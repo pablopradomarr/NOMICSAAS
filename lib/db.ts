@@ -101,6 +101,37 @@ export function flattenUniqueWhere(where: unknown): WhereRecord {
   return out
 }
 
+/**
+ * `where` de una operación dirigida (update/delete/upsert), acotado al tenant.
+ *
+ * Prisma exige un selector ÚNICO en estas operaciones, así que no vale componer
+ * con `AND` (dejaría el `where` sin campo único y Prisma lo rechazaría). Se
+ * reconstruye el selector forzando `organizationId = orgId` dentro del selector
+ * compuesto y se añade `organizationId` como filtro extra no único
+ * (extendedWhereUnique). Si el llamante traía una organización ajena, se LANZA:
+ * un selector cruzado es un bug, no algo que silenciar.
+ */
+export function scopeUniqueWhere(where: unknown, organizationId: string): WhereRecord {
+  const flat = flattenUniqueWhere(where)
+  const given = flat.organizationId
+  if (given !== undefined && given !== null && given !== organizationId) {
+    throw new TenantError(`tenantDb: selector único de otra organización`)
+  }
+
+  const out: WhereRecord = {}
+  if (isPlainObject(where)) {
+    for (const [key, value] of Object.entries(where)) {
+      if (key.includes("_") && isPlainObject(value) && "organizationId" in value) {
+        out[key] = { ...value, organizationId }
+        continue
+      }
+      out[key] = value
+    }
+  }
+  out.organizationId = organizationId
+  return out
+}
+
 /** Fija organizationId en los datos de creación; lanza si venía uno ajeno. */
 export function withOrg(data: unknown, organizationId: string): WhereRecord {
   if (!isPlainObject(data)) {
@@ -162,7 +193,7 @@ export const tenantExtension = (organizationId: string) =>
 
               case "update":
               case "delete":
-                return run({ ...typedArgs, where: and(flattenUniqueWhere(typedArgs.where), strictScope) })
+                return run({ ...typedArgs, where: scopeUniqueWhere(typedArgs.where, organizationId) })
 
               case "updateMany":
               case "updateManyAndReturn":
@@ -181,7 +212,7 @@ export const tenantExtension = (organizationId: string) =>
               case "upsert":
                 return run({
                   ...typedArgs,
-                  where: and(flattenUniqueWhere(typedArgs.where), strictScope),
+                  where: scopeUniqueWhere(typedArgs.where, organizationId),
                   create: withOrg(typedArgs.create, organizationId),
                   update: typedArgs.update,
                 })
@@ -196,7 +227,11 @@ export const tenantExtension = (organizationId: string) =>
   )
 
 function buildTenantClient(organizationId: string) {
-  return prisma.$extends(tenantExtension(organizationId))
+  return prisma.$extends(tenantExtension(organizationId)).$extends({
+    // La organización activa, accesible desde `models/` para construir los
+    // selectores únicos compuestos `organizationId_code`.
+    client: { $organizationId: organizationId },
+  })
 }
 
 export type TenantClient = ReturnType<typeof buildTenantClient>

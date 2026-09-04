@@ -1,10 +1,10 @@
 "use server"
 
 import { ActionState } from "@/lib/actions"
-import { getCurrentUser } from "@/lib/auth"
-import { prisma } from "@/lib/db"
+import { requireOrg } from "@/lib/authz"
 import { getUserUploadsDirectory, safePathJoin } from "@/lib/files"
-import { MODEL_BACKUP, modelFromJSON } from "@/models/backups"
+import { syncOrganizationStorage } from "@/lib/uploads"
+import { cleanupOrganizationTables, MODEL_BACKUP, modelFromJSON } from "@/models/backups"
 import { DEFAULT_CATEGORIES, DEFAULT_CURRENCIES, DEFAULT_FIELDS, DEFAULT_SETTINGS } from "@/models/defaults"
 import fs from "fs/promises"
 import JSZip from "jszip"
@@ -19,11 +19,12 @@ type BackupRestoreResult = {
   counters: Record<string, number>
 }
 
+/** Backup = volcado íntegro del tenant → ADMIN. */
 export async function restoreBackupAction(
   _prevState: ActionState<BackupRestoreResult> | null,
   formData: FormData
 ): Promise<ActionState<BackupRestoreResult>> {
-  const user = await getCurrentUser()
+  const { db, org, user } = await requireOrg("ADMIN")
   const userUploadsDirectory = getUserUploadsDirectory(user)
   const file = formData.get("file") as File
 
@@ -68,9 +69,9 @@ export async function restoreBackupAction(
       console.warn("No metadata found in backup, assuming legacy format")
     }
 
-    // Remove existing data
+    // Remove existing data (sólo de esta organización: tenantDb acota el deleteMany)
     if (REMOVE_EXISTING_DATA) {
-      await cleanupUserTables(user.id)
+      await cleanupOrganizationTables(db)
       await fs.rm(userUploadsDirectory, { recursive: true, force: true })
     }
 
@@ -82,7 +83,7 @@ export async function restoreBackupAction(
         const jsonFile = zip.file(`data/${backup.filename}`)
         if (jsonFile) {
           const jsonContent = await jsonFile.async("string")
-          const restoredCount = await modelFromJSON(user.id, backup, jsonContent)
+          const restoredCount = await modelFromJSON(db, backup, jsonContent)
           console.log(`Restored ${restoredCount} records from ${backup.filename}`)
           counters[backup.filename] = restoredCount
         }
@@ -94,13 +95,7 @@ export async function restoreBackupAction(
     // Restore files
     try {
       let restoredFilesCount = 0
-      const files = await prisma.file.findMany({
-        where: {
-          userId: user.id,
-        },
-      })
-
-      const userUploadsDirectory = getUserUploadsDirectory(user)
+      const files = await db.file.findMany()
 
       for (const file of files) {
         const filePathWithoutPrefix = path.normalize(file.path.replace(/^.*\/uploads\//, ""))
@@ -127,7 +122,7 @@ export async function restoreBackupAction(
           continue
         }
 
-        await prisma.file.update({
+        await db.file.update({
           where: { id: file.id },
           data: {
             path: filePathWithoutPrefix,
@@ -143,6 +138,8 @@ export async function restoreBackupAction(
       }
     }
 
+    await syncOrganizationStorage(org.id)
+
     return { success: true, data: { counters } }
   } catch (error) {
     console.error("Error restoring from backup:", error)
@@ -153,27 +150,16 @@ export async function restoreBackupAction(
   }
 }
 
-async function cleanupUserTables(userId: string) {
-  // Delete in reverse order to handle foreign key constraints
-  for (const { model } of [...MODEL_BACKUP].reverse()) {
-    try {
-      await model.deleteMany({ where: { userId } })
-    } catch (error) {
-      console.error(`Error clearing table:`, error)
-    }
-  }
-}
-
 export async function resetLLMSettingsAction() {
-  const user = await getCurrentUser()
+  const { db } = await requireOrg("ADMIN")
+  const organizationId = db.$organizationId
   const llmSettings = DEFAULT_SETTINGS.filter((setting) => setting.code === "prompt_analyse_new_file")
 
   for (const setting of llmSettings) {
-    await prisma.setting.upsert({
-      where: { userId_code: { code: setting.code, userId: user.id } },
+    await db.setting.upsert({
+      where: { organizationId_code: { organizationId, code: setting.code } },
       update: { value: setting.value },
-      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
-      create: { ...setting, userId: user.id, organizationId: user.id },
+      create: { ...setting, organizationId },
     })
   }
 
@@ -181,34 +167,34 @@ export async function resetLLMSettingsAction() {
 }
 
 export async function resetFieldsAndCategoriesAction() {
-  const user = await getCurrentUser()
+  const { db } = await requireOrg("ADMIN")
+  const organizationId = db.$organizationId
 
   for (const category of DEFAULT_CATEGORIES) {
-    await prisma.category.upsert({
-      where: { userId_code: { code: category.code, userId: user.id } },
+    await db.category.upsert({
+      where: { organizationId_code: { organizationId, code: category.code } },
       update: { name: category.name, color: category.color, llm_prompt: category.llm_prompt, createdAt: new Date() },
-      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
-      create: { ...category, userId: user.id, organizationId: user.id, createdAt: new Date() },
+      create: { ...category, organizationId, createdAt: new Date() },
     })
   }
-  await prisma.category.deleteMany({
-    where: { userId: user.id, code: { notIn: DEFAULT_CATEGORIES.map((category) => category.code) } },
+  await db.category.deleteMany({
+    where: { code: { notIn: DEFAULT_CATEGORIES.map((category) => category.code) } },
   })
 
   for (const currency of DEFAULT_CURRENCIES) {
-    await prisma.currency.upsert({
-      where: { userId_code: { code: currency.code, userId: user.id } },
+    await db.currency.upsert({
+      where: { organizationId_code: { organizationId, code: currency.code } },
       update: { name: currency.name },
-      create: { ...currency, userId: user.id },
+      create: { ...currency, organizationId },
     })
   }
-  await prisma.currency.deleteMany({
-    where: { userId: user.id, code: { notIn: DEFAULT_CURRENCIES.map((currency) => currency.code) } },
+  await db.currency.deleteMany({
+    where: { code: { notIn: DEFAULT_CURRENCIES.map((currency) => currency.code) } },
   })
 
   for (const field of DEFAULT_FIELDS) {
-    await prisma.field.upsert({
-      where: { userId_code: { code: field.code, userId: user.id } },
+    await db.field.upsert({
+      where: { organizationId_code: { organizationId, code: field.code } },
       update: {
         name: field.name,
         type: field.type,
@@ -219,12 +205,11 @@ export async function resetFieldsAndCategoriesAction() {
         isRequired: field.isRequired,
         isExtra: field.isExtra,
       },
-      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
-      create: { ...field, userId: user.id, organizationId: user.id, createdAt: new Date() },
+      create: { ...field, organizationId, createdAt: new Date() },
     })
   }
-  await prisma.field.deleteMany({
-    where: { userId: user.id, code: { notIn: DEFAULT_FIELDS.map((field) => field.code) } },
+  await db.field.deleteMany({
+    where: { code: { notIn: DEFAULT_FIELDS.map((field) => field.code) } },
   })
 
   redirect("/settings/backups")

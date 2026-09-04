@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { getTransactionById } from "@/models/transactions"
 import { notFound } from "next/navigation"
 
@@ -10,8 +10,8 @@ export default async function TransactionLayout({
   params: Promise<{ transactionId: string }>
 }) {
   const { transactionId } = await params
-  const user = await getCurrentUser()
-  const transaction = await getTransactionById(transactionId, user.id)
+  const { db } = await requireOrg("VIEWER")
+  const transaction = await getTransactionById(db, transactionId)
 
   if (!transaction) {
     notFound()

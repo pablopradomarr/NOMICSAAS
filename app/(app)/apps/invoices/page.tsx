@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { getAppData } from "@/models/apps"
 import { getCurrencies } from "@/models/currencies"
 import { getSettings } from "@/models/settings"
@@ -11,10 +11,10 @@ export type InvoiceAppData = {
 }
 
 export default async function InvoicesApp() {
-  const user = await getCurrentUser()
-  const settings = await getSettings(user.id)
-  const currencies = await getCurrencies(user.id)
-  const appData = (await getAppData(user, "invoices")) as InvoiceAppData | null
+  const { db, org, user } = await requireOrg("VIEWER")
+  const settings = await getSettings(db)
+  const currencies = await getCurrencies(db)
+  const appData = (await getAppData(db, user.id, "invoices")) as InvoiceAppData | null
 
   return (
     <div>
@@ -25,7 +25,7 @@ export default async function InvoicesApp() {
           </span>
         </h2>
       </header>
-      <InvoiceGenerator user={user} settings={settings} currencies={currencies} appData={appData} />
+      <InvoiceGenerator organization={org} settings={settings} currencies={currencies} appData={appData} />
     </div>
   )
 }

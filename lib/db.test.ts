@@ -8,7 +8,8 @@ if (TEST_DATABASE_URL) {
   process.env.DATABASE_URL = "postgresql://postgres@localhost:5432/erp"
 }
 
-const { and, flattenUniqueWhere, withOrg, TenantError, tenantDb, tenantTransaction, prisma } = await import("@/lib/db")
+const { and, flattenUniqueWhere, scopeUniqueWhere, withOrg, TenantError, tenantDb, tenantTransaction, prisma } =
+  await import("@/lib/db")
 
 const ORG_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
 const ORG_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1"
@@ -68,6 +69,25 @@ describe("tenantDb()", () => {
   })
 })
 
+describe("scopeUniqueWhere()", () => {
+  it("fuerza la organización dentro del selector compuesto y añade el filtro extra", () => {
+    expect(scopeUniqueWhere({ organizationId_code: { organizationId: ORG_A, code: "x" } }, ORG_A)).toEqual({
+      organizationId_code: { organizationId: ORG_A, code: "x" },
+      organizationId: ORG_A,
+    })
+  })
+
+  it("conserva el selector único por id y lo acota", () => {
+    expect(scopeUniqueWhere({ id: "1" }, ORG_A)).toEqual({ id: "1", organizationId: ORG_A })
+  })
+
+  it("lanza si el selector compuesto apunta a otra organización", () => {
+    expect(() => scopeUniqueWhere({ organizationId_code: { organizationId: ORG_B, code: "x" } }, ORG_A)).toThrow(
+      TenantError
+    )
+  })
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Integración: requiere DATABASE_URL_TEST (npm run test:integration)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,15 +112,15 @@ describe.skipIf(!TEST_DATABASE_URL)("tenantDb contra BD real (aislamiento I10)",
     })
     await prisma.category.createMany({
       data: [
-        { organizationId: ORG_A, userId: userA, code: "compartido", name: "Categoría de A" },
-        { organizationId: ORG_B, userId: userB, code: "compartido", name: "Categoría de B" },
-        { organizationId: ORG_B, userId: userB, code: "solo-b", name: "Sólo B" },
+        { organizationId: ORG_A, code: "compartido", name: "Categoría de A" },
+        { organizationId: ORG_B, code: "compartido", name: "Categoría de B" },
+        { organizationId: ORG_B, code: "solo-b", name: "Sólo B" },
       ],
     })
     await prisma.setting.createMany({
       data: [
-        { organizationId: ORG_A, userId: userA, code: "app_title", name: "Título", value: "A", updatedAt: new Date() },
-        { organizationId: ORG_B, userId: userB, code: "app_title", name: "Título", value: "B", updatedAt: new Date() },
+        { organizationId: ORG_A, code: "app_title", name: "Título", value: "A", updatedAt: new Date() },
+        { organizationId: ORG_B, code: "app_title", name: "Título", value: "B", updatedAt: new Date() },
       ],
     })
   })
@@ -153,7 +173,7 @@ describe.skipIf(!TEST_DATABASE_URL)("tenantDb contra BD real (aislamiento I10)",
   it("create con organizationId ajeno lanza TenantError", async () => {
     await expect(
       tenantDb(ORG_A).category.create({
-        data: { organizationId: ORG_B, userId: userB, code: "intruso", name: "Intruso" },
+        data: { organizationId: ORG_B, code: "intruso", name: "Intruso" },
       })
     ).rejects.toThrow(TenantError)
   })
@@ -186,7 +206,7 @@ describe.skipIf(!TEST_DATABASE_URL)("tenantDb contra BD real (aislamiento I10)",
 
       await expect(
         client.query(
-          `INSERT INTO categories (id, organization_id, user_id, code, name) VALUES (gen_random_uuid(), '${ORG_B}', '${userB}', 'rls', 'RLS')`
+          `INSERT INTO categories (id, organization_id, code, name) VALUES (gen_random_uuid(), '${ORG_B}', 'rls', 'RLS')`
         )
       ).rejects.toThrow(/row-level security/i)
       await client.query("ROLLBACK")

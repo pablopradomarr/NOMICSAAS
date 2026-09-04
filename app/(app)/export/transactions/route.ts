@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import {
   fileExists,
   fullPathForFile,
@@ -29,9 +29,9 @@ export async function GET(request: Request) {
   const includeAttachments = url.searchParams.get("includeAttachments") === "true"
   const progressId = url.searchParams.get("progressId")
 
-  const user = await getCurrentUser()
-  const { transactions } = await getTransactions(user.id, filters)
-  const existingFields = await getFields(user.id)
+  const { db, user } = await requireOrg("VIEWER")
+  const { transactions } = await getTransactions(db, filters)
+  const existingFields = await getFields(db)
 
   try {
     const fieldKeys = fields.filter((field) => existingFields.some((f) => f.code === field))
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
 
       for (const transaction of chunk) {
         const row: Record<string, unknown> = {}
-        const transactionFiles = includeFilePaths ? await getFilesByTransactionId(transaction.id, user.id) : []
+        const transactionFiles = includeFilePaths ? await getFilesByTransactionId(db, transaction.id) : []
 
         for (const field of existingFields) {
           if (field.code === "files") {
@@ -81,7 +81,7 @@ export async function GET(request: Request) {
 
           const exportFieldSettings = EXPORT_AND_IMPORT_FIELD_MAP[field.code]
           if (exportFieldSettings && exportFieldSettings.export) {
-            row[field.code] = await exportFieldSettings.export(user.id, value)
+            row[field.code] = await exportFieldSettings.export(db, value)
           } else {
             row[field.code] = value
           }
@@ -126,13 +126,13 @@ export async function GET(request: Request) {
 
     // First count total files to process
     for (const transaction of transactions) {
-      const transactionFiles = await getFilesByTransactionId(transaction.id, user.id)
+      const transactionFiles = await getFilesByTransactionId(db, transaction.id)
       totalFilesToProcess += transactionFiles.length
     }
 
     // Update progress with total files if progressId is provided
     if (progressId) {
-      await updateProgress(user.id, progressId, { total: totalFilesToProcess })
+      await updateProgress(db, user.id, progressId, { total: totalFilesToProcess })
     }
 
     console.log(`Starting to process ${totalFilesToProcess} files in total`)
@@ -144,7 +144,7 @@ export async function GET(request: Request) {
       )
 
       for (const transaction of chunk) {
-        const transactionFiles = await getFilesByTransactionId(transaction.id, user.id)
+        const transactionFiles = await getFilesByTransactionId(db, transaction.id)
 
         const transactionFolder = filesFolder.folder(getTransactionExportRelativeFolder(transaction, transactionFiles.length))
 
@@ -162,7 +162,7 @@ export async function GET(request: Request) {
             // Update progress every PROGRESS_UPDATE_INTERVAL_MS milliseconds
             const now = Date.now()
             if (progressId && now - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL_MS) {
-              await updateProgress(user.id, progressId, { current: totalFilesProcessed })
+              await updateProgress(db, user.id, progressId, { current: totalFilesProcessed })
               lastProgressUpdate = now
             }
           } else {
@@ -174,7 +174,7 @@ export async function GET(request: Request) {
 
     // Final progress update
     if (progressId) {
-      await updateProgress(user.id, progressId, { current: totalFilesToProcess })
+      await updateProgress(db, user.id, progressId, { current: totalFilesToProcess })
     }
 
     console.log(`Finished processing all ${totalFilesProcessed} files`)

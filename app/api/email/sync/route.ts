@@ -1,19 +1,16 @@
 import { fetchEmails } from "@/app/(app)/apps/email/scripts/fetch-emails"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { NextRequest, NextResponse } from "next/server"
 
 export async function POST(_request: NextRequest) {
   try {
-    // Verify user is authenticated
-    const user = await getCurrentUser()
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    // Lanzar una sincronización crea documentos → EDITOR
+    const { org, user } = await requireOrg("EDITOR")
 
     console.log(`🔄 Manual email sync triggered by user: ${user.email}`)
 
-    // Run the email sync
-    await fetchEmails()
+    // Run the email sync (sólo la organización activa)
+    await fetchEmails({ organizationId: org.id })
 
     return NextResponse.json({
       success: true,
@@ -35,11 +32,7 @@ export async function POST(_request: NextRequest) {
 
 export async function GET(_request: NextRequest) {
   try {
-    // Verify user is authenticated
-    const user = await getCurrentUser()
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    await requireOrg("VIEWER")
 
     return NextResponse.json({
       message: "Email sync API is ready",

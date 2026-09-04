@@ -1,7 +1,7 @@
 "use server"
 
 import { ActionState } from "@/lib/actions"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { EXPORT_AND_IMPORT_FIELD_MAP } from "@/models/export_and_import"
 import { createTransaction, findDuplicateTransaction } from "@/models/transactions"
 import { Transaction } from "@/prisma/client"
@@ -47,7 +47,7 @@ export async function saveTransactionsAction(
   _prevState: ActionState<Transaction> | null,
   formData: FormData
 ): Promise<ActionState<Transaction>> {
-  const user = await getCurrentUser()
+  const { db, user } = await requireOrg("EDITOR")
   try {
     const rows = JSON.parse(formData.get("rows") as string) as Record<string, unknown>[]
 
@@ -61,7 +61,7 @@ export async function saveTransactionsAction(
       for (const [fieldCode, value] of Object.entries(row)) {
         const fieldDef = EXPORT_AND_IMPORT_FIELD_MAP[fieldCode]
         if (fieldDef?.import) {
-          transactionData[fieldCode] = await fieldDef.import(user.id, value as string)
+          transactionData[fieldCode] = await fieldDef.import(db, value)
         } else {
           transactionData[fieldCode] = value as string
         }
@@ -71,7 +71,7 @@ export async function saveTransactionsAction(
 
       // --- Deduplication Check ---
       if (!shouldForceSave) {
-        const existingTransaction = await findDuplicateTransaction(user.id, transactionData)
+        const existingTransaction = await findDuplicateTransaction(db, transactionData)
 
         if (existingTransaction) {
           return {
@@ -85,7 +85,7 @@ export async function saveTransactionsAction(
           }
         }
       }
-      await createTransaction(user.id, transactionData)
+      await createTransaction(db, transactionData, { createdById: user.id })
 
       currentIndex++
     }

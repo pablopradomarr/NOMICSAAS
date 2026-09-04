@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { fetchAsBase64 } from "@/lib/utils"
 import { SettingsMap } from "@/models/settings"
-import { Currency, User } from "@/prisma/client"
+import { Currency, Organization } from "@/prisma/client"
 import { FileDown, Loader2, Save, TextSelect, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { startTransition, useMemo, useReducer, useState } from "react"
@@ -70,19 +70,19 @@ function invoiceFormReducer(state: InvoiceFormData, action: InvoiceFormAction): 
 }
 
 export function InvoiceGenerator({
-  user,
+  organization,
   settings,
   currencies,
   appData,
 }: {
-  user: User
+  organization: Organization
   settings: SettingsMap
   currencies: Currency[]
   appData: InvoiceAppData | null
 }) {
   const templates: InvoiceTemplate[] = useMemo(
-    () => [...defaultTemplates(user, settings), ...(appData?.templates || [])],
-    [user, settings, appData]
+    () => [...defaultTemplates(organization, settings), ...(appData?.templates || [])],
+    [organization, settings, appData]
   )
 
   const [selectedTemplate, setSelectedTemplate] = useState<string>(templates[0].name)
@@ -152,7 +152,7 @@ export function InvoiceGenerator({
     }
 
     try {
-      const result = await addNewTemplateAction(user, {
+      const result = await addNewTemplateAction({
         id: `tmpl_${Math.random().toString(36).substring(2, 15)}`,
         name: newTemplateName,
         formData: formData,
@@ -176,7 +176,7 @@ export function InvoiceGenerator({
     if (!templateId) return // Don't allow deleting default templates
 
     try {
-      const result = await deleteTemplateAction(user, templateId)
+      const result = await deleteTemplateAction(templateId)
       if (result.success) {
         router.refresh()
       }

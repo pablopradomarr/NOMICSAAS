@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { fileExists, fullPathForFile } from "@/lib/files"
 import { resolvePreviewFormat } from "@/lib/previews/format"
 import { generateFilePreviews } from "@/lib/previews/generate"
@@ -11,7 +11,7 @@ import { encodeFilename } from "@/lib/utils"
 
 export async function GET(request: Request, { params }: { params: Promise<{ fileId: string }> }) {
   const { fileId } = await params
-  const user = await getCurrentUser()
+  const { db, user } = await requireOrg("VIEWER")
 
   if (!fileId) {
     return new NextResponse("No fileId provided", { status: 400 })
@@ -22,10 +22,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
 
   try {
     // Find file in database
-    const file = await getFileById(fileId, user.id)
+    const file = await getFileById(db, fileId)
 
-    if (!file || file.userId !== user.id) {
-      return new NextResponse("File not found or does not belong to the user", { status: 404 })
+    if (!file) {
+      return new NextResponse("File not found or does not belong to the organization", { status: 404 })
     }
 
     // Check if file exists on disk
@@ -36,7 +36,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     }
 
     // Generate previews
-    const settings = await getSettings(user.id)
+    const settings = await getSettings(db)
     const format = resolvePreviewFormat(settings.llm_attachment_format)
     const { contentType, previews } = await generateFilePreviews(user, fullFilePath, file.mimetype, format)
     if (page > previews.length) {

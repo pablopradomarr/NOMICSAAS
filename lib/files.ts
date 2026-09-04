@@ -1,4 +1,4 @@
-import { File, Transaction, User } from "@/prisma/client"
+import { File, Organization, Transaction, User } from "@/prisma/client"
 import { formatDate } from "date-fns"
 import { access, constants, readdir, stat } from "fs/promises"
 import path from "path"
@@ -93,6 +93,7 @@ export async function fileExists(filePath: string) {
 export async function getDirectorySize(directoryPath: string) {
   let totalSize = 0
   async function calculateSize(dir: string) {
+    if (!(await fileExists(dir))) return
     const files = await readdir(dir, { withFileTypes: true })
     for (const file of files) {
       const fullPath = path.join(dir, file.name)
@@ -108,9 +109,27 @@ export async function getDirectorySize(directoryPath: string) {
   return totalSize
 }
 
-export function isEnoughStorageToUploadFile(user: User, fileSize: number) {
-  if (config.selfHosted.isEnabled || user.storageLimit < 0) {
+/**
+ * Consumo de disco de una organización: suma de los directorios de sus miembros.
+ * El layout físico sigue siendo por email (no se mueven ficheros ya escritos);
+ * lo que cambia es el SUJETO de la cuota, que pasa a ser la organización.
+ */
+export async function getOrganizationStorageUsed(memberEmails: string[]): Promise<number> {
+  let total = 0
+  for (const email of memberEmails) {
+    total += await getDirectorySize(safePathJoin(FILE_UPLOAD_PATH, email))
+  }
+  return total
+}
+
+/**
+ * E1 (T11): la cuota de almacenamiento es de la ORGANIZACIÓN. El directorio
+ * físico sigue colgando del email del usuario que sube (no se remueven ficheros
+ * ya escritos en disco); lo que se mide y limita es el consumo por organización.
+ */
+export function isEnoughStorageToUploadFile(organization: Organization, fileSize: number) {
+  if (config.selfHosted.isEnabled || organization.storageLimit < 0) {
     return true
   }
-  return user.storageUsed + fileSize <= user.storageLimit
+  return organization.storageUsed + fileSize <= organization.storageLimit
 }

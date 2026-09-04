@@ -15,16 +15,20 @@ vi.mock("./config", () => ({
   },
 }))
 vi.mock("@/models/files", () => ({
-  createFile: vi.fn(async (userId: string, data: Record<string, unknown>) => {
-    const row = { ...data, userId }
-    created.push(row)
-    return row
+  createFile: vi.fn(async (_db: unknown, data: Record<string, unknown>) => {
+    created.push(data)
+    return data
   }),
 }))
+vi.mock("@/models/memberships", () => ({ listOrganizationMemberEmails: vi.fn(async () => []) }))
+vi.mock("@/models/organizations", () => ({ updateOrganization: vi.fn() }))
 
 const { ingestUnsortedFile } = await import("./uploads")
 
-const user = { id: "user-1", email: "u@example.com", storageUsed: 0, storageLimit: -1 } as Record<string, unknown>
+const user = { id: "user-1", email: "u@example.com" } as Record<string, unknown>
+// E1 (T11): la cuota es de la organización; el contexto de subida lleva db + org + user.
+const organization = { id: "org-1", storageUsed: 0, storageLimit: -1 } as Record<string, unknown>
+const ctx = { db: {}, organization, user } as unknown as Parameters<typeof ingestUnsortedFile>[0]
 
 afterAll(async () => {
   await rm(tmpRoot, { recursive: true, force: true })
@@ -33,7 +37,7 @@ afterAll(async () => {
 describe("ingestUnsortedFile", () => {
   it("writes the buffer under the user's unsorted dir and creates an unsorted File row", async () => {
     const buffer = Buffer.from("%PDF-1.4 fake invoice")
-    const file = await ingestUnsortedFile(user, {
+    const file = await ingestUnsortedFile(ctx, {
       buffer,
       filename: "invoice.pdf",
       mimetype: "application/pdf",

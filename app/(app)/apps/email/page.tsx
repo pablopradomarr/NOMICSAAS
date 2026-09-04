@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { getAppData } from "@/models/apps"
 import { getSettings } from "@/models/settings"
 import { EmailServerManager } from "./components/email-server-manager"
@@ -36,9 +36,9 @@ export type EmailAppData = {
 }
 
 export default async function EmailApp() {
-  const user = await getCurrentUser()
-  const settings = await getSettings(user.id)
-  const appData = (await getAppData(user, "email")) as EmailAppData | null
+  const { db, user } = await requireOrg("VIEWER")
+  const settings = await getSettings(db)
+  const appData = (await getAppData(db, user.id, "email")) as EmailAppData | null
 
   const sanitizedAppData = appData
     ? { ...appData, servers: appData.servers.map((s) => ({ ...s, password: "" })) }

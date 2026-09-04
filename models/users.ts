@@ -1,15 +1,18 @@
-import { prisma } from "@/lib/db"
+// NOTA: usa el cliente sin tenant a propósito (auth y perfil son pre-tenant).
+// Excepción legítima a la regla ESLint no-restricted-imports.
+import { prisma, tenantDb } from "@/lib/db"
 import { Prisma } from "@/prisma/client"
 import { cache } from "react"
-import { ensurePersonalOrganization } from "./organizations"
-import { isDatabaseEmpty } from "./defaults"
-import { createUserDefaults } from "./defaults"
+import { createOrganizationDefaults, isDatabaseEmpty } from "./defaults"
+import { ensurePersonalOrganization, updateOrganization } from "./organizations"
 
 export const SELF_HOSTED_USER = {
   email: "taxhacker@localhost",
   name: "TaxHacker",
-  membershipPlan: "unlimited",
 }
+
+/** Plan de la organización local en self-hosted (ya no vive en `users`). */
+export const SELF_HOSTED_MEMBERSHIP_PLAN = "unlimited"
 
 export const getSelfHostedUser = cache(async () => {
   if (!process.env.DATABASE_URL) {
@@ -30,22 +33,33 @@ export const getOrCreateSelfHostedUser = cache(async () => {
 
   // E1: todo usuario necesita su organización personal (y su membresía ADMIN)
   // antes de que se creen datos de negocio.
-  await ensurePersonalOrganization(user, new Date())
+  const organization = await ensurePersonalOrganization(user, new Date())
+  if (organization.membershipPlan !== SELF_HOSTED_MEMBERSHIP_PLAN) {
+    await updateOrganization(organization.id, { membershipPlan: SELF_HOSTED_MEMBERSHIP_PLAN })
+  }
 
   return user
 })
 
-export async function getOrCreateCloudUser(email: string, data: Prisma.UserCreateInput) {
+export async function getOrCreateCloudUser(
+  email: string,
+  data: Prisma.UserCreateInput,
+  organizationData: Prisma.OrganizationUpdateInput = {}
+) {
   const user = await prisma.user.upsert({
     where: { email: email.toLowerCase() },
     update: data,
     create: data,
   })
 
-  await ensurePersonalOrganization(user, new Date())
+  const organization = await ensurePersonalOrganization(user, new Date())
+  if (Object.keys(organizationData).length > 0) {
+    await updateOrganization(organization.id, organizationData)
+  }
 
-  if (await isDatabaseEmpty(user.id)) {
-    await createUserDefaults(user.id)
+  const db = tenantDb(organization.id)
+  if (await isDatabaseEmpty(db)) {
+    await createOrganizationDefaults(db)
   }
 
   return user
@@ -63,12 +77,7 @@ export const getUserByEmail = cache(async (email: string) => {
   })
 })
 
-export const getUserByStripeCustomerId = cache(async (customerId: string) => {
-  return await prisma.user.findFirst({
-    where: { stripeCustomerId: customerId },
-  })
-})
-
+/** Sólo auth/perfil: la facturación y las cuotas viven en Organization (T11). */
 export function updateUser(userId: string, data: Prisma.UserUpdateInput) {
   return prisma.user.update({
     where: { id: userId },

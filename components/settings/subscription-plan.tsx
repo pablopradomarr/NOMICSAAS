@@ -1,4 +1,4 @@
-import { User } from "@/prisma/client"
+import { Organization } from "@/prisma/client"
 
 import { PricingCard } from "@/components/auth/pricing-card"
 import { Button } from "@/components/ui/button"
@@ -11,8 +11,9 @@ import { BrainCog, CalendarSync, HardDrive } from "lucide-react"
 import Link from "next/link"
 import { Badge } from "../ui/badge"
 
-export function SubscriptionPlan({ user }: { user: User }) {
-  const plan = PLANS[user.membershipPlan as keyof typeof PLANS] || PLANS.unlimited
+// E1 (T11): plan, cuotas y cliente de Stripe son de la organización.
+export function SubscriptionPlan({ organization }: { organization: Organization }) {
+  const plan = PLANS[organization.membershipPlan as keyof typeof PLANS] || PLANS.unlimited
 
   return (
     <div className="flex flex-wrap gap-5">
@@ -27,14 +28,14 @@ export function SubscriptionPlan({ user }: { user: User }) {
             <div className="flex items-center gap-2">
               <HardDrive className="h-4 w-4" />
               <span>
-                <strong className="font-semibold">Storage:</strong> {formatBytes(user.storageUsed)} /{" "}
-                {user.storageLimit > 0 ? formatBytes(user.storageLimit) : "Unlimited"}
+                <strong className="font-semibold">Storage:</strong> {formatBytes(organization.storageUsed)} /{" "}
+                {organization.storageLimit > 0 ? formatBytes(organization.storageLimit) : "Unlimited"}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <BrainCog className="h-4 w-4" />
               <span>
-                <strong className="font-semibold">AI Analyses:</strong> {formatNumber(plan.limits.ai - user.aiBalance)}{" "}
+                <strong className="font-semibold">AI Analyses:</strong> {formatNumber(plan.limits.ai - organization.aiBalance)}{" "}
                 / {plan.limits.ai > 0 ? formatNumber(plan.limits.ai) : "Unlimited"}
               </span>
             </div>
@@ -42,19 +43,19 @@ export function SubscriptionPlan({ user }: { user: User }) {
               <CalendarSync className="h-4 w-4" />
               <span>
                 <strong className="font-semibold">Expiration Date:</strong>{" "}
-                {user.membershipExpiresAt ? formatDate(user.membershipExpiresAt, "yyyy-MM-dd") : "Never"}
+                {organization.membershipExpiresAt ? formatDate(organization.membershipExpiresAt, "yyyy-MM-dd") : "Never"}
               </span>
             </div>
           </div>
 
           <div className="space-y-4 mt-6 text-center">
-            {user.stripeCustomerId && (
+            {organization.stripeCustomerId && (
               <Button asChild className="w-full">
                 <Link href="/api/stripe/portal">Manage Subscription</Link>
               </Button>
             )}
 
-            {!user.stripeCustomerId && user.membershipExpiresAt && (
+            {!organization.stripeCustomerId && organization.membershipExpiresAt && (
               <Button asChild className="w-full">
                 <Link href="/cloud">Buy Subscription</Link>
               </Button>

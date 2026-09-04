@@ -1,19 +1,22 @@
-import { prisma } from "@/lib/db"
-import { User } from "@/prisma/client"
+import { TenantClient } from "@/lib/db"
+import { Prisma } from "@/prisma/client"
 
-export const getAppData = async (user: User, app: string) => {
-  const appData = await prisma.appData.findUnique({
-    where: { userId_app: { userId: user.id, app } },
+/**
+ * AppData es estado por usuario DENTRO de la organización: se filtra por las dos
+ * columnas (organizationId inyectado por tenantDb + userId explícito).
+ */
+export const getAppData = async (db: TenantClient, userId: string, app: string) => {
+  const appData = await db.appData.findUnique({
+    where: { organizationId_userId_app: { organizationId: db.$organizationId, userId, app } },
   })
 
   return appData?.data
 }
 
-export const setAppData = async (user: User, app: string, data: any) => {
-  await prisma.appData.upsert({
-    where: { userId_app: { userId: user.id, app } },
+export const setAppData = async (db: TenantClient, userId: string, app: string, data: Prisma.InputJsonValue) => {
+  await db.appData.upsert({
+    where: { organizationId_userId_app: { organizationId: db.$organizationId, userId, app } },
     update: { data },
-    // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
-    create: { userId: user.id, organizationId: user.id, app, data },
+    create: { organizationId: db.$organizationId, userId, app, data },
   })
 }

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db"
+import { TenantClient } from "@/lib/db"
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_CURRENCIES,
@@ -16,40 +16,37 @@ export {
   DEFAULT_SETTINGS,
 } from "@/models/defaults-data"
 
-// TRANSICIÓN E1 (T9): `userId` se usa también como organizationId porque la
-// organización personal creada en el backfill tiene id = users.id.
-export async function createUserDefaults(userId: string) {
-  // Default projects
+/** Semilla de proyectos, categorías, monedas, campos y settings de UNA organización. */
+export async function createOrganizationDefaults(db: TenantClient) {
+  const organizationId = db.$organizationId
+
   for (const project of DEFAULT_PROJECTS) {
-    await prisma.project.upsert({
-      where: { userId_code: { code: project.code, userId } },
+    await db.project.upsert({
+      where: { organizationId_code: { organizationId, code: project.code } },
       update: { name: project.name, color: project.color, llm_prompt: project.llm_prompt },
-      create: { ...project, userId, organizationId: userId },
+      create: { ...project, organizationId },
     })
   }
 
-  // Default categories
   for (const category of DEFAULT_CATEGORIES) {
-    await prisma.category.upsert({
-      where: { userId_code: { code: category.code, userId } },
+    await db.category.upsert({
+      where: { organizationId_code: { organizationId, code: category.code } },
       update: { name: category.name, color: category.color, llm_prompt: category.llm_prompt },
-      create: { ...category, userId, organizationId: userId },
+      create: { ...category, organizationId },
     })
   }
 
-  // Default currencies
   for (const currency of DEFAULT_CURRENCIES) {
-    await prisma.currency.upsert({
-      where: { userId_code: { code: currency.code, userId } },
+    await db.currency.upsert({
+      where: { organizationId_code: { organizationId, code: currency.code } },
       update: { name: currency.name },
-      create: { ...currency, userId },
+      create: { ...currency, organizationId },
     })
   }
 
-  // Default fields
   for (const field of DEFAULT_FIELDS) {
-    await prisma.field.upsert({
-      where: { userId_code: { code: field.code, userId } },
+    await db.field.upsert({
+      where: { organizationId_code: { organizationId, code: field.code } },
       update: {
         name: field.name,
         type: field.type,
@@ -59,21 +56,20 @@ export async function createUserDefaults(userId: string) {
         isRequired: field.isRequired,
         isExtra: field.isExtra,
       },
-      create: { ...field, userId, organizationId: userId },
+      create: { ...field, organizationId },
     })
   }
 
-  // Default settings
   for (const setting of DEFAULT_SETTINGS) {
-    await prisma.setting.upsert({
-      where: { userId_code: { code: setting.code, userId } },
+    await db.setting.upsert({
+      where: { organizationId_code: { organizationId, code: setting.code } },
       update: { name: setting.name, description: setting.description, value: setting.value },
-      create: { ...setting, userId, organizationId: userId },
+      create: { ...setting, organizationId },
     })
   }
 }
 
-export async function isDatabaseEmpty(userId: string) {
-  const fieldsCount = await prisma.field.count({ where: { userId } })
+export async function isDatabaseEmpty(db: TenantClient) {
+  const fieldsCount = await db.field.count()
   return fieldsCount === 0
 }

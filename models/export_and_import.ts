@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db"
+import { TenantClient } from "@/lib/db"
 import { codeFromName } from "@/lib/utils"
 import { formatDate } from "date-fns"
 import { createCategory, getCategoryByCode } from "./categories"
@@ -9,11 +9,15 @@ export type ExportFilters = TransactionFilters
 
 export type ExportFields = string[]
 
+/**
+ * Los conversores reciben el cliente acotado a la organización (nunca un userId):
+ * así categorías y proyectos referenciados en el CSV se resuelven dentro del tenant.
+ */
 export type ExportImportFieldSettings = {
   code: string
   type: string
-  export?: (userId: string, value: any) => Promise<any>
-  import?: (userId: string, value: any) => Promise<any>
+  export?: (db: TenantClient, value: unknown) => Promise<unknown>
+  import?: (db: TenantClient, value: unknown) => Promise<unknown>
 }
 
 export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettings> = {
@@ -32,11 +36,11 @@ export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettin
   total: {
     code: "total",
     type: "number",
-    export: async function (userId: string, value: number) {
-      return value / 100
+    export: async function (_db, value) {
+      return (value as number) / 100
     },
-    import: async function (userId: string, value: string) {
-      const num = parseFloat(value)
+    import: async function (_db, value) {
+      const num = parseFloat(String(value))
       return isNaN(num) ? 0.0 : num * 100
     },
   },
@@ -47,14 +51,14 @@ export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettin
   convertedTotal: {
     code: "convertedTotal",
     type: "number",
-    export: async function (userId: string, value: number | null) {
+    export: async function (_db, value) {
       if (!value) {
         return null
       }
-      return value / 100
+      return (value as number) / 100
     },
-    import: async function (userId: string, value: string) {
-      const num = parseFloat(value)
+    import: async function (_db, value) {
+      const num = parseFloat(String(value))
       return isNaN(num) ? 0.0 : num * 100
     },
   },
@@ -65,11 +69,11 @@ export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettin
   type: {
     code: "type",
     type: "string",
-    export: async function (userId: string, value: string | null) {
-      return value ? value.toLowerCase() : ""
+    export: async function (_db, value) {
+      return value ? String(value).toLowerCase() : ""
     },
-    import: async function (userId: string, value: string) {
-      return value.toLowerCase()
+    import: async function (_db, value) {
+      return String(value).toLowerCase()
     },
   },
   note: {
@@ -79,54 +83,56 @@ export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettin
   categoryCode: {
     code: "categoryCode",
     type: "string",
-    export: async function (userId: string, value: string | null) {
+    export: async function (db, value) {
       if (!value) {
         return null
       }
-      const category = await getCategoryByCode(userId, value)
+      const category = await getCategoryByCode(db, String(value))
       return category?.name
     },
-    import: async function (userId: string, value: string) {
-      const category = await importCategory(userId, value)
+    import: async function (db, value) {
+      const category = await importCategory(db, String(value))
       return category?.code
     },
   },
   projectCode: {
     code: "projectCode",
     type: "string",
-    export: async function (userId: string, value: string | null) {
+    export: async function (db, value) {
       if (!value) {
         return null
       }
-      const project = await getProjectByCode(userId, value)
+      const project = await getProjectByCode(db, String(value))
       return project?.name
     },
-    import: async function (userId: string, value: string) {
-      const project = await importProject(userId, value)
+    import: async function (db, value) {
+      const project = await importProject(db, String(value))
       return project?.code
     },
   },
   issuedAt: {
     code: "issuedAt",
     type: "date",
-    export: async function (userId: string, value: Date | null) {
-      if (!value || isNaN(value.getTime())) {
+    export: async function (_db, value) {
+      const date = value as Date | null
+      if (!date || isNaN(date.getTime())) {
         return null
       }
 
       try {
-        return formatDate(value, "yyyy-MM-dd")
+        return formatDate(date, "yyyy-MM-dd")
       } catch (_error) {
         return null
       }
     },
-    import: async function (userId: string, value: string) {
+    import: async function (_db, value) {
+      const raw = String(value)
       try {
         // Date-only strings parse as UTC midnight; append local time to avoid -1 day shift
-        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-          return new Date(value + "T00:00:00")
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+          return new Date(raw + "T00:00:00")
         }
-        return new Date(value)
+        return new Date(raw)
       } catch (_error) {
         return null
       }
@@ -134,10 +140,16 @@ export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettin
   },
 }
 
-export const importProject = async (userId: string, name: string) => {
+/**
+ * G-08 (docs/AUDITORIA-FIABILIDAD.md): la búsqueda del proyecto existente NO
+ * llevaba filtro de propietario, así que un import de CSV podía engancharse al
+ * proyecto de OTRO usuario. Con `tenantDb` el filtro por organización se inyecta
+ * y el bug desaparece por construcción.
+ */
+export const importProject = async (db: TenantClient, name: string) => {
   const code = codeFromName(name)
 
-  const existingProject = await prisma.project.findFirst({
+  const existingProject = await db.project.findFirst({
     where: {
       OR: [{ code }, { name }],
     },
@@ -147,13 +159,14 @@ export const importProject = async (userId: string, name: string) => {
     return existingProject
   }
 
-  return await createProject(userId, { code, name })
+  return await createProject(db, { code, name })
 }
 
-export const importCategory = async (userId: string, name: string) => {
+/** Ídem G-08 para categorías. */
+export const importCategory = async (db: TenantClient, name: string) => {
   const code = codeFromName(name)
 
-  const existingCategory = await prisma.category.findFirst({
+  const existingCategory = await db.category.findFirst({
     where: {
       OR: [{ code }, { name }],
     },
@@ -163,5 +176,5 @@ export const importCategory = async (userId: string, name: string) => {
     return existingCategory
   }
 
-  return await createCategory(userId, { code, name })
+  return await createCategory(db, { code, name })
 }

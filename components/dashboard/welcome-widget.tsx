@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardTitle } from "@/components/ui/card"
 import { ColoredText } from "@/components/ui/colored-text"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
 import { getSettings, updateSettings } from "@/models/settings"
 import { Banknote, ChartBarStacked, FolderOpenDot, Key, TextCursorInput, X } from "lucide-react"
@@ -10,8 +10,8 @@ import Image from "next/image"
 import Link from "next/link"
 
 export async function WelcomeWidget() {
-  const user = await getCurrentUser()
-  const settings = await getSettings(user.id)
+  const { db } = await requireOrg("VIEWER")
+  const settings = await getSettings(db)
 
   return (
     <Card className="flex flex-col lg:flex-row items-start gap-10 p-10 w-full">
@@ -26,7 +26,7 @@ export async function WelcomeWidget() {
             size="icon"
             onClick={async () => {
               "use server"
-              await updateSettings(user.id, "is_welcome_message_hidden", "true")
+              await updateSettings(db, "is_welcome_message_hidden", "true")
               revalidatePath("/")
             }}
           >

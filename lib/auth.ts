@@ -1,6 +1,6 @@
 import config from "@/lib/config"
-import { getSelfHostedUser, getUserByEmail, getUserById, SELF_HOSTED_USER } from "@/models/users"
-import { User } from "@/prisma/client"
+import { getSelfHostedUser, getUserByEmail, getUserById, SELF_HOSTED_MEMBERSHIP_PLAN } from "@/models/users"
+import { Organization, User } from "@/prisma/client"
 import { betterAuth } from "better-auth"
 import { prismaAdapter } from "better-auth/adapters/prisma"
 import { APIError } from "better-auth/api"
@@ -11,11 +11,13 @@ import { redirect } from "next/navigation"
 import { prisma } from "./db"
 import { resend, sendOTPCodeEmail } from "./email"
 
+/** Datos que el sidebar pinta: identidad del usuario + plan/cuota de la organización activa. */
 export type UserProfile = {
   id: string
   name: string
   email: string
   avatar?: string
+  organizationName: string
   membershipPlan: string
   storageUsed: number
   storageLimit: number
@@ -98,16 +100,17 @@ export async function getCurrentUser(): Promise<User> {
   redirect(config.auth.loginUrl)
 }
 
-export function isSubscriptionExpired(user: User) {
+// E1 (T11): plan, caducidad y saldo de IA son de la ORGANIZACIÓN, no del usuario.
+export function isSubscriptionExpired(organization: Organization) {
   if (config.selfHosted.isEnabled) {
     return false
   }
-  return user.membershipExpiresAt && user.membershipExpiresAt < new Date()
+  return Boolean(organization.membershipExpiresAt && organization.membershipExpiresAt < new Date())
 }
 
-export function isAiBalanceExhausted(user: User) {
-  if (config.selfHosted.isEnabled || user.membershipPlan === SELF_HOSTED_USER.membershipPlan) {
+export function isAiBalanceExhausted(organization: Organization) {
+  if (config.selfHosted.isEnabled || organization.membershipPlan === SELF_HOSTED_MEMBERSHIP_PLAN) {
     return false
   }
-  return user.aiBalance <= 0
+  return organization.aiBalance <= 0
 }

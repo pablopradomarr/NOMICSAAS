@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db"
+import { TenantClient } from "@/lib/db"
 import { Field, Prisma, Transaction } from "@/prisma/client"
 import { cache } from "react"
 import { getFields } from "./fields"
@@ -42,14 +42,14 @@ export type TransactionPagination = {
 
 export const getTransactions = cache(
   async (
-    userId: string,
+    db: TenantClient,
     filters?: TransactionFilters,
     pagination?: TransactionPagination
   ): Promise<{
     transactions: Transaction[]
     total: number
   }> => {
-    const where: Prisma.TransactionWhereInput = { userId }
+    const where: Prisma.TransactionWhereInput = {}
     let orderBy: Prisma.TransactionOrderByWithRelationInput = { issuedAt: "desc" }
 
     if (filters) {
@@ -90,8 +90,8 @@ export const getTransactions = cache(
     }
 
     if (pagination) {
-      const total = await prisma.transaction.count({ where })
-      const transactions = await prisma.transaction.findMany({
+      const total = await db.transaction.count({ where })
+      const transactions = await db.transaction.findMany({
         where,
         include: {
           category: true,
@@ -103,7 +103,7 @@ export const getTransactions = cache(
       })
       return { transactions, total }
     } else {
-      const transactions = await prisma.transaction.findMany({
+      const transactions = await db.transaction.findMany({
         where,
         include: {
           category: true,
@@ -116,9 +116,9 @@ export const getTransactions = cache(
   }
 )
 
-export const getTransactionById = cache(async (id: string, userId: string): Promise<Transaction | null> => {
-  return await prisma.transaction.findUnique({
-    where: { id, userId },
+export const getTransactionById = cache(async (db: TenantClient, id: string): Promise<Transaction | null> => {
+  return await db.transaction.findFirst({
+    where: { id },
     include: {
       category: true,
       project: true,
@@ -126,21 +126,20 @@ export const getTransactionById = cache(async (id: string, userId: string): Prom
   })
 })
 
-export const getTransactionsByFileId = cache(async (fileId: string, userId: string): Promise<Transaction[]> => {
-  return await prisma.transaction.findMany({
-    where: { files: { array_contains: [fileId] }, userId },
+export const getTransactionsByFileId = cache(async (db: TenantClient, fileId: string): Promise<Transaction[]> => {
+  return await db.transaction.findMany({
+    where: { files: { array_contains: [fileId] } },
   })
 })
 
 // --- 1. New Dedicated Deduplication Function ---
-export const findDuplicateTransaction = async (userId: string, data: TransactionData) => {
-  const { standard } = await splitTransactionDataExtraFields(data, userId)
+export const findDuplicateTransaction = async (db: TenantClient, data: TransactionData) => {
+  const { standard } = await splitTransactionDataExtraFields(data, db)
   const currencyCode = standard.currencyCode || "USD"
 
   if (standard.total && standard.merchant && standard.issuedAt) {
-    const existingTransaction = await prisma.transaction.findFirst({
+    const existingTransaction = await db.transaction.findFirst({
       where: {
-        userId: userId,
         total: standard.total,
         merchant: standard.merchant,
         issuedAt: standard.issuedAt,
@@ -154,72 +153,87 @@ export const findDuplicateTransaction = async (userId: string, data: Transaction
   return null
 }
 
-export const createTransaction = async (userId: string, data: TransactionData): Promise<Transaction> => {
-  const { standard, extra } = await splitTransactionDataExtraFields(data, userId)
+export const createTransaction = async (
+  db: TenantClient,
+  data: TransactionData,
+  options: { createdById?: string | null } = {}
+): Promise<Transaction> => {
+  const { standard, extra } = await splitTransactionDataExtraFields(data, db)
 
-  const newTransaction = await prisma.transaction.create({
+  const newTransaction = await db.transaction.create({
     data: {
       ...standard,
       extra: extra,
       items: data.items as Prisma.InputJsonValue,
-      userId,
-      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
-      organizationId: userId,
-    },
+      createdById: options.createdById ?? null,
+      organizationId: db.$organizationId,
+    } as Prisma.TransactionUncheckedCreateInput,
   })
 
   return newTransaction
 }
 
-export const updateTransaction = async (id: string, userId: string, data: TransactionData): Promise<Transaction> => {
-  const { standard, extra } = await splitTransactionDataExtraFields(data, userId)
+export const updateTransaction = async (
+  db: TenantClient,
+  id: string,
+  data: TransactionData
+): Promise<Transaction> => {
+  const { standard, extra } = await splitTransactionDataExtraFields(data, db)
 
-  return await prisma.transaction.update({
-    where: { id, userId },
+  return await db.transaction.update({
+    where: { id },
     data: {
       ...standard,
       extra: extra,
       items: data.items ? (data.items as Prisma.InputJsonValue) : [],
-    },
+    } as Prisma.TransactionUncheckedUpdateInput,
   })
 }
 
-export const updateTransactionFiles = async (id: string, userId: string, files: string[]): Promise<Transaction> => {
-  return await prisma.transaction.update({
-    where: { id, userId },
+export const updateTransactionFiles = async (
+  db: TenantClient,
+  id: string,
+  files: string[]
+): Promise<Transaction> => {
+  return await db.transaction.update({
+    where: { id },
     data: { files },
   })
 }
 
-export const deleteTransaction = async (id: string, userId: string): Promise<Transaction | undefined> => {
-  const transaction = await getTransactionById(id, userId)
+export const deleteTransaction = async (
+  db: TenantClient,
+  id: string,
+  uploadsDirectory: string
+): Promise<Transaction | undefined> => {
+  const transaction = await getTransactionById(db, id)
 
   if (transaction) {
     const files = Array.isArray(transaction.files) ? transaction.files : []
 
     for (const fileId of files as string[]) {
-      if ((await getTransactionsByFileId(fileId, userId)).length <= 1) {
-        await deleteFile(fileId, userId)
+      if ((await getTransactionsByFileId(db, fileId)).length <= 1) {
+        await deleteFile(db, fileId, uploadsDirectory)
       }
     }
 
-    return await prisma.transaction.delete({
-      where: { id, userId },
+    return await db.transaction.delete({
+      where: { id },
     })
   }
 }
 
-export const bulkDeleteTransactions = async (ids: string[], userId: string) => {
-  return await prisma.transaction.deleteMany({
-    where: { id: { in: ids }, userId },
+export const bulkDeleteTransactions = async (db: TenantClient, ids: string[]) => {
+  return await db.transaction.deleteMany({
+    where: { id: { in: ids } },
   })
 }
 
 const splitTransactionDataExtraFields = async (
   data: TransactionData,
-  userId: string
+  db: TenantClient
 ): Promise<{ standard: TransactionData; extra: Prisma.InputJsonValue }> => {
-  const fields = await getFields(userId)
+  const fields = await getFields(db)
   const fieldMap = fields.reduce(
     (acc, field) => {
       acc[field.code] = field

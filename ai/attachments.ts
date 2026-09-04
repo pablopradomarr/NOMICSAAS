@@ -1,6 +1,7 @@
 import { fileExists, fullPathForFile } from "@/lib/files"
 import { resolvePreviewFormat } from "@/lib/previews/format"
 import { generateFilePreviews } from "@/lib/previews/generate"
+import { TenantClient } from "@/lib/db"
 import { getSettings } from "@/models/settings"
 import { File, User } from "@/prisma/client"
 import fs from "fs/promises"
@@ -13,14 +14,18 @@ export type AnalyzeAttachment = {
   base64: string
 }
 
-export const loadAttachmentsForAI = async (user: User, file: File): Promise<AnalyzeAttachment[]> => {
+export const loadAttachmentsForAI = async (
+  db: TenantClient,
+  user: User,
+  file: File
+): Promise<AnalyzeAttachment[]> => {
   const fullFilePath = fullPathForFile(user, file)
   const isFileExists = await fileExists(fullFilePath)
   if (!isFileExists) {
     throw new Error("File not found on disk")
   }
 
-  const settings = await getSettings(user.id)
+  const settings = await getSettings(db)
   const format = resolvePreviewFormat(settings.llm_attachment_format)
   const { contentType, previews } = await generateFilePreviews(user, fullFilePath, file.mimetype, format)
 

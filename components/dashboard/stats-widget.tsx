@@ -2,7 +2,7 @@ import { FiltersWidget } from "@/components/dashboard/filters-widget"
 import { IncomeExpenseGraph } from "@/components/dashboard/income-expense-graph"
 import { ProjectsWidget } from "@/components/dashboard/projects-widget"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { formatCurrency } from "@/lib/utils"
 import { getProjects } from "@/models/projects"
 import { getSettings } from "@/models/settings"
@@ -12,16 +12,16 @@ import { ArrowDown, ArrowUp, BicepsFlexed } from "lucide-react"
 import Link from "next/link"
 
 export async function StatsWidget({ filters }: { filters: TransactionFilters }) {
-  const user = await getCurrentUser()
-  const projects = await getProjects(user.id)
-  const settings = await getSettings(user.id)
+  const { db } = await requireOrg("VIEWER")
+  const projects = await getProjects(db)
+  const settings = await getSettings(db)
   const defaultCurrency = settings.default_currency || "EUR"
 
-  const stats = await getDashboardStats(user.id, filters)
-  const statsTimeSeries = await getDetailedTimeSeriesStats(user.id, filters, defaultCurrency)
+  const stats = await getDashboardStats(db, filters)
+  const statsTimeSeries = await getDetailedTimeSeriesStats(db, filters, defaultCurrency)
   const statsPerProject = Object.fromEntries(
     await Promise.all(
-      projects.map((project) => getProjectStats(user.id, project.code, filters).then((stats) => [project.code, stats]))
+      projects.map((project) => getProjectStats(db, project.code, filters).then((stats) => [project.code, stats]))
     )
   )
 

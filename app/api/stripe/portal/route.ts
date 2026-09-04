@@ -1,24 +1,22 @@
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { stripeClient } from "@/lib/stripe"
 import { NextRequest, NextResponse } from "next/server"
 
 export async function GET(request: NextRequest) {
-  const user = await getCurrentUser()
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  // Facturación → ADMIN. El cliente de Stripe cuelga de la organización (T11).
+  const { org } = await requireOrg("ADMIN")
 
   if (!stripeClient) {
     return new NextResponse("Stripe client is not initialized", { status: 500 })
   }
 
   try {
-    if (!user.stripeCustomerId) {
-      return NextResponse.json({ error: "No Stripe customer ID found for this user" }, { status: 400 })
+    if (!org.stripeCustomerId) {
+      return NextResponse.json({ error: "No Stripe customer ID found for this organization" }, { status: 400 })
     }
 
     const portalSession = await stripeClient.billingPortal.sessions.create({
-      customer: user.stripeCustomerId,
+      customer: org.stripeCustomerId,
       return_url: `${request.nextUrl.origin}/settings/profile`,
     })
 

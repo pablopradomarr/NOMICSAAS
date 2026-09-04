@@ -1,6 +1,6 @@
 import { LLMProvider } from "@/ai/providers/llmProvider"
 import config from "@/lib/config"
-import { prisma } from "@/lib/db"
+import { TenantClient } from "@/lib/db"
 import { PROVIDERS } from "@/lib/llm-providers"
 import { cache } from "react"
 
@@ -117,10 +117,8 @@ export function getAnalyzeConcurrency(settings: SettingsMap): number {
   return 1
 }
 
-export const getSettings = cache(async (userId: string): Promise<SettingsMap> => {
-  const settings = await prisma.setting.findMany({
-    where: { userId },
-  })
+export const getSettings = cache(async (db: TenantClient): Promise<SettingsMap> => {
+  const settings = await db.setting.findMany()
 
   const map = settings.reduce((acc, setting) => {
     if (isSelfHostedOnlySetting(setting.code) && !config.selfHosted.isEnabled) {
@@ -133,21 +131,19 @@ export const getSettings = cache(async (userId: string): Promise<SettingsMap> =>
   return map
 })
 
-export const updateSettings = cache(async (userId: string, code: string, value: string | undefined) => {
+export const updateSettings = async (db: TenantClient, code: string, value: string | undefined) => {
   if (isSelfHostedOnlySetting(code) && !config.selfHosted.isEnabled) {
     return null
   }
 
-  return await prisma.setting.upsert({
-    where: { userId_code: { code, userId } },
+  return await db.setting.upsert({
+    where: { organizationId_code: { organizationId: db.$organizationId, code } },
     update: { value },
     create: {
       code,
       value,
       name: code,
-      userId,
-      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
-      organizationId: userId,
+      organizationId: db.$organizationId,
     },
   })
-})
+}

@@ -1,14 +1,15 @@
 import LLMSettingsForm from "@/components/settings/llm-settings-form"
 import { SettingsPageHeader } from "@/components/settings/page-header"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
 import { getFields } from "@/models/fields"
 import { getSettings } from "@/models/settings"
 
 export default async function LlmSettingsPage() {
-  const user = await getCurrentUser()
-  const settings = await getSettings(user.id)
-  const fields = await getFields(user.id)
+  // La configuración LLM sólo la edita ADMIN (claves de proveedor).
+  const { db } = await requireOrg("ADMIN")
+  const settings = await getSettings(db)
+  const fields = await getFields(db)
 
   return (
     <div className="space-y-6">

@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card"
 import { AnalyzeAllButton } from "@/components/unsorted/analyze-all-button"
 import { AnalyzeConcurrencyBadge } from "@/components/unsorted/analyze-concurrency-badge"
 import AnalyzeForm from "@/components/unsorted/analyze-form"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
 import { getCategories } from "@/models/categories"
 import { getCurrencies } from "@/models/currencies"
@@ -24,13 +24,13 @@ export const metadata: Metadata = {
 }
 
 export default async function UnsortedPage() {
-  const user = await getCurrentUser()
-  const files = await getUnsortedFiles(user.id)
-  const categories = await getCategories(user.id)
-  const projects = await getProjects(user.id)
-  const currencies = await getCurrencies(user.id)
-  const fields = await getFields(user.id)
-  const settings = await getSettings(user.id)
+  const { db } = await requireOrg("VIEWER")
+  const files = await getUnsortedFiles(db)
+  const categories = await getCategories(db)
+  const projects = await getProjects(db)
+  const currencies = await getCurrencies(db)
+  const fields = await getFields(db)
+  const settings = await getSettings(db)
   const analyzeConcurrency = getAnalyzeConcurrency(settings)
 
   return (

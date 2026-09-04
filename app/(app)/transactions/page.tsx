@@ -4,7 +4,7 @@ import { TransactionSearchAndFilters } from "@/components/transactions/filters"
 import { TransactionList } from "@/components/transactions/list"
 import { NewTransactionDialog } from "@/components/transactions/new"
 import { Pagination } from "@/components/transactions/pagination"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { getCategories } from "@/models/categories"
 import { getFields } from "@/models/fields"
 import { getProjects } from "@/models/projects"
@@ -22,14 +22,14 @@ const TRANSACTIONS_PER_PAGE = 500
 
 export default async function TransactionsPage({ searchParams }: { searchParams: Promise<TransactionFilters> }) {
   const { page, ...filters } = await searchParams
-  const user = await getCurrentUser()
-  const { transactions, total } = await getTransactions(user.id, filters, {
+  const { db } = await requireOrg("VIEWER")
+  const { transactions, total } = await getTransactions(db, filters, {
     limit: TRANSACTIONS_PER_PAGE,
     offset: ((page ?? 1) - 1) * TRANSACTIONS_PER_PAGE,
   })
-  const categories = await getCategories(user.id)
-  const projects = await getProjects(user.id)
-  const fields = await getFields(user.id)
+  const categories = await getCategories(db)
+  const projects = await getProjects(db)
+  const fields = await getFields(db)
 
   // Reset page if user clicks a filter and no transactions are found
   if (page && page > 1 && transactions.length === 0) {

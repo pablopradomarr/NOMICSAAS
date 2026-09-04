@@ -72,3 +72,12 @@ export async function removeMembership(organizationId: string, userId: string): 
     where: { organizationId_userId: { organizationId, userId } },
   })
 }
+
+/** Emails de los miembros: los necesita el cálculo de cuota de disco (T11). */
+export async function listOrganizationMemberEmails(organizationId: string): Promise<string[]> {
+  const rows = await prisma.membership.findMany({
+    where: { organizationId },
+    select: { user: { select: { email: true } } },
+  })
+  return rows.map((row) => row.user.email)
+}

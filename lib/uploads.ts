@@ -1,14 +1,25 @@
-import { File as PrismaFile, User } from "@/prisma/client"
+import { File as PrismaFile, Organization, User } from "@/prisma/client"
+import { TenantClient } from "@/lib/db"
 import { createFile } from "@/models/files"
 import { randomUUID } from "crypto"
 import { mkdir, writeFile } from "fs/promises"
 import path from "path"
 import sharp from "sharp"
 import config from "./config"
-import { getStaticDirectory, getUserUploadsDirectory, isEnoughStorageToUploadFile, safePathJoin, unsortedFilePath } from "./files"
+import {
+  getOrganizationStorageUsed,
+  getStaticDirectory,
+  getUserUploadsDirectory,
+  isEnoughStorageToUploadFile,
+  safePathJoin,
+  unsortedFilePath,
+} from "./files"
+import { listOrganizationMemberEmails } from "@/models/memberships"
+import { updateOrganization } from "@/models/organizations"
 
 export async function uploadStaticImage(
   user: User,
+  organization: Organization,
   file: File,
   saveFileName: string,
   maxWidth: number = config.upload.images.maxWidth,
@@ -17,7 +28,7 @@ export async function uploadStaticImage(
 ) {
   const uploadDirectory = getStaticDirectory(user)
 
-  if (!isEnoughStorageToUploadFile(user, file.size)) {
+  if (!isEnoughStorageToUploadFile(organization, file.size)) {
     throw Error("Not enough space to upload the file")
   }
 
@@ -61,11 +72,18 @@ export async function uploadStaticImage(
   return uploadFilePath
 }
 
+export type UploadContext = {
+  db: TenantClient
+  organization: Organization
+  user: User
+}
+
 export async function ingestUnsortedFile(
-  user: User,
+  ctx: UploadContext,
   input: { buffer: Buffer; filename: string; mimetype: string; metadata?: Record<string, unknown> }
 ): Promise<PrismaFile> {
-  if (!isEnoughStorageToUploadFile(user, input.buffer.length)) {
+  const { db, organization, user } = ctx
+  if (!isEnoughStorageToUploadFile(organization, input.buffer.length)) {
     throw new Error("Not enough space to upload the file")
   }
 
@@ -76,11 +94,21 @@ export async function ingestUnsortedFile(
   await mkdir(path.dirname(fullFilePath), { recursive: true })
   await writeFile(fullFilePath, input.buffer)
 
-  return await createFile(user.id, {
+  return await createFile(db, {
     id: fileUuid,
+    organizationId: organization.id,
+    uploadedById: user.id,
     filename: input.filename,
     path: relativeFilePath,
     mimetype: input.mimetype,
     metadata: { size: input.buffer.length, ...input.metadata },
   })
+}
+
+/** Recalcula y persiste el consumo de disco de la organización (cuota T11). */
+export async function syncOrganizationStorage(organizationId: string): Promise<number> {
+  const emails = await listOrganizationMemberEmails(organizationId)
+  const storageUsed = await getOrganizationStorageUsed(emails)
+  await updateOrganization(organizationId, { storageUsed })
+  return storageUsed
 }

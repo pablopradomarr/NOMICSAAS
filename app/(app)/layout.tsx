@@ -4,7 +4,8 @@ import MobileMenu from "@/components/sidebar/mobile-menu"
 import { AppSidebar } from "@/components/sidebar/sidebar"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
-import { getCurrentUser, isSubscriptionExpired } from "@/lib/auth"
+import { isSubscriptionExpired } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
 import { getApps } from "@/app/(app)/apps/common"
 import { getUnsortedFilesCount } from "@/models/files"
@@ -31,18 +32,20 @@ export const viewport: Viewport = {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const user = await getCurrentUser()
-  const [unsortedFilesCount, apps] = await Promise.all([getUnsortedFilesCount(user.id), getApps()])
+  const { db, org, user } = await requireOrg("VIEWER")
+  const [unsortedFilesCount, apps] = await Promise.all([getUnsortedFilesCount(db), getApps()])
 
+  // Identidad del usuario + plan/cuota de la organización activa (T11).
   const userProfile = {
     id: user.id,
     name: user.name || "",
     email: user.email,
     avatar: user.avatar ? user.avatar + "?" + user.id : undefined,
-    membershipPlan: user.membershipPlan || "unlimited",
-    storageUsed: user.storageUsed || 0,
-    storageLimit: user.storageLimit || -1,
-    aiBalance: user.aiBalance || 0,
+    organizationName: org.name,
+    membershipPlan: org.membershipPlan || "unlimited",
+    storageUsed: org.storageUsed || 0,
+    storageLimit: org.storageLimit || -1,
+    aiBalance: org.aiBalance || 0,
   }
 
   return (
@@ -61,7 +64,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             }))}
           />
           <SidebarInset className="w-full h-full mt-[60px] md:mt-0 overflow-auto">
-            {isSubscriptionExpired(user) && <SubscriptionExpired />}
+            {isSubscriptionExpired(org) && <SubscriptionExpired />}
             {children}
           </SidebarInset>
         </SidebarProvider>

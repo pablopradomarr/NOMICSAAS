@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { fileExists, getStaticDirectory, safePathJoin } from "@/lib/files"
 import fs from "fs/promises"
 import lookup from "mime-types"
@@ -6,7 +6,7 @@ import { NextResponse } from "next/server"
 
 export async function GET(request: Request, { params }: { params: Promise<{ filename: string }> }) {
   const { filename } = await params
-  const user = await getCurrentUser()
+  const { user } = await requireOrg("VIEWER")
 
   if (!filename) {
     return new NextResponse("No filename provided", { status: 400 })

@@ -1,6 +1,7 @@
 "use server"
 
 import { ActionState } from "@/lib/actions"
+import { TenantClient } from "@/lib/db"
 import { updateFile } from "@/models/files"
 import { getLLMSettings, getSettings } from "@/models/settings"
 import { AnalyzeAttachment } from "./attachments"
@@ -12,13 +13,13 @@ export type AnalysisResult = {
 }
 
 export async function analyzeTransaction(
+  db: TenantClient,
   prompt: string,
   schema: Record<string, unknown>,
   attachments: AnalyzeAttachment[],
-  fileId: string,
-  userId: string
+  fileId: string
 ): Promise<ActionState<AnalysisResult>> {
-  const settings = await getSettings(userId)
+  const settings = await getSettings(db)
   const llmSettings = getLLMSettings(settings)
 
   try {
@@ -38,7 +39,7 @@ export async function analyzeTransaction(
     console.log("LLM response:", result)
     console.log("LLM tokens used:", tokensUsed)
 
-    await updateFile(fileId, userId, { cachedParseResult: result })
+    await updateFile(db, fileId, { cachedParseResult: result })
 
     return {
       success: true,

@@ -1,6 +1,7 @@
 import config from "@/lib/config"
 import { PLANS, stripeClient } from "@/lib/stripe"
-import { getOrCreateCloudUser, getUserByStripeCustomerId, updateUser } from "@/models/users"
+import { getOrganizationByStripeCustomerId, updateOrganization } from "@/models/organizations"
+import { getOrCreateCloudUser } from "@/models/users"
 import { NextResponse } from "next/server"
 import Stripe from "stripe"
 
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
         const subscription = await stripeClient.subscriptions.retrieve(subscriptionId)
 
         for (const item of subscription.items.data) {
-          await handleUserSubscriptionUpdate(customerId, item)
+          await handleOrganizationSubscriptionUpdate(customerId, item)
         }
         break
       }
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
         const customerId = subscription.customer as string
 
         for (const item of subscription.items.data) {
-          await handleUserSubscriptionUpdate(customerId, item)
+          await handleOrganizationSubscriptionUpdate(customerId, item)
         }
         break
       }
@@ -66,7 +67,8 @@ export async function POST(request: Request) {
   }
 }
 
-async function handleUserSubscriptionUpdate(
+/** E1 (T11): el plan, la caducidad y las cuotas son de la ORGANIZACIÓN. */
+async function handleOrganizationSubscriptionUpdate(
   customerId: string,
   item: Stripe.SubscriptionItem
 ) {
@@ -81,30 +83,33 @@ async function handleUserSubscriptionUpdate(
     throw new Error(`Plan not found for price ID: ${item.price.id}`)
   }
 
-  let user = await getUserByStripeCustomerId(customerId)
-  if (!user) {
+  let organization = await getOrganizationByStripeCustomerId(customerId)
+  if (!organization) {
     const customer = (await stripeClient.customers.retrieve(customerId)) as Stripe.Customer
-    console.log(`User not found for customer ${customerId}, creating new user with email ${customer.email}`)
+    console.log(`Organization not found for customer ${customerId}, creating user with email ${customer.email}`)
 
-    user = await getOrCreateCloudUser(customer.email as string, {
-      email: customer.email as string,
-      name: customer.name as string,
-      stripeCustomerId: customer.id,
-    })
+    await getOrCreateCloudUser(
+      customer.email as string,
+      { email: customer.email as string, name: customer.name as string },
+      { stripeCustomerId: customer.id }
+    )
+    organization = await getOrganizationByStripeCustomerId(customerId)
+    if (!organization) {
+      throw new Error(`Could not resolve organization for Stripe customer ${customerId}`)
+    }
   }
 
   const newMembershipExpiresAt = new Date(item.current_period_end * 1000)
 
-  await updateUser(user.id, {
+  await updateOrganization(organization.id, {
     membershipPlan: plan.code,
     membershipExpiresAt:
-      user.membershipExpiresAt && user.membershipExpiresAt > newMembershipExpiresAt
-        ? user.membershipExpiresAt
+      organization.membershipExpiresAt && organization.membershipExpiresAt > newMembershipExpiresAt
+        ? organization.membershipExpiresAt
         : newMembershipExpiresAt,
     storageLimit: plan.limits.storage,
     aiBalance: plan.limits.ai,
-    updatedAt: new Date(),
   })
 
-  console.log(`Updated user ${user.id} with plan ${plan.code} and expires at ${newMembershipExpiresAt}`)
+  console.log(`Updated organization ${organization.id} with plan ${plan.code} expiring at ${newMembershipExpiresAt}`)
 }

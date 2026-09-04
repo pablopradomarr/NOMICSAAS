@@ -1,10 +1,11 @@
 "use server"
 
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { encryptSecret, decryptSecret } from "@/lib/encryption"
 import { testImapConnection } from "@/lib/email-sync/imap-client"
 import { runEmailSync } from "@/lib/email-sync/ingest"
 import { getAppData, setAppData } from "@/models/apps"
+import { Prisma } from "@/prisma/client"
 import { randomUUID } from "crypto"
 import { revalidatePath } from "next/cache"
 import { EmailAppData, EmailServer } from "./page"
@@ -21,8 +22,9 @@ export async function addEmailServerAction(
   serverData: Omit<EmailServer, "id" | "status" | "lastSync" | "addedAt">
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getCurrentUser()
-    const appData = (await getAppData(user, "email")) as EmailAppData | null
+    // Configurar servidores IMAP = credenciales de la organización → ADMIN
+    const { db, user } = await requireOrg("ADMIN")
+    const appData = (await getAppData(db, user.id, "email")) as EmailAppData | null
     const currentData = appData || getDefaultAppData()
 
     const newServer: EmailServer = {
@@ -39,7 +41,7 @@ export async function addEmailServerAction(
       servers: [...currentData.servers, newServer],
     }
 
-    await setAppData(user, "email", updatedData)
+    await setAppData(db, user.id, "email", updatedData as unknown as Prisma.InputJsonValue)
     revalidatePath("/apps/email")
 
     return { success: true }
@@ -54,8 +56,8 @@ export async function updateEmailServerAction(
   serverData: Partial<EmailServer>
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getCurrentUser()
-    const appData = (await getAppData(user, "email")) as EmailAppData | null
+    const { db, user } = await requireOrg("ADMIN")
+    const appData = (await getAppData(db, user.id, "email")) as EmailAppData | null
 
     if (!appData) {
       return { success: false, error: "No email servers found" }
@@ -77,7 +79,7 @@ export async function updateEmailServerAction(
       servers: updatedServers,
     }
 
-    await setAppData(user, "email", updatedData)
+    await setAppData(db, user.id, "email", updatedData as unknown as Prisma.InputJsonValue)
     revalidatePath("/apps/email")
 
     return { success: true }
@@ -89,8 +91,8 @@ export async function updateEmailServerAction(
 
 export async function deleteEmailServerAction(serverId: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getCurrentUser()
-    const appData = (await getAppData(user, "email")) as EmailAppData | null
+    const { db, user } = await requireOrg("ADMIN")
+    const appData = (await getAppData(db, user.id, "email")) as EmailAppData | null
 
     if (!appData) {
       return { success: false, error: "No email servers found" }
@@ -103,7 +105,7 @@ export async function deleteEmailServerAction(serverId: string): Promise<{ succe
       servers: updatedServers,
     }
 
-    await setAppData(user, "email", updatedData)
+    await setAppData(db, user.id, "email", updatedData as unknown as Prisma.InputJsonValue)
     revalidatePath("/apps/email")
 
     return { success: true }
@@ -115,8 +117,8 @@ export async function deleteEmailServerAction(serverId: string): Promise<{ succe
 
 export async function testEmailConnectionAction(serverId: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getCurrentUser()
-    const appData = (await getAppData(user, "email")) as EmailAppData | null
+    const { db, user } = await requireOrg("ADMIN")
+    const appData = (await getAppData(db, user.id, "email")) as EmailAppData | null
     if (!appData) return { success: false, error: "No email servers found" }
     const server = appData.servers.find((s) => s.id === serverId)
     if (!server) return { success: false, error: "Server not found" }
@@ -142,7 +144,7 @@ export async function testEmailConnectionAction(serverId: string): Promise<{ suc
         s.id === serverId ? { ...s, status, errorMessage, lastSync: new Date() } : s
       ),
     }
-    await setAppData(user, "email", updatedData)
+    await setAppData(db, user.id, "email", updatedData as unknown as Prisma.InputJsonValue)
     revalidatePath("/apps/email")
     return status === "connected" ? { success: true } : { success: false, error: errorMessage }
   } catch (error) {
@@ -153,8 +155,9 @@ export async function testEmailConnectionAction(serverId: string): Promise<{ suc
 
 export async function syncEmailNowAction(serverId: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getCurrentUser()
-    const results = await runEmailSync({ userId: user.id, serverId })
+    // Lanzar una sincronización es una mutación de datos → EDITOR
+    const { org, user } = await requireOrg("EDITOR")
+    const results = await runEmailSync({ organizationId: org.id, userId: user.id, serverId })
     revalidatePath("/apps/email")
     const failed = results.find((r) => r.status === "error")
     if (failed) return { success: false, error: failed.errorMessage || "Sync failed" }

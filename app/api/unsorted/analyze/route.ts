@@ -3,32 +3,20 @@ import { loadAttachmentsForAI } from "@/ai/attachments"
 import { buildLLMPrompt } from "@/ai/prompt"
 import { fieldsToJsonSchema } from "@/ai/schema"
 import { ActionState } from "@/lib/actions"
-import { getSession, isAiBalanceExhausted, isSubscriptionExpired } from "@/lib/auth"
+import { isAiBalanceExhausted, isSubscriptionExpired } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { DEFAULT_PROMPT_ANALYSE_NEW_FILE } from "@/models/defaults"
 import { getFileById } from "@/models/files"
 import { getCategories } from "@/models/categories"
 import { getFields } from "@/models/fields"
+import { updateOrganization } from "@/models/organizations"
 import { getProjects } from "@/models/projects"
 import { getSettings } from "@/models/settings"
-import { getUserById, updateUser } from "@/models/users"
 import { NextRequest, NextResponse } from "next/server"
 
 export async function POST(request: NextRequest) {
-  const session = await getSession()
-  if (!session || !session.user) {
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      { success: false, error: "Unauthorized" },
-      { status: 401 }
-    )
-  }
-
-  const user = await getUserById(session.user.id)
-  if (!user) {
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      { success: false, error: "User not found" },
-      { status: 404 }
-    )
-  }
+  // Analizar con IA consume saldo de la organización y escribe en el fichero → EDITOR
+  const { db, org, user } = await requireOrg("EDITOR")
 
   let fileId: unknown
   try {
@@ -48,15 +36,15 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const file = await getFileById(fileId, user.id)
+  const file = await getFileById(db, fileId)
   if (!file) {
     return NextResponse.json<ActionState<AnalysisResult>>(
-      { success: false, error: "File not found or does not belong to the user" },
+      { success: false, error: "File not found or does not belong to the organization" },
       { status: 404 }
     )
   }
 
-  if (isAiBalanceExhausted(user)) {
+  if (isAiBalanceExhausted(org)) {
     return NextResponse.json<ActionState<AnalysisResult>>(
       {
         success: false,
@@ -66,7 +54,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  if (isSubscriptionExpired(user)) {
+  if (isSubscriptionExpired(org)) {
     return NextResponse.json<ActionState<AnalysisResult>>(
       {
         success: false,
@@ -78,7 +66,7 @@ export async function POST(request: NextRequest) {
 
   let attachments
   try {
-    attachments = await loadAttachmentsForAI(user, file)
+    attachments = await loadAttachmentsForAI(db, user, file)
   } catch (error) {
     console.error("Failed to retrieve files:", error)
     return NextResponse.json<ActionState<AnalysisResult>>(
@@ -87,10 +75,10 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  const settings = await getSettings(user.id)
-  const fields = await getFields(user.id)
-  const categories = await getCategories(user.id)
-  const projects = await getProjects(user.id)
+  const settings = await getSettings(db)
+  const fields = await getFields(db)
+  const categories = await getCategories(db)
+  const projects = await getProjects(db)
 
   const prompt = buildLLMPrompt(
     settings.prompt_analyse_new_file || DEFAULT_PROMPT_ANALYSE_NEW_FILE,
@@ -101,10 +89,10 @@ export async function POST(request: NextRequest) {
 
   const schema = fieldsToJsonSchema(fields)
 
-  const results = await analyzeTransaction(prompt, schema, attachments, file.id, user.id)
+  const results = await analyzeTransaction(db, prompt, schema, attachments, file.id)
 
   if (results.data?.tokensUsed && results.data.tokensUsed > 0) {
-    await updateUser(user.id, { aiBalance: { decrement: 1 } })
+    await updateOrganization(org.id, { aiBalance: { decrement: 1 } })
   }
 
   const isRateLimited = !results.success && /\(HTTP 429\)/.test(results.error || "")

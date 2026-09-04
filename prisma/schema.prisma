@@ -127,40 +127,24 @@ model Invitation {
 }
 
 model User {
-  id                  String        @id @default(uuid()) @db.Uuid
-  email               String        @unique
-  name                String
-  avatar              String?
-  settings            Setting[]
-  categories          Category[]
-  projects            Project[]
-  fields              Field[]
-  files               File[]
-  currencies          Currency[]
-  transactions        Transaction[]
-  createdAt           DateTime      @default(now()) @map("created_at")
-  updatedAt           DateTime      @updatedAt @map("updated_at")
-  stripeCustomerId    String?       @map("stripe_customer_id")
-  membershipPlan      String?       @map("membership_plan")
-  membershipExpiresAt DateTime?     @map("membership_expires_at")
-  emailVerified       Boolean       @default(false) @map("is_email_verified")
-  storageUsed         Int           @default(0) @map("storage_used")
-  storageLimit        Int           @default(-1) @map("storage_limit")
-  aiBalance           Int           @default(0) @map("ai_balance")
-  businessName        String?       @map("business_name")
-  businessAddress     String?       @map("business_address")
-  businessBankDetails String?       @map("business_bank_details")
-  businessLogo        String?       @map("business_logo")
-  accounts            Account[]
-  sessions            Session[]
-  appData             AppData[]
-  progress            Progress[]
-  memberships         Membership[]
+  id            String   @id @default(uuid()) @db.Uuid
+  email         String   @unique
+  name          String
+  avatar        String?
+  emailVerified Boolean  @default(false) @map("is_email_verified")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  // NOTA E1: las columnas de facturación (stripe_*, membership_*, storage_*,
-  // ai_balance) y de negocio (business_*) se han COPIADO a Organization en la
-  // migración de backfill. Se eliminan de users en T11, cuando el código las
-  // lea desde la organización activa.
+  accounts    Account[]
+  sessions    Session[]
+  memberships Membership[]
+  appData     AppData[]
+  progress    Progress[]
+
+  // E1 (T11): facturación (stripe_*, membership_*, storage_*, ai_balance) y datos
+  // de emisor (business_*) viven ahora en Organization. `users` queda con
+  // auth/perfil. Las tablas de negocio cuelgan de Organization; app_data y
+  // progress conservan user_id porque son estado por usuario DENTRO de la org.
 
   @@map("users")
 }
@@ -214,8 +198,6 @@ model Setting {
   id             String       @id @default(uuid()) @db.Uuid
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId         String       @map("user_id") @db.Uuid
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   code           String
   name           String
   description    String?
@@ -224,7 +206,6 @@ model Setting {
   updatedAt      DateTime     @updatedAt @map("updated_at")
 
   @@unique([organizationId, code])
-  @@unique([userId, code])
   @@map("settings")
 }
 
@@ -232,8 +213,6 @@ model Category {
   id             String        @id @default(uuid()) @db.Uuid
   organizationId String        @map("organization_id") @db.Uuid
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId         String        @map("user_id") @db.Uuid
-  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
   code           String
   name           String
   color          String        @default("#000000")
@@ -242,7 +221,6 @@ model Category {
   createdAt      DateTime      @default(now()) @map("created_at")
 
   @@unique([organizationId, code])
-  @@unique([userId, code])
   @@map("categories")
 }
 
@@ -250,8 +228,6 @@ model Project {
   id             String        @id @default(uuid()) @db.Uuid
   organizationId String        @map("organization_id") @db.Uuid
   organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId         String        @map("user_id") @db.Uuid
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   code           String
   name           String
   color          String        @default("#000000")
@@ -260,7 +236,6 @@ model Project {
   createdAt      DateTime      @default(now()) @map("created_at")
 
   @@unique([organizationId, code])
-  @@unique([userId, code])
   @@map("projects")
 }
 
@@ -268,8 +243,6 @@ model Field {
   id                  String       @id @default(uuid()) @db.Uuid
   organizationId      String       @map("organization_id") @db.Uuid
   organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId              String       @map("user_id") @db.Uuid
-  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   code                String
   name                String
   type                String       @default("string")
@@ -282,7 +255,6 @@ model Field {
   isExtra             Boolean      @default(true) @map("is_extra")
 
   @@unique([organizationId, code])
-  @@unique([userId, code])
   @@map("fields")
 }
 
@@ -290,8 +262,7 @@ model File {
   id                String       @id @default(uuid()) @db.Uuid
   organizationId    String       @map("organization_id") @db.Uuid
   organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId            String       @map("user_id") @db.Uuid
-  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  uploadedById      String?      @map("uploaded_by_id") @db.Uuid // ex user_id: autoría, NO tenancy
   filename          String
   path              String
   mimetype          String
@@ -303,6 +274,7 @@ model File {
 
   @@index([organizationId, createdAt])
   @@index([organizationId, isReviewed])
+  @@index([organizationId, uploadedById])
   @@map("files")
 }
 
@@ -310,8 +282,7 @@ model Transaction {
   id                    String       @id @default(uuid()) @db.Uuid
   organizationId        String       @map("organization_id") @db.Uuid
   organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId                String       @map("user_id") @db.Uuid
-  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdById           String?      @map("created_by_id") @db.Uuid // ex user_id: autoría, NO tenancy
   name                  String?
   description           String?
   merchant              String?
@@ -333,7 +304,7 @@ model Transaction {
   updatedAt             DateTime     @updatedAt @map("updated_at")
   text                  String?
 
-  @@index([userId])
+  @@index([organizationId, createdById])
   @@index([organizationId, issuedAt])
   @@index([organizationId, categoryCode])
   @@index([organizationId, projectCode])
@@ -347,13 +318,10 @@ model Currency {
   id             String        @id @default(uuid()) @db.Uuid
   organizationId String?       @map("organization_id") @db.Uuid
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId         String?       @map("user_id") @db.Uuid
-  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
   code           String
   name           String
 
   @@unique([organizationId, code])
-  @@unique([userId, code])
   @@map("currencies")
 }
 
@@ -367,7 +335,6 @@ model AppData {
   data           Json
 
   @@unique([organizationId, userId, app])
-  @@unique([userId, app])
   @@map("app_data")
 }
 
@@ -383,7 +350,6 @@ model Progress {
   total          Int          @default(0)
   createdAt      DateTime     @default(now()) @map("created_at")
 
-  @@index([userId])
   @@index([organizationId, userId])
   @@map("progress")
 }

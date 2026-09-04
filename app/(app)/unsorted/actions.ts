@@ -2,14 +2,9 @@
 
 import { transactionFormSchema } from "@/forms/transactions"
 import { ActionState } from "@/lib/actions"
-import { getCurrentUser } from "@/lib/auth"
-import {
-  getDirectorySize,
-  getTransactionFileUploadPath,
-  getUserUploadsDirectory,
-  safePathJoin,
-  unsortedFilePath,
-} from "@/lib/files"
+import { requireOrg } from "@/lib/authz"
+import { getTransactionFileUploadPath, getUserUploadsDirectory, safePathJoin, unsortedFilePath } from "@/lib/files"
+import { syncOrganizationStorage } from "@/lib/uploads"
 import { createFile, deleteFile, getFileById, updateFile } from "@/models/files"
 import {
   createTransaction,
@@ -17,7 +12,6 @@ import {
   updateTransactionFiles,
   findDuplicateTransaction,
 } from "@/models/transactions"
-import { updateUser } from "@/models/users"
 import { Transaction } from "@/prisma/client"
 import { randomUUID } from "crypto"
 import { mkdir, readFile, rename, writeFile } from "fs/promises"
@@ -29,7 +23,7 @@ export async function saveFileAsTransactionAction(
   formData: FormData
 ): Promise<ActionState<Transaction>> {
   try {
-    const user = await getCurrentUser()
+    const { db, org, user } = await requireOrg("EDITOR")
     const validatedForm = transactionFormSchema.safeParse(Object.fromEntries(formData.entries()))
 
     if (!validatedForm.success) {
@@ -38,7 +32,7 @@ export async function saveFileAsTransactionAction(
 
     // Get the file record
     const fileId = formData.get("fileId") as string
-    const file = await getFileById(fileId, user.id)
+    const file = await getFileById(db, fileId)
     if (!file) throw new Error("File not found")
 
     const forceSave = formData.get("forceSave") === "true"
@@ -46,7 +40,7 @@ export async function saveFileAsTransactionAction(
 
     // --- Deduplication Check ---
     if (!forceSave) {
-      const existingTransaction = await findDuplicateTransaction(user.id, transactionData)
+      const existingTransaction = await findDuplicateTransaction(db, transactionData)
 
       if (existingTransaction) {
         return {
@@ -61,7 +55,7 @@ export async function saveFileAsTransactionAction(
       }
     }
 
-    const transaction = await createTransaction(user.id, validatedForm.data)
+    const transaction = await createTransaction(db, validatedForm.data, { createdById: user.id })
 
     // Move file to processed location
     const userUploadsDirectory = getUserUploadsDirectory(user)
@@ -75,12 +69,13 @@ export async function saveFileAsTransactionAction(
     await rename(path.resolve(oldFullFilePath), path.resolve(newFullFilePath))
 
     // Update file record
-    await updateFile(file.id, user.id, {
+    await updateFile(db, file.id, {
       path: newRelativeFilePath,
       isReviewed: true,
     })
 
-    await updateTransactionFiles(transaction.id, user.id, [file.id])
+    await updateTransactionFiles(db, transaction.id, [file.id])
+    await syncOrganizationStorage(org.id)
 
     revalidatePath("/unsorted")
     revalidatePath("/transactions")
@@ -97,8 +92,9 @@ export async function deleteUnsortedFileAction(
   fileId: string
 ): Promise<ActionState<Transaction>> {
   try {
-    const user = await getCurrentUser()
-    await deleteFile(fileId, user.id)
+    const { db, org, user } = await requireOrg("EDITOR")
+    await deleteFile(db, fileId, getUserUploadsDirectory(user))
+    await syncOrganizationStorage(org.id)
     revalidatePath("/unsorted")
     return { success: true }
   } catch (error) {
@@ -112,7 +108,7 @@ export async function splitFileIntoItemsAction(
   formData: FormData
 ): Promise<ActionState<null>> {
   try {
-    const user = await getCurrentUser()
+    const { db, org, user } = await requireOrg("EDITOR")
     const fileId = formData.get("fileId") as string
     const items = JSON.parse(formData.get("items") as string) as TransactionData[]
 
@@ -121,7 +117,7 @@ export async function splitFileIntoItemsAction(
     }
 
     // Get the original file
-    const originalFile = await getFileById(fileId, user.id)
+    const originalFile = await getFileById(db, fileId)
     if (!originalFile) {
       return { success: false, error: "Original file not found" }
     }
@@ -145,12 +141,14 @@ export async function splitFileIntoItemsAction(
       await writeFile(fullFilePath, fileContent)
 
       // Create file record in database with the item data cached
-      await createFile(user.id, {
+      await createFile(db, {
         id: fileUuid,
+        organizationId: org.id,
+        uploadedById: user.id,
         filename: fileName,
         path: relativeFilePath,
         mimetype: originalFile.mimetype,
-        metadata: originalFile.metadata,
+        metadata: originalFile.metadata ?? undefined,
         isSplitted: true,
         cachedParseResult: {
           name: item.name,
@@ -169,11 +167,10 @@ export async function splitFileIntoItemsAction(
     }
 
     // Delete the original file
-    await deleteFile(fileId, user.id)
+    await deleteFile(db, fileId, userUploadsDirectory)
 
-    // Update user storage used
-    const storageUsed = await getDirectorySize(getUserUploadsDirectory(user))
-    await updateUser(user.id, { storageUsed })
+    // Update organization storage used
+    await syncOrganizationStorage(org.id)
 
     revalidatePath("/unsorted")
     return { success: true }

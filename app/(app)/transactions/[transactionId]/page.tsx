@@ -2,7 +2,7 @@ import { FormTextarea } from "@/components/forms/simple"
 import TransactionEditForm from "@/components/transactions/edit"
 import TransactionFiles from "@/components/transactions/transaction-files"
 import { Card } from "@/components/ui/card"
-import { getCurrentUser } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import { incompleteTransactionFields } from "@/lib/stats"
 import { getCategories } from "@/models/categories"
 import { getCurrencies } from "@/models/currencies"
@@ -16,18 +16,18 @@ import { notFound } from "next/navigation"
 
 export default async function TransactionPage({ params }: { params: Promise<{ transactionId: string }> }) {
   const { transactionId } = await params
-  const user = await getCurrentUser()
-  const transaction = await getTransactionById(transactionId, user.id)
+  const { db } = await requireOrg("VIEWER")
+  const transaction = await getTransactionById(db, transactionId)
   if (!transaction) {
     notFound()
   }
 
-  const files = await getFilesByTransactionId(transactionId, user.id)
-  const categories = await getCategories(user.id)
-  const currencies = await getCurrencies(user.id)
-  const settings = await getSettings(user.id)
-  const fields = await getFields(user.id)
-  const projects = await getProjects(user.id)
+  const files = await getFilesByTransactionId(db, transactionId)
+  const categories = await getCategories(db)
+  const currencies = await getCurrencies(db)
+  const settings = await getSettings(db)
+  const fields = await getFields(db)
+  const projects = await getProjects(db)
   const incompleteFields = incompleteTransactionFields(fields, transaction)
 
   return (

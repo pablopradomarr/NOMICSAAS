@@ -1,7 +1,8 @@
 "use server"
 
 import * as React from "react"
-import { getCurrentUser, isSubscriptionExpired } from "@/lib/auth"
+import { isSubscriptionExpired } from "@/lib/auth"
+import { requireOrg } from "@/lib/authz"
 import {
   getTransactionFileUploadPath,
   getUserUploadsDirectory,
@@ -10,13 +11,15 @@ import {
 } from "@/lib/files"
 import { getAppData, setAppData } from "@/models/apps"
 import { createFile } from "@/models/files"
+import { syncOrganizationStorage } from "@/lib/uploads"
+import { Prisma } from "@/prisma/client"
 import {
   createTransaction,
   updateTransactionFiles,
   TransactionData,
   findDuplicateTransaction,
 } from "@/models/transactions"
-import { Transaction, User } from "@/prisma/client"
+import { Transaction } from "@/prisma/client"
 import { renderToBuffer } from "@react-pdf/renderer"
 import { randomUUID } from "crypto"
 import { mkdir, writeFile } from "fs/promises"
@@ -34,19 +37,27 @@ export async function generateInvoicePDF(data: InvoiceFormData): Promise<Uint8Ar
   return new Uint8Array(buffer)
 }
 
-export async function addNewTemplateAction(user: User, template: InvoiceTemplate) {
-  const appData = (await getAppData(user, "invoices")) as InvoiceAppData | null
+export async function addNewTemplateAction(template: InvoiceTemplate) {
+  const { db, user } = await requireOrg("EDITOR")
+  const appData = (await getAppData(db, user.id, "invoices")) as InvoiceAppData | null
   const updatedTemplates = [...(appData?.templates || []), template]
-  const appDataResult = await setAppData(user, "invoices", { ...appData, templates: updatedTemplates })
+  const appDataResult = await setAppData(db, user.id, "invoices", {
+    ...appData,
+    templates: updatedTemplates,
+  } as unknown as Prisma.InputJsonValue)
   return { success: true, data: appDataResult }
 }
 
-export async function deleteTemplateAction(user: User, templateId: string) {
-  const appData = (await getAppData(user, "invoices")) as InvoiceAppData | null
+export async function deleteTemplateAction(templateId: string) {
+  const { db, user } = await requireOrg("EDITOR")
+  const appData = (await getAppData(db, user.id, "invoices")) as InvoiceAppData | null
   if (!appData) return { success: false, error: "No app data found" }
 
   const updatedTemplates = appData.templates.filter((t) => t.id !== templateId)
-  const appDataResult = await setAppData(user, "invoices", { ...appData, templates: updatedTemplates })
+  const appDataResult = await setAppData(db, user.id, "invoices", {
+    ...appData,
+    templates: updatedTemplates,
+  } as unknown as Prisma.InputJsonValue)
   return { success: true, data: appDataResult }
 }
 
@@ -63,7 +74,7 @@ export async function saveInvoiceAsTransactionAction(
   }
 }> {
   try {
-    const user = await getCurrentUser()
+    const { db, org, user } = await requireOrg("EDITOR")
 
     // Generate PDF
     const pdfBuffer = await generateInvoicePDF(formData)
@@ -89,7 +100,7 @@ export async function saveInvoiceAsTransactionAction(
 
     // --- Deduplication Check ---
     if (!forceSave) {
-      const existingTransaction = await findDuplicateTransaction(user.id, rawTransactionData)
+      const existingTransaction = await findDuplicateTransaction(db, rawTransactionData)
 
       if (existingTransaction) {
         return {
@@ -103,17 +114,17 @@ export async function saveInvoiceAsTransactionAction(
       }
     }
 
-    const transaction = await createTransaction(user.id, rawTransactionData)
+    const transaction = await createTransaction(db, rawTransactionData, { createdById: user.id })
 
     // Check storage limits
-    if (!isEnoughStorageToUploadFile(user, pdfBuffer.length)) {
+    if (!isEnoughStorageToUploadFile(org, pdfBuffer.length)) {
       return {
         success: false,
         error: "Insufficient storage to save invoice PDF",
       }
     }
 
-    if (isSubscriptionExpired(user)) {
+    if (isSubscriptionExpired(org)) {
       return {
         success: false,
         error: "Your subscription has expired, please upgrade your account or buy new subscription plan",
@@ -131,8 +142,10 @@ export async function saveInvoiceAsTransactionAction(
     await writeFile(fullFilePath, pdfBuffer)
 
     // Create file record in database
-    const fileRecord = await createFile(user.id, {
+    const fileRecord = await createFile(db, {
       id: fileUuid,
+      organizationId: org.id,
+      uploadedById: user.id,
       filename: fileName,
       path: relativeFilePath,
       mimetype: "application/pdf",
@@ -144,7 +157,8 @@ export async function saveInvoiceAsTransactionAction(
     })
 
     // Update transaction with the file ID
-    await updateTransactionFiles(transaction.id, user.id, [fileRecord.id])
+    await updateTransactionFiles(db, transaction.id, [fileRecord.id])
+    await syncOrganizationStorage(org.id)
 
     revalidatePath("/transactions")
 
