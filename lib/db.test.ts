@@ -187,6 +187,43 @@ describe.skipIf(!TEST_DATABASE_URL)("tenantDb contra BD real (aislamiento I10)",
     expect(categories).toHaveLength(1)
   })
 
+  // ── Hallazgo #19: límites documentados de la extensión ────────────────────
+  it("LÍMITE #19: $queryRaw NO pasa por la extensión (el WHERE es del llamante)", async () => {
+    const sinFiltro = await tenantDb(ORG_A).$queryRawUnsafe<{ count: bigint }[]>(
+      `SELECT count(*)::bigint AS count FROM categories WHERE code = 'compartido'`
+    )
+    // Ve las dos filas: SQL crudo no lo acota nadie. Está documentado en el
+    // JSDoc de tenantDb() y por eso `models/` no usa SQL crudo de negocio.
+    expect(Number(sinFiltro[0].count)).toBe(2)
+
+    const conFiltro = await tenantDb(ORG_A).$queryRawUnsafe<{ count: bigint }[]>(
+      `SELECT count(*)::bigint AS count FROM categories WHERE code = 'compartido' AND organization_id = $1::uuid`,
+      ORG_A
+    )
+    expect(Number(conFiltro[0].count)).toBe(1)
+  })
+
+  it("LÍMITE #19: el include anidado no lleva filtro propio, lo garantiza la FK compuesta", async () => {
+    // La lectura raíz sí está acotada…
+    const categorias = await tenantDb(ORG_A).category.findMany({ include: { transactions: true } })
+    expect(categorias).toHaveLength(1)
+    expect(categorias[0].organizationId).toBe(ORG_A)
+    // …y las transacciones colgadas no pueden ser de otra organización porque la
+    // FK es (category_code, organization_id) → categories(code, organization_id).
+    expect(categorias[0].transactions.every((t) => t.organizationId === ORG_A)).toBe(true)
+  })
+
+  it("tenantTransaction acepta userId y fija también app.current_user (#1/#2)", async () => {
+    const [org, user] = await tenantTransaction(ORG_A, userA, async (tx) => {
+      const rows = await tx.$queryRawUnsafe<{ o: string | null; u: string | null }[]>(
+        "SELECT app.current_org() AS o, app.current_user() AS u"
+      )
+      return [rows[0].o, rows[0].u] as const
+    })
+    expect(org).toBe(ORG_A)
+    expect(user).toBe(userA)
+  })
+
   it("RLS bloquea la otra organización para el rol app_runtime (barrera 2)", async () => {
     const { Client } = await import("pg")
     const url = new URL(TEST_DATABASE_URL as string)

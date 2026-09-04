@@ -1,4 +1,4 @@
-import { File, Organization, Transaction, User } from "@/prisma/client"
+import { File, Organization, Transaction } from "@/prisma/client"
 import { formatDate } from "date-fns"
 import { access, constants, readdir, stat } from "fs/promises"
 import path from "path"
@@ -10,16 +10,33 @@ export const FILE_PREVIEWS_DIRECTORY_NAME = "previews"
 export const FILE_STATIC_DIRECTORY_NAME = "static"
 export const FILE_IMPORT_CSV_DIRECTORY_NAME = "csv"
 
-export function getUserUploadsDirectory(user: User) {
-  return safePathJoin(FILE_UPLOAD_PATH, user.email)
+/**
+ * Referencia mínima a una organización para resolver rutas de disco.
+ * E1-fix (#3): el sujeto del almacenamiento es la ORGANIZACIÓN, no el usuario.
+ */
+export type OrganizationRef = Pick<Organization, "id">
+
+/**
+ * Directorio raíz de una organización: `uploads/<organizationId>/…`.
+ *
+ * Antes de E1-fix la ruta se derivaba del email del usuario que hacía la
+ * petición, de modo que otro miembro de la misma organización recibía 404 al
+ * descargar un fichero subido por un compañero (hallazgo BLOQUEA-3). El
+ * identificador es un uuid: no contiene separadores ni `..`, pero se compone
+ * igualmente con `safePathJoin`.
+ */
+export function getOrganizationUploadsDirectory(organization: OrganizationRef) {
+  return safePathJoin(FILE_UPLOAD_PATH, organization.id)
 }
 
-export function getStaticDirectory(user: User) {
-  return safePathJoin(getUserUploadsDirectory(user), FILE_STATIC_DIRECTORY_NAME)
+/** `uploads/<organizationId>/static` — logo de facturación y avatar (#5). */
+export function getStaticDirectory(organization: OrganizationRef) {
+  return safePathJoin(getOrganizationUploadsDirectory(organization), FILE_STATIC_DIRECTORY_NAME)
 }
 
-export function getUserPreviewsDirectory(user: User) {
-  return safePathJoin(getUserUploadsDirectory(user), FILE_PREVIEWS_DIRECTORY_NAME)
+/** `uploads/<organizationId>/previews` — miniaturas y páginas de PDF. */
+export function getOrganizationPreviewsDirectory(organization: OrganizationRef) {
+  return safePathJoin(getOrganizationUploadsDirectory(organization), FILE_PREVIEWS_DIRECTORY_NAME)
 }
 
 export function unsortedFilePath(fileUuid: string, filename: string) {
@@ -37,9 +54,8 @@ export function getTransactionFileUploadPath(fileUuid: string, filename: string,
   return formatFilePath(storedFileName, transaction.issuedAt || new Date())
 }
 
-export function fullPathForFile(user: User, file: File) {
-  const userUploadsDirectory = getUserUploadsDirectory(user)
-  return safePathJoin(userUploadsDirectory, file.path)
+export function fullPathForFile(organization: OrganizationRef, file: File) {
+  return safePathJoin(getOrganizationUploadsDirectory(organization), file.path)
 }
 
 export function getTransactionExportRelativeFolder(transaction: Transaction, totalFiles: number): string {
@@ -110,22 +126,19 @@ export async function getDirectorySize(directoryPath: string) {
 }
 
 /**
- * Consumo de disco de una organización: suma de los directorios de sus miembros.
- * El layout físico sigue siendo por email (no se mueven ficheros ya escritos);
- * lo que cambia es el SUJETO de la cuota, que pasa a ser la organización.
+ * Consumo de disco de una organización = tamaño de SU directorio.
+ *
+ * E1-fix (#6): antes se sumaban los directorios (por email) de todos los
+ * miembros, lo que contabilizaba en una organización ficheros que el usuario
+ * había subido en OTRA organización de la que también era miembro.
  */
-export async function getOrganizationStorageUsed(memberEmails: string[]): Promise<number> {
-  let total = 0
-  for (const email of memberEmails) {
-    total += await getDirectorySize(safePathJoin(FILE_UPLOAD_PATH, email))
-  }
-  return total
+export async function getOrganizationStorageUsed(organization: OrganizationRef): Promise<number> {
+  return await getDirectorySize(getOrganizationUploadsDirectory(organization))
 }
 
 /**
- * E1 (T11): la cuota de almacenamiento es de la ORGANIZACIÓN. El directorio
- * físico sigue colgando del email del usuario que sube (no se remueven ficheros
- * ya escritos en disco); lo que se mide y limita es el consumo por organización.
+ * E1 (T11): la cuota de almacenamiento es de la ORGANIZACIÓN, y desde E1-fix
+ * también lo es el directorio físico (`uploads/<organizationId>/…`).
  */
 export function isEnoughStorageToUploadFile(organization: Organization, fileSize: number) {
   if (config.selfHosted.isEnabled || organization.storageLimit < 0) {

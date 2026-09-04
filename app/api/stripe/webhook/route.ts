@@ -1,6 +1,10 @@
 import config from "@/lib/config"
 import { PLANS, stripeClient } from "@/lib/stripe"
-import { getOrganizationByStripeCustomerId, updateOrganization } from "@/models/organizations"
+import {
+  getOrganizationByStripeCustomerId,
+  getOrganizationByStripeCustomerIdOrThrow,
+  updateOrganization,
+} from "@/models/organizations"
 import { getOrCreateCloudUser } from "@/models/users"
 import { NextResponse } from "next/server"
 import Stripe from "stripe"
@@ -26,7 +30,9 @@ export async function POST(request: Request) {
     return new NextResponse("Webhook signature verification failed", { status: 400 })
   }
 
-  console.log("Webhook event:", event)
+  // E1-fix (#16): el objeto íntegro del evento lleva email, dirección de
+  // facturación e importes del cliente. Al log sólo van el id y el tipo.
+  console.log(`Stripe webhook recibido: ${event.id} (${event.type})`)
 
   // Handle the event
   try {
@@ -72,7 +78,7 @@ async function handleOrganizationSubscriptionUpdate(
   customerId: string,
   item: Stripe.SubscriptionItem
 ) {
-  console.log(`Updating subscription for customer ${customerId}`)
+  console.log(`Actualizando suscripción del cliente Stripe ${customerId}`)
 
   if (!stripeClient) {
     return new NextResponse("Stripe client is not initialized", { status: 500 })
@@ -83,20 +89,19 @@ async function handleOrganizationSubscriptionUpdate(
     throw new Error(`Plan not found for price ID: ${item.price.id}`)
   }
 
+  // `stripe_customer_id` es UNIQUE desde 20260904140100: la resolución es
+  // determinista, no "la primera que aparezca" (#16).
   let organization = await getOrganizationByStripeCustomerId(customerId)
   if (!organization) {
     const customer = (await stripeClient.customers.retrieve(customerId)) as Stripe.Customer
-    console.log(`Organization not found for customer ${customerId}, creating user with email ${customer.email}`)
+    console.log(`Organización no encontrada para el cliente Stripe ${customerId}: se da de alta`)
 
     await getOrCreateCloudUser(
       customer.email as string,
       { email: customer.email as string, name: customer.name as string },
       { stripeCustomerId: customer.id }
     )
-    organization = await getOrganizationByStripeCustomerId(customerId)
-    if (!organization) {
-      throw new Error(`Could not resolve organization for Stripe customer ${customerId}`)
-    }
+    organization = await getOrganizationByStripeCustomerIdOrThrow(customerId)
   }
 
   const newMembershipExpiresAt = new Date(item.current_period_end * 1000)
@@ -111,5 +116,5 @@ async function handleOrganizationSubscriptionUpdate(
     aiBalance: plan.limits.ai,
   })
 
-  console.log(`Updated organization ${organization.id} with plan ${plan.code} expiring at ${newMembershipExpiresAt}`)
+  console.log(`Organización ${organization.id} actualizada al plan ${plan.code}`)
 }

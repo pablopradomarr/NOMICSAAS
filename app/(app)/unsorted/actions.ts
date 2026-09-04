@@ -3,7 +3,7 @@
 import { transactionFormSchema } from "@/forms/transactions"
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
-import { getTransactionFileUploadPath, getUserUploadsDirectory, safePathJoin, unsortedFilePath } from "@/lib/files"
+import { getOrganizationUploadsDirectory, getTransactionFileUploadPath, safePathJoin, unsortedFilePath } from "@/lib/files"
 import { syncOrganizationStorage } from "@/lib/uploads"
 import { createFile, deleteFile, getFileById, updateFile } from "@/models/files"
 import {
@@ -58,13 +58,13 @@ export async function saveFileAsTransactionAction(
     const transaction = await createTransaction(db, validatedForm.data, { createdById: user.id })
 
     // Move file to processed location
-    const userUploadsDirectory = getUserUploadsDirectory(user)
+    const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
     const originalFileName = path.basename(file.path)
     const newRelativeFilePath = getTransactionFileUploadPath(file.id, originalFileName, transaction)
 
     // Move file to new location and name
-    const oldFullFilePath = safePathJoin(userUploadsDirectory, file.path)
-    const newFullFilePath = safePathJoin(userUploadsDirectory, newRelativeFilePath)
+    const oldFullFilePath = safePathJoin(organizationUploadsDirectory, file.path)
+    const newFullFilePath = safePathJoin(organizationUploadsDirectory, newRelativeFilePath)
     await mkdir(path.dirname(newFullFilePath), { recursive: true })
     await rename(path.resolve(oldFullFilePath), path.resolve(newFullFilePath))
 
@@ -92,8 +92,8 @@ export async function deleteUnsortedFileAction(
   fileId: string
 ): Promise<ActionState<Transaction>> {
   try {
-    const { db, org, user } = await requireOrg("EDITOR")
-    await deleteFile(db, fileId, getUserUploadsDirectory(user))
+    const { db, org } = await requireOrg("EDITOR")
+    await deleteFile(db, fileId, getOrganizationUploadsDirectory(org))
     await syncOrganizationStorage(org.id)
     revalidatePath("/unsorted")
     return { success: true }
@@ -123,8 +123,8 @@ export async function splitFileIntoItemsAction(
     }
 
     // Get the original file's content
-    const userUploadsDirectory = getUserUploadsDirectory(user)
-    const originalFilePath = safePathJoin(userUploadsDirectory, originalFile.path)
+    const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
+    const originalFilePath = safePathJoin(organizationUploadsDirectory, originalFile.path)
     const fileContent = await readFile(originalFilePath)
 
     // Create a new file for each item
@@ -132,7 +132,7 @@ export async function splitFileIntoItemsAction(
       const fileUuid = randomUUID()
       const fileName = `${originalFile.filename}-part-${item.name}`
       const relativeFilePath = unsortedFilePath(fileUuid, fileName)
-      const fullFilePath = safePathJoin(userUploadsDirectory, relativeFilePath)
+      const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
 
       // Create directory if it doesn't exist
       await mkdir(path.dirname(fullFilePath), { recursive: true })
@@ -167,7 +167,7 @@ export async function splitFileIntoItemsAction(
     }
 
     // Delete the original file
-    await deleteFile(db, fileId, userUploadsDirectory)
+    await deleteFile(db, fileId, organizationUploadsDirectory)
 
     // Update organization storage used
     await syncOrganizationStorage(org.id)

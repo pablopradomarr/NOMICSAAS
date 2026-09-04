@@ -2,7 +2,7 @@
 
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
-import { getUserUploadsDirectory, safePathJoin } from "@/lib/files"
+import { getOrganizationUploadsDirectory, safePathJoin } from "@/lib/files"
 import { syncOrganizationStorage } from "@/lib/uploads"
 import { cleanupOrganizationTables, MODEL_BACKUP, modelFromJSON } from "@/models/backups"
 import { DEFAULT_CATEGORIES, DEFAULT_CURRENCIES, DEFAULT_FIELDS, DEFAULT_SETTINGS } from "@/models/defaults"
@@ -24,8 +24,8 @@ export async function restoreBackupAction(
   _prevState: ActionState<BackupRestoreResult> | null,
   formData: FormData
 ): Promise<ActionState<BackupRestoreResult>> {
-  const { db, org, user } = await requireOrg("ADMIN")
-  const userUploadsDirectory = getUserUploadsDirectory(user)
+  const { db, org } = await requireOrg("ADMIN")
+  const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
   const file = formData.get("file") as File
 
   if (!file || file.size === 0) {
@@ -72,7 +72,7 @@ export async function restoreBackupAction(
     // Remove existing data (sólo de esta organización: tenantDb acota el deleteMany)
     if (REMOVE_EXISTING_DATA) {
       await cleanupOrganizationTables(db)
-      await fs.rm(userUploadsDirectory, { recursive: true, force: true })
+      await fs.rm(organizationUploadsDirectory, { recursive: true, force: true })
     }
 
     const counters: Record<string, number> = {}
@@ -107,8 +107,8 @@ export async function restoreBackupAction(
         }
 
         const fileContents = await zipFile.async("nodebuffer")
-        const fullFilePath = safePathJoin(userUploadsDirectory, filePathWithoutPrefix)
-        if (!fullFilePath.startsWith(path.normalize(userUploadsDirectory))) {
+        const fullFilePath = safePathJoin(organizationUploadsDirectory, filePathWithoutPrefix)
+        if (!fullFilePath.startsWith(path.normalize(organizationUploadsDirectory))) {
           console.error(`Attempted path traversal detected for file ${file.path}`)
           continue
         }

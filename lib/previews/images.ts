@@ -1,7 +1,6 @@
 "use server"
 
-import { fileExists, getUserPreviewsDirectory, safePathJoin } from "@/lib/files"
-import { User } from "@/prisma/client"
+import { fileExists, getOrganizationPreviewsDirectory, OrganizationRef, safePathJoin } from "@/lib/files"
 import fs from "fs/promises"
 import path from "path"
 import sharp from "sharp"
@@ -9,7 +8,7 @@ import config from "../config"
 import { DEFAULT_PREVIEW_FORMAT, PreviewFormat, previewContentType, previewExtension } from "./format"
 
 export async function resizeImage(
-  user: User,
+  organization: OrganizationRef,
   origFilePath: string,
   maxWidth: number = config.upload.images.maxWidth,
   maxHeight: number = config.upload.images.maxHeight,
@@ -17,13 +16,13 @@ export async function resizeImage(
   format: PreviewFormat = DEFAULT_PREVIEW_FORMAT
 ): Promise<{ contentType: string; resizedPath: string }> {
   try {
-    const userPreviewsDirectory = getUserPreviewsDirectory(user)
-    await fs.mkdir(userPreviewsDirectory, { recursive: true })
+    const previewsDirectory = getOrganizationPreviewsDirectory(organization)
+    await fs.mkdir(previewsDirectory, { recursive: true })
 
     const basename = path.basename(origFilePath, path.extname(origFilePath))
     const extension = previewExtension(format)
     const contentType = previewContentType(format)
-    const outputPath = safePathJoin(userPreviewsDirectory, `${basename}.${extension}`)
+    const outputPath = safePathJoin(previewsDirectory, `${basename}.${extension}`)
 
     if (await fileExists(outputPath)) {
       const metadata = await sharp(outputPath).metadata()

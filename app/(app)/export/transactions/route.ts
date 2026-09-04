@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   const includeAttachments = url.searchParams.get("includeAttachments") === "true"
   const progressId = url.searchParams.get("progressId")
 
-  const { db, user } = await requireOrg("VIEWER")
+  const { db, org, user } = await requireOrg("VIEWER")
   const { transactions } = await getTransactions(db, filters)
   const existingFields = await getFields(db)
 
@@ -60,7 +60,7 @@ export async function GET(request: Request) {
             if (includeFilePaths) {
               const paths: string[] = []
               for (const file of transactionFiles) {
-                const fullFilePath = fullPathForFile(user, file)
+                const fullFilePath = fullPathForFile(org, file)
                 if (await fileExists(fullFilePath)) {
                   paths.push(getTransactionExportFilePath(transaction, file, transactionFiles.length))
                 }
@@ -151,7 +151,7 @@ export async function GET(request: Request) {
         if (!transactionFolder) continue
 
         for (const file of transactionFiles) {
-          const fullFilePath = fullPathForFile(user, file)
+          const fullFilePath = fullPathForFile(org, file)
           if (await fileExists(fullFilePath)) {
             console.log(
               `Processing file ${++totalFilesProcessed}/${totalFilesToProcess}: ${file.filename} for transaction ${transaction.id}`

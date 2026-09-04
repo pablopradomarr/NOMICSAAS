@@ -1,7 +1,6 @@
 "use server"
 
-import { fileExists, getUserPreviewsDirectory, safePathJoin } from "@/lib/files"
-import { User } from "@/prisma/client"
+import { fileExists, getOrganizationPreviewsDirectory, OrganizationRef, safePathJoin } from "@/lib/files"
 import fs from "fs/promises"
 import path from "path"
 import { fromPath } from "pdf2pic"
@@ -9,12 +8,12 @@ import config from "../config"
 import { DEFAULT_PREVIEW_FORMAT, PreviewFormat, previewContentType, previewExtension } from "./format"
 
 export async function pdfToImages(
-  user: User,
+  organization: OrganizationRef,
   origFilePath: string,
   format: PreviewFormat = DEFAULT_PREVIEW_FORMAT
 ): Promise<{ contentType: string; pages: string[] }> {
-  const userPreviewsDirectory = getUserPreviewsDirectory(user)
-  await fs.mkdir(userPreviewsDirectory, { recursive: true })
+  const previewsDirectory = getOrganizationPreviewsDirectory(organization)
+  await fs.mkdir(previewsDirectory, { recursive: true })
 
   const basename = path.basename(origFilePath, path.extname(origFilePath))
   const extension = previewExtension(format)
@@ -23,7 +22,7 @@ export async function pdfToImages(
   // Check if converted pages already exist
   const existingPages: string[] = []
   for (let i = 1; i <= config.upload.pdfs.maxPages; i++) {
-    const convertedFilePath = safePathJoin(userPreviewsDirectory, `${basename}.${i}.${extension}`)
+    const convertedFilePath = safePathJoin(previewsDirectory, `${basename}.${i}.${extension}`)
     if (await fileExists(convertedFilePath)) {
       existingPages.push(convertedFilePath)
     } else {
@@ -39,7 +38,7 @@ export async function pdfToImages(
   const pdf2picOptions = {
     density: config.upload.pdfs.dpi,
     saveFilename: basename,
-    savePath: userPreviewsDirectory,
+    savePath: previewsDirectory,
     format: extension,
     quality: config.upload.pdfs.quality,
     width: config.upload.pdfs.maxWidth,

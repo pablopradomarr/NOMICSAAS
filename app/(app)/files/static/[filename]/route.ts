@@ -6,19 +6,19 @@ import { NextResponse } from "next/server"
 
 export async function GET(request: Request, { params }: { params: Promise<{ filename: string }> }) {
   const { filename } = await params
-  const { user } = await requireOrg("VIEWER")
+  const { org } = await requireOrg("VIEWER")
 
   if (!filename) {
     return new NextResponse("No filename provided", { status: 400 })
   }
 
-  const staticFilesDirectory = getStaticDirectory(user)
+  const staticFilesDirectory = getStaticDirectory(org)
 
   try {
     const fullFilePath = safePathJoin(staticFilesDirectory, filename)
     const isFileExists = await fileExists(fullFilePath)
     if (!isFileExists) {
-      return new NextResponse(`File not found for user: ${filename}`, { status: 404 })
+      return new NextResponse(`File not found for organization: ${filename}`, { status: 404 })
     }
 
     const fileBuffer = await fs.readFile(fullFilePath)

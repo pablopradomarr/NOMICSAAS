@@ -3,7 +3,7 @@
 import { invitationIdSchema, inviteMemberFormSchema } from "@/forms/invitations"
 import { changeMemberRoleFormSchema, removeMemberFormSchema } from "@/forms/memberships"
 import { ActionState } from "@/lib/actions"
-import { requireOrg } from "@/lib/authz"
+import { clearActiveOrg, withOrg } from "@/lib/authz"
 import config from "@/lib/config"
 import { sendOrganizationInviteEmail } from "@/lib/email"
 import { ROLE_LABELS } from "@/lib/organization-options"
@@ -39,8 +39,7 @@ export async function inviteMemberAction(
   _prevState: ActionState<InviteResult> | null,
   formData: FormData
 ): Promise<ActionState<InviteResult>> {
-  const { db, org, user } = await requireOrg("ADMIN")
-
+  return await withOrg(Role.ADMIN, async ({ db, org, user }) => {
   const validated = inviteMemberFormSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
@@ -86,6 +85,7 @@ export async function inviteMemberAction(
   // TODO(E2): auditLog("membership.invite", { email, role: invitation.role })
   revalidatePath(MEMBERS_PATH)
   return { success: true, data: { emailSent, inviteUrl: emailSent ? undefined : inviteUrl } }
+  })()
 }
 
 /** Rota el token y reinicia la caducidad. Sólo ADMIN. */
@@ -93,8 +93,7 @@ export async function resendInvitationAction(
   _prevState: ActionState<InviteResult> | null,
   formData: FormData
 ): Promise<ActionState<InviteResult>> {
-  const { db, org, user } = await requireOrg("ADMIN")
-
+  return await withOrg(Role.ADMIN, async ({ db, org, user }) => {
   const validated = invitationIdSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: "Invitación no encontrada" }
@@ -124,6 +123,7 @@ export async function resendInvitationAction(
 
   revalidatePath(MEMBERS_PATH)
   return { success: true, data: { emailSent, inviteUrl: emailSent ? undefined : inviteUrl } }
+  })()
 }
 
 /** REVOKED es terminal. Sólo ADMIN. */
@@ -131,8 +131,7 @@ export async function revokeInvitationAction(
   _prevState: ActionState<null> | null,
   formData: FormData
 ): Promise<ActionState<null>> {
-  const { db } = await requireOrg("ADMIN")
-
+  return await withOrg(Role.ADMIN, async ({ db }): Promise<ActionState<null>> => {
   const validated = invitationIdSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: "Invitación no encontrada" }
@@ -150,6 +149,7 @@ export async function revokeInvitationAction(
   // TODO(E2): auditLog("invitation.revoke", { invitationId: existing.id })
   revalidatePath(MEMBERS_PATH)
   return { success: true }
+  })()
 }
 
 /** Invariante: la organización debe conservar al menos un ADMIN. */
@@ -157,8 +157,7 @@ export async function changeMemberRoleAction(
   _prevState: ActionState<null> | null,
   formData: FormData
 ): Promise<ActionState<null>> {
-  const { org } = await requireOrg("ADMIN")
-
+  return await withOrg(Role.ADMIN, async ({ org }): Promise<ActionState<null>> => {
   const validated = changeMemberRoleFormSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
@@ -180,6 +179,7 @@ export async function changeMemberRoleAction(
   revalidatePath(MEMBERS_PATH)
   revalidatePath("/", "layout")
   return { success: true }
+  })()
 }
 
 /** Baja de un miembro. Exige motivo (queda en AuditLog en E2). */
@@ -187,8 +187,7 @@ export async function removeMemberAction(
   _prevState: ActionState<null> | null,
   formData: FormData
 ): Promise<ActionState<null>> {
-  const { org } = await requireOrg("ADMIN")
-
+  return await withOrg(Role.ADMIN, async ({ org }): Promise<ActionState<null>> => {
   const validated = removeMemberFormSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
@@ -207,4 +206,38 @@ export async function removeMemberAction(
   revalidatePath(MEMBERS_PATH)
   revalidatePath("/", "layout")
   return { success: true }
+  })()
+}
+
+/**
+ * Baja voluntaria de la organización activa (E1-fix, hallazgo #26).
+ *
+ * Cualquier miembro puede irse (VIEWER incluido), pero se mantiene el invariante
+ * "toda organización conserva al menos un ADMIN": el último administrador debe
+ * nombrar a otro antes de salir. Al salir se limpia la cookie de organización
+ * activa; `requireOrg` recalculará la siguiente membresía en el próximo request,
+ * o mandará a `/organizations/new` si ya no queda ninguna (#9).
+ *
+ * DESVIACIÓN respecto al diseño (§6.7): el contrato es "salgo YO de la
+ * organización activa", sin parámetros — no admite `membershipId` de terceros,
+ * para eso está `removeMemberAction` (ADMIN). Anotado en
+ * docs/design/E1-organizaciones-roles.md §"Desviaciones aceptadas".
+ */
+export async function leaveOrganizationAction(): Promise<ActionState<null>> {
+  return await withOrg(Role.VIEWER, async ({ org, user, role }): Promise<ActionState<null>> => {
+    if (role === Role.ADMIN && (await countAdmins(org.id)) <= 1) {
+      return {
+        success: false,
+        error: "Eres el único administrador: nombra a otro antes de salir de la organización",
+      }
+    }
+
+    await removeMembership(org.id, user.id)
+    await clearActiveOrg()
+    // TODO(E2): auditLog("membership.leave", { userId: user.id, organizationId: org.id })
+
+    revalidatePath(MEMBERS_PATH)
+    revalidatePath("/", "layout")
+    return { success: true }
+  })()
 }

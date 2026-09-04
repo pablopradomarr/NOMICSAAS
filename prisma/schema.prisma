@@ -61,7 +61,7 @@ model Organization {
   businessLogo        String? @map("business_logo")
 
   // Facturación y cuotas (D-1: plan y consumo por organización)
-  stripeCustomerId    String?   @map("stripe_customer_id")
+  stripeCustomerId    String?   @unique @map("stripe_customer_id")
   membershipPlan      String?   @map("membership_plan")
   membershipExpiresAt DateTime? @map("membership_expires_at")
   storageUsed         Int       @default(0) @map("storage_used")
@@ -83,7 +83,6 @@ model Organization {
   appData      AppData[]
   progress     Progress[]
 
-  @@index([stripeCustomerId])
   @@map("organizations")
 }
 
@@ -118,6 +117,8 @@ model Invitation {
   acceptedAt     DateTime?        @map("accepted_at")
   acceptedById   String?          @map("accepted_by_id") @db.Uuid
   revokedAt      DateTime?        @map("revoked_at")
+  /// E1-fix (#14): intentos fallidos de aceptación; a 5 el enlace se bloquea.
+  attempts       Int              @default(0)
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
 

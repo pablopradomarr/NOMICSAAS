@@ -11,7 +11,7 @@ import { encodeFilename } from "@/lib/utils"
 
 export async function GET(request: Request, { params }: { params: Promise<{ fileId: string }> }) {
   const { fileId } = await params
-  const { db, user } = await requireOrg("VIEWER")
+  const { db, org } = await requireOrg("VIEWER")
 
   if (!fileId) {
     return new NextResponse("No fileId provided", { status: 400 })
@@ -29,7 +29,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     }
 
     // Check if file exists on disk
-    const fullFilePath = fullPathForFile(user, file)
+    const fullFilePath = fullPathForFile(org, file)
     const isFileExists = await fileExists(fullFilePath)
     if (!isFileExists) {
       return new NextResponse(`File not found on disk: ${file.path}`, { status: 404 })
@@ -38,7 +38,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     // Generate previews
     const settings = await getSettings(db)
     const format = resolvePreviewFormat(settings.llm_attachment_format)
-    const { contentType, previews } = await generateFilePreviews(user, fullFilePath, file.mimetype, format)
+    const { contentType, previews } = await generateFilePreviews(org, fullFilePath, file.mimetype, format)
     if (page > previews.length) {
       return new NextResponse("Page not found", { status: 404 })
     }

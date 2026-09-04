@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 export async function POST(request: NextRequest) {
   // Analizar con IA consume saldo de la organización y escribe en el fichero → EDITOR
-  const { db, org, user } = await requireOrg("EDITOR")
+  const { db, org } = await requireOrg("EDITOR")
 
   let fileId: unknown
   try {
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
 
   let attachments
   try {
-    attachments = await loadAttachmentsForAI(db, user, file)
+    attachments = await loadAttachmentsForAI(db, org, file)
   } catch (error) {
     console.error("Failed to retrieve files:", error)
     return NextResponse.json<ActionState<AnalysisResult>>(

@@ -3,11 +3,12 @@ import { MemberRow, MembersTable } from "@/components/settings/members-table"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { InvitationRow, PendingInvitationsTable } from "@/components/settings/pending-invitations-table"
 import { Separator } from "@/components/ui/separator"
-import { requireOrg } from "@/lib/authz"
-import { isInvitationExpired, listInvitations, markInvitationExpired } from "@/models/invitations"
+import { AuthzError, requireOrg } from "@/lib/authz"
+import { listLiveInvitations } from "@/models/invitations"
 import { listOrganizationMembersWithUsers } from "@/models/memberships"
-import { InvitationStatus, Role } from "@/prisma/client"
+import { Role } from "@/prisma/client"
 import { Metadata } from "next"
+import { notFound } from "next/navigation"
 
 export const metadata: Metadata = {
   title: "Miembros",
@@ -20,23 +21,25 @@ function formatDate(date: Date | null): string {
 }
 
 export default async function MembersSettingsPage() {
-  const { db, org, user, role } = await requireOrg("VIEWER")
-  const canManage = role === Role.ADMIN
+  // E1-fix (#7): la lista de miembros expone nombres, correos y las direcciones
+  // invitadas. Es información de administración: un VIEWER no debe verla, y se
+  // responde 404 (no 403) para no confirmar siquiera que la pantalla existe.
+  let context
+  try {
+    context = await requireOrg(Role.ADMIN)
+  } catch (error) {
+    if (error instanceof AuthzError) notFound()
+    throw error
+  }
+  const { db, org, user } = context
 
   const members = await listOrganizationMembersWithUsers(org.id)
   const adminCount = members.filter((membership) => membership.role === Role.ADMIN).length
 
-  // Limpieza perezosa: las PENDING caducadas se marcan EXPIRED al listarlas (§6.6).
-  const now = new Date()
-  const pending = await listInvitations(db, InvitationStatus.PENDING)
-  const live = []
-  for (const invitation of pending) {
-    if (isInvitationExpired(invitation, now)) {
-      await markInvitationExpired(db, invitation.id)
-    } else {
-      live.push(invitation)
-    }
-  }
+  // E1-fix (#8): un Server Component NO escribe en la base de datos. La
+  // caducidad se aplica FILTRANDO por `expiresAt` en la lectura; marcar EXPIRED
+  // es cosa de las server actions.
+  const live = await listLiveInvitations(db, new Date())
 
   const nameByUserId = new Map(members.map((membership) => [membership.userId, membership.user.name || membership.user.email]))
 
@@ -67,30 +70,21 @@ export default async function MembersSettingsPage() {
 
       <section className="space-y-3">
         <h3 className="text-lg font-semibold">Miembros de {org.name}</h3>
-        <MembersTable members={memberRows} canManage={canManage} />
-        {!canManage && (
-          <p className="text-sm text-muted-foreground">
-            Sólo un administrador puede invitar, cambiar perfiles o dar de baja a un miembro.
-          </p>
-        )}
+        <MembersTable members={memberRows} canManage />
       </section>
 
       <Separator />
 
       <section className="space-y-3">
         <h3 className="text-lg font-semibold">Invitaciones pendientes</h3>
-        <PendingInvitationsTable invitations={invitationRows} canManage={canManage} />
+        <PendingInvitationsTable invitations={invitationRows} canManage />
       </section>
 
-      {canManage && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <h3 className="text-lg font-semibold">Invitar a alguien</h3>
-            <InviteMemberForm />
-          </section>
-        </>
-      )}
+      <Separator />
+      <section className="space-y-3">
+        <h3 className="text-lg font-semibold">Invitar a alguien</h3>
+        <InviteMemberForm />
+      </section>
     </div>
   )
 }

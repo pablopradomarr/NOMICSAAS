@@ -11,7 +11,9 @@ import { TenantClient, tenantDb } from "@/lib/db"
 import { getMembership, getUserMemberships } from "@/models/memberships"
 import { getOrganizationById } from "@/models/organizations"
 import { Organization, Role, User } from "@/prisma/client"
+import { ActionState } from "@/lib/actions"
 import { cookies } from "next/headers"
+import { redirect } from "next/navigation"
 import { cache } from "react"
 
 export { ACTIVE_ORG_COOKIE, AuthzError, ROLE_RANK, hasRole, roleSatisfies } from "@/lib/authz-core"
@@ -97,4 +99,42 @@ export async function setActiveOrg(organizationId: string, userId: string): Prom
 export async function clearActiveOrg(): Promise<void> {
   const cookieStore = await cookies()
   cookieStore.delete(ACTIVE_ORG_COOKIE)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// withOrg — envoltorio de server actions (E1-fix, hallazgo #24)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Envuelve el cuerpo de una server action de mutación con `requireOrg(minRole)`
+ * y traduce `AuthzError` a `ActionState`.
+ *
+ * Sin esto, un `AuthzError` se propaga como excepción no controlada: Next lo
+ * convierte en el error genérico de servidor y el formulario del cliente se
+ * queda sin mensaje. Con esto, quien no tiene permiso recibe
+ * `{ success: false, error: "Sin permiso" }` y quien no tiene organización se va
+ * a `/organizations/new`.
+ *
+ * Las excepciones de control de flujo de Next (`redirect()`, `notFound()`)
+ * llevan la propiedad `digest` y se dejan pasar intactas.
+ */
+export function withOrg<Args extends unknown[], T>(
+  minRole: Role,
+  fn: (context: OrgContext, ...args: Args) => Promise<ActionState<T>>
+): (...args: Args) => Promise<ActionState<T>> {
+  return async (...args: Args): Promise<ActionState<T>> => {
+    let context: OrgContext
+    try {
+      context = await requireOrg(minRole)
+    } catch (error) {
+      if (error instanceof AuthzError) {
+        if (error.code === "NO_ORGANIZATION") {
+          redirect("/organizations/new")
+        }
+        return { success: false, error: "Sin permiso" }
+      }
+      throw error
+    }
+    return await fn(context, ...args)
+  }
 }

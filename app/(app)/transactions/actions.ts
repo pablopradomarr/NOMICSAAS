@@ -5,8 +5,8 @@ import { ActionState } from "@/lib/actions"
 import { isSubscriptionExpired } from "@/lib/auth"
 import { requireOrg } from "@/lib/authz"
 import {
+  getOrganizationUploadsDirectory,
   getTransactionFileUploadPath,
-  getUserUploadsDirectory,
   isEnoughStorageToUploadFile,
   safePathJoin,
 } from "@/lib/files"
@@ -98,11 +98,11 @@ export async function deleteTransactionAction(
   transactionId: string
 ): Promise<ActionState<Transaction>> {
   try {
-    const { db, org, user } = await requireOrg("EDITOR")
+    const { db, org } = await requireOrg("EDITOR")
     const transaction = await getTransactionById(db, transactionId)
     if (!transaction) throw new Error("Transaction not found")
 
-    await deleteTransaction(db, transaction.id, getUserUploadsDirectory(user))
+    await deleteTransaction(db, transaction.id, getOrganizationUploadsDirectory(org))
     await syncOrganizationStorage(org.id)
 
     revalidatePath("/transactions")
@@ -122,7 +122,7 @@ export async function deleteTransactionFileAction(
     return { success: false, error: "File ID and transaction ID are required" }
   }
 
-  const { db, org, user } = await requireOrg("EDITOR")
+  const { db, org } = await requireOrg("EDITOR")
   const transaction = await getTransactionById(db, transactionId)
   if (!transaction) {
     return { success: false, error: "Transaction not found" }
@@ -134,7 +134,7 @@ export async function deleteTransactionFileAction(
     transaction.files ? (transaction.files as string[]).filter((id) => id !== fileId) : []
   )
 
-  await deleteFile(db, fileId, getUserUploadsDirectory(user))
+  await deleteFile(db, fileId, getOrganizationUploadsDirectory(org))
 
   // Update organization storage used
   await syncOrganizationStorage(org.id)
@@ -158,7 +158,7 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
       return { success: false, error: "Transaction not found" }
     }
 
-    const userUploadsDirectory = getUserUploadsDirectory(user)
+    const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
 
     // Check limits
     const totalFileSize = files.reduce((acc, file) => acc + file.size, 0)
@@ -180,7 +180,7 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
         const arrayBuffer = await file.arrayBuffer()
         const buffer = Buffer.from(arrayBuffer)
 
-        const fullFilePath = safePathJoin(userUploadsDirectory, relativeFilePath)
+        const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
         await mkdir(path.dirname(fullFilePath), { recursive: true })
 
         await writeFile(fullFilePath, buffer)

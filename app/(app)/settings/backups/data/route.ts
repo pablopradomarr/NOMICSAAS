@@ -1,5 +1,5 @@
 import { requireOrg } from "@/lib/authz"
-import { fileExists, getUserUploadsDirectory } from "@/lib/files"
+import { fileExists, getOrganizationUploadsDirectory } from "@/lib/files"
 import { MODEL_BACKUP, modelToJSON } from "@/models/backups"
 import { updateProgress } from "@/models/progress"
 import fs from "fs/promises"
@@ -13,8 +13,10 @@ const PROGRESS_UPDATE_INTERVAL_MS = 2000 // 2 seconds
 
 export async function GET(request: Request) {
   // Backup = volcado íntegro del tenant → ADMIN.
-  const { db, user } = await requireOrg("ADMIN")
-  const userUploadsDirectory = getUserUploadsDirectory(user)
+  // E1-fix (#4): el backup empaqueta el directorio de la ORGANIZACIÓN, no el
+  // del ADMIN que lo lanza (antes se perdían los ficheros de los demás miembros).
+  const { db, org, user } = await requireOrg("ADMIN")
+  const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
   const url = new URL(request.url)
   const progressId = url.searchParams.get("progressId")
 
@@ -56,7 +58,7 @@ export async function GET(request: Request) {
       return new NextResponse("Internal Server Error", { status: 500 })
     }
 
-    const uploadedFiles = await getAllFilePaths(userUploadsDirectory)
+    const uploadedFiles = await getAllFilePaths(organizationUploadsDirectory)
 
     // Update progress with total files if progressId is provided
     if (progressId) {
@@ -80,7 +82,7 @@ export async function GET(request: Request) {
         }
 
         const fileContent = await fs.readFile(file)
-        uploadsFolder.file(file.replace(userUploadsDirectory, ""), fileContent)
+        uploadsFolder.file(file.replace(organizationUploadsDirectory, ""), fileContent)
 
         processedFiles++
 

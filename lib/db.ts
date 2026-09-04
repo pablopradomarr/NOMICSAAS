@@ -1,13 +1,25 @@
 import { PrismaPg } from "@prisma/adapter-pg"
 import { Prisma, PrismaClient } from "@/prisma/client"
+import { AsyncLocalStorage } from "node:async_hooks"
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
+/**
+ * E1-fix (#17): `log: ["query"]` imprime cada sentencia SQL CON SUS PARÁMETROS.
+ * En producción eso vuelca datos de clientes (importes, NIF, emails) al log del
+ * contenedor. Sólo se activa en desarrollo; en producción, avisos y errores.
+ */
+function prismaLogLevels(): Prisma.LogLevel[] {
+  if (process.env.NODE_ENV === "production") return ["warn", "error"]
+  if (process.env.NODE_ENV === "test") return ["error"]
+  return ["query", "info", "warn", "error"]
+}
+
 function createPrismaClient() {
   const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL })
-  return new PrismaClient({ adapter, log: ["query", "info", "warn", "error"] })
+  return new PrismaClient({ adapter, log: prismaLogLevels() })
 }
 
 /**
@@ -50,11 +62,11 @@ export class TenantError extends Error {
   }
 }
 
-function assertUuid(organizationId: string): string {
-  if (!UUID_RE.test(organizationId)) {
-    throw new TenantError(`tenantDb: organizationId no es un uuid válido`)
+function assertUuid(value: string, label = "organizationId"): string {
+  if (!UUID_RE.test(value)) {
+    throw new TenantError(`tenantDb: ${label} no es un uuid válido`)
   }
-  return organizationId
+  return value
 }
 
 type WhereRecord = Record<string, unknown>
@@ -153,6 +165,60 @@ function delegateName(model: string): string {
 
 const READ_OPERATIONS = new Set(["findMany", "findFirst", "findFirstOrThrow", "count", "aggregate", "groupBy"])
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GUC de tenant — barrera 2 (RLS). ADR-0002 + ADR-0007 + E1-fix (#1, #2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Contexto de la transacción de tenant en curso (evita anidar transacciones). */
+type TenantGucContext = { organizationId: string; userId?: string }
+
+const tenantGucStorage = new AsyncLocalStorage<TenantGucContext>()
+
+/** Firma mínima que necesitan los helpers de GUC (cliente o cliente de transacción). */
+type RawExecutor = { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown> }
+
+/**
+ * Fija `app.current_org` y `app.current_user` como GUC LOCALES: duran hasta el
+ * COMMIT/ROLLBACK, igual que `SET LOCAL`.
+ *
+ * Se usa `set_config(..., is_local => true)` y no `SET LOCAL` porque
+ * `current_user` es palabra reservada de SQL y `SET LOCAL app.current_user`
+ * ni siquiera parsea (error 42601). `set_config` además admite parámetros
+ * vinculados, así que el valor no se interpola en la sentencia; aun así se
+ * valida como uuid.
+ *
+ * Sin usuario se fija cadena vacía, que `app.current_user()` convierte en NULL:
+ * una transacción nunca hereda el usuario de otra.
+ */
+async function applyTenantGucs(tx: RawExecutor, organizationId: string | null, userId?: string): Promise<void> {
+  await tx.$executeRaw`SELECT set_config('app.current_org', ${organizationId ? assertUuid(organizationId) : ""}, true)`
+  await tx.$executeRaw`SELECT set_config('app.current_user', ${userId ? assertUuid(userId, "userId") : ""}, true)`
+}
+
+/**
+ * Ejecuta UNA operación de Prisma dentro de una transacción con los GUC de
+ * tenant fijados. Se invoca desde la extensión cuando la llamada no viene ya
+ * envuelta por `tenantTransaction`.
+ *
+ * Los args llegan YA acotados por la extensión (barrera 1), así que aquí se
+ * ejecutan contra el cliente crudo de la transacción: no hay recursión.
+ */
+async function runWithTenantGucs(
+  organizationId: string,
+  model: string,
+  operation: string,
+  args: WhereRecord
+): Promise<unknown> {
+  const inherited = tenantGucStorage.getStore()
+  const userId = inherited?.organizationId === organizationId ? inherited.userId : undefined
+  return await prisma.$transaction(async (tx) => {
+    await applyTenantGucs(tx, organizationId, userId)
+    const delegate = (tx as unknown as ClientByModel)[delegateName(model)]
+    return await delegate[operation](args)
+  })
+}
+
+
 export const tenantExtension = (organizationId: string) =>
   Prisma.defineExtension((client) =>
     client.$extends({
@@ -176,50 +242,71 @@ export const tenantExtension = (organizationId: string) =>
             // de forma genérica, así que se invoca a través de una firma laxa.
             const run = query as unknown as (nextArgs: WhereRecord) => Promise<unknown>
 
+            // Args acotados por la barrera 1 + operación efectiva a ejecutar.
+            let nextOperation = operation
+            let nextArgs: WhereRecord
+
             if (READ_OPERATIONS.has(operation)) {
-              return run({ ...typedArgs, where: and(typedArgs.where, readScope) })
+              nextArgs = { ...typedArgs, where: and(typedArgs.where, readScope) }
+            } else {
+              switch (operation) {
+                case "findUnique":
+                case "findUniqueOrThrow": {
+                  // El callback query() ejecuta LA MISMA operación: para poder añadir
+                  // un filtro no único hay que reescribirla a findFirst.
+                  nextOperation = operation === "findUnique" ? "findFirst" : "findFirstOrThrow"
+                  nextArgs = { ...typedArgs, where: and(flattenUniqueWhere(typedArgs.where), readScope) }
+                  break
+                }
+
+                case "update":
+                case "delete":
+                  nextArgs = { ...typedArgs, where: scopeUniqueWhere(typedArgs.where, organizationId) }
+                  break
+
+                case "updateMany":
+                case "updateManyAndReturn":
+                case "deleteMany":
+                  nextArgs = { ...typedArgs, where: and(typedArgs.where, strictScope) }
+                  break
+
+                case "create":
+                  nextArgs = { ...typedArgs, data: withOrg(typedArgs.data, organizationId) }
+                  break
+
+                case "createMany":
+                case "createManyAndReturn": {
+                  const rows = Array.isArray(typedArgs.data) ? typedArgs.data : [typedArgs.data]
+                  nextArgs = { ...typedArgs, data: rows.map((row) => withOrg(row, organizationId)) }
+                  break
+                }
+
+                case "upsert":
+                  nextArgs = {
+                    ...typedArgs,
+                    where: scopeUniqueWhere(typedArgs.where, organizationId),
+                    create: withOrg(typedArgs.create, organizationId),
+                    update: typedArgs.update,
+                  }
+                  break
+
+                default:
+                  throw new TenantError(`tenantDb: operación no contemplada ${model}.${operation}`)
+              }
             }
 
-            switch (operation) {
-              case "findUnique":
-              case "findUniqueOrThrow": {
-                // El callback query() ejecuta LA MISMA operación: para poder añadir un
-                // filtro no único hay que reescribirla a findFirst sobre el cliente padre.
-                const where = and(flattenUniqueWhere(typedArgs.where), readScope)
-                const target = operation === "findUnique" ? "findFirst" : "findFirstOrThrow"
-                const delegate = (client as unknown as ClientByModel)[delegateName(model)]
-                return delegate[target]({ ...typedArgs, where })
-              }
-
-              case "update":
-              case "delete":
-                return run({ ...typedArgs, where: scopeUniqueWhere(typedArgs.where, organizationId) })
-
-              case "updateMany":
-              case "updateManyAndReturn":
-              case "deleteMany":
-                return run({ ...typedArgs, where: and(typedArgs.where, strictScope) })
-
-              case "create":
-                return run({ ...typedArgs, data: withOrg(typedArgs.data, organizationId) })
-
-              case "createMany":
-              case "createManyAndReturn": {
-                const rows = Array.isArray(typedArgs.data) ? typedArgs.data : [typedArgs.data]
-                return run({ ...typedArgs, data: rows.map((row) => withOrg(row, organizationId)) })
-              }
-
-              case "upsert":
-                return run({
-                  ...typedArgs,
-                  where: scopeUniqueWhere(typedArgs.where, organizationId),
-                  create: withOrg(typedArgs.create, organizationId),
-                  update: typedArgs.update,
-                })
-
-              default:
-                throw new TenantError(`tenantDb: operación no contemplada ${model}.${operation}`)
+            // E1-fix (#1): TODA operación de negocio se ejecuta con los GUC de
+            // tenant fijados, para que RLS (barrera 2) evalúe la política. Si ya
+            // estamos dentro de `tenantTransaction` de esta misma organización,
+            // los GUC ya están puestos y se ejecuta en esa transacción (abrir otra
+            // desde dentro consumiría una segunda conexión y podría interbloquear).
+            const store = tenantGucStorage.getStore()
+            if (store?.organizationId === organizationId) {
+              if (nextOperation === operation) return run(nextArgs)
+              const delegate = (client as unknown as ClientByModel)[delegateName(model)]
+              return delegate[nextOperation](nextArgs)
             }
+            return await runWithTenantGucs(organizationId, model, nextOperation, nextArgs)
           },
         },
       },
@@ -245,11 +332,34 @@ export type TenantTransactionClient = Omit<
 const tenantClients = new Map<string, TenantClient>()
 
 /**
- * Cliente Prisma acotado a una organización.
+ * Cliente Prisma acotado a una organización (barrera 1).
+ *
  * - Inyecta `where.organizationId` en lecturas, actualizaciones, borrados y agregados.
  * - Inyecta `data.organizationId` en creaciones (y LANZA si venía uno ajeno).
  * - Reescribe `findUnique`/`findUniqueOrThrow` a `findFirst`/`findFirstOrThrow`.
+ * - Desde E1-fix (#1) ejecuta cada operación dentro de una transacción con
+ *   `app.current_org` (y `app.current_user`, si lo hereda de `tenantTransaction`)
+ *   fijados por `SET LOCAL`, de modo que RLS (barrera 2) también filtra.
+ *
  * Memoizado por organización: la extensión no se recrea en cada llamada.
+ *
+ * ## LÍMITES CONOCIDOS (hallazgo #19 de la revisión E1)
+ *
+ * 1. **Relaciones anidadas.** El filtro se aplica al modelo RAÍZ de la
+ *    operación, no a los `include` / `select` anidados ni a las escrituras
+ *    anidadas (`create: { files: { create: [...] } }`). Hoy no hay fuga porque
+ *    las FK son COMPUESTAS por `(organization_id, …)` (migración
+ *    20260904120200) y la BD rechaza cruzar organizaciones; pero al añadir una
+ *    relación nueva hay que mantener esa FK compuesta o filtrar a mano.
+ * 2. **SQL crudo.** `$queryRaw`, `$queryRawUnsafe`, `$executeRaw*` NO pasan por
+ *    la extensión: el `WHERE organization_id` es responsabilidad de quien
+ *    escribe la consulta. Desde E1-fix corren, además, con `app.current_org`
+ *    fijado sólo si van dentro de `tenantTransaction`.
+ * 3. **Modelos fuera de `TENANT_MODELS`.** `User`, `Session`, `Account`,
+ *    `Verification` y `Organization` pasan sin tocar: son pre-tenant o
+ *    resuelven QUÉ organización.
+ *
+ * Ambos límites están cubiertos por tests en `lib/db.test.ts`.
  */
 export function tenantDb(organizationId: string): TenantClient {
   assertUuid(organizationId)
@@ -261,20 +371,54 @@ export function tenantDb(organizationId: string): TenantClient {
 }
 
 /**
- * Transacción con `app.current_org` fijado vía SET LOCAL, para que RLS (barrera 2)
- * evalúe la política de la organización activa. Toda escritura de negocio debería
- * pasar por aquí. El uuid se valida con regex antes de interpolarlo: SET no admite
+ * Transacción con `app.current_org` (y opcionalmente `app.current_user`) fijados
+ * vía `SET LOCAL`, para que RLS (barrera 2) evalúe las políticas de la
+ * organización activa y de la pertenencia del usuario.
+ *
+ * Úsala cuando varias operaciones deban ser atómicas o cuando la política
+ * necesite el usuario (alta de organización, aceptación de invitación, gestión
+ * de miembros). Para operaciones sueltas no hace falta: desde E1-fix (#1)
+ * `tenantDb(orgId)` ya envuelve cada operación en su propia transacción con los
+ * GUC puestos.
+ *
+ * Los uuid se validan con regex antes de interpolarse: `SET` no admite
  * parámetros vinculados en Postgres.
  */
 export async function tenantTransaction<T>(
   organizationId: string,
-  fn: (tx: TenantTransactionClient) => Promise<T>
+  userIdOrFn: string | undefined | ((tx: TenantTransactionClient) => Promise<T>),
+  maybeFn?: (tx: TenantTransactionClient) => Promise<T>
 ): Promise<T> {
+  const userId = typeof userIdOrFn === "function" ? undefined : userIdOrFn
+  const fn = typeof userIdOrFn === "function" ? userIdOrFn : maybeFn
+  if (!fn) throw new TenantError("tenantTransaction: falta la función de transacción")
   assertUuid(organizationId)
+
   // El cliente extendido propaga la extensión a su cliente de transacción: las
-  // consultas de `tx` ya salen filtradas por organización.
-  return tenantDb(organizationId).$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SET LOCAL app.current_org = '${organizationId}'`)
-    return fn(tx as unknown as TenantTransactionClient)
+  // consultas de `tx` ya salen filtradas por organización. El AsyncLocalStorage
+  // le dice a la extensión que NO abra una transacción propia por operación.
+  return await tenantGucStorage.run({ organizationId, userId }, async () =>
+    tenantDb(organizationId).$transaction(async (tx) => {
+      await applyTenantGucs(tx, organizationId, userId)
+      return fn(tx as unknown as TenantTransactionClient)
+    })
+  )
+}
+
+/**
+ * Igual que `tenantTransaction` pero sobre el cliente SIN acotar: para los
+ * modelos que resuelven QUÉ organización (`organizations`, `memberships`) y por
+ * tanto no pueden pasar por `tenantDb`. Fija los mismos GUC, de modo que las
+ * políticas por pertenencia (`app.current_user()`) se evalúen correctamente.
+ * @internal Sólo `models/organizations.ts` y `models/memberships.ts`.
+ */
+export async function withTenantGucs<T>(
+  organizationId: string | null,
+  userId: string | undefined,
+  fn: (tx: Omit<PrismaClient, "$transaction" | "$connect" | "$disconnect" | "$on" | "$extends" | "$use">) => Promise<T>
+): Promise<T> {
+  return await prisma.$transaction(async (tx) => {
+    await applyTenantGucs(tx, organizationId, userId)
+    return fn(tx)
   })
 }

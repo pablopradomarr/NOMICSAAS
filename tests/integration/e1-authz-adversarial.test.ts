@@ -22,7 +22,8 @@ const cookieStore = {
     delete cookieBag[name]
   },
 }
-vi.mock("next/headers", () => ({ cookies: async () => cookieStore }))
+// `headers()` lo usa el rate limit de invitaciones (E1-fix #14).
+vi.mock("next/headers", () => ({ cookies: async () => cookieStore, headers: async () => new Headers() }))
 vi.mock("next/cache", () => ({ revalidatePath: () => {}, revalidateTag: () => {} }))
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
@@ -40,7 +41,6 @@ vi.mock("@/lib/auth", () => ({
 }))
 
 const { prisma } = await import("@/lib/db")
-const { AuthzError } = await import("@/lib/authz-core")
 
 /**
  * QA adversarial E1 — último ADMIN, invitaciones indebidas (CA-6, CA-7, CA-8) y

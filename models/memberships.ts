@@ -1,6 +1,6 @@
 // NOTA: usa el cliente sin tenant a propósito (resuelve QUÉ organización tiene
 // el usuario). Excepción legítima a la futura regla no-restricted-imports (T10).
-import { prisma } from "@/lib/db"
+import { prisma, withTenantGucs } from "@/lib/db"
 import { Membership, Organization, Role } from "@/prisma/client"
 
 export type MembershipWithOrganization = Membership & { organization: Organization }
@@ -40,6 +40,11 @@ export async function listOrganizationMembers(organizationId: string): Promise<M
   })
 }
 
+/**
+ * Alta de membresía con `app.current_user` fijado: la política RLS de
+ * `memberships` admite la fila porque es del propio usuario (aceptación de
+ * invitación) o porque la organización es la activa.
+ */
 export async function createMembership(input: {
   organizationId: string
   userId: string
@@ -47,15 +52,17 @@ export async function createMembership(input: {
   invitedById?: string | null
   now: Date
 }): Promise<Membership> {
-  return await prisma.membership.create({
-    data: {
-      organizationId: input.organizationId,
-      userId: input.userId,
-      role: input.role,
-      invitedById: input.invitedById ?? null,
-      acceptedAt: input.now,
-    },
-  })
+  return await withTenantGucs(input.organizationId, input.userId, async (tx) =>
+    tx.membership.create({
+      data: {
+        organizationId: input.organizationId,
+        userId: input.userId,
+        role: input.role,
+        invitedById: input.invitedById ?? null,
+        acceptedAt: input.now,
+      },
+    })
+  )
 }
 
 export async function countAdmins(organizationId: string): Promise<number> {
@@ -74,16 +81,20 @@ export async function updateMembershipRole(
   userId: string,
   role: Role
 ): Promise<Membership> {
-  return await prisma.membership.update({
-    where: { organizationId_userId: { organizationId, userId } },
-    data: { role },
-  })
+  return await withTenantGucs(organizationId, undefined, async (tx) =>
+    tx.membership.update({
+      where: { organizationId_userId: { organizationId, userId } },
+      data: { role },
+    })
+  )
 }
 
 export async function removeMembership(organizationId: string, userId: string): Promise<Membership> {
-  return await prisma.membership.delete({
-    where: { organizationId_userId: { organizationId, userId } },
-  })
+  return await withTenantGucs(organizationId, undefined, async (tx) =>
+    tx.membership.delete({
+      where: { organizationId_userId: { organizationId, userId } },
+    })
+  )
 }
 
 /** Emails de los miembros: los necesita el cálculo de cuota de disco (T11). */

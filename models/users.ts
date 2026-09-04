@@ -77,8 +77,10 @@ export async function getOrCreateInvitedUser(email: string, name?: string) {
   const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
   if (existing) return existing
 
+  // E1-fix (#14): la cuenta nace SIN verificar. better-auth marcará
+  // `emailVerified` al validar el OTP; hasta entonces no es utilizable.
   return await prisma.user.create({
-    data: { email: normalizedEmail, name: name || normalizedEmail.split("@")[0] },
+    data: { email: normalizedEmail, name: name || normalizedEmail.split("@")[0], emailVerified: false },
   })
 }
 

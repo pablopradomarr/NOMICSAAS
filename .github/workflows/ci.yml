@@ -73,3 +73,65 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  test-integration:
+    name: Integration Tests (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: "true"
+      # El rol de migraciones y de los tests es el propietario; el test de humo
+      # de RLS abre sus propias conexiones como `app_runtime` (ADR-0007).
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/erp_test
+      BASE_URL: http://localhost:7331
+      BETTER_AUTH_SECRET: ci-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npx prisma generate
+      # Falla el job si DATABASE_URL_TEST no está: los tests de fuga entre
+      # tenants y el de migración NO pueden saltarse en CI (#10).
+      - run: npm run test:integration
+
+  pureza-motor:
+    name: Guard de pureza (lib/ledger, lib/analytics)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # CLAUDE.md: `lib/ledger/**` y `lib/analytics/**` son funciones PURAS.
+      # Prohibido `new Date()` sin argumento, `Date.now()`, `prisma`, `fetch` y
+      # cualquier LLM: la fecha de referencia entra por parámetro.
+      - name: Sin reloj, IO ni LLM en el motor contable
+        run: |
+          set -e
+          for dir in lib/ledger lib/analytics; do
+            [ -d "$dir" ] || { echo "· $dir todavía no existe (E3/E4), se omite"; continue; }
+            if grep -rnE "Date\.now\(\)|new Date\(\s*\)|from \"@/lib/db\"|\bprisma\b|\bfetch\(|langchain|@langchain" \
+                 --include="*.ts" "$dir" | grep -v "\.test\.ts:"; then
+              echo "::error::Impureza detectada en $dir (reloj, IO, Prisma o LLM). Ver CLAUDE.md."
+              exit 1
+            fi
+            echo "· $dir puro"
+          done

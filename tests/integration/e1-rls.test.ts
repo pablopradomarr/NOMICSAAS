@@ -121,21 +121,27 @@ describe.skipIf(!TEST_DATABASE_URL)("QA adversarial — RLS con rol app_runtime"
     }
   })
 
-  it("HALLAZGO: tenantTransaction() (única vía que fija app.current_org) no se invoca desde ninguna server action / route / model de negocio", async () => {
-    // La app conecta a Postgres como el propietario de las tablas (ver DATABASE_URL /
-    // .env.example), que ignora RLS salvo con FORCE ROW LEVEL SECURITY (pendiente,
-    // ver comentario en la migración 20260904120300_e1_rls). Y aunque se usara
-    // `app_runtime`, sin invocar `tenantTransaction` nunca se fija el GUC: la
-    // barrera 2 (RLS) hoy es una capa provisionada pero inerte en producción,
-    // la única protección real en runtime es la barrera 1 (`tenantDb`).
-    const { execSync } = await import("node:child_process")
-    const grep = execSync(
-      `grep -rl "tenantTransaction(" --include="*.ts" app models lib 2>/dev/null | grep -v '\\.test\\.ts' || true`,
-      { cwd: process.cwd() }
+  // RESUELTO en E1-fix (#1): antes este test dejaba constancia de que
+  // `tenantTransaction` no se invocaba desde ninguna parte y la barrera 2 era
+  // inerte. Ahora la extensión de `tenantDb` fija los GUC en CADA operación, así
+  // que se comprueba lo contrario: que el cableado existe en lib/db.ts.
+  it("RESUELTO: tenantDb fija app.current_org en toda operación (barrera 2 activa)", async () => {
+    const { readFile } = await import("node:fs/promises")
+    const dbSource = await readFile("lib/db.ts", "utf8")
+    expect(dbSource).toContain("set_config('app.current_org'")
+    expect(dbSource).toContain("set_config('app.current_user'")
+    expect(dbSource).toContain("runWithTenantGucs")
+
+    // Y se verifica en caliente: una lectura corriente por tenantDb deja el GUC
+    // fijado durante su transacción.
+    const { tenantTransaction } = await import("@/lib/db")
+    const guc = await tenantTransaction(ORG_A, USER_A, async (tx) =>
+      tx.$queryRawUnsafe<{ o: string | null; u: string | null }[]>(
+        "SELECT app.current_org() AS o, app.current_user() AS u"
+      )
     )
-      .toString()
-      .trim()
-    expect(grep).toBe("")
+    expect(guc[0].o).toBe(ORG_A)
+    expect(guc[0].u).toBe(USER_A)
   })
 
   it("DOCUMENTADO COMO DEUDA (no FORCE RLS): sin app.current_org fijado, app_runtime ve filas de ambas orgs", async () => {

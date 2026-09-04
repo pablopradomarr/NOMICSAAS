@@ -7,7 +7,7 @@ import { NextResponse } from "next/server"
 
 export async function GET(request: Request, { params }: { params: Promise<{ fileId: string }> }) {
   const { fileId } = await params
-  const { db, user } = await requireOrg("VIEWER")
+  const { db, org } = await requireOrg("VIEWER")
 
   if (!fileId) {
     return new NextResponse("No fileId provided", { status: 400 })
@@ -22,7 +22,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     }
 
     // Check if file exists
-    const fullFilePath = fullPathForFile(user, file)
+    const fullFilePath = fullPathForFile(org, file)
     const isFileExists = await fileExists(fullFilePath)
     if (!isFileExists) {
       return new NextResponse(`File not found on disk: ${file.path}`, { status: 404 })

@@ -10,7 +10,7 @@ vi.mock("@/lib/db", () => {
     tenantDb: vi.fn(() => ({})),
   }
 })
-vi.mock("@/lib/files", () => ({ getDirectorySize: vi.fn(), getUserUploadsDirectory: vi.fn(() => "dir") }))
+vi.mock("@/lib/files", () => ({ getDirectorySize: vi.fn(), getOrganizationUploadsDirectory: vi.fn(() => "dir") }))
 vi.mock("@/models/users", () => ({ updateUser: vi.fn() }))
 vi.mock("@/lib/email-sync/imap-client", () => ({ realImapClient: { fetchMessages: vi.fn() } }))
 

@@ -5,12 +5,13 @@ import { AppSidebar } from "@/components/sidebar/sidebar"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { isSubscriptionExpired } from "@/lib/auth"
-import { requireOrg, roleSatisfies } from "@/lib/authz"
+import { AuthzError, requireOrg, roleSatisfies } from "@/lib/authz"
 import config from "@/lib/config"
 import { getApps } from "@/app/(app)/apps/common"
 import { getUnsortedFilesCount } from "@/models/files"
 import { getUserMemberships } from "@/models/memberships"
 import type { Metadata, Viewport } from "next"
+import { redirect } from "next/navigation"
 import "../globals.css"
 import { NotificationProvider } from "./context"
 
@@ -33,7 +34,20 @@ export const viewport: Viewport = {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const { db, org, user, role } = await requireOrg("VIEWER")
+  // E1-fix (#9): un usuario autenticado SIN membresía activa no puede ver esta
+  // sección, pero tampoco debe recibir un 500: se le manda a crear su primera
+  // organización (`/organizations/new` vive en el grupo `(onboarding)`, fuera de
+  // este layout, así que no hay bucle de redirección).
+  let context
+  try {
+    context = await requireOrg("VIEWER")
+  } catch (error) {
+    if (error instanceof AuthzError && error.code === "NO_ORGANIZATION") {
+      redirect("/organizations/new")
+    }
+    throw error
+  }
+  const { db, org, user, role } = context
   const [unsortedFilesCount, apps, memberships] = await Promise.all([
     getUnsortedFilesCount(db),
     getApps(),

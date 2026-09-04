@@ -11,7 +11,8 @@ const EDITOR = "dddddddd-dddd-4ddd-8ddd-dddddddddd11"
 const EDITOR_EMAIL = "editor@test.local"
 
 const cookieStore = { get: () => undefined, set: () => {}, delete: () => {} }
-vi.mock("next/headers", () => ({ cookies: async () => cookieStore }))
+// `headers()` lo usa el rate limit de invitaciones (E1-fix #14).
+vi.mock("next/headers", () => ({ cookies: async () => cookieStore, headers: async () => new Headers() }))
 vi.mock("next/cache", () => ({ revalidatePath: () => {}, revalidateTag: () => {} }))
 vi.mock("next/navigation", () => ({
   redirect: () => {
@@ -29,7 +30,6 @@ vi.mock("@/lib/auth", () => ({
 }))
 
 const { prisma } = await import("@/lib/db")
-const { AuthzError } = await import("@/lib/authz-core")
 const { generateInvitationToken, hashInvitationToken } = await import("@/models/invitations")
 
 let editorUser: { id: string; email: string; name: string }
@@ -79,7 +79,8 @@ describe.skipIf(!TEST_DATABASE_URL)("organizaciones, miembros e invitaciones", (
     const formData = new FormData()
     formData.set("email", "nueva@test.local")
     formData.set("role", "VIEWER")
-    await expect(inviteMemberAction(null, formData)).rejects.toThrow(AuthzError)
+    // E1-fix (#24): `withOrg` traduce AuthzError a ActionState en vez de propagarlo.
+    await expect(inviteMemberAction(null, formData)).resolves.toEqual({ success: false, error: "Sin permiso" })
     expect(await prisma.invitation.count({ where: { organizationId: ORG_A } })).toBe(0)
   })
 
@@ -88,7 +89,7 @@ describe.skipIf(!TEST_DATABASE_URL)("organizaciones, miembros e invitaciones", (
     const formData = new FormData()
     formData.set("userId", EDITOR)
     formData.set("role", "ADMIN")
-    await expect(changeMemberRoleAction(null, formData)).rejects.toThrow(AuthzError)
+    await expect(changeMemberRoleAction(null, formData)).resolves.toEqual({ success: false, error: "Sin permiso" })
     expect((await prisma.membership.findFirst({ where: { organizationId: ORG_A, userId: EDITOR } }))?.role).toBe(
       "EDITOR"
     )

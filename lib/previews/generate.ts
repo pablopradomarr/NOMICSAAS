@@ -1,21 +1,21 @@
 import config from "@/lib/config"
 import { resizeImage } from "@/lib/previews/images"
 import { pdfToImages } from "@/lib/previews/pdf"
-import { User } from "@/prisma/client"
+import { OrganizationRef } from "@/lib/files"
 import { DEFAULT_PREVIEW_FORMAT, PreviewFormat } from "./format"
 
 export async function generateFilePreviews(
-  user: User,
+  organization: OrganizationRef,
   filePath: string,
   mimetype: string,
   format: PreviewFormat = DEFAULT_PREVIEW_FORMAT
 ): Promise<{ contentType: string; previews: string[] }> {
   if (mimetype === "application/pdf") {
-    const { contentType, pages } = await pdfToImages(user, filePath, format)
+    const { contentType, pages } = await pdfToImages(organization, filePath, format)
     return { contentType, previews: pages }
   } else if (mimetype.startsWith("image/")) {
     const { contentType, resizedPath } = await resizeImage(
-      user,
+      organization,
       filePath,
       config.upload.images.maxWidth,
       config.upload.images.maxHeight,

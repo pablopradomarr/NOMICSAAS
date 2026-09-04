@@ -5,7 +5,7 @@ import { isSubscriptionExpired } from "@/lib/auth"
 import { requireOrg } from "@/lib/authz"
 import {
   getTransactionFileUploadPath,
-  getUserUploadsDirectory,
+  getOrganizationUploadsDirectory,
   isEnoughStorageToUploadFile,
   safePathJoin,
 } from "@/lib/files"
@@ -135,8 +135,8 @@ export async function saveInvoiceAsTransactionAction(
     const fileUuid = randomUUID()
     const fileName = `invoice-${formData.invoiceNumber}.pdf`
     const relativeFilePath = getTransactionFileUploadPath(fileUuid, fileName, transaction)
-    const userUploadsDirectory = getUserUploadsDirectory(user)
-    const fullFilePath = safePathJoin(userUploadsDirectory, relativeFilePath)
+    const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
+    const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
 
     await mkdir(path.dirname(fullFilePath), { recursive: true })
     await writeFile(fullFilePath, pdfBuffer)

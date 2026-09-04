@@ -10,7 +10,9 @@ services:
       - NODE_ENV=production
       - SELF_HOSTED_MODE=true
       - UPLOAD_PATH=/app/data/uploads
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-taxhacker}
+      - DATABASE_URL=postgresql://app_runtime:app_runtime@postgres:5432/${POSTGRES_DB:-taxhacker}
+      # Migraciones con el rol PROPIETARIO (ADR-0007); el runtime va sin BYPASSRLS.
+      - DIRECT_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-taxhacker}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-}
     volumes:
       - ./data:/app/data
@@ -29,7 +31,9 @@ services:
       - NODE_ENV=production
       - SELF_HOSTED_MODE=true
       - UPLOAD_PATH=/app/data/uploads
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-taxhacker}
+      - DATABASE_URL=postgresql://app_runtime:app_runtime@postgres:5432/${POSTGRES_DB:-taxhacker}
+      # Migraciones con el rol PROPIETARIO (ADR-0007); el runtime va sin BYPASSRLS.
+      - DIRECT_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-taxhacker}
       # Optional override. When unset, both containers use the same persisted secret from ./data.
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-}
     volumes:
