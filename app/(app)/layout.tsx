@@ -5,10 +5,11 @@ import { AppSidebar } from "@/components/sidebar/sidebar"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { isSubscriptionExpired } from "@/lib/auth"
-import { requireOrg } from "@/lib/authz"
+import { requireOrg, roleSatisfies } from "@/lib/authz"
 import config from "@/lib/config"
 import { getApps } from "@/app/(app)/apps/common"
 import { getUnsortedFilesCount } from "@/models/files"
+import { getUserMemberships } from "@/models/memberships"
 import type { Metadata, Viewport } from "next"
 import "../globals.css"
 import { NotificationProvider } from "./context"
@@ -32,8 +33,20 @@ export const viewport: Viewport = {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const { db, org, user } = await requireOrg("VIEWER")
-  const [unsortedFilesCount, apps] = await Promise.all([getUnsortedFilesCount(db), getApps()])
+  const { db, org, user, role } = await requireOrg("VIEWER")
+  const [unsortedFilesCount, apps, memberships] = await Promise.all([
+    getUnsortedFilesCount(db),
+    getApps(),
+    getUserMemberships(user.id),
+  ])
+
+  // El switcher es un Client Component: recibe las organizaciones ya resueltas.
+  const organizations = memberships.map((membership) => ({
+    id: membership.organizationId,
+    name: membership.organization.name,
+    subtitle: membership.organization.taxId ?? membership.organization.baseCurrency,
+    role: membership.role,
+  }))
 
   // Identidad del usuario + plan/cuota de la organización activa (T11).
   const userProfile = {
@@ -62,6 +75,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               name: app.manifest.name,
               icon: app.manifest.icon,
             }))}
+            organizations={organizations}
+            activeOrganizationId={org.id}
+            isAdmin={role === "ADMIN"}
+            canEdit={roleSatisfies(role, "EDITOR")}
           />
           <SidebarInset className="w-full h-full mt-[60px] md:mt-0 overflow-auto">
             {isSubscriptionExpired(org) && <SubscriptionExpired />}

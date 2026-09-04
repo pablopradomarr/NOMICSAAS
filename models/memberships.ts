@@ -20,6 +20,19 @@ export async function getUserMemberships(userId: string): Promise<MembershipWith
   })
 }
 
+export type MembershipWithUser = Membership & {
+  user: { id: string; email: string; name: string; avatar: string | null }
+}
+
+/** Miembros con su identidad, para la tabla de `/settings/members`. */
+export async function listOrganizationMembersWithUsers(organizationId: string): Promise<MembershipWithUser[]> {
+  return await prisma.membership.findMany({
+    where: { organizationId },
+    include: { user: { select: { id: true, email: true, name: true, avatar: true } } },
+    orderBy: [{ createdAt: "asc" }],
+  })
+}
+
 export async function listOrganizationMembers(organizationId: string): Promise<Membership[]> {
   return await prisma.membership.findMany({
     where: { organizationId },

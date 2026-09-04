@@ -20,6 +20,7 @@ import {
 import { UserProfile } from "@/lib/auth"
 import config from "@/lib/config"
 import {
+  Building2,
   ClockArrowUp,
   Coins,
   DatabaseBackup,
@@ -33,12 +34,14 @@ import {
   Tags,
   Upload,
   User,
+  Users,
 } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect } from "react"
 import { Blinker } from "./blinker"
+import { OrgSwitcher, OrganizationOption } from "./org-switcher"
 import { SidebarMenuItemWithHighlight } from "./sidebar-item"
 import SidebarUser from "./sidebar-user"
 
@@ -49,13 +52,15 @@ type SidebarApp = {
 }
 
 const settingsItems = [
-  { title: "Profile & Plan", href: "/settings/profile", icon: User },
-  { title: "LLM settings", href: "/settings/llm", icon: Sparkles },
-  { title: "Fields", href: "/settings/fields", icon: FormInput },
-  { title: "Categories", href: "/settings/categories", icon: Tags },
-  { title: "Projects", href: "/settings/projects", icon: FolderKanban },
-  { title: "Currencies", href: "/settings/currencies", icon: Coins },
-  { title: "Backup & Restore", href: "/settings/backups", icon: DatabaseBackup },
+  { title: "Profile & Plan", href: "/settings/profile", icon: User, adminOnly: false },
+  { title: "Organización", href: "/settings/organization", icon: Building2, adminOnly: false },
+  { title: "Miembros", href: "/settings/members", icon: Users, adminOnly: false },
+  { title: "LLM settings", href: "/settings/llm", icon: Sparkles, adminOnly: true },
+  { title: "Fields", href: "/settings/fields", icon: FormInput, adminOnly: true },
+  { title: "Categories", href: "/settings/categories", icon: Tags, adminOnly: true },
+  { title: "Projects", href: "/settings/projects", icon: FolderKanban, adminOnly: false },
+  { title: "Currencies", href: "/settings/currencies", icon: Coins, adminOnly: false },
+  { title: "Backup & Restore", href: "/settings/backups", icon: DatabaseBackup, adminOnly: true },
 ]
 
 export function AppSidebar({
@@ -63,11 +68,19 @@ export function AppSidebar({
   unsortedFilesCount,
   isSelfHosted,
   apps,
+  organizations,
+  activeOrganizationId,
+  isAdmin,
+  canEdit,
 }: {
   profile: UserProfile
   unsortedFilesCount: number
   isSelfHosted: boolean
   apps: SidebarApp[]
+  organizations: OrganizationOption[]
+  activeOrganizationId: string
+  isAdmin: boolean
+  canEdit: boolean
 }) {
   const { open, setOpenMobile } = useSidebar()
   const pathname = usePathname()
@@ -84,21 +97,32 @@ export function AppSidebar({
     <>
       <Sidebar variant="inset" collapsible="icon">
         <SidebarHeader>
-          <Link href="/" className="flex min-w-0 items-center gap-2">
-            <Image src="/logo/256.png" alt="Logo" className="h-10 w-10 shrink-0 rounded-lg" width={40} height={40} />
+          <Link href="/" className="flex min-w-0 items-center gap-2 px-1 py-1">
+            <Image src="/logo/256.png" alt="Logo" className="h-7 w-7 shrink-0 rounded-lg" width={28} height={28} />
             <div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
-              <span className="truncate font-semibold text-base text-black">{accountTitle}</span>
+              <span className="truncate text-xs text-muted-foreground">{accountTitle}</span>
               <span className="truncate text-xs text-muted-foreground">{accountSubtitle}</span>
             </div>
           </Link>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <OrgSwitcher
+                organizations={organizations}
+                activeOrganizationId={activeOrganizationId}
+                canManageMembers={isAdmin}
+              />
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup>
-            <UploadButton className="w-full mt-4 mb-2">
-              <Upload className="h-4 w-4" />
-              {open ? <span>Upload</span> : ""}
-            </UploadButton>
-          </SidebarGroup>
+          {canEdit && (
+            <SidebarGroup>
+              <UploadButton className="w-full mt-4 mb-2">
+                <Upload className="h-4 w-4" />
+                {open ? <span>Upload</span> : ""}
+              </UploadButton>
+            </SidebarGroup>
+          )}
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
@@ -167,7 +191,9 @@ export function AppSidebar({
             <SidebarGroupLabel>Settings</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {settingsItems.map((item) => (
+                {settingsItems
+                  .filter((item) => !item.adminOnly || isAdmin)
+                  .map((item) => (
                   <SidebarMenuItemWithHighlight key={item.href} href={item.href}>
                     <SidebarMenuButton asChild>
                       <Link href={item.href}>
@@ -186,14 +212,16 @@ export function AppSidebar({
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
-                    <Link href="/import/csv">
-                      <Import />
-                      Import from CSV
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                {canEdit && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <Link href="/import/csv">
+                        <Import />
+                        Import from CSV
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
                 {isSelfHosted && (
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild>

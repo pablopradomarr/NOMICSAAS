@@ -26,6 +26,11 @@ export function isInvitationExpired(invitation: Pick<Invitation, "expiresAt">, n
   return invitation.expiresAt.getTime() <= now.getTime()
 }
 
+/** El token viaja por PATH, nunca por query: no debe acabar en `Referer` ni en logs. */
+export function buildInvitationUrl(baseUrl: string, token: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/invite/${token}`
+}
+
 export function normalizeInvitationEmail(email: string): string {
   return email.trim().toLowerCase()
 }

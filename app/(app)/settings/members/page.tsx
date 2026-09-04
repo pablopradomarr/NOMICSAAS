@@ -1,0 +1,96 @@
+import { InviteMemberForm } from "@/components/settings/invite-member-form"
+import { MemberRow, MembersTable } from "@/components/settings/members-table"
+import { SettingsPageHeader } from "@/components/settings/page-header"
+import { InvitationRow, PendingInvitationsTable } from "@/components/settings/pending-invitations-table"
+import { Separator } from "@/components/ui/separator"
+import { requireOrg } from "@/lib/authz"
+import { isInvitationExpired, listInvitations, markInvitationExpired } from "@/models/invitations"
+import { listOrganizationMembersWithUsers } from "@/models/memberships"
+import { InvitationStatus, Role } from "@/prisma/client"
+import { Metadata } from "next"
+
+export const metadata: Metadata = {
+  title: "Miembros",
+}
+
+const dateFormatter = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
+
+function formatDate(date: Date | null): string {
+  return date ? dateFormatter.format(date) : "—"
+}
+
+export default async function MembersSettingsPage() {
+  const { db, org, user, role } = await requireOrg("VIEWER")
+  const canManage = role === Role.ADMIN
+
+  const members = await listOrganizationMembersWithUsers(org.id)
+  const adminCount = members.filter((membership) => membership.role === Role.ADMIN).length
+
+  // Limpieza perezosa: las PENDING caducadas se marcan EXPIRED al listarlas (§6.6).
+  const now = new Date()
+  const pending = await listInvitations(db, InvitationStatus.PENDING)
+  const live = []
+  for (const invitation of pending) {
+    if (isInvitationExpired(invitation, now)) {
+      await markInvitationExpired(db, invitation.id)
+    } else {
+      live.push(invitation)
+    }
+  }
+
+  const nameByUserId = new Map(members.map((membership) => [membership.userId, membership.user.name || membership.user.email]))
+
+  const memberRows: MemberRow[] = members.map((membership) => ({
+    userId: membership.userId,
+    name: membership.user.name,
+    email: membership.user.email,
+    role: membership.role,
+    memberSince: formatDate(membership.acceptedAt ?? membership.createdAt),
+    isLastAdmin: membership.role === Role.ADMIN && adminCount <= 1,
+    isCurrentUser: membership.userId === user.id,
+  }))
+
+  const invitationRows: InvitationRow[] = live.map((invitation) => ({
+    id: invitation.id,
+    email: invitation.email,
+    role: invitation.role,
+    invitedBy: nameByUserId.get(invitation.invitedById) ?? "—",
+    expiresAt: formatDate(invitation.expiresAt),
+  }))
+
+  return (
+    <div className="space-y-8">
+      <SettingsPageHeader
+        title="Miembros"
+        description="Quién tiene acceso a esta organización y con qué perfil. La autorización se comprueba siempre en el servidor."
+      />
+
+      <section className="space-y-3">
+        <h3 className="text-lg font-semibold">Miembros de {org.name}</h3>
+        <MembersTable members={memberRows} canManage={canManage} />
+        {!canManage && (
+          <p className="text-sm text-muted-foreground">
+            Sólo un administrador puede invitar, cambiar perfiles o dar de baja a un miembro.
+          </p>
+        )}
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <h3 className="text-lg font-semibold">Invitaciones pendientes</h3>
+        <PendingInvitationsTable invitations={invitationRows} canManage={canManage} />
+      </section>
+
+      {canManage && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <h3 className="text-lg font-semibold">Invitar a alguien</h3>
+            <InviteMemberForm />
+          </section>
+        </>
+      )}
+    </div>
+  )
+}

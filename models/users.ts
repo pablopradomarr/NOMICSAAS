@@ -65,6 +65,23 @@ export async function getOrCreateCloudUser(
   return user
 }
 
+/**
+ * D-3: la invitación ES la autorización de alta, por eso este es el único punto
+ * que puede crear una cuenta con `DISABLE_SIGNUP=true`. Sólo debe invocarse
+ * cuando existe una invitación PENDING y no caducada para ese email.
+ * A diferencia del alta cloud, NO crea organización personal: el usuario entra
+ * en la organización que le invita.
+ */
+export async function getOrCreateInvitedUser(email: string, name?: string) {
+  const normalizedEmail = email.toLowerCase()
+  const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+  if (existing) return existing
+
+  return await prisma.user.create({
+    data: { email: normalizedEmail, name: name || normalizedEmail.split("@")[0] },
+  })
+}
+
 export const getUserById = cache(async (id: string) => {
   return await prisma.user.findUnique({
     where: { id },

@@ -1,0 +1,210 @@
+"use server"
+
+import { invitationIdSchema, inviteMemberFormSchema } from "@/forms/invitations"
+import { changeMemberRoleFormSchema, removeMemberFormSchema } from "@/forms/memberships"
+import { ActionState } from "@/lib/actions"
+import { requireOrg } from "@/lib/authz"
+import config from "@/lib/config"
+import { sendOrganizationInviteEmail } from "@/lib/email"
+import { ROLE_LABELS } from "@/lib/organization-options"
+import {
+  INVITATION_TTL_DAYS,
+  buildInvitationUrl,
+  createInvitation,
+  getInvitationById,
+  normalizeInvitationEmail,
+  resendInvitation,
+  revokeInvitation,
+} from "@/models/invitations"
+import {
+  countAdmins,
+  getMembership,
+  removeMembership,
+  updateMembershipRole,
+} from "@/models/memberships"
+import { getUserByEmail } from "@/models/users"
+import { Role } from "@/prisma/client"
+import { revalidatePath } from "next/cache"
+
+const MEMBERS_PATH = "/settings/members"
+
+export type InviteResult = {
+  /** Enlace de aceptación; sólo se devuelve cuando no hay proveedor de email. */
+  inviteUrl?: string
+  emailSent: boolean
+}
+
+/** T14 — invitar a un miembro. Sólo ADMIN. */
+export async function inviteMemberAction(
+  _prevState: ActionState<InviteResult> | null,
+  formData: FormData
+): Promise<ActionState<InviteResult>> {
+  const { db, org, user } = await requireOrg("ADMIN")
+
+  const validated = inviteMemberFormSchema.safeParse(Object.fromEntries(formData))
+  if (!validated.success) {
+    return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
+  }
+
+  const email = normalizeInvitationEmail(validated.data.email)
+
+  // ¿Ya es miembro? No se invita dos veces a la misma persona.
+  const invitedUser = await getUserByEmail(email)
+  if (invitedUser && (await getMembership(org.id, invitedUser.id))) {
+    return { success: false, error: "Esa persona ya es miembro de la organización" }
+  }
+
+  // Sólo puede haber una invitación PENDING viva por (organización, email):
+  // se revoca la anterior antes de crear la nueva (índice parcial único).
+  const pending = await db.invitation.findFirst({ where: { email, status: "PENDING" } })
+  if (pending) {
+    await revokeInvitation(db, pending.id, new Date())
+  }
+
+  const { invitation, token } = await createInvitation(db, {
+    email,
+    role: validated.data.role,
+    invitedById: user.id,
+    now: new Date(),
+  })
+
+  const inviteUrl = buildInvitationUrl(config.app.baseURL, token)
+  let emailSent = false
+  try {
+    emailSent = await sendOrganizationInviteEmail({
+      email,
+      organizationName: org.name,
+      inviterName: user.name || user.email,
+      roleLabel: ROLE_LABELS[invitation.role] ?? invitation.role,
+      inviteUrl,
+      expiresInDays: INVITATION_TTL_DAYS,
+    })
+  } catch {
+    emailSent = false
+  }
+
+  // TODO(E2): auditLog("membership.invite", { email, role: invitation.role })
+  revalidatePath(MEMBERS_PATH)
+  return { success: true, data: { emailSent, inviteUrl: emailSent ? undefined : inviteUrl } }
+}
+
+/** Rota el token y reinicia la caducidad. Sólo ADMIN. */
+export async function resendInvitationAction(
+  _prevState: ActionState<InviteResult> | null,
+  formData: FormData
+): Promise<ActionState<InviteResult>> {
+  const { db, org, user } = await requireOrg("ADMIN")
+
+  const validated = invitationIdSchema.safeParse(Object.fromEntries(formData))
+  if (!validated.success) {
+    return { success: false, error: "Invitación no encontrada" }
+  }
+
+  const existing = await getInvitationById(db, validated.data.invitationId)
+  if (!existing || existing.status === "ACCEPTED") {
+    return { success: false, error: "Esa invitación ya no se puede reenviar" }
+  }
+
+  const { invitation, token } = await resendInvitation(db, existing.id, new Date())
+  const inviteUrl = buildInvitationUrl(config.app.baseURL, token)
+
+  let emailSent = false
+  try {
+    emailSent = await sendOrganizationInviteEmail({
+      email: invitation.email,
+      organizationName: org.name,
+      inviterName: user.name || user.email,
+      roleLabel: ROLE_LABELS[invitation.role] ?? invitation.role,
+      inviteUrl,
+      expiresInDays: INVITATION_TTL_DAYS,
+    })
+  } catch {
+    emailSent = false
+  }
+
+  revalidatePath(MEMBERS_PATH)
+  return { success: true, data: { emailSent, inviteUrl: emailSent ? undefined : inviteUrl } }
+}
+
+/** REVOKED es terminal. Sólo ADMIN. */
+export async function revokeInvitationAction(
+  _prevState: ActionState<null> | null,
+  formData: FormData
+): Promise<ActionState<null>> {
+  const { db } = await requireOrg("ADMIN")
+
+  const validated = invitationIdSchema.safeParse(Object.fromEntries(formData))
+  if (!validated.success) {
+    return { success: false, error: "Invitación no encontrada" }
+  }
+
+  const existing = await getInvitationById(db, validated.data.invitationId)
+  if (!existing) {
+    return { success: false, error: "Invitación no encontrada" }
+  }
+  if (existing.status === "ACCEPTED") {
+    return { success: false, error: "Esa invitación ya se ha aceptado" }
+  }
+
+  await revokeInvitation(db, existing.id, new Date())
+  // TODO(E2): auditLog("invitation.revoke", { invitationId: existing.id })
+  revalidatePath(MEMBERS_PATH)
+  return { success: true }
+}
+
+/** Invariante: la organización debe conservar al menos un ADMIN. */
+export async function changeMemberRoleAction(
+  _prevState: ActionState<null> | null,
+  formData: FormData
+): Promise<ActionState<null>> {
+  const { org } = await requireOrg("ADMIN")
+
+  const validated = changeMemberRoleFormSchema.safeParse(Object.fromEntries(formData))
+  if (!validated.success) {
+    return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
+  }
+
+  const membership = await getMembership(org.id, validated.data.userId)
+  if (!membership) {
+    return { success: false, error: "Esa persona no es miembro de la organización" }
+  }
+  if (membership.role === validated.data.role) {
+    return { success: true }
+  }
+  if (membership.role === Role.ADMIN && validated.data.role !== Role.ADMIN && (await countAdmins(org.id)) <= 1) {
+    return { success: false, error: "La organización debe conservar al menos un administrador" }
+  }
+
+  await updateMembershipRole(org.id, validated.data.userId, validated.data.role)
+  // TODO(E2): auditLog("membership.changeRole", { userId, from: membership.role, to: validated.data.role })
+  revalidatePath(MEMBERS_PATH)
+  revalidatePath("/", "layout")
+  return { success: true }
+}
+
+/** Baja de un miembro. Exige motivo (queda en AuditLog en E2). */
+export async function removeMemberAction(
+  _prevState: ActionState<null> | null,
+  formData: FormData
+): Promise<ActionState<null>> {
+  const { org } = await requireOrg("ADMIN")
+
+  const validated = removeMemberFormSchema.safeParse(Object.fromEntries(formData))
+  if (!validated.success) {
+    return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
+  }
+
+  const membership = await getMembership(org.id, validated.data.userId)
+  if (!membership) {
+    return { success: false, error: "Esa persona no es miembro de la organización" }
+  }
+  if (membership.role === Role.ADMIN && (await countAdmins(org.id)) <= 1) {
+    return { success: false, error: "La organización debe conservar al menos un administrador" }
+  }
+
+  await removeMembership(org.id, validated.data.userId)
+  // TODO(E2): auditLog("membership.remove", { userId, reason: validated.data.reason })
+  revalidatePath(MEMBERS_PATH)
+  revalidatePath("/", "layout")
+  return { success: true }
+}
