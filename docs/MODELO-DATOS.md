@@ -3,7 +3,7 @@
 Convenciones: ids `uuid`; dinero `Int` céntimos (`BigInt` solo en agregados); fechas contables `@db.Date`; toda tabla de negocio con `organizationId` + uniques/índices compuestos; `createdAt/updatedAt`; nada de negocio se borra físicamente si tiene dependientes. **Nombres físicos en snake_case obligatorios**: `@@map("journal_lines")` y `@map("organization_id")` en toda tabla/campo nuevo (el SQL de RLS, triggers e informes usa snake_case). **Anulación = contra-asiento** (`reversesEntryId`); `voidedAt/voidedBy/voidReason` en `JournalEntry` son informativos y **ninguna query filtra por ellos** (el contra-asiento ya neutraliza el importe).
 
 ## Heredado de TaxHacker (se conserva, se añade `organizationId`)
-`User`, `Session`, `Account`, `Verification` (auth) · `Setting` (+ `version`, `updatedAt`) · `Category`, `Field`, `Currency`, `File` (+ `sha256`, − `cachedParseResult`), `Transaction` (+ `journalEntryId?`, `status: DRAFT|PROPOSED|POSTED|VOID`, `extractionRunId?`), `AppData`, `Progress`. `Project` heredado se sustituye por el `Project` analítico (migración: proyectos existentes → `Project` con LN `GENERAL`).
+`User`, `Session`, `Account` (auth; **conserva el nombre `Account` — la cuenta contable es `LedgerAccount`**), `Verification` (auth) · `Setting` (+ `version`, `updatedAt`) · `Category`, `Field`, `Currency`, `File` (+ `sha256`, − `cachedParseResult`), `Transaction` (+ `journalEntryId?`, `status: DRAFT|PROPOSED|POSTED|VOID`, `extractionRunId?`), `AppData`, `Progress`. `Project` heredado se sustituye por el `Project` analítico (migración: proyectos existentes → `Project` con LN `GENERAL`).
 
 ## Tenancy
 ```prisma
@@ -13,19 +13,47 @@ enum Role { ADMIN EDITOR VIEWER }   enum PgcVariant { GENERAL PYMES }
 ```
 
 ## Plan de cuentas e impuestos
+> Actualizado por **E2** (`docs/design/E2-plan-cuentas.md` ronda 2) tras la validación contable (`docs/design/E2-validacion-contable.md`). El modelo TypeScript se llama **`LedgerAccount`**, no `Account`: ese nombre lo ocupa better-auth y renombrarlo rompería el login (`prismaAdapter` resuelve los modelos por nombre). El nombre físico es `accounts`, que es lo que ven RLS, triggers e informes.
+
 ```prisma
-model Account { id; organizationId; code String; name String; level Int; parentCode String?; nature Nature; statement Statement?; epigraph String?; analyticType AnalyticType?; cashflowCategory CashflowCategory?; isPostable Boolean; isActive Boolean true; isSystem Boolean false; createdAt; updatedAt
-  @@unique([organizationId, code]) @@index([organizationId, parentCode]) }
+model LedgerAccount { id; organizationId; code String @db.VarChar(12); name String; level Int; parentCode String?; nature Nature; statement Statement?; epigraph String?; epigraphPymes String?; bidirectional Boolean false; isContra Boolean false; analyticType AnalyticType?; cashflowCategory CashflowCategory?; isPostable Boolean true; isActive Boolean true; isSystem Boolean false; origin AccountOrigin MANUAL; createdAt; updatedAt
+  @@unique([organizationId, code]) @@index([organizationId, parentCode]) @@index([organizationId, isActive, isPostable]) @@map("accounts") }
 enum Nature { DEUDORA ACREEDORA }
 enum Statement { BALANCE_ACTIVO BALANCE_PASIVO BALANCE_PN PYG ECPN }
-enum AnalyticType { INGRESO_DIRECTO COSTE_DIRECTO_MC1 COSTE_DIRECTO_MC2 INDIRECTO_CECO AMORTIZACION_DETERIORO FINANCIERO EXTRAORDINARIO NO_ANALITICO }
+enum AnalyticType { INGRESO_DIRECTO COSTE_DIRECTO_MC1 COSTE_DIRECTO_MC2 INDIRECTO_CECO AMORTIZACION_DETERIORO FINANCIERO EXTRAORDINARIO NO_ANALITICO }   // EXTRAORDINARIO sin uso en el seed: el PGC 2007 suprimió el resultado extraordinario
 enum CashflowCategory { OPERATING INVESTING FINANCING }
-model OrganizationAccountMap { id; organizationId; key AccountKey; accountCode String; @@unique([organizationId,key]) }
-enum AccountKey { CLIENTES PROVEEDORES ACREEDORES BANCO_DEFAULT CAJA IVA_SOPORTADO IVA_REPERCUTIDO IRPF_RETENIDO_CLIENTES IRPF_A_PAGAR HP_ACREEDORA_IVA HP_DEUDORA_IVA SS_ACREEDORA REMUNERACIONES_PENDIENTES RESULTADO_EJERCICIO VENTAS_DEFAULT COMPRAS_DEFAULT }
-// Defaults del seed (existen en npgc.csv): CLIENTES 430 · PROVEEDORES 400 · ACREEDORES 410 · BANCO_DEFAULT 572 · CAJA 570 · IVA_SOPORTADO 472 · IVA_REPERCUTIDO 477 · IRPF_RETENIDO_CLIENTES 473 · IRPF_A_PAGAR 4751 · HP_ACREEDORA_IVA 4750 · HP_DEUDORA_IVA 4700 · SS_ACREEDORA 476 · REMUNERACIONES_PENDIENTES 465 · RESULTADO_EJERCICIO 129 · VENTAS_DEFAULT 705 · COMPRAS_DEFAULT 600. `importNPGC` crea opcionalmente subcuentas 4720/4770 (`isSystem`) si la organización lo pide.
-model TaxRate { id; organizationId; code String; kind TaxKind; ratePermille Int; accountCode String; counterAccountCode String?; validFrom Date; validTo Date?; @@unique([organizationId,code,validFrom]) }
+enum AccountOrigin { SEED MANUAL CSV_IMPORT }   // idempotencia del seed sin pisar ediciones del usuario
+// `epigraph` = modelo normal · `epigraphPymes` = modelo abreviado/PYMES (numeración propia). Se guardan LAS DOS: cambiar de variante no obliga a reimportar. Selector único: epigraphFor(account, variant).
+// `bidirectional` (7 cuentas: 551, 552, 5523–5525, 554, 555): saldo indistinto, el balance las reclasifica POR SIGNO (E6); statement/epigraph guardan la ruta deudora.
+// `isContra` (165 cuentas: 28x, 29x, 39x, 49x, 59x, 406, 437, 606/608/609, 706/708/709): el renderizador RESTA, no suma.
+model OrganizationAccountMap { id; organizationId; key AccountKey; accountCode String; @@unique([organizationId,key]) @@map("organization_account_maps") }
+enum AccountKey {  // 57 claves. Las 43 primeras son de mapeo OBLIGATORIO (E3/E8); las 14 últimas se declaran ahora y las mapea su épica.
+  CLIENTES PROVEEDORES ACREEDORES BANCO_DEFAULT CAJA IVA_SOPORTADO IVA_REPERCUTIDO IRPF_RETENIDO_CLIENTES IRPF_A_PAGAR
+  HP_ACREEDORA_IVA HP_DEUDORA_IVA SS_ACREEDORA REMUNERACIONES_PENDIENTES RESULTADO_EJERCICIO VENTAS_DEFAULT COMPRAS_DEFAULT
+  SUBCONTRATACION_DEFAULT ANTICIPOS_PROVEEDORES ANTICIPOS_CLIENTES DESCUENTO_PP_VENTAS DESCUENTO_PP_COMPRAS
+  DEVOLUCION_VENTAS DEVOLUCION_COMPRAS RAPPEL_VENTAS RAPPEL_COMPRAS REDONDEO_GASTO REDONDEO_INGRESO
+  IRPF_PROFESIONALES_A_PAGAR IRPF_ALQUILERES_A_PAGAR IRPF_TRABAJO_A_PAGAR IVA_SOPORTADO_ISP IVA_REPERCUTIDO_ISP
+  AJUSTE_IVA_NEGATIVO AJUSTE_IVA_POSITIVO IMPUESTO_BENEFICIOS_GASTO HP_ACREEDORA_IS HP_DEUDORA_IS
+  ACTIVO_IMPUESTO_DIFERIDO PASIVO_IMPUESTO_DIFERIDO PERIODIFICACION_GASTO PERIODIFICACION_INGRESO
+  DIFERENCIA_CAMBIO_NEGATIVA DIFERENCIA_CAMBIO_POSITIVA
+  RETENCIONES_CAPITAL_SOPORTADAS SS_DEUDORA ANTICIPOS_REMUNERACIONES SUELDOS_DEFAULT SS_EMPRESA_DEFAULT
+  CLIENTES_DUDOSO_COBRO DETERIORO_CLIENTES DOTACION_DETERIORO_CREDITOS REVERSION_DETERIORO_CREDITOS
+  PERDIDA_CREDITOS_INCOBRABLES CUENTA_PUENTE_TESORERIA COMISIONES_BANCARIAS REMANENTE RESULTADOS_NEGATIVOS_ANTERIORES }
+// Defaults del seed: CLIENTES 430 · PROVEEDORES 400 · ACREEDORES 410 · BANCO_DEFAULT 572 · CAJA 570 · IVA_SOPORTADO 472 · IVA_REPERCUTIDO 477 · IRPF_RETENIDO_CLIENTES 473 · IRPF_A_PAGAR 4751 · HP_ACREEDORA_IVA 4750 · HP_DEUDORA_IVA 4700 · SS_ACREEDORA 476 · REMUNERACIONES_PENDIENTES 465 · RESULTADO_EJERCICIO 129 · VENTAS_DEFAULT 705 · COMPRAS_DEFAULT 600 · SUBCONTRATACION_DEFAULT 607 · ANTICIPOS_PROVEEDORES 407 · ANTICIPOS_CLIENTES 438 · 706/606/708/608/709/609 · REDONDEO 669/769 · IRPF 47510/47511/47512 · AJUSTE_IVA 634/639 · IS 630/4752/4709 · impuesto diferido 4740/479 · periodificación 480/485 · diferencias de cambio 668/768.
+// `importNpgc(opts.useSubaccounts = true)` (default) crea 5720/4300/4000/4100 y 47510/47511/47512, deja los padres no postables y mapea SIEMPRE a la hoja (I-plan-1).
+// `opts.createSoftwareAccounts = false` (default): 4720/4730/4760/4770 solo bajo demanda o al activar ISP/intracomunitarias, y siempre como SUBCUENTAS de 472/473/476/477.
+model TaxRate { id; organizationId; code String; name String; kind TaxKind; rateBps Int; appliesTo TaxAppliesTo BOTH; accountCode String; counterAccountCode String?; linkedTaxRateId String?; validFrom Date; validTo Date?; isActive Boolean true; isSystem Boolean false; @@unique([organizationId,code,validFrom]) @@map("tax_rates") }
 enum TaxKind { IVA IRPF RECARGO EXENTO }
+enum TaxAppliesTo { SALE PURCHASE BOTH }
+// `rateBps` (puntos básicos), NO `ratePermille`: el recargo de labores del tabaco es 1,75 % = 175 bps y no es entero en tanto por mil.
+// UNA fila por tipo impositivo: `accountCode` = lado venta (477 / 4751), `counterAccountCode` = lado compra (472 / 473). La dirección la fija el asiento tipo. Con inversión del sujeto pasivo se usan LAS DOS en el mismo asiento.
+// `linkedTaxRateId`: un RECARGO apunta al IVA que acompaña (5,2↔21 · 1,4↔10 · 0,5↔4 · 1,75↔tabaco). Tributo distinto, versionable por separado.
+// `validFrom` SIEMPRE explícita (2025-01-01 en los tipos de IVA sembrados): un asiento de 2024 no puede coger el tipo de 2026. No se siembra ningún tipo derogado; IGIC/IPSI se cargan por organización desde el editor.
+// Restricciones SQL: CHECK rate_bps 0..10000 · CHECK kind='EXENTO' ⇒ rate_bps=0 · CHECK valid_to >= valid_from · EXCLUDE USING gist (organization_id, code, daterange(valid_from, valid_to, '[]')) contra solapes de vigencia.
 ```
+Política fiscal por organización (la consume el motor en E3, reglas R-IVA-1…R-IVA-8): `Organization.prorrataPermille Int?`, `Organization.taxRoundingMode TaxRoundingMode` (`PER_TIPO` por defecto: una cuota por tipo impositivo) y `Organization.redondeoToleranciaCents Int` (default 1; por encima, el asiento se bloquea). `Organization.pgcVariant` es **inmutable** en cuanto existe un asiento posteado.
+
+Seed `seeds/npgc.csv` (13 columnas: `codigo,nombre,nivel,padre,grupo,naturaleza,estado_financiero,epigrafe,tipo_analitico,bidireccional,is_contra,pymes,epigrafe_pymes`): 906 filas · **794** en PGC PYMES (`pymes = 1`; el criterio contable —reglas P-01…P-13— vive en `build_npgc.py`, no en TypeScript) · 165 contra-cuentas · 7 bidireccionales.
 
 ## Ejercicios y diario
 ```prisma
@@ -70,7 +98,7 @@ model ReportRun { id; organizationId; type ReportType; periodStart; periodEnd; p
 enum ReportType { DIARIO MAYOR SUMAS_SALDOS BALANCE PYG PYG_ANALITICA CASHFLOW_DIRECTO CASHFLOW_INDIRECTO PRESUPUESTO_REAL DASHBOARD }
 enum Seal { VALIDADO_AUTOMATICAMENTE REQUIERE_REVISION }
 model BankStatementLine { id; organizationId; accountCode; date Date; amountCents Int; description; reference?; sha256; matchedLineId?; importedAt }
-model AuditLog { id; organizationId; userId?; entity String; entityId String; action String; before Json?; after Json?; reason?; ts; @@index([organizationId,ts]) }
+model AuditLog { id; organizationId; userId?; entity String; entityId String; action String; before Json?; after Json?; reason String?; ts; @@index([organizationId,ts]) @@index([organizationId,entity,entityId,ts]) @@map("audit_logs") }   // E2: append-only también en RLS (FOR UPDATE/DELETE USING(false)); se escribe en la MISMA transacción que la mutación
 model ManualReviewFlag { id; organizationId; periodStart; periodEnd; reason; createdBy; clearedAt?; clearedBy? }
 model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int?; lastHash String?; @@unique([organizationId,code,year]) }
 ```
@@ -79,7 +107,9 @@ model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int
 | Regla | Dónde |
 |---|---|
 | Σdebe = Σhaber por asiento | código + constraint trigger diferido |
-| Cuenta postable, activa, de la misma org | código + FK compuesta |
+| Cuenta postable, activa, de la misma org | código + FK compuesta `(organization_id, account_code) → accounts(organization_id, code)` (creada en E2) |
+| Mapa de sistema resoluble (I-plan-1): toda `AccountKey` obligatoria → cuenta existente, activa y postable | `validateAccountMap` + revalidación al sembrar + check de Auditoría |
+| `statement` de cuenta oficial de nivel ≤ 3: inmutable; `epigraph`: ADMIN + motivo + `AuditLog`, prohibido con líneas en ejercicio `CLOSED` | código (R-10a/R-10b) |
 | Fecha en ejercicio OPEN y mes no bloqueado | código + trigger |
 | Numeración sin huecos | `FOR UPDATE` sobre `fiscal_years` |
 | 6/7 con destino analítico si `analyticsRequired` | código |

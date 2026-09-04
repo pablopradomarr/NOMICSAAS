@@ -7,6 +7,30 @@ RD 602/2016 y RD 1/2021). Incluye todas las cuentas de PYMES (RD 1515/2007),
 que son un subconjunto del cuadro general.
 
 Uso:  python3 build_npgc.py [ruta_salida.csv]
+
+Columnas del CSV:
+  codigo, nombre, nivel, padre, grupo, naturaleza, estado_financiero, epigrafe,
+  tipo_analitico, bidireccional, is_contra, pymes, epigrafe_pymes
+
+  bidireccional  1 = cuenta corriente de saldo indistinto (551, 552, 554, 555).
+                 `estado_financiero`/`epigrafe` son el lado DEUDOR; con saldo
+                 acreedor el balance debe reclasificarla al pasivo.
+  is_contra      1 = la naturaleza contradice el estado: la cuenta MINORA su masa
+                 (28x, 29x, 39x, 49x, 59x, 406, 437, 606/608/609, 706/708/709,
+                 103/104/108/109/153/154/190/192...). El renderizador debe restar.
+  pymes          1 = la cuenta existe en el cuadro del PGC PYMES (RD 1515/2007
+                 consolidado con RD 602/2016 y RD 1/2021). Reglas P-01..P-13 en
+                 docs/design/E2-validacion-contable.md §2.1.
+  epigrafe_pymes epigrafe del modelo abreviado/PYMES (numeracion propia de balance
+                 y PyG); vacio si pymes = 0.
+
+Correcciones aplicadas respecto a la version anterior (ver docs/design/E2-validacion-contable.md):
+  D-1  5530-5533: MAPEO estaba cruzado respecto a NATURALEZA_OVERRIDE.
+  D-2  190/192/194 y 1034/1044: de "Deudas a corto plazo" a Patrimonio neto.
+  D-3  tipo_analitico de 65x, 67x, 678, 693/793, 694/695/794, 795, 696-699,
+       77x, 778, 796-799 coherente con el bloque de PyG de su epigrafe.
+  555  naturaleza DEUDORA con estado BALANCE_PASIVO (contradiccion interna) ->
+       lado deudor + marca bidireccional.
 """
 import csv
 import os
@@ -967,9 +991,9 @@ MAPEO = {
     "101": (PN, f"{FP} / I. Capital / 1. Capital escriturado"),
     "102": (PN, f"{FP} / I. Capital / 1. Capital escriturado"),
     "103": (PN, f"{FP} / I. Capital / 2. (Capital no exigido)"),
-    "1034": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
+    "1034": (PN, f"{FP} / I. Capital / 2. (Capital no exigido)"),   # FIX D-2: minora capital, no es deuda
     "104": (PN, f"{FP} / I. Capital / 2. (Capital no exigido)"),
-    "1044": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
+    "1044": (PN, f"{FP} / I. Capital / 2. (Capital no exigido)"),   # FIX D-2
     "108": (PN, f"{FP} / IV. (Acciones y participaciones en patrimonio propias)"),
     "109": (PN, f"{FP} / IV. (Acciones y participaciones en patrimonio propias)"),
     "11": (PN, FP),
@@ -1023,7 +1047,10 @@ MAPEO = {
     "179": (PAS, f"{PNC} / II. Deudas a largo plazo / 1. Obligaciones y otros valores negociables"),
     "18": (PAS, f"{PNC} / II. Deudas a largo plazo / 5. Otros pasivos financieros"),
     "181": (PAS, f"{PNC} / V. Periodificaciones a largo plazo"),
-    "19": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
+    "19": ("", ""),                                                  # FIX D-2: contenedor mixto (190/192/194 -> PN ; 195/197/199 -> PC)
+    "190": (PN, f"{FP} / I. Capital / 1. Capital escriturado"),      # FIX D-2
+    "192": (PN, f"{FP} / I. Capital / 2. (Capital no exigido)"),     # FIX D-2
+    "194": (PN, f"{FP} / I. Capital / 1. Capital escriturado"),      # FIX D-2
     "195": (PAS, f"{PC} / VII. Deuda con características especiales a corto plazo"),
     "197": (PAS, f"{PC} / VII. Deuda con características especiales a corto plazo"),
     "199": (PAS, f"{PC} / VII. Deuda con características especiales a corto plazo"),
@@ -1236,12 +1263,16 @@ MAPEO = {
     "552": (ACT, f"{AC} / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros"),
     "5525": (ACT, f"{AC} / V. Inversiones financieras a corto plazo / 5. Otros activos financieros"),
     "553": ("", ""),
-    "5530": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
-    "5531": (ACT, f"{AC} / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios"),
-    "5532": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
-    "5533": (ACT, f"{AC} / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios"),
+    # FIX D-1: MAPEO estaba cruzado respecto a NATURALEZA_OVERRIDE.
+    # 5530/5532 (deudoras) = derecho de credito frente a socios -> Activo
+    # 5531/5533 (acreedoras) = obligacion frente a socios       -> Pasivo
+    "5530": (ACT, f"{AC} / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios"),
+    "5531": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
+    "5532": (ACT, f"{AC} / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios"),
+    "5533": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
     "554": (ACT, f"{AC} / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios"),
-    "555": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
+    "555": (ACT, f"{AC} / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios"),  # FIX: bidireccional, lado deudor
+
     "556": (PAS, f"{PC} / III. Deudas a corto plazo / 5. Otros pasivos financieros"),
     "5563": (PAS, f"{PC} / IV. Deudas con empresas del grupo y asociadas a corto plazo"),
     "5564": (PAS, f"{PC} / IV. Deudas con empresas del grupo y asociadas a corto plazo"),
@@ -1512,19 +1543,134 @@ NATURALEZA_OVERRIDE = {
 # ---------------------------------------------------------------------------
 # 4. TIPO ANALÍTICO (grupos 6 y 7) — propuesta para empresa de proyectos/servicios
 # ---------------------------------------------------------------------------
+#
+# REGLA DE COHERENCIA (validada en validate_analytic_coherence): el nivel de margen
+# implicito en el tipo analitico debe pertenecer al bloque de PyG del epigrafe:
+#   epigrafes  1-13 -> resultado de explotacion -> INGRESO_DIRECTO / COSTE_DIRECTO_MC1 /
+#                                                  COSTE_DIRECTO_MC2 / INDIRECTO_CECO /
+#                                                  AMORTIZACION_DETERIORO / NO_ANALITICO
+#   epigrafes 14-19 -> resultado financiero      -> FINANCIERO / NO_ANALITICO
+#   epigrafe     20 -> impuesto                  -> NO_ANALITICO
+# EXTRAORDINARIO queda sin uso en el seed a proposito: el PGC 2007 suprimio el
+# resultado extraordinario. Se conserva en el enum para overrides por organizacion.
 TIPO_ANALITICO = {
     "70": "INGRESO_DIRECTO",
     "60": "COSTE_DIRECTO_MC1", "61": "COSTE_DIRECTO_MC1",
     "64": "COSTE_DIRECTO_MC2",
     "71": "COSTE_DIRECTO_MC1",                       # variación existencias productos (signo ingreso)
     "62": "INDIRECTO_CECO", "63": "INDIRECTO_CECO",
+    "65": "INDIRECTO_CECO",                          # FIX D-3: 650/651/659 son gasto de explotación (epígrafe 7)
     "68": "AMORTIZACION_DETERIORO", "69": "AMORTIZACION_DETERIORO", "79": "AMORTIZACION_DETERIORO",  # nivel EBIT
     "66": "FINANCIERO", "76": "FINANCIERO",
-    "67": "EXTRAORDINARIO", "77": "EXTRAORDINARIO",
+    "67": "AMORTIZACION_DETERIORO", "77": "AMORTIZACION_DETERIORO",  # FIX D-3: epígrafe 11, dentro de explotación
+    # --- FIX D-3: coherencia epígrafe <-> nivel de margen -------------------
+    "673": "FINANCIERO", "675": "FINANCIERO",        # epígrafe 18 (resultado financiero)
+    "766": "FINANCIERO", "773": "FINANCIERO", "775": "FINANCIERO",
+    "678": "INDIRECTO_CECO", "778": "INDIRECTO_CECO",  # epígrafe 13 "Otros resultados" (explotación) -> CECO EXTRAORDINARIO
+    "693": "COSTE_DIRECTO_MC1", "793": "COSTE_DIRECTO_MC1",  # epígrafes 2 y 4 (margen bruto)
+    "694": "INDIRECTO_CECO", "695": "INDIRECTO_CECO", "794": "INDIRECTO_CECO",  # epígrafe 7.c) (EBITDA)
+    "795": "INDIRECTO_CECO",                                                    # epígrafe 10 (EBITDA)
+    "696": "FINANCIERO", "697": "FINANCIERO", "698": "FINANCIERO", "699": "FINANCIERO",  # epígrafe 18
+    "796": "FINANCIERO", "797": "FINANCIERO", "798": "FINANCIERO", "799": "FINANCIERO",  # epígrafe 18
     # Excepciones
     "630": "NO_ANALITICO", "633": "NO_ANALITICO", "638": "NO_ANALITICO",  # Impuesto sobre beneficios (nivel Resultado)
     "75": "NO_ANALITICO",                                                  # otros ingresos de gestión: configurable por org
 }
+
+# ---------------------------------------------------------------------------
+# 4.bis MARCAS DE PRESENTACION
+# ---------------------------------------------------------------------------
+# Cuentas corrientes de saldo indistinto: el `estado_financiero` del CSV es el
+# lado DEUDOR; con saldo acreedor el balance debe reclasificarlas al pasivo.
+BIDIRECCIONAL = {"551", "552", "554", "555"}   # 553 y 559 son contenedores mixtos con hijos unidireccionales
+
+# ---------------------------------------------------------------------------
+# 4.ter PGC PYMES (RD 1515/2007 consolidado con RD 602/2016 y RD 1/2021)
+# ---------------------------------------------------------------------------
+# Reglas P-01..P-13 de docs/design/E2-validacion-contable.md §2.1.
+# Prefijo -> motivo de exclusion del cuadro de cuentas PYMES.
+PYMES_EXCLUIDAS = {
+    "8": "P-01 sin ECPN en PYMES", "9": "P-01 sin ECPN en PYMES",
+    "133": "P-02 VR con cambios en PN", "134": "P-02 coberturas contables",
+    "135": "P-02 diferencias de conversion", "136": "P-02 ANC mantenidos para la venta",
+    "137": "P-03 ingresos fiscales a distribuir",
+    "1110": "P-04 instrumentos financieros compuestos",
+    "178": "P-05 obligaciones y bonos convertibles",
+    "140": "P-06 retribuciones l/p prestacion definida", "147": "P-06 pagos en instrumentos de patrimonio",
+    "176": "P-07 derivados de cobertura l/p", "255": "P-07 derivados l/p",
+    "5593": "P-07 derivado de cobertura c/p", "5598": "P-07 derivado de cobertura c/p",
+    "204": "P-08 fondo de comercio (combinaciones de negocio)",
+    "774": "P-09 diferencia negativa en combinaciones de negocio",
+    "580": "P-10 ANC mantenidos para la venta", "581": "P-10", "582": "P-10", "583": "P-10",
+    "584": "P-10", "585": "P-10", "586": "P-10", "587": "P-10", "588": "P-10", "589": "P-10",
+    "599": "P-10 deterioro de ANC mantenidos para la venta",
+    "643": "P-11 retribuciones l/p aportacion definida",
+    "644": "P-11 retribuciones l/p prestacion definida",
+    "645": "P-11 retribuciones en instrumentos de patrimonio",
+    "6457": "P-11", "7957": "P-11", "7950": "P-11",
+    "6632": "P-12 imputacion de VR con cambios en PN", "7632": "P-12",
+}
+# Excepciones a la exclusion por prefijo (el prefijo excluye, la excepcion rescata).
+PYMES_RESCATADAS = {
+    "5590": "derivado de cartera de negociacion, SI existe en PYMES",
+    "5595": "derivado de cartera de negociacion, SI existe en PYMES",
+}
+
+# Renumeracion del modelo de PyG: normal (RD 602/2016) -> PYMES/abreviado.
+PYG_NORMAL_A_PYMES = {
+    "13.": "12.",   # Otros resultados
+    "14.": "13.",   # Ingresos financieros
+    "15.": "14.",   # Gastos financieros
+    "16.": "15.",   # Variación de valor razonable en instrumentos financieros
+    "17.": "16.",   # Diferencias de cambio
+    "18.": "17.",   # Deterioro y resultado por enajenaciones de instrumentos financieros
+    "19.": "18.",   # Otros ingresos y gastos de carácter financiero
+    "20.": "19.",   # Impuestos sobre beneficios
+}
+# Renumeracion del modelo de balance: normal -> PYMES/abreviado (orden significativo).
+BALANCE_NORMAL_A_PYMES = [
+    ("A) Patrimonio neto / A-3) Subvenciones", "A) Patrimonio neto / A-2) Subvenciones"),
+    ("B) Activo corriente / II. Existencias", "B) Activo corriente / I. Existencias"),
+    ("B) Activo corriente / III. Deudores comerciales", "B) Activo corriente / II. Deudores comerciales"),
+    ("B) Activo corriente / IV. Inversiones en empresas del grupo", "B) Activo corriente / III. Inversiones en empresas del grupo"),
+    ("B) Activo corriente / V. Inversiones financieras", "B) Activo corriente / IV. Inversiones financieras"),
+    ("B) Activo corriente / VI. Periodificaciones", "B) Activo corriente / V. Periodificaciones"),
+    ("B) Activo corriente / VII. Efectivo", "B) Activo corriente / VI. Efectivo"),
+    ("C) Pasivo corriente / II. Provisiones", "C) Pasivo corriente / I. Provisiones"),
+    ("C) Pasivo corriente / III. Deudas a corto plazo", "C) Pasivo corriente / II. Deudas a corto plazo"),
+    ("C) Pasivo corriente / IV. Deudas con empresas del grupo", "C) Pasivo corriente / III. Deudas con empresas del grupo"),
+    ("C) Pasivo corriente / V. Acreedores comerciales", "C) Pasivo corriente / IV. Acreedores comerciales"),
+    ("C) Pasivo corriente / VI. Periodificaciones", "C) Pasivo corriente / V. Periodificaciones"),
+    ("C) Pasivo corriente / VII. Deuda con características especiales", "C) Pasivo corriente / VI. Deuda con características especiales"),
+]
+
+
+def en_pymes(code):
+    """True si la cuenta forma parte del cuadro del PGC PYMES."""
+    for n in range(len(code), 0, -1):
+        pref = code[:n]
+        if pref in PYMES_RESCATADAS:
+            return True
+        if pref in PYMES_EXCLUIDAS:
+            return False
+    return True
+
+
+def epigrafe_pymes(estado, epigrafe):
+    """Traduce un epigrafe del modelo normal al modelo PYMES/abreviado."""
+    if not epigrafe:
+        return ""
+    if estado == "PYG":
+        for k in sorted(PYG_NORMAL_A_PYMES, key=len, reverse=True):
+            if epigrafe.startswith(k):
+                return PYG_NORMAL_A_PYMES[k] + epigrafe[len(k):]
+        return epigrafe
+    out = epigrafe
+    for src, dst in BALANCE_NORMAL_A_PYMES:
+        if out.startswith(src):
+            out = dst + out[len(src):]
+            break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1551,12 +1697,59 @@ def build_rows():
                 tipo = ""
         else:
             tipo = ""
+        bidi = 1 if _longest_prefix_key(codigo, BIDIRECCIONAL) else 0
+        # is_contra: la naturaleza contradice el estado -> la cuenta MINORA su masa.
+        contra = 0
+        if not bidi:
+            if estado == "BALANCE_ACTIVO" and nat == "ACREEDORA":
+                contra = 1
+            elif estado in ("BALANCE_PASIVO", "BALANCE_PN") and nat == "DEUDORA":
+                contra = 1
+            elif estado == "PYG" and grupo == "6" and nat == "ACREEDORA":
+                contra = 1
+            elif estado == "PYG" and grupo == "7" and nat == "DEUDORA":
+                contra = 1
+        pym = 1 if en_pymes(codigo) else 0
+        epi_p = epigrafe_pymes(estado, epigrafe) if pym else ""
         rows.append(OrderedDict([
             ("codigo", codigo), ("nombre", nombre), ("nivel", nivel), ("padre", padre),
             ("grupo", grupo), ("naturaleza", nat), ("estado_financiero", estado),
             ("epigrafe", epigrafe), ("tipo_analitico", tipo),
+            ("bidireccional", bidi), ("is_contra", contra),
+            ("pymes", pym), ("epigrafe_pymes", epi_p),
         ]))
     return rows
+
+
+def _longest_prefix_key(code, keyset):
+    for n in range(len(code), 0, -1):
+        if code[:n] in keyset:
+            return True
+    return False
+
+
+# Bloques de la PyG por numero de epigrafe -> tipos analiticos admisibles.
+_EXPLOTACION = {"INGRESO_DIRECTO", "COSTE_DIRECTO_MC1", "COSTE_DIRECTO_MC2",
+                "INDIRECTO_CECO", "AMORTIZACION_DETERIORO", "NO_ANALITICO"}
+_FINANCIERO = {"FINANCIERO", "NO_ANALITICO"}
+_IMPUESTO = {"NO_ANALITICO"}
+
+
+def validate_analytic_coherence(rows):
+    """El tipo analitico debe pertenecer al bloque de PyG de su epigrafe."""
+    errs = []
+    for r in rows:
+        if r["estado_financiero"] != "PYG" or not r["epigrafe"] or not r["tipo_analitico"]:
+            continue
+        num = r["epigrafe"].split(".")[0]
+        if not num.isdigit():
+            continue
+        n = int(num)
+        allowed = _EXPLOTACION if n <= 13 else (_FINANCIERO if n <= 19 else _IMPUESTO)
+        if r["tipo_analitico"] not in allowed:
+            errs.append(f'{r["codigo"]} epigrafe "{r["epigrafe"][:40]}" (bloque {n}) '
+                        f'incompatible con tipo_analitico {r["tipo_analitico"]}')
+    assert not errs, "Incoherencia epigrafe <-> tipo_analitico:\n  " + "\n  ".join(errs)
 
 
 def validate(rows):
@@ -1572,6 +1765,20 @@ def validate(rows):
     for r in rows:
         if r["grupo"] in "12345":
             assert r["tipo_analitico"] == "", r["codigo"]
+    # --- integridad de las columnas nuevas ---
+    pymes_codes = {r["codigo"] for r in rows if r["pymes"] == 1}
+    huerfanas = [r["codigo"] for r in rows
+                 if r["pymes"] == 1 and r["padre"] and r["padre"] not in pymes_codes]
+    assert not huerfanas, f"PYMES: padres filtrados con hijo superviviente: {huerfanas}"
+    sin_epi = [r["codigo"] for r in rows
+               if r["pymes"] == 1 and r["epigrafe"] and not r["epigrafe_pymes"]]
+    assert not sin_epi, f"PYMES: epigrafe sin traduccion: {sin_epi}"
+    fuera = [r["codigo"] for r in rows if r["pymes"] == 0 and r["epigrafe_pymes"]]
+    assert not fuera, f"epigrafe_pymes en cuenta no PYMES: {fuera}"
+    assert all(r["bidireccional"] in (0, 1) and r["is_contra"] in (0, 1) for r in rows)
+    # una cuenta no puede ser a la vez bidireccional y contra
+    assert not [r["codigo"] for r in rows if r["bidireccional"] and r["is_contra"]]
+    validate_analytic_coherence(rows)
     return Counter(r["grupo"] for r in rows)
 
 
@@ -1584,11 +1791,18 @@ def main():
         w.writeheader()
         w.writerows(rows)
     print(f"OK: {len(rows)} filas escritas en {out}")
-    print("grupo | filas | niv1 | niv2 | niv3 | niv4")
+    print("grupo | filas | niv1 | niv2 | niv3 | niv4 | pymes")
     for g in sorted(counts):
         lv = Counter(r["nivel"] for r in rows if r["grupo"] == g)
-        print(f"  {g}   | {counts[g]:5d} | {lv[1]:4d} | {lv[2]:4d} | {lv[3]:4d} | {lv[4]:4d}")
-    print(f"TOTAL | {len(rows):5d}")
+        pg = sum(1 for r in rows if r["grupo"] == g and r["pymes"] == 1)
+        print(f"  {g}   | {counts[g]:5d} | {lv[1]:4d} | {lv[2]:4d} | {lv[3]:4d} | {lv[4]:4d} | {pg:5d}")
+    print(f"TOTAL | {len(rows):5d} |      |      |      |      | "
+          f"{sum(1 for r in rows if r['pymes'] == 1):5d}")
+    print(f"bidireccionales: {sum(r['bidireccional'] for r in rows)} | "
+          f"contra-cuentas: {sum(r['is_contra'] for r in rows)} | "
+          f"excluidas de PYMES: {sum(1 for r in rows if r['pymes'] == 0)}")
+    ta = Counter(r["tipo_analitico"] for r in rows if r["tipo_analitico"])
+    print("tipo_analitico: " + " · ".join(f"{k}={v}" for k, v in sorted(ta.items())))
 
 
 if __name__ == "__main__":
