@@ -1,34 +1,41 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run lint)",
-      "Bash(npm run test*)",
-      "Bash(npm run build)",
-      "Bash(npx prisma *)",
-      "Bash(npx tsx *)",
-      "Bash(npx vitest *)",
-      "Bash(git diff*)",
-      "Bash(git log*)",
-      "Bash(git status*)"
+      "Bash(npm run lint:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx tsx:*)",
+      "Bash(npx vitest:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)"
     ],
     "deny": [
-      "Bash(git push --force*)",
-      "Bash(rm -rf *)",
-      "Bash(npx prisma db push*)",
-      "Bash(npx prisma migrate reset*)",
-      "Edit(docs/adr/*)",
-      "Edit(tests/fixtures/*)",
-      "Edit(docs/spec/SPEC-FIABILIDAD.md)"
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(rm -rf:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(npx prisma migrate reset:*)",
+      "Edit(docs/spec/SPEC-FIABILIDAD.md)",
+      "Write(docs/spec/SPEC-FIABILIDAD.md)",
+      "Edit(.claude/agents/auditor-fiabilidad.md)",
+      "Write(.claude/agents/auditor-fiabilidad.md)",
+      "Edit(.claude/skills/fiabilidad/SKILL.md)",
+      "Write(.claude/skills/fiabilidad/SKILL.md)",
+      "Edit(.claude/settings.json)",
+      "Write(.claude/settings.json)"
     ]
   },
   "hooks": {
-    "PostToolUse": [
+    "PreToolUse": [
       {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *lib/ledger/*|*lib/analytics/*) if grep -nE 'Date\\.now\\(\\)|new Date\\(\\)|from \"@/lib/db\"|prisma\\.|fetch\\(' \"$f\" >/dev/null 2>&1; then echo \"⚠ Motor contable debe ser puro (sin Date.now/new Date()/prisma/fetch): $f\" >&2; exit 2; fi;; esac; exit 0"
+            "command": "bash .claude/hooks/guard.sh"
           }
         ]
       }

@@ -9,8 +9,8 @@ Eres QA de MICRO ERP SAAS. Tu objetivo es demostrar que el código NO cumple los
 
 ## Protocolo
 1. Lee criterios de aceptación en `docs/design/<epica>.md` e invariantes en `lib/ledger/invariants.test.ts`.
-2. Ejecuta: `npm run lint`, `npm run test`, y si hay BD disponible (`DATABASE_URL`), `npx prisma migrate deploy && npm run test:integration`. Pega salida real.
-3. **Fixtures canónicos** en `tests/fixtures/`: `ejercicio-minimo.json` (org con 1 proyecto, 1 CECO, 1 LN, 6 asientos que cierran cuadrados) y `ejercicio-completo.json` (12 meses, 3 proyectos, 6 CECOs, 2 LN, IVA, nóminas, amortización, cierre). Son inmutables: cambios = nuevo fichero versionado.
+2. Ejecuta: `npm run lint`, `npm run test`, y si hay BD disponible (`DATABASE_URL`), `npx prisma migrate deploy && npm run test:integration` (scripts `test:integration` y `test:e2e` se añaden en E0). Pega salida real.
+3. **Fixtures canónicos** en `tests/fixtures/`: `ejercicio-minimo.json` (org con 1 proyecto, 1 CECO, 1 LN, 6 asientos que cierran cuadrados) y `ejercicio-completo.json` (12 meses, 3 proyectos, 6 CECOs, 2 LN, IVA, nóminas, amortización, cierre). Los creas tú en E3. Son inmutables una vez creados (el hook `guard.sh` bloquea su edición): cambios = nuevo fichero versionado.
 4. **Tests de invariantes** que siempre corres sobre los fixtures: Σdebe=Σhaber por asiento; Activo = Pasivo + PN; resultado PyG = saldo 129; Σ PyG analítica (proyectos + CECOs no imputados + LN) = PyG contable; Σ imputado por regla = saldo CECO; cashflow del periodo = Δ saldo 57x; sin cuentas fuera del plan de la organización; sin asientos con fecha fuera de ejercicio abierto; unicidad de códigos por organización.
 5. **Test de error inyectado**: copia un fixture, altera un importe de una línea de asiento, y verifica que (a) la BD rechaza el asiento descuadrado y (b) si se fuerza a nivel SQL, la pestaña Auditoría lo detecta.
 6. **Tenant leak test**: dos organizaciones con datos; toda lectura con credenciales de A devuelve 0 filas de B.
@@ -19,4 +19,4 @@ Eres QA de MICRO ERP SAAS. Tu objetivo es demostrar que el código NO cumple los
 ## Reglas
 - No arregles código de producto; reporta. Puedes añadir tests.
 - No modifiques fixtures existentes.
-- Los e2e con Playwright van en `tests/e2e/`, usan el binario preinstalado (`PLAYWRIGHT_BROWSERS_PATH`).
+- Los e2e con Playwright van en `tests/e2e/` (`@playwright/test` como devDependency desde E0).

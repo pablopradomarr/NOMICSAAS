@@ -8,7 +8,8 @@ R7 exige PyG, balance, cashflow y diario "todo cuadrado". SPEC-FIABILIDAD P1–P
 ## Decisión
 - `JournalEntry` / `JournalLine` en céntimos `Int`, con `debit`/`credit` excluyentes, cuenta por FK compuesta a `Account` de la organización, destino analítico en la línea.
 - Integridad en BD: `CHECK`, constraint trigger diferido Σdebe = Σhaber, numeración sin huecos por ejercicio con bloqueo pesimista, sin `DELETE` (anulación por contra-asiento con `reversesEntryId`).
-- Motor puro en `lib/ledger/` (`buildEntry`, `void`, `templates`, `reconcile`, `invariants`, `reports`); prohibido `Date.now()`, IO y LLM (hook de pre-commit y revisor).
+- Motor puro en `lib/ledger/` (`buildEntry`, `void`, `templates`, `reconcile`, `invariants`, `reports`); prohibido `Date.now()`, IO y LLM (hook PreToolUse `.claude/hooks/guard.sh`, check en CI y revisor).
+- Anulación únicamente por contra-asiento; no existe flag `voided` en líneas ni filtros de exclusión en informes.
 - Informes = funciones puras sobre líneas del periodo; caché inmutable en `ReportRun` indexada por `ledgerHash` (sha256 canónico de las líneas) + `gitSha`; cada celda con provenance; sello `VALIDADO AUTOMÁTICAMENTE` / `REQUIERE REVISIÓN`.
 - Invariantes I1–I10 (skill `fiabilidad`) ejecutados en cada `ReportRun`, en cierre de periodo y desde la pestaña Auditoría.
 

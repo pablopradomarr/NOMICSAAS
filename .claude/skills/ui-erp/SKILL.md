@@ -27,5 +27,5 @@ Documentos (Bandeja · Operaciones · Facturas emitidas) · Contabilidad (Libro 
 - Base: shadcn/Tailwind de TaxHacker, tema claro por defecto. Paleta CFOnomic: fondo `#FFFFFF`, texto `#1A202C`, secundario `#737373`, superficies `#F7F7F7` / `#EDF2F7`, bloques oscuros `#0A0A0A`, acento lima `#EAFF69` (solo highlights: punto del logo, chip validado, foco), aviso `#F5A623`. No introducir rojo/verde semáforo ni azul corporativo.
 - Tipografía: Open Sans (UI), JetBrains Mono (códigos de cuenta, hashes, run_id), League Spartan (títulos de sección). Cargar vía `next/font/google`.
 - Densidad alta: filas de 32px en tablas, sin cards decorativas, sin ilustraciones.
-- Roles: `viewer` no ve botones de mutación; todo botón destructivo exige motivo (dialog) y queda en `AuditLog`.
+- Roles: `VIEWER` no ve botones de mutación; todo botón destructivo exige motivo (dialog) y queda en `AuditLog`.
 - Español: "Debe / Haber", "Pérdidas y ganancias", "Balance de situación", "Libro diario", "Centro de coste", "Línea de negocio", "Ejercicio", "Asiento nº".

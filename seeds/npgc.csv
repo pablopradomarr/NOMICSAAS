@@ -665,49 +665,49 @@ codigo,nombre,nivel,padre,grupo,naturaleza,estado_financiero,epigrafe,tipo_anali
 6735,"Pérdidas procedentes de participaciones a largo plazo, otras partes vinculadas",4,673,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
 675,Pérdidas por operaciones con obligaciones propias,3,67,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
 678,Gastos excepcionales,3,67,6,DEUDORA,PYG,13. Otros resultados,EXTRAORDINARIO
-68,Dotaciones para amortizaciones,2,6,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
-680,Amortización del inmovilizado intangible,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
-681,Amortización del inmovilizado material,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
-682,Amortización de las inversiones inmobiliarias,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
-69,Pérdidas por deterioro y otras dotaciones,2,6,6,DEUDORA,PYG,,INDIRECTO_CECO
-690,Pérdidas por deterioro del inmovilizado intangible,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
-691,Pérdidas por deterioro del inmovilizado material,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
-692,Pérdidas por deterioro de las inversiones inmobiliarias,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
-693,Pérdidas por deterioro de existencias,3,69,6,DEUDORA,PYG,4. Aprovisionamientos,INDIRECTO_CECO
-6930,Pérdidas por deterioro de productos terminados y en curso de fabricación,4,693,6,DEUDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
-6931,Pérdidas por deterioro de mercaderías,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
-6932,Pérdidas por deterioro de materias primas,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
-6933,Pérdidas por deterioro de otros aprovisionamientos,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
-694,Pérdidas por deterioro de créditos por operaciones comerciales,3,69,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
-695,Dotación a la provisión por operaciones comerciales,3,69,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
-6954,Dotación a la provisión por contratos onerosos,4,695,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
-6959,Dotación a la provisión para otras operaciones comerciales,4,695,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
-696,Pérdidas por deterioro de participaciones y valores representativos de deuda a largo plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6960,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas del grupo",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6961,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas asociadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6962,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras partes vinculadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6963,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras empresas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6965,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, empresas del grupo",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6966,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, empresas asociadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6967,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, otras partes vinculadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6968,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, otras empresas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-697,Pérdidas por deterioro de créditos a largo plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6970,"Pérdidas por deterioro de créditos a largo plazo, empresas del grupo",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6971,"Pérdidas por deterioro de créditos a largo plazo, empresas asociadas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6972,"Pérdidas por deterioro de créditos a largo plazo, otras partes vinculadas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6973,"Pérdidas por deterioro de créditos a largo plazo, otras empresas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-698,Pérdidas por deterioro de participaciones y valores representativos de deuda a corto plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6980,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas del grupo",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6981,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas asociadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6985,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, empresas del grupo",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6986,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, empresas asociadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6987,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, otras partes vinculadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6988,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, otras empresas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-699,Pérdidas por deterioro de créditos a corto plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6990,"Pérdidas por deterioro de créditos a corto plazo, empresas del grupo",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6991,"Pérdidas por deterioro de créditos a corto plazo, empresas asociadas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6992,"Pérdidas por deterioro de créditos a corto plazo, otras partes vinculadas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-6993,"Pérdidas por deterioro de créditos a corto plazo, otras empresas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+68,Dotaciones para amortizaciones,2,6,6,DEUDORA,PYG,8. Amortización del inmovilizado,AMORTIZACION_DETERIORO
+680,Amortización del inmovilizado intangible,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,AMORTIZACION_DETERIORO
+681,Amortización del inmovilizado material,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,AMORTIZACION_DETERIORO
+682,Amortización de las inversiones inmobiliarias,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,AMORTIZACION_DETERIORO
+69,Pérdidas por deterioro y otras dotaciones,2,6,6,DEUDORA,PYG,,AMORTIZACION_DETERIORO
+690,Pérdidas por deterioro del inmovilizado intangible,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+691,Pérdidas por deterioro del inmovilizado material,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+692,Pérdidas por deterioro de las inversiones inmobiliarias,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+693,Pérdidas por deterioro de existencias,3,69,6,DEUDORA,PYG,4. Aprovisionamientos,AMORTIZACION_DETERIORO
+6930,Pérdidas por deterioro de productos terminados y en curso de fabricación,4,693,6,DEUDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,AMORTIZACION_DETERIORO
+6931,Pérdidas por deterioro de mercaderías,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",AMORTIZACION_DETERIORO
+6932,Pérdidas por deterioro de materias primas,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",AMORTIZACION_DETERIORO
+6933,Pérdidas por deterioro de otros aprovisionamientos,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",AMORTIZACION_DETERIORO
+694,Pérdidas por deterioro de créditos por operaciones comerciales,3,69,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",AMORTIZACION_DETERIORO
+695,Dotación a la provisión por operaciones comerciales,3,69,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",AMORTIZACION_DETERIORO
+6954,Dotación a la provisión por contratos onerosos,4,695,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",AMORTIZACION_DETERIORO
+6959,Dotación a la provisión para otras operaciones comerciales,4,695,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",AMORTIZACION_DETERIORO
+696,Pérdidas por deterioro de participaciones y valores representativos de deuda a largo plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6960,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas del grupo",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6961,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas asociadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6962,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras partes vinculadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6963,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras empresas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6965,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, empresas del grupo",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6966,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, empresas asociadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6967,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, otras partes vinculadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6968,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, otras empresas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+697,Pérdidas por deterioro de créditos a largo plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6970,"Pérdidas por deterioro de créditos a largo plazo, empresas del grupo",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6971,"Pérdidas por deterioro de créditos a largo plazo, empresas asociadas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6972,"Pérdidas por deterioro de créditos a largo plazo, otras partes vinculadas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6973,"Pérdidas por deterioro de créditos a largo plazo, otras empresas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+698,Pérdidas por deterioro de participaciones y valores representativos de deuda a corto plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6980,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas del grupo",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6981,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas asociadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6985,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, empresas del grupo",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6986,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, empresas asociadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6987,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, otras partes vinculadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6988,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, otras empresas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+699,Pérdidas por deterioro de créditos a corto plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6990,"Pérdidas por deterioro de créditos a corto plazo, empresas del grupo",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6991,"Pérdidas por deterioro de créditos a corto plazo, empresas asociadas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6992,"Pérdidas por deterioro de créditos a corto plazo, otras partes vinculadas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+6993,"Pérdidas por deterioro de créditos a corto plazo, otras empresas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
 7,Ventas e ingresos,1,,7,ACREEDORA,PYG,,
 70,"Ventas de mercaderías, de producción propia, de servicios, etc.",2,7,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios,INGRESO_DIRECTO
 700,Ventas de mercaderías,3,70,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
@@ -734,11 +734,11 @@ codigo,nombre,nivel,padre,grupo,naturaleza,estado_financiero,epigrafe,tipo_anali
 7092,«Rappels» sobre ventas de productos semiterminados,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
 7093,«Rappels» sobre ventas de subproductos y residuos,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
 7094,«Rappels» sobre ventas de envases y embalajes,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
-71,Variación de existencias,2,7,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
-710,Variación de existencias de productos en curso,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
-711,Variación de existencias de productos semiterminados,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
-712,Variación de existencias de productos terminados,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
-713,"Variación de existencias de subproductos, residuos y materiales recuperados",3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
+71,Variación de existencias,2,7,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
+710,Variación de existencias de productos en curso,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
+711,Variación de existencias de productos semiterminados,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
+712,Variación de existencias de productos terminados,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
+713,"Variación de existencias de subproductos, residuos y materiales recuperados",3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
 73,Trabajos realizados para la empresa,2,7,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
 730,Trabajos realizados para el inmovilizado intangible,3,73,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
 731,Trabajos realizados para el inmovilizado material,3,73,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
@@ -799,50 +799,50 @@ codigo,nombre,nivel,padre,grupo,naturaleza,estado_financiero,epigrafe,tipo_anali
 774,Diferencia negativa en combinaciones de negocios,3,77,7,ACREEDORA,PYG,12. Diferencia negativa de combinaciones de negocio,EXTRAORDINARIO
 775,Beneficios por operaciones con obligaciones propias,3,77,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
 778,Ingresos excepcionales,3,77,7,ACREEDORA,PYG,13. Otros resultados,EXTRAORDINARIO
-79,Excesos y aplicaciones de provisiones y de pérdidas por deterioro,2,7,7,ACREEDORA,PYG,,INDIRECTO_CECO
-790,Reversión del deterioro del inmovilizado intangible,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
-791,Reversión del deterioro del inmovilizado material,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
-792,Reversión del deterioro de las inversiones inmobiliarias,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
-793,Reversión del deterioro de existencias,3,79,7,ACREEDORA,PYG,4. Aprovisionamientos,INDIRECTO_CECO
-7930,Reversión del deterioro de productos terminados y en curso de fabricación,4,793,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
-7931,Reversión del deterioro de mercaderías,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
-7932,Reversión del deterioro de materias primas,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
-7933,Reversión del deterioro de otros aprovisionamientos,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
-794,Reversión del deterioro de créditos por operaciones comerciales,3,79,7,ACREEDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
-795,Exceso de provisiones,3,79,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
-7950,Exceso de provisión por retribuciones al personal,4,795,7,ACREEDORA,PYG,6. Gastos de personal / c) Provisiones,INDIRECTO_CECO
-7951,Exceso de provisión para impuestos,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
-7952,Exceso de provisión para otras responsabilidades,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
-7954,Exceso de provisión por operaciones comerciales,4,795,7,ACREEDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
-7955,Exceso de provisión para actuaciones medioambientales,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
-7956,Exceso de provisión para reestructuraciones,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
-7957,Exceso de provisión por transacciones con pagos basados en instrumentos de patrimonio,4,795,7,ACREEDORA,PYG,6. Gastos de personal / c) Provisiones,INDIRECTO_CECO
-796,Reversión del deterioro de participaciones y valores representativos de deuda a largo plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7960,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas del grupo",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7961,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas asociadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7962,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras partes vinculadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7963,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras empresas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7965,"Reversión del deterioro de valores representativos de deuda a largo plazo, empresas del grupo",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7966,"Reversión del deterioro de valores representativos de deuda a largo plazo, empresas asociadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7967,"Reversión del deterioro de valores representativos de deuda a largo plazo, otras partes vinculadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7968,"Reversión del deterioro de valores representativos de deuda a largo plazo, otras empresas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-797,Reversión del deterioro de créditos a largo plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7970,"Reversión del deterioro de créditos a largo plazo, empresas del grupo",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7971,"Reversión del deterioro de créditos a largo plazo, empresas asociadas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7972,"Reversión del deterioro de créditos a largo plazo, otras partes vinculadas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7973,"Reversión del deterioro de créditos a largo plazo, otras empresas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-798,Reversión del deterioro de participaciones y valores representativos de deuda a corto plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7980,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas del grupo",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7981,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas asociadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7985,"Reversión del deterioro en valores representativos de deuda a corto plazo, empresas del grupo",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7986,"Reversión del deterioro en valores representativos de deuda a corto plazo, empresas asociadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7987,"Reversión del deterioro en valores representativos de deuda a corto plazo, otras partes vinculadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7988,"Reversión del deterioro en valores representativos de deuda a corto plazo, otras empresas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-799,Reversión del deterioro de créditos a corto plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7990,"Reversión del deterioro de créditos a corto plazo, empresas del grupo",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7991,"Reversión del deterioro de créditos a corto plazo, empresas asociadas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7992,"Reversión del deterioro de créditos a corto plazo, otras partes vinculadas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
-7993,"Reversión del deterioro de créditos a corto plazo, otras empresas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+79,Excesos y aplicaciones de provisiones y de pérdidas por deterioro,2,7,7,ACREEDORA,PYG,,AMORTIZACION_DETERIORO
+790,Reversión del deterioro del inmovilizado intangible,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+791,Reversión del deterioro del inmovilizado material,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+792,Reversión del deterioro de las inversiones inmobiliarias,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+793,Reversión del deterioro de existencias,3,79,7,ACREEDORA,PYG,4. Aprovisionamientos,AMORTIZACION_DETERIORO
+7930,Reversión del deterioro de productos terminados y en curso de fabricación,4,793,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,AMORTIZACION_DETERIORO
+7931,Reversión del deterioro de mercaderías,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",AMORTIZACION_DETERIORO
+7932,Reversión del deterioro de materias primas,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",AMORTIZACION_DETERIORO
+7933,Reversión del deterioro de otros aprovisionamientos,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",AMORTIZACION_DETERIORO
+794,Reversión del deterioro de créditos por operaciones comerciales,3,79,7,ACREEDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",AMORTIZACION_DETERIORO
+795,Exceso de provisiones,3,79,7,ACREEDORA,PYG,10. Excesos de provisiones,AMORTIZACION_DETERIORO
+7950,Exceso de provisión por retribuciones al personal,4,795,7,ACREEDORA,PYG,6. Gastos de personal / c) Provisiones,AMORTIZACION_DETERIORO
+7951,Exceso de provisión para impuestos,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,AMORTIZACION_DETERIORO
+7952,Exceso de provisión para otras responsabilidades,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,AMORTIZACION_DETERIORO
+7954,Exceso de provisión por operaciones comerciales,4,795,7,ACREEDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",AMORTIZACION_DETERIORO
+7955,Exceso de provisión para actuaciones medioambientales,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,AMORTIZACION_DETERIORO
+7956,Exceso de provisión para reestructuraciones,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,AMORTIZACION_DETERIORO
+7957,Exceso de provisión por transacciones con pagos basados en instrumentos de patrimonio,4,795,7,ACREEDORA,PYG,6. Gastos de personal / c) Provisiones,AMORTIZACION_DETERIORO
+796,Reversión del deterioro de participaciones y valores representativos de deuda a largo plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7960,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas del grupo",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7961,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas asociadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7962,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras partes vinculadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7963,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras empresas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7965,"Reversión del deterioro de valores representativos de deuda a largo plazo, empresas del grupo",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7966,"Reversión del deterioro de valores representativos de deuda a largo plazo, empresas asociadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7967,"Reversión del deterioro de valores representativos de deuda a largo plazo, otras partes vinculadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7968,"Reversión del deterioro de valores representativos de deuda a largo plazo, otras empresas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+797,Reversión del deterioro de créditos a largo plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7970,"Reversión del deterioro de créditos a largo plazo, empresas del grupo",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7971,"Reversión del deterioro de créditos a largo plazo, empresas asociadas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7972,"Reversión del deterioro de créditos a largo plazo, otras partes vinculadas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7973,"Reversión del deterioro de créditos a largo plazo, otras empresas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+798,Reversión del deterioro de participaciones y valores representativos de deuda a corto plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7980,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas del grupo",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7981,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas asociadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7985,"Reversión del deterioro en valores representativos de deuda a corto plazo, empresas del grupo",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7986,"Reversión del deterioro en valores representativos de deuda a corto plazo, empresas asociadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7987,"Reversión del deterioro en valores representativos de deuda a corto plazo, otras partes vinculadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7988,"Reversión del deterioro en valores representativos de deuda a corto plazo, otras empresas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+799,Reversión del deterioro de créditos a corto plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7990,"Reversión del deterioro de créditos a corto plazo, empresas del grupo",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7991,"Reversión del deterioro de créditos a corto plazo, empresas asociadas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7992,"Reversión del deterioro de créditos a corto plazo, otras partes vinculadas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
+7993,"Reversión del deterioro de créditos a corto plazo, otras empresas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,AMORTIZACION_DETERIORO
 8,Gastos imputados al patrimonio neto,1,,8,DEUDORA,ECPN,,
 80,Gastos financieros por valoración de activos y pasivos,2,8,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
 800,Pérdidas en activos financieros a valor razonable con cambios en el patrimonio neto,3,80,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,

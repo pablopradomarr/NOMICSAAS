@@ -7,7 +7,7 @@ description: Multi-tenancy y seguridad del ERP sobre Supabase Postgres con Prism
 
 ## Modelo
 ```prisma
-model Organization { id String @id @default(uuid()) @db.Uuid; slug String @unique; name String; baseCurrency String @default("EUR"); timezone String @default("Europe/Madrid"); pgcVariant String @default("PYMES"); settings Json?; memberships Membership[]; createdAt DateTime @default(now()) }
+model Organization { id String @id @default(uuid()) @db.Uuid; slug String @unique; name String; baseCurrency String @default("EUR"); timezone String @default("Europe/Madrid"); pgcVariant PgcVariant @default(PYMES); ledgerEnabled Boolean @default(true); analyticsRequired Boolean @default(true); reviewThresholds Json?; memberships Membership[]; createdAt DateTime @default(now()) @@map("organizations") }  // esquema canónico: docs/MODELO-DATOS.md
 model Membership { id String @id @default(uuid()) @db.Uuid; organizationId String @db.Uuid; userId String @db.Uuid; role Role; invitedBy String? @db.Uuid; acceptedAt DateTime?; @@unique([organizationId, userId]) }
 enum Role { ADMIN EDITOR VIEWER }
 ```

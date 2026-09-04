@@ -1516,13 +1516,14 @@ TIPO_ANALITICO = {
     "70": "INGRESO_DIRECTO",
     "60": "COSTE_DIRECTO_MC1", "61": "COSTE_DIRECTO_MC1",
     "64": "COSTE_DIRECTO_MC2",
-    "62": "INDIRECTO_CECO", "63": "INDIRECTO_CECO", "68": "INDIRECTO_CECO",
-    "69": "INDIRECTO_CECO", "79": "INDIRECTO_CECO",
+    "71": "COSTE_DIRECTO_MC1",                       # variación existencias productos (signo ingreso)
+    "62": "INDIRECTO_CECO", "63": "INDIRECTO_CECO",
+    "68": "AMORTIZACION_DETERIORO", "69": "AMORTIZACION_DETERIORO", "79": "AMORTIZACION_DETERIORO",  # nivel EBIT
     "66": "FINANCIERO", "76": "FINANCIERO",
     "67": "EXTRAORDINARIO", "77": "EXTRAORDINARIO",
     # Excepciones
-    "630": "NO_ANALITICO", "633": "NO_ANALITICO", "638": "NO_ANALITICO",  # Impuesto sobre beneficios
-    "6930": "COSTE_DIRECTO_MC1", "7930": "COSTE_DIRECTO_MC1",              # Variación existencias productos
+    "630": "NO_ANALITICO", "633": "NO_ANALITICO", "638": "NO_ANALITICO",  # Impuesto sobre beneficios (nivel Resultado)
+    "75": "NO_ANALITICO",                                                  # otros ingresos de gestión: configurable por org
 }
 
 

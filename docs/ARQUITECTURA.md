@@ -16,7 +16,7 @@
                          │ Prisma 7 (+ RLS, triggers)
                  Supabase Postgres 17
 ```
-Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Dominio** (`models/`, acceso a datos por tenant) → **Motor** (`lib/ledger`, `lib/analytics`: funciones puras, testeadas, sin IO) → **BD** (constraints + triggers + RLS como última barrera).
+Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Dominio** (`models/`, acceso a datos por tenant vía `tenantDb`) → **Motor** (`lib/ledger`, `lib/analytics`: funciones puras, testeadas, sin IO) → **BD** (constraints + triggers + RLS como última barrera).
 
 ## 2. Decisiones clave (ADRs)
 | ADR | Decisión | Nivel |
@@ -41,14 +41,14 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | `lib/analytics/margins.ts` | PyG analítica por nivel/proyecto/LN/CECO | Puro |
 | `lib/analytics/allocate.ts` | Liquidación de CECOs (drivers, cascada, Hamilton) | Puro |
 | `lib/ledger/hash.ts` | `ledgerHash(lines)` sha256 canónico | Puro |
-| `lib/money.ts` | parse/format céntimos, redondeo half-even, reparto mayor resto | Puro |
+| `lib/money.ts` | parse/format céntimos, redondeo half-even, reparto mayor resto (creado en E0) | Puro |
 | `lib/fx/*` | obtención y persistencia de tasas (`ExchangeRate`), conversión servidor | IO |
 | `models/ledger.ts` | lectura de líneas por periodo (SQL agregado), persistencia transaccional de asientos con numeración | IO, tenant |
 | `models/reports.ts` | `ReportRun` (caché por `ledgerHash`), provenance, validación | IO |
 | `models/accounts.ts`, `models/analytics.ts`, `models/fiscal-years.ts`, `models/taxes.ts`, `models/organizations.ts`, `models/memberships.ts`, `models/audit-log.ts` | CRUD por tenant | IO |
 | `ai/*` | Extracción LLM → `ExtractionRun` (modelo, proveedor, prompt sha256, schema version, tokens, raw, partial) | IO; nunca cifras finales |
 | `ai/prompts/*.md` | Prompts base versionados en git; overrides por organización con `version` | — |
-| `app/(app)/{documentos,operaciones,contabilidad,informes,analitica,auditoria,configuracion}` | Rutas y server actions | `requireOrg(role)` |
+| `app/(app)/{unsorted,transactions,apps,dashboard,settings}` (heredadas) + `app/(app)/{ledger,reports,analytics,audit}` (nuevas); configuración contable bajo `settings/` | Rutas y server actions | `requireOrg(role)` |
 | `components/reports/*`, `components/ledger/*`, `components/ui/{money-cell,confidence-badge,check-status}.tsx` | UI financiera | Sin cálculo contable |
 | `scripts/run-invariants.ts`, `scripts/report.ts` | CLI para CI/auditor | — |
 | `tests/fixtures/*.json`, `tests/e2e/*` | Fixtures inmutables, e2e Playwright | — |
@@ -63,7 +63,7 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | Spec | Implementación |
 |---|---|
 | C1 snapshot | `ledgerHash` + `ReportRun` inmutable; `File.sha256`; `ExtractionRun` inmutable |
-| C2 motor | `lib/ledger`, `lib/analytics` puros; hook de `.claude/settings.json` bloquea impurezas; tests con casos fijos |
+| C2 motor | `lib/ledger`, `lib/analytics` puros; hook PreToolUse `.claude/hooks/guard.sh` bloquea impurezas antes de escribir; mismo check en CI; tests con casos fijos |
 | C3 provenance | Cada celda de informe: `{valor, metrica, run_id, ledgerHash, calculado_por, registros_origen(query), confianza}` |
 | C4 validación | Capa 1 `invariants.ts`; Capa 2 agente `auditor-fiabilidad` + pestaña Auditoría; Capa 3 revisión por excepción (sello) |
 | C5 confianza | `ConfidenceBadge` en toda cifra no derivada del diario |
@@ -71,7 +71,7 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | C7 versionado | prompts en git, `ReportRun.gitSha`, `ExtractionRun.model/promptSha`, `runs/registro.jsonl` |
 
 ## 7. Seguridad
-better-auth (sesión con `activeOrganizationId`), `requireOrg(minRole)` en toda acción, `tenantDb`, RLS, `AuditLog`, secretos LLM cifrados (`lib/encryption.ts` heredado), rate limit en análisis IA por organización, validación de uploads (mimetype, tamaño, sha256), sin SQL interpolado.
+better-auth (sesión con `activeOrganizationId`), `requireOrg(minRole)` en toda acción, `tenantDb(orgId)` en `lib/db.ts`, RLS, `AuditLog`, secretos LLM cifrados (`lib/encryption.ts` heredado), rate limit en análisis IA por organización, validación de uploads (mimetype, tamaño, sha256), sin SQL interpolado.
 
 ## 8. Rendimiento
 Índices `(organization_id, entry_date)`, `(organization_id, account_code, entry_date)`, `(organization_id, project_id)`, `(organization_id, cost_center_id)`. Agregados en SQL con `BIGINT`. `ReportRun` cachea por hash. Vistas materializadas opcionales para saldos mensuales (refresco al postear) — v1.1.

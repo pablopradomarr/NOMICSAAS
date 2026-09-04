@@ -3,7 +3,7 @@
 **Estado:** PROPUESTO (pendiente de firma: Pablo) · **Nivel:** 2 · **Fecha:** 2026-09-04
 
 ## Contexto
-Gaps ALTA G-01…G-04 de TaxHacker: cifras del LLM persistidas sin validar, extracción parcial no marcada, `cachedParseResult` como memoria, tasa de cambio en navegador. SPEC P1, P4, P6, P7.
+Gaps ALTA G-01…G-04 de TaxHacker (G-05 y G-06 se cierran en E6): cifras del LLM persistidas sin validar, extracción parcial no marcada, `cachedParseResult` como memoria, tasa de cambio en navegador. SPEC P1, P4, P6, P7.
 
 ## Decisión
 - Cada análisis crea un `ExtractionRun` inmutable: proveedor, modelo, sha256 del prompt efectivo, versión de schema, páginas enviadas/totales (`partial`), salida cruda, propuesta normalizada (céntimos, ISO), resultado de `reconcile`, tokens, duración, usuario.

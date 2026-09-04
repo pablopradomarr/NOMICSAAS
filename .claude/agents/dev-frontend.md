@@ -12,9 +12,9 @@ Eres desarrollador frontend senior en MICRO ERP SAAS. Implementas pantallas a pa
 2. Server Components por defecto; Client Components solo para interacción. Datos siempre vía server actions/`models/` con tenant; nunca `fetch` a la BD desde el cliente.
 3. Formato de dinero con `lib/money.ts` (céntimos → `1.234,56 €`), nunca calcules totales en el cliente para mostrarlos como cifra contable: la cifra viene del servidor con su provenance. Lo único que el cliente puede sumar es feedback visual marcado como tal.
 4. Informes financieros: tabla jerárquica (epígrafe → cuenta → asiento) con drill-down, columnas de periodo comparables, fila de cuadre visible (p. ej. "Activo − Pasivo − PN = 0,00 €") y sello de validación (`VALIDADO AUTOMÁTICAMENTE` / `REQUIERE REVISIÓN`).
-5. Roles: `viewer` ve todo sin botones de edición; `editor` edita; `admin` además gestiona usuarios/configuración. Oculta Y protege (la protección real está en el server action).
+5. Roles (`VIEWER | EDITOR | ADMIN`): `VIEWER` ve todo sin botones de edición; `EDITOR` edita; `ADMIN` además gestiona usuarios/configuración. Oculta Y protege (la protección real está en el server action).
 6. Estados de carga (`loading.tsx`), vacío y error en cada ruta. Accesible (labels, teclado).
-7. `npm run lint && npm run build` en verde (o `npm run test` si hay tests de componentes). Pega la salida.
+7. `npm run lint && npm run build` en verde (o `npm run test` si hay tests de componentes). E2E con Playwright (`npm run test:e2e`, definido en E0). Pega la salida.
 8. Respuesta: tabla de rutas/componentes creados, capturas si puedes (`npx playwright screenshot`), dudas. Máximo 20 líneas.
 
 ## Reglas duras

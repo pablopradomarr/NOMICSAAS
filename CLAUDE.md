@@ -24,7 +24,7 @@ ERP SaaS de contabilidad y control de gestión para **empresas de proyectos/serv
 1. **El LLM extrae y redacta; el código calcula.** Ninguna cifra contable sale de un modelo. OCR → propuesta → validación determinista → asiento.
 2. **Partida doble siempre.** Todo movimiento económico es un asiento con Σdebe = Σhaber (tolerancia 0). Un asiento descuadrado no se persiste: la BD lo impide (constraint + trigger), no solo la app.
 3. **Los informes son vistas del libro diario.** PyG, balance, cashflow, PyG analítica se derivan por SQL/código del diario; nunca se almacenan cifras "de informe" que puedan divergir.
-4. **Cuadre verificable**: `Activo = Pasivo + PN`, `Resultado PyG = variación 129`, `Σ PyG analítica por proyecto/CECO/LN = PyG contable`, `Cashflow final = saldo tesorería (57x)`. Estos invariantes tienen tests y se exponen en la pestaña Auditoría.
+4. **Cuadre verificable**: invariantes I1–I10 definidos UNA sola vez en `.claude/skills/fiabilidad/SKILL.md` (partida doble, `Activo = Pasivo + PN`, PyG = líneas 6/7 excluyendo regularización/cierre/apertura y = saldo 129 si regularizado, Σ matriz analítica = PyG contable, Σ imputado = saldo CECO, cashflow = Δ57x, unicidad, fechas, plan, tenant). Tienen tests y se exponen en la pestaña Auditoría.
 5. **Segregación**: quien implementa ≠ quien revisa ≠ quien audita cifras. El `auditor-fiabilidad` se lanza en contexto limpio.
 6. **Trazabilidad**: cada asiento referencia documento origen (`File`), extracción (`ExtractionRun` con modelo+prompt-hash), usuario y timestamp. Nada se borra: se anula con contra-asiento.
 7. **Multi-tenant estricto**: toda tabla de negocio lleva `organizationId`; toda query pasa por el helper de tenant; RLS en Supabase como segunda barrera.
@@ -37,11 +37,13 @@ ERP SaaS de contabilidad y control de gestión para **empresas de proyectos/serv
 - Idioma: código e identificadores en inglés; UI, docs, commits y comentarios de dominio en **español**. Términos contables en español oficial del PGC.
 
 ## Convenciones de código
-- Server Actions en `app/(app)/<modulo>/actions.ts`; lógica de dominio en `models/`; motor contable puro en `lib/ledger/` (funciones puras, sin `Date.now()` implícito, sin llamadas LLM).
+- Server Actions en `app/(app)/<modulo>/actions.ts`; lógica de dominio en `models/` (acceso a datos SIEMPRE vía `tenantDb(orgId)` de `lib/db.ts`); motor contable puro en `lib/ledger/` y `lib/analytics/` (funciones puras, sin `Date.now()` implícito, sin IO, sin LLM). Rutas: se conservan las heredadas de TaxHacker (`unsorted`, `transactions`, `settings`, `apps`, `dashboard`) y se añaden `ledger/`, `reports/`, `analytics/`, `audit/`; las de configuración contable cuelgan de `settings/`.
+- Roles: enum `ADMIN | EDITOR | VIEWER` (`Membership.role`); toda server action empieza por `requireOrg(minRole)`.
 - Validación de entrada con `zod` en `forms/`. Un schema por entidad.
 - Tests unitarios junto al fichero (`*.test.ts`). Invariantes contables en `lib/ledger/invariants.test.ts` con fixtures fijos (vacío, un asiento, negativos, cierre de ejercicio).
 - Migraciones Prisma nombradas `NNNN_<que_hace>`; nunca editar una migración aplicada.
-- Prohibido: `any`, `Float` para dinero, cálculos en prompts, borrar asientos, `Date.now()` dentro de `lib/ledger/`.
+- Prohibido: `any`, `Float` para dinero, cálculos en prompts, borrar asientos, `Date.now()` dentro de `lib/ledger/` y `lib/analytics/` (el hook `.claude/hooks/guard.sh` lo bloquea antes de escribir).
+- Anulación de asientos: SOLO por contra-asiento (`reversesEntryId`); no existe flag que excluya líneas de los informes.
 
 ## Comandos
 ```
@@ -49,5 +51,6 @@ npm run dev        # http://localhost:7331
 npm run test       # vitest
 npm run lint
 npx prisma migrate dev --name <nombre>
-npx tsx seeds/import_npgc.ts   # carga NPGC en una organización
+npx tsx seeds/import_npgc.ts --org <id> --variant PYMES   # (a crear en E2) carga NPGC en una organización
+npx tsx scripts/run-invariants.ts --org <id>            # (a crear en E7) invariantes I1–I10 → validacion.json
 ```

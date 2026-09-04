@@ -21,10 +21,10 @@ Columnas: `codigo,nombre,nivel,padre,grupo,naturaleza,estado_financiero,epigrafe
 | `nature`, `statement`, `epigraph`, `analyticType` | Copiados del seed al crear la organización; **editables** salvo `statement` de cuentas oficiales de nivel ≤ 3 (cambiarlo requiere rol admin y queda en log de auditoría) |
 | `isPostable` | Solo hojas (sin hijos) reciben líneas de asiento |
 | `isActive` | Desactivar en lugar de borrar; borrar solo si 0 líneas |
-| `isSystem` | Cuentas que el motor necesita (129, 4700, 4750, 4751, 472x/477x definidas por la org, 57x, 430, 400, 410, 465, 476) — no desactivables; mapeadas en `OrganizationAccountMap` (p. ej. `IVA_SOPORTADO → "4720"`) para que el motor nunca hardcodee códigos |
+| `isSystem` | Cuentas que el motor necesita — no desactivables; mapeadas en `OrganizationAccountMap` (defaults que EXISTEN en el seed: `IVA_SOPORTADO → 472`, `IVA_REPERCUTIDO → 477`, `HP_ACREEDORA_IVA → 4750`, `HP_DEUDORA_IVA → 4700`, `IRPF_A_PAGAR → 4751`, `IRPF_RETENIDO_CLIENTES → 473`, `CLIENTES → 430`, `PROVEEDORES → 400`, `ACREEDORES → 410`, `BANCO_DEFAULT → 572`, `SS_ACREEDORA → 476`, `REMUNERACIONES_PENDIENTES → 465`, `RESULTADO_EJERCICIO → 129`; lista completa en `docs/MODELO-DATOS.md`). Si la org crea 4720/4770 puede remapear. El motor nunca hardcodea códigos |
 | `cashflowCategory` | Solo para 57x y contrapartidas: `OPERATING | INVESTING | FINANCING` |
 
-Creación de organización = `importNPGC(orgId, variant: "GENERAL" | "PYMES")` + `OrganizationAccountMap` con defaults. Idempotente.
+Creación de organización = `importNPGC(orgId, variant: "GENERAL" | "PYMES")` (`models/accounts.ts`, a crear en E2; CLI `seeds/import_npgc.ts`) + `OrganizationAccountMap` con defaults. Idempotente.
 
 ## Asientos tipo (referencia para `lib/ledger/templates/`) — importes en céntimos, contrapartida por `OrganizationAccountMap`
 
@@ -37,7 +37,7 @@ Creación de organización = `importNPGC(orgId, variant: "GENERAL" | "PYMES")` +
 | Pago proveedor | 400/410 | 572 |
 | Nómina | 640 sueldo bruto (proyecto/CECO) · 642 SS empresa (mismo destino) | 465 neto · 476 SS acreedora (cuota obrera + empresa) · 4751 IRPF |
 | Amortización mensual | 68x (CECO) | 28x |
-| Liquidación IVA trimestral | 477 | 472 · 4750 (a pagar) / 4700 (a compensar) |
+| Liquidación IVA trimestral | 477 · 4700 (si soportado > repercutido) | 472 · 4750 (si repercutido > soportado) |
 | Periodificación ingreso anticipado | 430 | 438/485 → devengo mensual 485 → 705 |
 | Anulación | Contra-asiento exacto con `reversesEntryId`; nunca `delete` |
 | Regularización cierre | 7xx → 129 ; 129 → 6xx | |

@@ -15,10 +15,10 @@ Eres desarrollador backend senior en MICRO ERP SAAS (Next.js 16 + Prisma 7 + Pos
 5. Respuesta final: tabla de ficheros tocados (creado/modificado), qué invariantes cubren los tests, salida de tests, dudas. Máximo 20 líneas.
 
 ## Reglas duras
-- Dinero: `Int` en céntimos. Nunca `Float`, nunca `parseFloat` sobre importes sin pasar por `lib/money.ts`.
+- Dinero: `Int` en céntimos. Nunca `Float`, nunca `parseFloat` sobre importes sin pasar por `lib/money.ts` (existe desde E0: `parseCents`, `formatCents`, `roundHalfEven`, `splitLargestRemainder`).
 - `lib/ledger/**`: funciones puras. Prohibido `Date.now()`, `new Date()` sin argumento, `prisma`, `fetch`, LLM. La fecha de referencia entra por parámetro.
-- Toda query de negocio filtra por `organizationId` (usa el helper `withTenant`). Nunca `findUnique` por id sin tenant.
-- Asientos: `Σdebe === Σhaber` verificado en código Y en BD (constraint diferido / trigger). No hay `delete` de asientos: `void` + contra-asiento.
+- Toda query de negocio pasa por `tenantDb(orgId)` (`lib/db.ts`, a crear en E1). Nunca `prisma` directo en `models/` de negocio; nunca `findUnique` por id sin tenant.
+- Asientos: `Σdebe === Σhaber` verificado en código Y en BD (constraint diferido / trigger). No hay `delete` ni flag de exclusión: anulación = contra-asiento exacto (`reversesEntryId`).
 - No toques `docs/`, ADRs, prompts del auditor ni invariantes existentes sin que la tarea lo diga explícitamente (Nivel 2).
 - No borres ni reescribas tests existentes para que pasen.
 - Commits atómicos con mensaje en español: `feat(ledger): ...`, `fix(analytics): ...`.

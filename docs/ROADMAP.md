@@ -4,7 +4,7 @@ Estado: `PENDIENTE` · `DISEÑADA` (existe `docs/design/`) · `EN CURSO` · `CER
 
 | Épica | Alcance | Depende de | Nivel | Estado |
 |---|---|---|---|---|
-| **E0 Base** | Repo, CI (lint/test/invariantes), Docker + Supabase local/branch, `lib/money.ts`, `runs/registro.jsonl`, fixtures vacíos, hook de pureza | — | 1 | EN CURSO (esta sesión: sistema agéntico + docs) |
+| **E0 Base** | Sistema agéntico + docs (hecho), `lib/money.ts` + tests (hecho), hook de pureza (hecho), `runs/registro.jsonl` (hecho). Pendiente: CI (lint/test/invariantes/guard), scripts `test:integration` y `test:e2e` + `@playwright/test`, Docker + Supabase local/branch | — | 1 | EN CURSO — **E1 puede planificarse en paralelo** (solo depende de la parte hecha) |
 | **E1 Organizaciones y roles** | `Organization`, `Membership`, `Role`, `requireOrg`, `tenantDb`, switcher, invitaciones, migración de datos TaxHacker (user → org), RLS base, tenant leak test | E0 | 2 (ADR-0002) | PENDIENTE |
 | **E2 Plan de cuentas e impuestos** | `Account`, seed NPGC (GENERAL/PYMES), `OrganizationAccountMap`, `TaxRate`, UI árbol editable (crear/renombrar/desactivar), import CSV plan propio, `AuditLog` | E1 | 1 (config) | PENDIENTE |
 | **E3 Libro diario** | `FiscalYear`, `PeriodLock`, `JournalEntry/Line`, `post/void`, numeración, constraints+trigger, plantillas de asientos tipo, asiento manual UI, mayor, sumas y saldos, invariantes I1, I7–I10, `ledgerHash` | E2 | 2 (ADR-0003) | PENDIENTE |

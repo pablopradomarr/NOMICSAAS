@@ -25,8 +25,8 @@ Spec completa: `docs/spec/SPEC-FIABILIDAD.md` (prevalece sobre cualquier prompt)
 |---|---|---|
 | I1 | Por asiento: Σdebe = Σhaber | 0 |
 | I2 | Balance: Σ saldos activo = Σ saldos pasivo + PN (incluyendo resultado del periodo) | 0 |
-| I3 | Resultado PyG (grupos 6/7) = saldo 129 tras regularización, o = Σ(7)−Σ(6) antes de ella | 0 |
-| I4 | Σ PyG analítica (proyectos directos + CECOs + líneas de negocio no asignadas + no analítico) = PyG contable, por cada nivel de margen | 0 |
+| I3 | **Definición única.** PyG del periodo = Σ(haber−debe) de líneas de grupos 6/7 cuyo asiento tiene `kind ∉ {REGULARIZATION, CLOSING, OPENING}`. Si el ejercicio está regularizado, además PyG = saldo acreedor de 129 tras la regularización | 0 |
+| I4 | **Definición única.** Por cada nivel de margen, Σ de todas las columnas de la matriz analítica (proyectos + imputaciones a líneas de negocio sin proyecto + CECOs no imputados + amortización/deterioro + financiero/extraordinario + NO_ANALITICO) = PyG contable (I3) del mismo periodo. Ninguna línea 6/7 queda fuera de la matriz | 0 |
 | I5 | Liquidación de CECO: Σ importes imputados = saldo del CECO en el periodo; remanente ≤ 1 céntimo asignado al mayor receptor | 1 céntimo |
 | I6 | Cashflow: saldo inicial 57x + Σ flujos del periodo = saldo final 57x | 0 |
 | I7 | Sin duplicados: (`organizationId`, `code`) único en cuentas, proyectos, CECOs, LN; (`organizationId`, `entryNumber`) único en asientos | — |
@@ -38,7 +38,7 @@ Salida: `validacion.json` `{run_id, checks: [{id, status: PASS|FAIL, evidencia}]
 
 ## Sello del entregable
 - Todos PASS y auditoría (si aplica) CONFORME → `VALIDADO AUTOMÁTICAMENTE`.
-- Cualquier FAIL / DISCREPANCIA / NO_VERIFICABLE / primer run tras cambio de motor / variación > umbral configurado (`OrganizationSettings.reviewThresholds`) → `REQUIERE REVISIÓN` + motivo. La UI lo muestra en la pestaña Auditoría y en cabecera del informe.
+- Cualquier FAIL / DISCREPANCIA / NO_VERIFICABLE / primer run tras cambio de motor / variación > umbral configurado (`Organization.reviewThresholds`) → `REQUIERE REVISIÓN` + motivo. La UI lo muestra en la pestaña Auditoría y en cabecera del informe.
 
 ## Provenance por cifra
 ```json

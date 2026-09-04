@@ -12,7 +12,7 @@ Commit base: `6cb7254` (v0.8.5). Auditoría detallada: `docs/AUDITORIA-FIABILIDA
 |---|---|---|
 | `prisma/schema.prisma` | User, Session, Account, Setting, Category, Project, Field, File, Transaction, Currency, AppData, Progress | **Extender**: `Organization`, `Membership(role)`, todas las tablas de negocio con `organizationId`; nuevas tablas contables (ver `docs/MODELO-DATOS.md`). `Transaction` se conserva como "operación/documento" y se enlaza a `JournalEntry` |
 | `lib/auth.ts`, `lib/auth-client.ts`, `app/(auth)` | better-auth (email/password, magic link, Stripe) | Conservar; añadir organización activa en sesión y `Membership` |
-| `lib/db.ts` | Prisma client (`@prisma/adapter-pg`) | Conservar; añadir `withTenant(orgId)` helper y extensión Prisma que inyecta filtro |
+| `lib/db.ts` | Prisma client (`@prisma/adapter-pg`) | Conservar; añadir `tenantDb(orgId)` (extensión Prisma que inyecta el filtro de organización) |
 | `lib/uploads.ts`, `lib/files.ts`, `lib/previews/*` | Subida, almacenamiento, previews (pdf2pic/sharp) | Conservar; añadir `sha256` en `File` (gap G-ALTA) |
 | `ai/analyze.ts`, `ai/prompt.ts`, `ai/schema.ts`, `ai/attachments.ts`, `ai/providers/llmProvider.ts` | OCR/extracción con LLM, schema dinámico desde `Field` | **Envolver**: resultado → `ExtractionRun` (modelo, proveedor, prompt hash, schema version, tokens, output crudo). Eliminar `File.cachedParseResult`. Añadir `reconcile()` determinista antes de proponer asiento. Prompts base a `ai/prompts/*.md` versionados |
 | `app/api/unsorted/analyze/route.ts`, `lib/analyze-queue.ts` | Endpoint + cola de análisis con concurrencia y retry 429 | Conservar |
@@ -25,7 +25,7 @@ Commit base: `6cb7254` (v0.8.5). Auditoría detallada: `docs/AUDITORIA-FIABILIDA
 | `app/(app)/apps/email/*`, `lib/email-sync/*` | Ingesta IMAP de adjuntos | Conservar (por organización) |
 | `app/(app)/import/csv/*`, `models/export_and_import.ts` | Import/export CSV | Conservar; corregir `*100` sin redondeo y `findFirst` sin `userId` (cross-tenant) |
 | `models/backups.ts`, `app/(app)/settings/backups` | Backup/restore JSON | Extender a todas las tablas nuevas; por organización |
-| `app/(app)/settings/*` | Categorías, proyectos, campos, monedas, LLM, perfil | Añadir: Plan de cuentas, CECOs, Líneas de negocio, Reglas de imputación, Ejercicios, Impuestos, Usuarios y roles, Auditoría |
+| `app/(app)/settings/*` | Categorías, proyectos, campos, monedas, LLM, perfil | Añadir bajo `settings/`: Plan de cuentas, CECOs, Líneas de negocio, Reglas de imputación, Ejercicios, Impuestos, Usuarios y roles. Rutas nuevas de primer nivel: `ledger/`, `reports/`, `analytics/`, `audit/` |
 | `models/defaults-data.ts` | Prompt por defecto, campos, categorías | Prompt en `ai/prompts/`; añadir seed NPGC, CECOs, niveles de margen |
 | `lib/stripe.ts`, `app/api/stripe/*` | Planes/membresía | Conservar a nivel organización (cloud) |
 | `docker-compose*.yml`, `Dockerfile` | Despliegue | Conservar; `DATABASE_URL` → Supabase en cloud |
@@ -37,10 +37,10 @@ Commit base: `6cb7254` (v0.8.5). Auditoría detallada: `docs/AUDITORIA-FIABILIDA
 - Progreso largo: `Progress` + SSE `app/api/progress/[id]`.
 - Tests: vitest, `forms/transactions.test.ts` como ejemplo.
 
-## Gaps ALTA que el ERP cierra (de `docs/AUDITORIA-FIABILIDAD.md`)
-1. Total/IVA/items del LLM guardados sin validar Σitems = total → `reconcile()`.
-2. Extracción parcial (≤ 4 páginas) sin marcar → `ExtractionRun.partial = true` y badge.
-3. `cachedParseResult` como memoria de cifras → eliminar; `ExtractionRun` inmutable.
-4. Tasa de cambio en navegador sin persistir → `ExchangeRate` en servidor.
-5. `profitPerCurrency` NaN / monedas no convertidas a 0 → dashboard sobre diario en moneda base.
-6. Unidades mezcladas céntimos/decimales en items → schema de items en céntimos.
+## Gaps ALTA que el ERP cierra (IDs de `docs/AUDITORIA-FIABILIDAD.md`, no reenumerar)
+- G-01 Total/IVA/items del LLM guardados sin validar Σitems = total, unidades mezcladas → `reconcile()` + schema de items en céntimos (E8).
+- G-02 Extracción parcial (≤ 4 páginas) sin marcar → `ExtractionRun.partial = true` y badge (E8).
+- G-03 `cachedParseResult` como memoria de cifras → eliminar; `ExtractionRun` inmutable (E8).
+- G-04 Tasa de cambio en navegador sin persistir → `ExchangeRate` en servidor (E8).
+- G-05 `profitPerCurrency` NaN → dashboard sobre diario en moneda base, SQL con COALESCE (E6).
+- G-06 Series temporales a 0 para monedas sin convertir, sin aviso → `excludedCount` visible (E6).

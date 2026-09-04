@@ -10,7 +10,8 @@ CLAUDE.md                     reglas del proyecto (leído siempre)
 .claude/skills/               7 skills de dominio (fiabilidad, contabilidad-analitica, pgc-npgc, estados-financieros,
                               codebase-taxhacker, supabase-multitenant, ui-erp)
 .claude/commands/             /epica  /sprint  /auditar  /cuadre
-.claude/settings.json         permisos + hook que bloquea impurezas en lib/ledger y lib/analytics
+.claude/settings.json         permisos (allow/deny) + hook PreToolUse
+.claude/hooks/guard.sh        bloquea ANTES de escribir: impurezas en lib/ledger y lib/analytics, edición de fixtures, ADRs aprobados, Float en importes
 docs/spec/SPEC-FIABILIDAD.md  principios P1–P7, componentes C1–C7 (inmutable)
 docs/AUDITORIA-FIABILIDAD.md  Fase 1 sobre TaxHacker: 22 gaps (6 ALTA)
 docs/SPEC-FUNCIONAL.md        qué construimos · docs/ARQUITECTURA.md cómo · docs/MODELO-DATOS.md esquema
@@ -39,7 +40,7 @@ tests/fixtures/               fixtures contables inmutables (los crea qa-tester 
 
 ## Primeros pasos
 1. Firmar (o comentar) `docs/adr/0001…0006` cambiando `Estado` a `APROBADO por Pablo el <fecha>`.
-2. `claude` → `/epica E1` (organizaciones y roles) → revisar `docs/design/E1-*.md` → `/sprint E1`.
+2. `claude` → `/epica E1` (organizaciones y roles; E0 está EN CURSO pero su parte bloqueante ya existe) → revisar `docs/design/E1-*.md` → `/sprint E1`. Completar el resto de E0 (CI, scripts de test, Docker/Supabase) dentro del primer sprint.
 3. Configurar `DATABASE_URL` (Supabase) y `.env` según `README.md` de TaxHacker.
 
 ## Modelos recomendados por agente
