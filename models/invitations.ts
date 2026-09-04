@@ -65,13 +65,23 @@ export function isInvitationLocked(invitation: Pick<Invitation, "attempts">): bo
 }
 
 /**
- * Suma un intento fallido de aceptación. Se hace con el cliente sin tenant
- * porque en el momento del fallo puede que aún no haya organización activa.
+ * Suma un intento fallido de aceptación.
+ *
+ * Ronda 2 (#3): antes escribía con el cliente sin tenant y SIN GUC, así que el
+ * `WITH CHECK` de la política de `invitations` la rechazaba en cuanto la app
+ * conecta como `app_runtime` — justo en el camino de un intento fallido, que es
+ * donde menos se mira. La organización se conoce (viene en la invitación), así
+ * que se fija `app.current_org` para el UPDATE.
  */
-export async function registerFailedInvitationAttempt(invitationId: string): Promise<void> {
-  await prisma.invitation.update({
-    where: { id: invitationId },
-    data: { attempts: { increment: 1 } },
+export async function registerFailedInvitationAttempt(
+  invitationId: string,
+  organizationId: string
+): Promise<void> {
+  await withTenantGucs(organizationId, undefined, async (tx) => {
+    await tx.invitation.update({
+      where: { id: invitationId },
+      data: { attempts: { increment: 1 } },
+    })
   })
 }
 

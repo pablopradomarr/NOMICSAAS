@@ -96,6 +96,8 @@ jobs:
       # El rol de migraciones y de los tests es el propietario; el test de humo
       # de RLS abre sus propias conexiones como `app_runtime` (ADR-0007).
       DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/erp_test
+      APP_RUNTIME_PASSWORD: ci-app-runtime-password
+      PGPASSWORD: postgres
       BASE_URL: http://localhost:7331
       BETTER_AUTH_SECRET: ci-secret-not-for-production
     steps:
@@ -112,6 +114,14 @@ jobs:
       # Falla el job si DATABASE_URL_TEST no está: los tests de fuga entre
       # tenants y el de migración NO pueden saltarse en CI (#10).
       - run: npm run test:integration
+      # Ronda 2 (#6): la suite anterior corre como PROPIETARIO, que ignora RLS.
+      # Ésta ejecuta el código real de `models/` conectando como `app_runtime`
+      # (NOBYPASSRLS): es la única que demuestra que la barrera 2 filtra.
+      - name: Credencial del rol de runtime (las migraciones ya no fijan contraseñas)
+        run: ./scripts/dev-db-setup.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp_test
+      - run: npm run test:integration:rls
 
   pureza-motor:
     name: Guard de pureza (lib/ledger, lib/analytics)

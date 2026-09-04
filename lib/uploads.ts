@@ -74,6 +74,17 @@ export function sniffFileExtension(buffer: Buffer): string | null {
   return null
 }
 
+/**
+ * Un zip es xlsx sólo si contiene `[Content_Types].xml` (parte obligatoria de
+ * OOXML). Ronda 2 (#11): sin esta comprobación, cualquier zip —un .docx, un
+ * .jar, un zip con lo que sea— pasaba como hoja de cálculo por tener la firma
+ * `PK\x03\x04`. El nombre de cada entrada viaja SIN comprimir en su cabecera
+ * local, así que basta con buscarlo en el buffer.
+ */
+export function isOoxmlPackage(buffer: Buffer): boolean {
+  return buffer.includes(Buffer.from("[Content_Types].xml", "latin1"))
+}
+
 /** Firmas binarias explícitamente prohibidas (ejecutables y scripts nativos). */
 function isForbiddenBinary(buffer: Buffer): boolean {
   return (
@@ -118,6 +129,10 @@ export function assertAcceptableUpload(filename: string, buffer: Buffer): string
       throw new UploadValidationError(`El contenido de ${filename} no corresponde a la extensión .${extension}`)
     }
     return declared
+  }
+
+  if (sniffed === "xlsx" && !isOoxmlPackage(buffer)) {
+    throw new UploadValidationError(`${filename} es un archivo comprimido, no una hoja de cálculo xlsx`)
   }
 
   const sniffedMime = ALLOWED_UPLOAD_TYPES[sniffed]

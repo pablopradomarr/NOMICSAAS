@@ -1,5 +1,5 @@
 import { requireOrg } from "@/lib/authz"
-import { fileExists, fullPathForFile } from "@/lib/files"
+import { fileExists, fullPathForFile, safeDownloadHeaders } from "@/lib/files"
 import { resolvePreviewFormat } from "@/lib/previews/format"
 import { generateFilePreviews } from "@/lib/previews/generate"
 import { getFileById } from "@/models/files"
@@ -50,7 +50,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     // Return file with proper content type
     return new NextResponse(fileBuffer, {
       headers: {
-        "Content-Type": contentType,
+        ...safeDownloadHeaders(contentType),
         "Content-Disposition": `inline; filename*=${encodeFilename(path.basename(previewPath))}`,
       },
     })

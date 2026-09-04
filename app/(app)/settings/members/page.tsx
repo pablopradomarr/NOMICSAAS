@@ -8,7 +8,7 @@ import { listLiveInvitations } from "@/models/invitations"
 import { listOrganizationMembersWithUsers } from "@/models/memberships"
 import { Role } from "@/prisma/client"
 import { Metadata } from "next"
-import { notFound } from "next/navigation"
+import { notFound, redirect } from "next/navigation"
 
 export const metadata: Metadata = {
   title: "Miembros",
@@ -28,7 +28,13 @@ export default async function MembersSettingsPage() {
   try {
     context = await requireOrg(Role.ADMIN)
   } catch (error) {
-    if (error instanceof AuthzError) notFound()
+    if (error instanceof AuthzError) {
+      // Ronda 2 (#12): no es lo mismo «no tienes organización» que «no eres
+      // ADMIN». Al primero hay que llevarlo a crear una; al segundo se le
+      // responde 404 para no confirmar que la pantalla existe.
+      if (error.code === "NO_ORGANIZATION") redirect("/organizations/new")
+      notFound()
+    }
     throw error
   }
   const { db, org, user } = context

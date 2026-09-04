@@ -54,7 +54,9 @@ type SidebarApp = {
 const settingsItems = [
   { title: "Profile & Plan", href: "/settings/profile", icon: User, adminOnly: false },
   { title: "Organización", href: "/settings/organization", icon: Building2, adminOnly: false },
-  { title: "Miembros", href: "/settings/members", icon: Users, adminOnly: false },
+  // Ronda 2 (#12): la pantalla ya responde 404 a quien no es ADMIN; el menú no
+  // debe ofrecer un enlace que lleva a un 404.
+  { title: "Miembros", href: "/settings/members", icon: Users, adminOnly: true },
   { title: "LLM settings", href: "/settings/llm", icon: Sparkles, adminOnly: true },
   { title: "Fields", href: "/settings/fields", icon: FormInput, adminOnly: true },
   { title: "Categories", href: "/settings/categories", icon: Tags, adminOnly: true },

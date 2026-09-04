@@ -10,7 +10,7 @@ import {
   isEnoughStorageToUploadFile,
   safePathJoin,
 } from "@/lib/files"
-import { syncOrganizationStorage } from "@/lib/uploads"
+import { UploadValidationError, assertAcceptableUpload, syncOrganizationStorage } from "@/lib/uploads"
 import { updateField } from "@/models/fields"
 import { createFile, deleteFile } from "@/models/files"
 import {
@@ -173,36 +173,45 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
       }
     }
 
-    const fileRecords = await Promise.all(
-      files.map(async (file) => {
-        const fileUuid = randomUUID()
-        const relativeFilePath = getTransactionFileUploadPath(fileUuid, file.name, transaction)
-        const arrayBuffer = await file.arrayBuffer()
-        const buffer = Buffer.from(arrayBuffer)
+    // Ronda 2 (#7): los adjuntos de una transacción son subidas de usuario
+    // exactamente igual que las de /files, así que pasan por la MISMA validación
+    // (lista blanca + tamaño + magic bytes) y se persiste el mimetype DETECTADO,
+    // nunca el `file.type` que declara el navegador.
+    let fileRecords
+    try {
+      fileRecords = await Promise.all(
+        files.map(async (file) => {
+          const arrayBuffer = await file.arrayBuffer()
+          const buffer = Buffer.from(arrayBuffer)
+          const mimetype = assertAcceptableUpload(file.name, buffer)
 
-        const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
-        await mkdir(path.dirname(fullFilePath), { recursive: true })
+          const fileUuid = randomUUID()
+          const relativeFilePath = getTransactionFileUploadPath(fileUuid, file.name, transaction)
+          const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
+          await mkdir(path.dirname(fullFilePath), { recursive: true })
+          await writeFile(fullFilePath, buffer)
 
-        await writeFile(fullFilePath, buffer)
-
-        // Create file record in database
-        const fileRecord = await createFile(db, {
-          id: fileUuid,
-          organizationId: org.id,
-          uploadedById: user.id,
-          filename: file.name,
-          path: relativeFilePath,
-          mimetype: file.type,
-          isReviewed: true,
-          metadata: {
-            size: file.size,
-            lastModified: file.lastModified,
-          },
+          return await createFile(db, {
+            id: fileUuid,
+            organizationId: org.id,
+            uploadedById: user.id,
+            filename: file.name,
+            path: relativeFilePath,
+            mimetype,
+            isReviewed: true,
+            metadata: {
+              size: buffer.length,
+              lastModified: file.lastModified,
+            },
+          })
         })
-
-        return fileRecord
-      })
-    )
+      )
+    } catch (error) {
+      if (error instanceof UploadValidationError) {
+        return { success: false, error: error.message }
+      }
+      throw error
+    }
 
     // Update invoice with the new file ID
     await updateTransactionFiles(

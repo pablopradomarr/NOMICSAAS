@@ -125,11 +125,11 @@ export async function acceptInvitationAction(token: string): Promise<ActionState
 
   const session = await getSession()
   if (!session?.user) {
-    await registerFailedInvitationAttempt(invitation.id)
+    await registerFailedInvitationAttempt(invitation.id, invitation.organizationId)
     return { success: false, error: "Inicia sesión con el correo invitado para aceptar la invitación" }
   }
   if (session.user.email.toLowerCase() !== invitation.email) {
-    await registerFailedInvitationAttempt(invitation.id)
+    await registerFailedInvitationAttempt(invitation.id, invitation.organizationId)
     return {
       success: false,
       error: "Esta invitación es para otra dirección de correo. Entra con la dirección a la que se envió.",

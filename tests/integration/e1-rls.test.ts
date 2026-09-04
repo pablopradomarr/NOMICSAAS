@@ -1,4 +1,5 @@
 import { Client } from "pg"
+import { appRuntimeDatabaseUrl } from "@/tests/support/env"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 // lib/db construye el PrismaClient al importarse: la URL debe fijarse antes.
@@ -14,11 +15,10 @@ const ORG_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb40"
 const USER_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa41"
 const USER_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb41"
 
+// Ronda 2 (#5): usuario y contraseña del rol de runtime salen del entorno
+// (`APP_RUNTIME_PASSWORD`), nunca hardcodeados: en CI el servidor lleva credenciales.
 function runtimeUrl(): string {
-  const url = new URL(TEST_DATABASE_URL as string)
-  url.username = "app_runtime"
-  url.password = ""
-  return url.toString()
+  return appRuntimeDatabaseUrl(TEST_DATABASE_URL as string)
 }
 
 /**

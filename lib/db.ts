@@ -169,8 +169,17 @@ const READ_OPERATIONS = new Set(["findMany", "findFirst", "findFirstOrThrow", "c
 // GUC de tenant — barrera 2 (RLS). ADR-0002 + ADR-0007 + E1-fix (#1, #2)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Contexto de la transacción de tenant en curso (evita anidar transacciones). */
-type TenantGucContext = { organizationId: string; userId?: string }
+/**
+ * Contexto de la transacción de tenant en curso.
+ *
+ * `client` es el cliente CRUDO de la transacción (sin extensión) en la que ya
+ * están fijados los GUC. Toda operación que la extensión intercepte estando
+ * este contexto activo se despacha SOBRE ÉL: si se despachara sobre el cliente
+ * base (`prisma`), la consulta saldría de la transacción y perdería
+ * `app.current_org` / `app.current_user` — que es justo el fallo #2 de la
+ * ronda 2 de revisión. Al ser crudo, además, no vuelve a entrar en la extensión.
+ */
+type TenantGucContext = { organizationId: string | null; userId?: string; client: ClientByModel }
 
 const tenantGucStorage = new AsyncLocalStorage<TenantGucContext>()
 
@@ -213,8 +222,12 @@ async function runWithTenantGucs(
   const userId = inherited?.organizationId === organizationId ? inherited.userId : undefined
   return await prisma.$transaction(async (tx) => {
     await applyTenantGucs(tx, organizationId, userId)
-    const delegate = (tx as unknown as ClientByModel)[delegateName(model)]
-    return await delegate[operation](args)
+    const rawClient = tx as unknown as ClientByModel
+    // El contexto se publica también aquí para que cualquier operación anidada
+    // (p. ej. la reescritura findUnique→findFirst) caiga en ESTA transacción.
+    return await tenantGucStorage.run({ organizationId, userId, client: rawClient }, async () =>
+      rawClient[delegateName(model)][operation](args)
+    )
   })
 }
 
@@ -238,9 +251,6 @@ export const tenantExtension = (organizationId: string) =>
               ? { OR: [{ organizationId }, { organizationId: null }] }
               : strictScope
             const typedArgs = (args ?? {}) as WhereRecord
-            // `query` está tipado con los args del modelo concreto; aquí se compone
-            // de forma genérica, así que se invoca a través de una firma laxa.
-            const run = query as unknown as (nextArgs: WhereRecord) => Promise<unknown>
 
             // Args acotados por la barrera 1 + operación efectiva a ejecutar.
             let nextOperation = operation
@@ -296,15 +306,16 @@ export const tenantExtension = (organizationId: string) =>
             }
 
             // E1-fix (#1): TODA operación de negocio se ejecuta con los GUC de
-            // tenant fijados, para que RLS (barrera 2) evalúe la política. Si ya
-            // estamos dentro de `tenantTransaction` de esta misma organización,
-            // los GUC ya están puestos y se ejecuta en esa transacción (abrir otra
-            // desde dentro consumiría una segunda conexión y podría interbloquear).
+            // tenant fijados, para que RLS (barrera 2) evalúe la política.
+            //
+            // Ronda 2 (#2/#9): si ya hay una transacción de tenant abierta para
+            // ESTA organización, la operación se despacha sobre SU cliente crudo
+            // — nunca sobre `client`/`query`, que podrían ser el cliente base y
+            // sacar la consulta de la transacción (perdiendo los GUC) o abrir una
+            // segunda conexión.
             const store = tenantGucStorage.getStore()
-            if (store?.organizationId === organizationId) {
-              if (nextOperation === operation) return run(nextArgs)
-              const delegate = (client as unknown as ClientByModel)[delegateName(model)]
-              return delegate[nextOperation](nextArgs)
+            if (store && store.organizationId === organizationId) {
+              return await store.client[delegateName(model)][nextOperation](nextArgs)
             }
             return await runWithTenantGucs(organizationId, model, nextOperation, nextArgs)
           },
@@ -315,9 +326,26 @@ export const tenantExtension = (organizationId: string) =>
 
 function buildTenantClient(organizationId: string) {
   return prisma.$extends(tenantExtension(organizationId)).$extends({
-    // La organización activa, accesible desde `models/` para construir los
-    // selectores únicos compuestos `organizationId_code`.
-    client: { $organizationId: organizationId },
+    client: {
+      // La organización activa, accesible desde `models/` para construir los
+      // selectores únicos compuestos `organizationId_code`.
+      $organizationId: organizationId,
+
+      /**
+       * Ronda 2 (#9): `tenantDb(org).$transaction(fn)` NO fija los GUC, así que
+       * las escrituras de dentro violarían el `WITH CHECK` de RLS; y como la
+       * extensión no vería contexto de tenant, cada operación abriría ADEMÁS su
+       * propia transacción anidada (segunda conexión del pool con la primera
+       * abierta). Se corta con un error explícito en lugar de fallar en
+       * producción con un mensaje de Postgres.
+       */
+      $transaction(): never {
+        throw new TenantError(
+          "tenantDb(orgId).$transaction() no fija app.current_org/app.current_user y anidaría transacciones. " +
+            "Usa tenantTransaction(orgId, userId?, async (tx) => …)."
+        )
+      },
+    },
   })
 }
 
@@ -372,18 +400,50 @@ export function tenantDb(organizationId: string): TenantClient {
 
 /**
  * Transacción con `app.current_org` (y opcionalmente `app.current_user`) fijados
- * vía `SET LOCAL`, para que RLS (barrera 2) evalúe las políticas de la
+ * como GUC locales, para que RLS (barrera 2) evalúe las políticas de la
  * organización activa y de la pertenencia del usuario.
  *
- * Úsala cuando varias operaciones deban ser atómicas o cuando la política
+ * Úsala cuando varias operaciones deban ser ATÓMICAS o cuando la política
  * necesite el usuario (alta de organización, aceptación de invitación, gestión
- * de miembros). Para operaciones sueltas no hace falta: desde E1-fix (#1)
- * `tenantDb(orgId)` ya envuelve cada operación en su propia transacción con los
- * GUC puestos.
+ * de miembros). Para operaciones sueltas no hace falta: `tenantDb(orgId)` ya
+ * envuelve cada operación en su propia transacción con los GUC puestos.
  *
- * Los uuid se validan con regex antes de interpolarse: `SET` no admite
- * parámetros vinculados en Postgres.
+ * ## Coste (deuda anotada en docs/ESTADO.md, se retira en E3)
+ * Una operación suelta por `tenantDb` = un `BEGIN` + dos `set_config` + la
+ * consulta + `COMMIT`: tres viajes extra a la base y una conexión del pool
+ * ocupada mientras dura. Es el precio de tener RLS efectiva sin refactorizar de
+ * golpe los 32 ficheros heredados (ADR-0007). Cuando el código de negocio esté
+ * agrupado dentro de `tenantTransaction` (E3), la envoltura por operación
+ * dejará de hacer falta: dentro de esta función TODAS las operaciones comparten
+ * la misma transacción y no abren ninguna más.
  */
+/**
+ * Cliente que ve `fn` dentro de `tenantTransaction`: los delegados de modelo van
+ * al cliente ACOTADO (barrera 1; la extensión los despacha sobre la transacción
+ * gracias al AsyncLocalStorage) y los métodos `$…` —en particular `$queryRaw*` y
+ * `$executeRaw*`— van DIRECTOS a la transacción, que es donde están fijados los
+ * GUC. Sin esto, un `$queryRaw` dentro de la transacción saldría por otra
+ * conexión y no vería `app.current_org`.
+ */
+function tenantTransactionFacade(organizationId: string, tx: object): TenantTransactionClient {
+  const scoped = tenantDb(organizationId) as unknown as Record<string, unknown>
+  const rawTx = tx as unknown as Record<string, unknown>
+  return new Proxy(
+    {},
+    {
+      get(_target, property) {
+        if (typeof property !== "string") return undefined
+        if (property === "$organizationId") return organizationId
+        if (property.startsWith("$")) {
+          const value = rawTx[property]
+          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(rawTx) : value
+        }
+        return scoped[property]
+      },
+    }
+  ) as unknown as TenantTransactionClient
+}
+
 export async function tenantTransaction<T>(
   organizationId: string,
   userIdOrFn: string | undefined | ((tx: TenantTransactionClient) => Promise<T>),
@@ -394,31 +454,53 @@ export async function tenantTransaction<T>(
   if (!fn) throw new TenantError("tenantTransaction: falta la función de transacción")
   assertUuid(organizationId)
 
-  // El cliente extendido propaga la extensión a su cliente de transacción: las
-  // consultas de `tx` ya salen filtradas por organización. El AsyncLocalStorage
-  // le dice a la extensión que NO abra una transacción propia por operación.
-  return await tenantGucStorage.run({ organizationId, userId }, async () =>
-    tenantDb(organizationId).$transaction(async (tx) => {
-      await applyTenantGucs(tx, organizationId, userId)
-      return fn(tx as unknown as TenantTransactionClient)
-    })
-  )
+  const outer = tenantGucStorage.getStore()
+  if (outer && outer.organizationId === organizationId) {
+    // Reentrante: ya hay transacción de tenant abierta para esta organización.
+    // Abrir otra tomaría una segunda conexión del pool mientras la primera sigue
+    // viva → interbloqueo bajo carga. Se reutiliza la que hay (#9).
+    return await fn(tenantTransactionFacade(organizationId, outer.client))
+  }
+
+  // La transacción se abre sobre el cliente CRUDO y se publica en el
+  // AsyncLocalStorage; `fn` recibe el cliente acotado de siempre y la extensión
+  // despacha cada operación sobre esta transacción (ver TenantGucContext).
+  return await prisma.$transaction(async (tx) => {
+    await applyTenantGucs(tx, organizationId, userId)
+    return await tenantGucStorage.run(
+      { organizationId, userId, client: tx as unknown as ClientByModel },
+      async () => fn(tenantTransactionFacade(organizationId, tx))
+    )
+  })
 }
 
 /**
- * Igual que `tenantTransaction` pero sobre el cliente SIN acotar: para los
- * modelos que resuelven QUÉ organización (`organizations`, `memberships`) y por
- * tanto no pueden pasar por `tenantDb`. Fija los mismos GUC, de modo que las
- * políticas por pertenencia (`app.current_user()`) se evalúen correctamente.
- * @internal Sólo `models/organizations.ts` y `models/memberships.ts`.
+ * Igual que `tenantTransaction` pero entrega el cliente SIN acotar: para los
+ * modelos que resuelven QUÉ organización (`organizations`, `memberships`,
+ * `invitations` por token) y por tanto no pueden pasar por `tenantDb`. Fija los
+ * mismos GUC, de modo que las políticas por pertenencia (`app.current_user()`)
+ * se evalúen correctamente.
+ *
+ * Publica además el contexto en el AsyncLocalStorage (#9): si dentro se usa
+ * `tenantDb(orgId)` de la misma organización, sus operaciones entran en ESTA
+ * transacción en lugar de abrir una segunda conexión.
+ *
+ * @internal Sólo `models/{organizations,memberships,invitations}.ts` y `lib/email-sync`.
  */
 export async function withTenantGucs<T>(
   organizationId: string | null,
   userId: string | undefined,
   fn: (tx: Omit<PrismaClient, "$transaction" | "$connect" | "$disconnect" | "$on" | "$extends" | "$use">) => Promise<T>
 ): Promise<T> {
+  const outer = tenantGucStorage.getStore()
+  if (outer && outer.organizationId === organizationId) {
+    return await fn(outer.client as unknown as Parameters<typeof fn>[0])
+  }
   return await prisma.$transaction(async (tx) => {
     await applyTenantGucs(tx, organizationId, userId)
-    return fn(tx)
+    return await tenantGucStorage.run(
+      { organizationId, userId, client: tx as unknown as ClientByModel },
+      async () => fn(tx)
+    )
   })
 }

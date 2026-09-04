@@ -5,16 +5,23 @@
  * del usuario que los subía. Desde E1-fix el sujeto del almacenamiento es la
  * organización. Este script mueve los directorios heredados a su sitio.
  *
- * Cómo decide la organización de destino, en este orden:
- *   1. Si algún `files.uploaded_by_id` del usuario apunta a una organización,
- *      se usa ESA (el fichero pertenece a donde está registrado).
- *   2. Si no, la organización personal del usuario (id = users.id, convención
- *      del backfill 20260904120100).
- *   3. Si no hay ninguna, se avisa y se deja el directorio intacto.
+ * Cómo decide la organización de destino, FICHERO A FICHERO (ronda 2, #10):
+ *   1. Se busca la fila de `files` cuyo `path` coincide con la ruta relativa del
+ *      fichero dentro del directorio heredado y se usa SU `organization_id`.
+ *      Es el único criterio correcto: un usuario puede pertenecer a varias
+ *      organizaciones y tener en su antiguo directorio ficheros de todas ellas
+ *      (la versión anterior mandaba el directorio entero a la organización del
+ *      PRIMER fichero del usuario, mezclando tenants).
+ *   2. Los ficheros que no están en `files` (previews regenerables, `static/`,
+ *      restos) van a la organización personal del usuario, o a su única
+ *      membresía si no la hubiera.
+ *   3. Si no hay forma de resolverla, se avisa y el fichero se queda donde está.
  *
- * Idempotente: si el directorio de destino ya contiene el fichero con el mismo
- * tamaño, no hace nada; los directorios de origen vacíos se eliminan al final.
- * DRY-RUN POR DEFECTO: no toca nada sin `--apply`.
+ * Al terminar recalcula `organizations.storage_used` de cada organización
+ * tocada, que si no queda contando un directorio que ya no existe.
+ *
+ * Idempotente: si el destino ya tiene el fichero con el mismo tamaño, no hace
+ * nada. DRY-RUN POR DEFECTO: no toca nada sin `--apply`.
  *
  * Uso:
  *   npx tsx scripts/migrate-uploads-to-org.ts               # simulación
@@ -23,16 +30,20 @@
  */
 
 import { prisma } from "@/lib/db"
+import { getOrganizationStorageUsed } from "@/lib/files"
+import { updateOrganization } from "@/models/organizations"
 import { constants } from "node:fs"
 import { access, mkdir, readdir, rename, rm, stat } from "node:fs/promises"
 import path from "node:path"
 
-type Plan = {
-  email: string
-  from: string
-  to: string
+type Movimiento = {
+  /** Ruta relativa dentro del directorio heredado. */
+  relative: string
+  source: string
+  target: string
   organizationId: string
-  files: number
+  /** Cómo se resolvió la organización (para el informe). */
+  origen: "files.path" | "organización personal" | "única membresía"
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -71,24 +82,19 @@ async function listFiles(root: string, prefix = ""): Promise<string[]> {
   return out
 }
 
-/** Organización de destino para el directorio de un email heredado. */
-async function resolveOrganizationId(email: string): Promise<string | null> {
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } })
-  if (!user) return null
+/** Organización de reserva del usuario: la personal, o su única membresía. */
+async function fallbackOrganizationId(userId: string): Promise<{ id: string; origen: Movimiento["origen"] } | null> {
+  const personal = await prisma.organization.findFirst({ where: { id: userId }, select: { id: true } })
+  if (personal) return { id: personal.id, origen: "organización personal" }
 
-  const uploaded = await prisma.file.findFirst({
-    where: { uploadedById: user.id },
-    orderBy: { createdAt: "asc" },
-    select: { organizationId: true },
-  })
-  if (uploaded) return uploaded.organizationId
-
-  const membership = await prisma.membership.findFirst({
-    where: { userId: user.id },
+  const memberships = await prisma.membership.findMany({
+    where: { userId },
     orderBy: [{ createdAt: "asc" }],
     select: { organizationId: true },
   })
-  return membership?.organizationId ?? null
+  // Con más de una membresía NO se adivina: mezclar tenants es peor que parar.
+  if (memberships.length === 1) return { id: memberships[0].organizationId, origen: "única membresía" }
+  return null
 }
 
 async function main() {
@@ -109,56 +115,100 @@ async function main() {
     return
   }
 
-  const plans: Plan[] = []
+  const movimientos: Movimiento[] = []
+  const sinDestino: string[] = []
+  const organizacionesTocadas = new Set<string>()
+
   for (const dir of legacyDirs) {
     const from = path.join(uploadsPath, dir.name)
-    const organizationId = await resolveOrganizationId(dir.name)
-    if (!organizationId) {
-      console.warn(`[uploads] SIN DESTINO para ${dir.name}: no hay usuario ni membresía. Se deja intacto.`)
+    const user = await prisma.user.findUnique({ where: { email: dir.name.toLowerCase() } })
+    if (!user) {
+      console.warn(`[uploads] ${dir.name}: no hay usuario con ese correo. Directorio intacto.`)
       continue
     }
-    const files = await listFiles(from)
-    plans.push({ email: dir.name, from, to: path.join(uploadsPath, organizationId), organizationId, files: files.length })
+    const fallback = await fallbackOrganizationId(user.id)
+
+    for (const relative of await listFiles(from)) {
+      // `files.path` guarda exactamente la ruta relativa al directorio raíz del
+      // usuario, con separadores POSIX.
+      const registrado = await prisma.file.findFirst({
+        where: { path: relative.split(path.sep).join("/") },
+        select: { organizationId: true },
+      })
+
+      const destino = registrado
+        ? { id: registrado.organizationId, origen: "files.path" as const }
+        : fallback
+
+      if (!destino) {
+        sinDestino.push(path.join(dir.name, relative))
+        continue
+      }
+
+      organizacionesTocadas.add(destino.id)
+      movimientos.push({
+        relative,
+        source: path.join(from, relative),
+        target: path.join(uploadsPath, destino.id, relative),
+        organizationId: destino.id,
+        origen: destino.origen,
+      })
+    }
+  }
+
+  const porOrganizacion = new Map<string, number>()
+  for (const m of movimientos) porOrganizacion.set(m.organizationId, (porOrganizacion.get(m.organizationId) ?? 0) + 1)
+  for (const [organizationId, n] of porOrganizacion) {
+    console.log(`[uploads] → ${organizationId}: ${n} ficheros`)
+  }
+  const porResolucion = new Map<string, number>()
+  for (const m of movimientos) porResolucion.set(m.origen, (porResolucion.get(m.origen) ?? 0) + 1)
+  for (const [origen, n] of porResolucion) console.log(`[uploads]   resueltos por ${origen}: ${n}`)
+  for (const huerfano of sinDestino) {
+    console.warn(`[uploads] SIN DESTINO (no está en files y el usuario tiene varias organizaciones): ${huerfano}`)
+  }
+
+  if (!apply) {
+    console.log(`[uploads] simulación: ${movimientos.length} ficheros se moverían. No se ha modificado nada.`)
+    return
   }
 
   let moved = 0
   let skipped = 0
-
-  for (const plan of plans) {
-    console.log(`[uploads] ${plan.email} → ${plan.organizationId} (${plan.files} ficheros)`)
-    if (!apply) continue
-
-    for (const relative of await listFiles(plan.from)) {
-      const source = path.join(plan.from, relative)
-      const target = path.join(plan.to, relative)
-
-      if (await exists(target)) {
-        const [a, b] = await Promise.all([stat(source), stat(target)])
-        if (a.size === b.size) {
-          skipped++
-          continue
-        }
-        console.warn(`[uploads] CONFLICTO (tamaños distintos), se conserva el destino: ${relative}`)
-        skipped++
-        continue
+  for (const m of movimientos) {
+    if (await exists(m.target)) {
+      const [a, b] = await Promise.all([stat(m.source), stat(m.target)])
+      if (a.size !== b.size) {
+        console.warn(`[uploads] CONFLICTO (tamaños distintos), se conserva el destino: ${m.relative}`)
       }
-
-      await mkdir(path.dirname(target), { recursive: true })
-      await rename(source, target)
-      moved++
+      skipped++
+      continue
     }
+    await mkdir(path.dirname(m.target), { recursive: true })
+    await rename(m.source, m.target)
+    moved++
+  }
 
-    // El directorio heredado sólo se borra si ha quedado vacío.
-    const leftovers = await listFiles(plan.from)
-    if (leftovers.length === 0) {
-      await rm(plan.from, { recursive: true, force: true })
+  // Directorios heredados que hayan quedado vacíos.
+  for (const dir of legacyDirs) {
+    const from = path.join(uploadsPath, dir.name)
+    if (!(await exists(from))) continue
+    if ((await listFiles(from)).length === 0) {
+      await rm(from, { recursive: true, force: true })
     } else {
-      console.warn(`[uploads] ${plan.email}: quedan ${leftovers.length} ficheros sin mover, no se borra el directorio`)
+      console.warn(`[uploads] ${dir.name}: quedan ficheros sin mover, no se borra el directorio`)
     }
   }
 
-  console.log(`[uploads] hecho. movidos=${moved} omitidos=${skipped} directorios=${plans.length}`)
-  if (!apply) console.log("[uploads] no se ha modificado nada (simulación)")
+  // La cuota se mide sobre el directorio de la organización: si no se recalcula,
+  // `storage_used` sigue reflejando un reparto que ya no existe (#10).
+  for (const organizationId of organizacionesTocadas) {
+    const storageUsed = await getOrganizationStorageUsed({ id: organizationId })
+    await updateOrganization(organizationId, { storageUsed })
+    console.log(`[uploads] storage_used de ${organizationId} = ${storageUsed} bytes`)
+  }
+
+  console.log(`[uploads] hecho. movidos=${moved} omitidos=${skipped} sin destino=${sinDestino.length}`)
 }
 
 main()

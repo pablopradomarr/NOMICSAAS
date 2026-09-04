@@ -1,5 +1,5 @@
 import { Prisma } from "@/prisma/client"
-import { prisma, tenantDb } from "@/lib/db"
+import { prisma, tenantDb, withTenantGucs } from "@/lib/db"
 import { decryptSecret } from "@/lib/encryption"
 import { ingestUnsortedFile, syncOrganizationStorage, UploadContext } from "@/lib/uploads"
 import { File, Organization, User } from "@/prisma/client"
@@ -89,11 +89,16 @@ export async function syncServer(
   }
 }
 
-async function applyResult(organizationId: string, userId: string, result: SyncResult) {
+/** Exportada para el test de RLS con `app_runtime` (ronda 2, #4/#6). */
+export async function applySyncResult(organizationId: string, userId: string, result: SyncResult) {
   // Lock the row and re-read the CURRENT data inside the transaction so a concurrent sync
   // (the hourly cron container vs. a manual "Sync Now" in the web app) can't clobber the
   // other's watermark/status with a stale read-modify-write.
-  await prisma.$transaction(async (tx) => {
+  // Ronda 2 (#4): la transacción no fijaba los GUC de tenant, así que el UPDATE
+  // de `app_data` violaba el WITH CHECK de RLS en cuanto la app conecta como
+  // `app_runtime`. `withTenantGucs` los fija y reutiliza la transacción si ya
+  // hubiera una abierta para esta organización.
+  await withTenantGucs(organizationId, userId, async (tx) => {
     const locked = await tx.$queryRaw<{ data: Record<string, unknown> }[]>`
       SELECT data FROM app_data
       WHERE organization_id = ${organizationId}::uuid AND user_id = ${userId}::uuid AND app = 'email'
@@ -157,7 +162,7 @@ export async function runEmailSync(
         user: row.user satisfies User,
       }
       const result = await syncServer(server, ctx)
-      await applyResult(row.organizationId, row.userId, result)
+      await applySyncResult(row.organizationId, row.userId, result)
       if (result.processed > 0) {
         await syncOrganizationStorage(row.organizationId)
       }

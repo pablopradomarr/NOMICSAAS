@@ -8,6 +8,8 @@ vi.mock("@/lib/db", () => {
   return {
     prisma: { appData: { findMany: vi.fn() }, $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(tx)) },
     tenantDb: vi.fn(() => ({})),
+    // Ronda 2 (#4): applySyncResult fija los GUC de tenant con withTenantGucs.
+    withTenantGucs: vi.fn(async (_org: unknown, _user: unknown, fn: (tx: unknown) => unknown) => fn(tx)),
   }
 })
 vi.mock("@/lib/files", () => ({ getDirectorySize: vi.fn(), getOrganizationUploadsDirectory: vi.fn(() => "dir") }))

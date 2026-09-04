@@ -1,4 +1,5 @@
 import { Client } from "pg"
+import { appRuntimeDatabaseUrl } from "@/tests/support/env"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -24,11 +25,10 @@ const ORG_B = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee20"
 const USER_A = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee11"
 const USER_B = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee21"
 
+// Ronda 2 (#5): usuario y contraseña del rol de runtime salen del entorno
+// (`APP_RUNTIME_PASSWORD`), nunca hardcodeados: en CI el servidor lleva credenciales.
 function runtimeUrl(): string {
-  const url = new URL(TEST_DATABASE_URL as string)
-  url.username = "app_runtime"
-  url.password = "app_runtime"
-  return url.toString()
+  return appRuntimeDatabaseUrl(TEST_DATABASE_URL as string)
 }
 
 async function runtimeClient(): Promise<Client> {

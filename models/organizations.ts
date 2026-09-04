@@ -1,6 +1,7 @@
 // NOTA: usa el cliente sin tenant a propósito (resuelve QUÉ organización).
 // Excepción legítima a la futura regla no-restricted-imports (T10).
 import { prisma, withTenantGucs } from "@/lib/db"
+import { randomUUID } from "node:crypto"
 import { Organization, PgcVariant, Prisma, Role } from "@/prisma/client"
 import { cache } from "react"
 
@@ -65,11 +66,18 @@ export async function createOrganizationWithOwner(
   ownerUserId: string,
   now: Date
 ): Promise<Organization> {
-  return await withTenantGucs(null, ownerUserId, async (tx) => {
+  // Ronda 2 (#1): el uuid se genera AQUÍ, no en la base. Prisma ejecuta
+  // `INSERT … RETURNING`, y el RETURNING se evalúa contra la política de SELECT
+  // de `organizations`; conociendo el id de antemano podemos fijar
+  // `app.current_org` ANTES del INSERT y que la fila recién creada sea visible
+  // para su propio RETURNING (la membresía aún no existe).
+  const organizationId = randomUUID()
+  return await withTenantGucs(organizationId, ownerUserId, async (tx) => {
     const organization = await tx.organization.create({
       data: {
+        id: organizationId,
         name: input.name,
-        slug: input.slug ?? buildOrganizationSlug(input.name, crypto.randomUUID()),
+        slug: input.slug ?? buildOrganizationSlug(input.name, organizationId),
         taxId: input.taxId ?? null,
         baseCurrency: input.baseCurrency ?? "EUR",
         timezone: input.timezone ?? "Europe/Madrid",
@@ -105,7 +113,9 @@ export async function ensurePersonalOrganization(
   if (existing) return existing
 
   const label = user.businessName || user.name || user.email.split("@")[0]
-  return await withTenantGucs(null, user.id, async (tx) => {
+  // El id de la organización personal es el del usuario (convención del
+  // backfill), así que se conoce antes del INSERT y se fija como app.current_org.
+  return await withTenantGucs(user.id, user.id, async (tx) => {
     const organization = await tx.organization.create({
       data: {
         id: user.id,

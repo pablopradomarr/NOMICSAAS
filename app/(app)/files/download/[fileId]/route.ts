@@ -1,5 +1,5 @@
 import { requireOrg } from "@/lib/authz"
-import { fileExists, fullPathForFile } from "@/lib/files"
+import { fileExists, fullPathForFile, safeDownloadHeaders } from "@/lib/files"
 import { encodeFilename } from "@/lib/utils"
 import { getFileById } from "@/models/files"
 import fs from "fs/promises"
@@ -34,9 +34,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     // Return file with proper content type and encoded filename
     return new NextResponse(fileBuffer, {
       headers: {
-        "Content-Type": file.mimetype,
-          "Content-Disposition": `attachment; filename*=${encodeFilename(file.filename)}`,
-        },
+        ...safeDownloadHeaders(file.mimetype),
+        "Content-Disposition": `attachment; filename*=${encodeFilename(file.filename)}`,
+      },
     })
   } catch (error) {
     console.error("Error serving file:", error)

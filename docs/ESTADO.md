@@ -7,7 +7,8 @@ Actualizado: 2026-09-04 ~17:00 Europe/Madrid · Repo: `pablopradomarr/NOMICSAAS`
 |---|---|---|
 | E0 Base (agentes, docs, ADR 1–7 aprobados, `lib/money.ts`, hook guard) | HECHO salvo CI/Docker | 2168fd7, c3ff192, 83cdf86 |
 | E1 T1–T14 (tenancy, roles, RLS con escape, switcher, miembros, invitaciones) | IMPLEMENTADO, **revisión = CAMBIOS REQUERIDOS** | daf199f, 34e41cb, f65f37c, + commit QA |
-| E1-fix (3 BLOQUEA + 15 DEBE + PUEDE #19/#20/#21/#24/#25/#26) | IMPLEMENTADO, pendiente de re-revisión | sin commit (working tree) |
+| E1-fix ronda 1 (3 BLOQUEA + 15 DEBE + PUEDE #19/#20/#21/#24/#25/#26) | IMPLEMENTADO | 143a289 |
+| E1-fix ronda 2 (2 BLOQUEA + 7 DEBE + 3 PUEDE de la re-revisión) | IMPLEMENTADO, pendiente de re-revisión | sin commit (working tree) |
 
 QA: PASS condicionado (barrera 1 y authz resisten; migración CA-1 sin test). Revisor: 3 BLOQUEA, 15 DEBE, 8 PUEDE (informe completo en `docs/design/E1-revision.md`, ya con columna "Resolución").
 
@@ -21,8 +22,25 @@ npx tsx scripts/migrate-uploads-to-org.ts --apply    # ejecuta (idempotente)
 ```
 Resuelve la organización destino por `files.uploaded_by_id` y, en su defecto, por la organización personal del usuario. Sin este paso, los ficheros anteriores dejan de encontrarse (las filas de `files` no cambian: sólo cambia el directorio raíz).
 
+### Deuda anotada: una transacción por operación
+`tenantDb(orgId)` envuelve CADA operación en su propia transacción para poder fijar `app.current_org`/`app.current_user` (`SET LOCAL`) y que RLS filtre: son tres viajes extra a la base (BEGIN + dos `set_config` + COMMIT) y una conexión del pool ocupada mientras dura. Es el precio de tener la barrera 2 activa sin refactorizar de golpe los 32 ficheros heredados (ADR-0007). **En E3**, cuando el código de negocio esté agrupado dentro de `tenantTransaction`, la envoltura por operación deja de hacer falta: dentro de esa función todas las operaciones comparten una sola transacción. `tenantDb(org).$transaction()` lanza un error explícito que remite a `tenantTransaction`.
+
 ### Roles de base de datos
-`DATABASE_URL` debe apuntar ahora al rol **`app_runtime`** (LOGIN, NOBYPASSRLS, no propietario) y `DIRECT_URL` al propietario, que es el que usan las migraciones (`prisma.config.ts`). En local la migración crea `app_runtime` con contraseña `app_runtime`.
+`DATABASE_URL` debe apuntar ahora al rol **`app_runtime`** (LOGIN, NOBYPASSRLS, no propietario) y `DIRECT_URL` al propietario, que es el que usan las migraciones (`prisma.config.ts`). Las migraciones **ya no fijan contraseñas** (quedarían en el repositorio): crean el rol sin LOGIN y garantizan `NOBYPASSRLS`. La credencial la pone el operador:
+
+```bash
+APP_RUNTIME_PASSWORD='…' ./scripts/dev-db-setup.sh     # local y CI (default: app_runtime)
+```
+
+**Acción pendiente del operador:** en cualquier entorno donde ya se aplicó `20260904140000_e1_rls_effective`, esa migración dejó la contraseña literal `app_runtime`; hay que ROTARLA. La migración no se edita porque ya está aplicada (`CLAUDE.md`).
+
+### Comandos de test
+```bash
+npm run test                  # unitarios
+npm run test:integration      # integración como PROPIETARIO (no ejerce RLS)
+npm run test:integration:rls  # models/ como app_runtime: RLS efectiva
+npm run test:all              # los tres
+```
 
 ## Siguiente trabajo (en este orden) — épica E1 "fix" (COMPLETADA salvo lo indicado)
 1. ✅ **BLOQUEA-1/2 RLS inerte**: cablear `tenantTransaction` en escrituras de `models/`; políticas de `organizations`/`memberships` por `user_id` (función `app.current_user()`); `SET LOCAL` en `createOrganizationWithOwner`; `.env.example`/docker-compose con rol `app_runtime`; test de humo con `app_runtime` en `test:integration`. Si no cabe en un sprint, ADR-0008 que reconozca RLS efectiva en E3 (Nivel 2: Pablo ya delegó aprobación general en sesión de setup).

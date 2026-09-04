@@ -4,7 +4,7 @@ import { transactionFormSchema } from "@/forms/transactions"
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
 import { getOrganizationUploadsDirectory, getTransactionFileUploadPath, safePathJoin, unsortedFilePath } from "@/lib/files"
-import { syncOrganizationStorage } from "@/lib/uploads"
+import { UploadValidationError, assertAcceptableUpload, syncOrganizationStorage } from "@/lib/uploads"
 import { createFile, deleteFile, getFileById, updateFile } from "@/models/files"
 import {
   createTransaction,
@@ -127,10 +127,18 @@ export async function splitFileIntoItemsAction(
     const originalFilePath = safePathJoin(organizationUploadsDirectory, originalFile.path)
     const fileContent = await readFile(originalFilePath)
 
+    // Ronda 2 (#7): el nombre de la parte conserva la EXTENSIÓN del original (si
+    // no, `unsortedFilePath` derivaba una extensión del nombre del item) y el
+    // contenido vuelve a pasar por la validación, que además devuelve el
+    // mimetype real: nunca se persiste el declarado por el cliente.
+    const originalExtension = path.extname(originalFile.filename)
+    const originalBaseName = path.basename(originalFile.filename, originalExtension)
+
     // Create a new file for each item
     for (const item of items) {
       const fileUuid = randomUUID()
-      const fileName = `${originalFile.filename}-part-${item.name}`
+      const fileName = `${originalBaseName}-part-${item.name}${originalExtension}`
+      const mimetype = assertAcceptableUpload(fileName, fileContent)
       const relativeFilePath = unsortedFilePath(fileUuid, fileName)
       const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
 
@@ -147,7 +155,7 @@ export async function splitFileIntoItemsAction(
         uploadedById: user.id,
         filename: fileName,
         path: relativeFilePath,
-        mimetype: originalFile.mimetype,
+        mimetype,
         metadata: originalFile.metadata ?? undefined,
         isSplitted: true,
         cachedParseResult: {
@@ -175,6 +183,9 @@ export async function splitFileIntoItemsAction(
     revalidatePath("/unsorted")
     return { success: true }
   } catch (error) {
+    if (error instanceof UploadValidationError) {
+      return { success: false, error: error.message }
+    }
     console.error("Failed to split file into items:", error)
     return { success: false, error: `Failed to split file into items: ${error}` }
   }

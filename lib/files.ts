@@ -97,6 +97,27 @@ export function safePathJoin(basePath: string, ...paths: string[]) {
   return joinedPath
 }
 
+/**
+ * Tipos que el navegador NO debe interpretar. Ronda 2 (#11): un `.csv`, `.txt` o
+ * `.eml` puede contener HTML/JS; servirlo con su mimetype declarado y sin
+ * `nosniff` abre la puerta a XSS almacenado en el propio dominio de la app.
+ * Se sirven como `text/plain` y siempre con `X-Content-Type-Options: nosniff`.
+ */
+const INERT_MIMETYPES: ReadonlySet<string> = new Set(["text/csv", "text/plain", "message/rfc822"])
+
+/** Mimetype seguro para servir un fichero almacenado. */
+export function safeDownloadContentType(mimetype: string): string {
+  return INERT_MIMETYPES.has(mimetype) ? "text/plain; charset=utf-8" : mimetype
+}
+
+/** Cabeceras de respuesta comunes a toda descarga de fichero de usuario. */
+export function safeDownloadHeaders(mimetype: string): Record<string, string> {
+  return {
+    "Content-Type": safeDownloadContentType(mimetype),
+    "X-Content-Type-Options": "nosniff",
+  }
+}
+
 export async function fileExists(filePath: string) {
   try {
     await access(path.normalize(filePath), constants.F_OK)

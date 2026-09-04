@@ -1,5 +1,5 @@
 import { requireOrg } from "@/lib/authz"
-import { fileExists, getStaticDirectory, safePathJoin } from "@/lib/files"
+import { fileExists, getStaticDirectory, safeDownloadHeaders, safePathJoin } from "@/lib/files"
 import fs from "fs/promises"
 import lookup from "mime-types"
 import { NextResponse } from "next/server"
@@ -24,9 +24,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
     const fileBuffer = await fs.readFile(fullFilePath)
 
     return new NextResponse(fileBuffer, {
-      headers: {
-        "Content-Type": lookup.lookup(filename) || "application/octet-stream",
-      },
+      headers: safeDownloadHeaders(lookup.lookup(filename) || "application/octet-stream"),
     })
   } catch (error) {
     console.error("Error serving file:", error)
