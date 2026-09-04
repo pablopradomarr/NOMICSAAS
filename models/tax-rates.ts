@@ -9,7 +9,7 @@ import type { TaxRateInput, TaxRateRow } from "@/lib/taxes/types"
 import { TenantClient, TenantTransactionClient, tenantTransaction } from "@/lib/db"
 import { getPlan, type Actor } from "@/models/accounts"
 import { writeAuditLog } from "@/models/audit-log"
-import type { TaxKind, TaxRate } from "@/prisma/client"
+import type { Organization, TaxKind, TaxRate, TaxRoundingMode } from "@/prisma/client"
 
 type AnyClient = TenantClient | TenantTransactionClient
 
@@ -133,6 +133,48 @@ export async function updateTaxRate(
       userId: actor.userId,
     })
     return { ok: true as const, value: after }
+  })
+}
+
+/**
+ * Política fiscal de la organización (D2-8): prorrata, método de redondeo y
+ * tolerancia. Cambia cómo el motor calculará las cuotas de TODO documento
+ * posterior, así que el motivo es obligatorio y queda en `AuditLog` (§7).
+ */
+export type TaxPolicyPatch = {
+  prorrataPermille: number | null
+  taxRoundingMode: TaxRoundingMode
+  redondeoToleranciaCents: number
+}
+
+export async function updateTaxPolicy(
+  organizationId: string,
+  patch: TaxPolicyPatch,
+  actor: Actor,
+  reason: string
+): Promise<Organization> {
+  return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
+    const before = await tx.organization.findFirst({ where: { id: organizationId } })
+    if (!before) throw new Error("La organización no existe")
+    const after = await tx.organization.update({ where: { id: organizationId }, data: patch })
+    await writeAuditLog(tx, {
+      entity: "Organization",
+      entityId: organizationId,
+      action: "update",
+      before: {
+        prorrataPermille: before.prorrataPermille,
+        taxRoundingMode: before.taxRoundingMode,
+        redondeoToleranciaCents: before.redondeoToleranciaCents,
+      },
+      after: {
+        prorrataPermille: after.prorrataPermille,
+        taxRoundingMode: after.taxRoundingMode,
+        redondeoToleranciaCents: after.redondeoToleranciaCents,
+      },
+      reason,
+      userId: actor.userId,
+    })
+    return after
   })
 }
 

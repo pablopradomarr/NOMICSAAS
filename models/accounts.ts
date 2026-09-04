@@ -7,7 +7,15 @@
  */
 
 import { buildPlan, computeIsPostable } from "@/lib/accounts/codes"
-import { filterByVariant, planDiff, seedRowsToPlanAccounts } from "@/lib/accounts/csv"
+import {
+  ColumnMapping,
+  filterByVariant,
+  ImportDefaults,
+  parseCustomPlanCsv,
+  planDiff,
+  resolveImportedParents,
+  seedRowsToPlanAccounts,
+} from "@/lib/accounts/csv"
 import { checkAnalyticCoherence as checkCoherencePure } from "@/lib/accounts/epigraphs"
 import {
   ACCOUNT_KEY_DEFAULT_CODE,
@@ -17,6 +25,7 @@ import {
   validateAccountMap,
 } from "@/lib/accounts/map"
 import {
+  AccountError,
   AccountUsage,
   AccountWarning,
   AccountKey,
@@ -41,6 +50,7 @@ import { seedTaxRates, VIGENCIA_IVA_2025 } from "@/lib/taxes/rates"
 import { writeAuditLog } from "@/models/audit-log"
 import { loadNpgcSeed, NPGC_SEED_SHA_SETTING } from "@/models/npgc-seed"
 import type { LedgerAccount, Prisma } from "@/prisma/client"
+import { createHash } from "node:crypto"
 
 type AnyClient = TenantClient | TenantTransactionClient
 
@@ -150,7 +160,7 @@ export async function createAccount(
   input: NewAccountInput,
   actor: Actor,
   reason?: string | null
-): Promise<{ ok: true; account: LedgerAccount } | { ok: false; errors: ReturnType<typeof validateNewAccount> }> {
+): Promise<{ ok: true; account: LedgerAccount } | { ok: false; errors: AccountError[] }> {
   return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
     const plan = await getPlan(tx)
     const parentCode = input.code.length > 1 ? findParent(plan, input.code) : null
@@ -159,7 +169,7 @@ export async function createAccount(
       : { movementCount: 0, childCount: 0, mappedKeys: [], taxRateCodes: [] }
 
     const validated = validateNewAccount(input, plan, parentUsage)
-    if (!validated.ok) return { ok: false as const, errors: validated }
+    if (!validated.ok) return { ok: false as const, errors: validated.errors }
 
     const { parentDemoted } = applyNewAccount(plan, validated.value)
     const created = await tx.ledgerAccount.create({ data: accountCreateData(organizationId, validated.value) })
@@ -513,6 +523,99 @@ export async function importNpgc(
       unresolvedKeys: unresolved,
       dryRun: false,
     }
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// importCustomPlan — import de un plan ajeno desde CSV (§4.2, T11)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ImportCustomPlanResult = {
+  created: number
+  updated: number
+  skipped: number
+  dryRun: boolean
+  /** Muestra para la previsualización del wizard (máximo 20 filas). */
+  preview: { code: string; name: string; action: "create" | "update" }[]
+}
+
+/**
+ * Import de plan propio. TODO O NADA (riesgo R4): cualquier fila inválida
+ * rechaza el fichero entero con su nº de fila. El cliente NO calcula el diff:
+ * `dryRun: true` devuelve el `PlanDiff` desde el servidor y no escribe nada.
+ */
+export async function importCustomPlan(
+  organizationId: string,
+  csvText: string,
+  mapping: ColumnMapping,
+  opts: {
+    variant: PgcVariant
+    defaults: Omit<ImportDefaults, "epigraphCatalog">
+    epigraphCatalog: ReadonlySet<string>
+    actor: Actor
+    dryRun: boolean
+    fileName?: string
+    reason?: string | null
+  }
+): Promise<Result<ImportCustomPlanResult>> {
+  const parsed = parseCustomPlanCsv(csvText, mapping, { ...opts.defaults, epigraphCatalog: opts.epigraphCatalog })
+  if (!parsed.ok) return parsed as Result<ImportCustomPlanResult>
+
+  return await tenantTransaction(organizationId, opts.actor.userId ?? undefined, async (tx) => {
+    const plan = await getPlan(tx)
+    const resolved = resolveImportedParents(parsed.value, plan)
+    if (!resolved.ok) return resolved as Result<ImportCustomPlanResult>
+
+    const incoming = seedRowsToPlanAccounts(resolved.value, "CSV_IMPORT")
+    const diff = planDiff(plan, incoming, "import")
+    const preview = [
+      ...diff.create.map((a) => ({ code: a.code, name: a.name, action: "create" as const })),
+      ...diff.update.map((u) => ({
+        code: u.code,
+        name: plan.byCode.get(u.code)?.name ?? "",
+        action: "update" as const,
+      })),
+    ]
+      .sort((a, b) => (a.code < b.code ? -1 : 1))
+      .slice(0, 20)
+
+    const summary: ImportCustomPlanResult = {
+      created: diff.create.length,
+      updated: diff.update.length,
+      skipped: diff.skip.length,
+      dryRun: opts.dryRun,
+      preview,
+    }
+    if (opts.dryRun) return ok(summary)
+
+    for (const account of [...diff.create].sort((a, b) => (a.code < b.code ? -1 : 1))) {
+      await tx.ledgerAccount.create({ data: accountCreateData(organizationId, account) })
+    }
+    for (const change of diff.update) {
+      await tx.ledgerAccount.updateMany({ where: { code: change.code }, data: change.patch })
+    }
+    for (const change of diff.postableChanges) {
+      await tx.ledgerAccount.updateMany({ where: { code: change.code }, data: { isPostable: change.isPostable } })
+    }
+
+    await writeAuditLog(tx, {
+      entity: "Organization",
+      entityId: organizationId,
+      action: "import",
+      before: null,
+      after: {
+        fileName: opts.fileName ?? null,
+        fileSha256: createHash("sha256").update(csvText).digest("hex"),
+        mapping,
+        variant: opts.variant,
+        created: summary.created,
+        updated: summary.updated,
+        skipped: summary.skipped,
+      },
+      reason: opts.reason ?? null,
+      userId: opts.actor.userId,
+    })
+    return ok(summary)
   })
 }
 

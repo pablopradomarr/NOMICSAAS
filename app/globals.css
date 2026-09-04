@@ -97,3 +97,15 @@
     -moz-appearance: textfield;
   }
 }
+
+/*
+ * E2 · T10 — códigos contables, hashes e identificadores técnicos.
+ * JetBrains Mono (`.claude/skills/ui-erp`) con pila monoespaciada de respaldo y
+ * cifras tabulares, para que los códigos de cuenta alineen en columna.
+ */
+@layer utilities {
+  .font-code {
+    font-family: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}

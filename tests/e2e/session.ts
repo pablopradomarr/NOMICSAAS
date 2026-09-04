@@ -1,0 +1,79 @@
+import { randomUUID } from "node:crypto"
+import { Client } from "pg"
+import type { BrowserContext, Page } from "@playwright/test"
+
+/**
+ * E2 · T13 — sesión para los tests de extremo a extremo.
+ *
+ * En `SELF_HOSTED_MODE` (el modo de desarrollo de este repositorio) la app
+ * resuelve el usuario local sin pasar por better-auth: no hay nada que iniciar.
+ * Fuera de ese modo se SIEMBRA una sesión de better-auth directamente en la
+ * base y se planta su cookie, para no depender del correo del código OTP.
+ *
+ * En ambos casos el objetivo es el mismo: que el smoke pruebe el plan de
+ * cuentas, no el buzón de correo. El login real lo cubre `login.spec.ts` cuando
+ * la instalación no es self-hosted.
+ */
+
+export const DATABASE_URL =
+  process.env.DATABASE_URL || "postgresql://postgres@localhost:5432/erp"
+
+export const IS_SELF_HOSTED = (process.env.SELF_HOSTED_MODE ?? "true") === "true"
+
+export async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
+  const client = new Client({ connectionString: DATABASE_URL })
+  await client.connect()
+  try {
+    return await fn(client)
+  } finally {
+    await client.end()
+  }
+}
+
+/** Correo del usuario con el que corre el smoke. ADMIN de la organización. */
+export async function adminUserId(): Promise<string> {
+  return await withDb(async (client) => {
+    const { rows } = await client.query<{ user_id: string }>(
+      `SELECT m.user_id
+         FROM memberships m
+         JOIN organizations o ON o.id = m.organization_id
+        WHERE m.role = 'ADMIN'
+        ORDER BY o.created_at ASC
+        LIMIT 1`
+    )
+    if (rows.length === 0) throw new Error("No hay ningún ADMIN sembrado en la base de desarrollo")
+    return rows[0].user_id
+  })
+}
+
+/**
+ * Inserta una sesión de better-auth y la deja lista en el contexto del
+ * navegador. Sólo se usa fuera de `SELF_HOSTED_MODE`.
+ */
+export async function seedSession(context: BrowserContext, baseURL: string): Promise<void> {
+  const userId = await adminUserId()
+  const token = randomUUID().replace(/-/g, "")
+  await withDb(async (client) => {
+    await client.query(
+      `INSERT INTO sessions (id, token, expires_at, created_at, updated_at, user_id)
+       VALUES ($1, $2, now() + interval '1 day', now(), now(), $3)`,
+      [randomUUID(), token, userId]
+    )
+  })
+  const url = new URL(baseURL)
+  await context.addCookies([
+    {
+      name: "taxhacker.session_token",
+      value: token,
+      domain: url.hostname,
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ])
+}
+
+/** Deja la página autenticada, sea cual sea el modo de la instalación. */
+export async function signIn(page: Page, baseURL: string): Promise<void> {
+  if (!IS_SELF_HOSTED) await seedSession(page.context(), baseURL)
+}

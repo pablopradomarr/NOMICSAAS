@@ -16,6 +16,7 @@ import {
   resendInvitation,
   revokeInvitation,
 } from "@/models/invitations"
+import { recordAuditLog } from "@/models/audit-log"
 import {
   countAdmins,
   getMembership,
@@ -82,7 +83,15 @@ export async function inviteMemberAction(
     emailSent = false
   }
 
-  // TODO(E2): auditLog("membership.invite", { email, role: invitation.role })
+  // E2 · T11 — el registro de auditoría existe desde E2: se cierra el TODO.
+  await recordAuditLog(org.id, {
+    entity: "Invitation",
+    entityId: invitation.id,
+    action: "invite",
+    before: null,
+    after: { email, role: invitation.role, emailSent },
+    userId: user.id,
+  })
   revalidatePath(MEMBERS_PATH)
   return { success: true, data: { emailSent, inviteUrl: emailSent ? undefined : inviteUrl } }
   })()
@@ -131,7 +140,7 @@ export async function revokeInvitationAction(
   _prevState: ActionState<null> | null,
   formData: FormData
 ): Promise<ActionState<null>> {
-  return await withOrg(Role.ADMIN, async ({ db }): Promise<ActionState<null>> => {
+  return await withOrg(Role.ADMIN, async ({ db, org, user }): Promise<ActionState<null>> => {
   const validated = invitationIdSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: "Invitación no encontrada" }
@@ -146,7 +155,14 @@ export async function revokeInvitationAction(
   }
 
   await revokeInvitation(db, existing.id, new Date())
-  // TODO(E2): auditLog("invitation.revoke", { invitationId: existing.id })
+  await recordAuditLog(org.id, {
+    entity: "Invitation",
+    entityId: existing.id,
+    action: "revoke",
+    before: { email: existing.email, role: existing.role, status: existing.status },
+    after: { status: "REVOKED" },
+    userId: user.id,
+  })
   revalidatePath(MEMBERS_PATH)
   return { success: true }
   })()
@@ -157,7 +173,7 @@ export async function changeMemberRoleAction(
   _prevState: ActionState<null> | null,
   formData: FormData
 ): Promise<ActionState<null>> {
-  return await withOrg(Role.ADMIN, async ({ org }): Promise<ActionState<null>> => {
+  return await withOrg(Role.ADMIN, async ({ org, user: actor }): Promise<ActionState<null>> => {
   const validated = changeMemberRoleFormSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
@@ -175,7 +191,14 @@ export async function changeMemberRoleAction(
   }
 
   await updateMembershipRole(org.id, validated.data.userId, validated.data.role)
-  // TODO(E2): auditLog("membership.changeRole", { userId, from: membership.role, to: validated.data.role })
+  await recordAuditLog(org.id, {
+    entity: "Membership",
+    entityId: validated.data.userId,
+    action: "update",
+    before: { role: membership.role },
+    after: { role: validated.data.role },
+    userId: actor.id,
+  })
   revalidatePath(MEMBERS_PATH)
   revalidatePath("/", "layout")
   return { success: true }
@@ -187,7 +210,7 @@ export async function removeMemberAction(
   _prevState: ActionState<null> | null,
   formData: FormData
 ): Promise<ActionState<null>> {
-  return await withOrg(Role.ADMIN, async ({ org }): Promise<ActionState<null>> => {
+  return await withOrg(Role.ADMIN, async ({ org, user: actor }): Promise<ActionState<null>> => {
   const validated = removeMemberFormSchema.safeParse(Object.fromEntries(formData))
   if (!validated.success) {
     return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
@@ -202,7 +225,15 @@ export async function removeMemberAction(
   }
 
   await removeMembership(org.id, validated.data.userId)
-  // TODO(E2): auditLog("membership.remove", { userId, reason: validated.data.reason })
+  await recordAuditLog(org.id, {
+    entity: "Membership",
+    entityId: validated.data.userId,
+    action: "delete",
+    before: { role: membership.role },
+    after: null,
+    reason: validated.data.reason,
+    userId: actor.id,
+  })
   revalidatePath(MEMBERS_PATH)
   revalidatePath("/", "layout")
   return { success: true }
@@ -233,8 +264,17 @@ export async function leaveOrganizationAction(): Promise<ActionState<null>> {
     }
 
     await removeMembership(org.id, user.id)
+    // El log se escribe ANTES de soltar la organización activa: después, la
+    // cookie ya no apunta a ella.
+    await recordAuditLog(org.id, {
+      entity: "Membership",
+      entityId: user.id,
+      action: "leave",
+      before: { role },
+      after: null,
+      userId: user.id,
+    })
     await clearActiveOrg()
-    // TODO(E2): auditLog("membership.leave", { userId: user.id, organizationId: org.id })
 
     revalidatePath(MEMBERS_PATH)
     revalidatePath("/", "layout")

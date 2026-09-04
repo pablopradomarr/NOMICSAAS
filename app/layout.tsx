@@ -1,6 +1,18 @@
 import config from "@/lib/config"
 import type { Metadata, Viewport } from "next"
+import { JetBrains_Mono } from "next/font/google"
 import "./globals.css"
+
+/**
+ * E2 · T10 — JetBrains Mono para códigos de cuenta, hashes y `run_id`
+ * (`.claude/skills/ui-erp`). Se expone como variable CSS; la clase `.font-code`
+ * de `globals.css` la usa con una pila monoespaciada de respaldo.
+ */
+const jetBrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-jetbrains-mono",
+})
 
 export const metadata: Metadata = {
   title: {
@@ -44,7 +56,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={jetBrainsMono.variable}>
       <body className="min-h-screen bg-white antialiased">{children}</body>
     </html>
   )

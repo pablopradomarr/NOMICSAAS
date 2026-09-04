@@ -7,7 +7,7 @@
  * impedir. `audit_logs` es append-only en la barrera 2 (ADR-0008).
  */
 
-import { TenantClient, TenantTransactionClient } from "@/lib/db"
+import { TenantClient, TenantTransactionClient, tenantTransaction } from "@/lib/db"
 import type { AuditLog, Prisma } from "@/prisma/client"
 
 /** Modelos auditables. Cadena porque `AuditLog.entity` es texto, no enum. */
@@ -29,6 +29,10 @@ export type AuditAction =
   | "import"
   | "remap"
   | "close"
+  // E2 · T11 — cierre de los TODO(E2) de E1 (miembros e invitaciones).
+  | "invite"
+  | "revoke"
+  | "leave"
 
 export type AuditLogInput = {
   entity: AuditEntity
@@ -70,6 +74,20 @@ export async function writeAuditLog(tx: AuditWriter, input: AuditLogInput): Prom
       userId: input.userId ?? null,
     },
   })
+}
+
+/**
+ * E2 · T11 — Escritura de un asiento de auditoría SUELTO, en su propia
+ * transacción de tenant.
+ *
+ * Existe sólo para cerrar los `TODO(E2): auditLog(...)` que dejó E1 en
+ * `settings/members` y `settings/organization`: aquellas mutaciones se
+ * escribieron antes de que existiera `AuditLog` y no corren dentro de una
+ * `tenantTransaction`, así que no hay `tx` que compartir. Para todo lo demás se
+ * usa `writeAuditLog(tx, …)`, que ata el log a la mutación.
+ */
+export async function recordAuditLog(organizationId: string, input: AuditLogInput): Promise<AuditLog> {
+  return await tenantTransaction(organizationId, input.userId ?? undefined, async (tx) => writeAuditLog(tx, input))
 }
 
 export type AuditLogFilter = {

@@ -30,11 +30,15 @@ import {
   Gift,
   House,
   Import,
+  ListTree,
+  Percent,
+  ScrollText,
   Sparkles,
   Tags,
   Upload,
   User,
   Users,
+  Waypoints,
 } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
@@ -57,6 +61,14 @@ const settingsItems = [
   // Ronda 2 (#12): la pantalla ya responde 404 a quien no es ADMIN; el menú no
   // debe ofrecer un enlace que lleva a un 404.
   { title: "Miembros", href: "/settings/members", icon: Users, adminOnly: true },
+  // E2 · T11 — configuración contable. El plan y el mapa se LEEN con cualquier
+  // rol (VIEWER incluido); sólo el import es exclusivo de ADMIN, así que es el
+  // único con `adminOnly` — el resto respondería 404 y el menú no debe llevar
+  // a un 404 (ronda 2, #12).
+  { title: "Plan de cuentas", href: "/settings/accounts", icon: ListTree, adminOnly: false },
+  { title: "Mapa de cuentas", href: "/settings/account-map", icon: Waypoints, adminOnly: false },
+  { title: "Impuestos", href: "/settings/taxes", icon: Percent, adminOnly: false },
+  { title: "Auditoría de cambios", href: "/settings/audit", icon: ScrollText, adminOnly: false },
   { title: "LLM settings", href: "/settings/llm", icon: Sparkles, adminOnly: true },
   { title: "Fields", href: "/settings/fields", icon: FormInput, adminOnly: true },
   { title: "Categories", href: "/settings/categories", icon: Tags, adminOnly: true },

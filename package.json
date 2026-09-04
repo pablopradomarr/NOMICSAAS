@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:rls": "vitest run --config vitest.integration.rls.config.ts",
+    "test:e2e": "playwright test --config playwright.config.ts",
     "test:all": "npm run test && npm run test:integration && npm run test:integration:rls",
     "test:watch": "vitest"
   },
@@ -75,6 +76,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26",
     "@types/react": "^19",
