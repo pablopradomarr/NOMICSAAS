@@ -68,6 +68,14 @@ model Organization {
   storageLimit        Int       @default(-1) @map("storage_limit")
   aiBalance           Int       @default(0) @map("ai_balance")
 
+  // E2 — política fiscal de la organización (D2-8; la consume el motor en E3)
+  /// Prorrata general aplicable (‰). Null = 100 % deducible.
+  prorrataPermille        Int?            @map("prorrata_permille")
+  /// R-IVA-1 canónica: una cuota por tipo impositivo.
+  taxRoundingMode         TaxRoundingMode @default(PER_TIPO) @map("tax_rounding_mode")
+  /// R-IVA-7: diferencia residual admitida contra 669/769. Por encima, bloquea.
+  redondeoToleranciaCents Int             @default(1) @map("redondeo_tolerancia_cents")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -82,6 +90,12 @@ model Organization {
   currencies   Currency[]
   appData      AppData[]
   progress     Progress[]
+
+  // E2
+  ledgerAccounts LedgerAccount[]
+  accountMaps    OrganizationAccountMap[]
+  taxRates       TaxRate[]
+  auditLogs      AuditLog[]
 
   @@map("organizations")
 }
@@ -353,4 +367,280 @@ model Progress {
 
   @@index([organizationId, userId])
   @@map("progress")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E2 — Plan de cuentas e impuestos (docs/design/E2-plan-cuentas.md §2.2)
+// Tablas y columnas nuevas en snake_case: el SQL de RLS, triggers e informes las
+// usa por nombre físico.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Nature {
+  DEUDORA
+  ACREEDORA
+
+  @@map("nature")
+}
+
+enum Statement {
+  BALANCE_ACTIVO
+  BALANCE_PASIVO
+  BALANCE_PN
+  PYG
+  ECPN
+
+  @@map("statement")
+}
+
+enum AnalyticType {
+  INGRESO_DIRECTO
+  COSTE_DIRECTO_MC1
+  COSTE_DIRECTO_MC2
+  INDIRECTO_CECO
+  AMORTIZACION_DETERIORO
+  FINANCIERO
+  EXTRAORDINARIO
+  NO_ANALITICO
+
+  @@map("analytic_type")
+}
+
+enum CashflowCategory {
+  OPERATING
+  INVESTING
+  FINANCING
+
+  @@map("cashflow_category")
+}
+
+/// 57 claves (§2.2). Las 43 del bloque obligatorio las resuelve `defaultAccountMap`;
+/// las 14 restantes se declaran ahora para no encadenar migraciones de enum en E3–E8.
+enum AccountKey {
+  // ── Bloque obligatorio (43): E3 factura/cobro/pago + E8 impuestos ──
+  CLIENTES
+  PROVEEDORES
+  ACREEDORES
+  BANCO_DEFAULT
+  CAJA
+  IVA_SOPORTADO
+  IVA_REPERCUTIDO
+  IRPF_RETENIDO_CLIENTES
+  IRPF_A_PAGAR
+  HP_ACREEDORA_IVA
+  HP_DEUDORA_IVA
+  SS_ACREEDORA
+  REMUNERACIONES_PENDIENTES
+  RESULTADO_EJERCICIO
+  VENTAS_DEFAULT
+  COMPRAS_DEFAULT
+  SUBCONTRATACION_DEFAULT
+  ANTICIPOS_PROVEEDORES
+  ANTICIPOS_CLIENTES
+  DESCUENTO_PP_VENTAS
+  DESCUENTO_PP_COMPRAS
+  DEVOLUCION_VENTAS
+  DEVOLUCION_COMPRAS
+  RAPPEL_VENTAS
+  RAPPEL_COMPRAS
+  REDONDEO_GASTO
+  REDONDEO_INGRESO
+  IRPF_PROFESIONALES_A_PAGAR
+  IRPF_ALQUILERES_A_PAGAR
+  IRPF_TRABAJO_A_PAGAR
+  IVA_SOPORTADO_ISP
+  IVA_REPERCUTIDO_ISP
+  AJUSTE_IVA_NEGATIVO
+  AJUSTE_IVA_POSITIVO
+  IMPUESTO_BENEFICIOS_GASTO
+  HP_ACREEDORA_IS
+  HP_DEUDORA_IS
+  ACTIVO_IMPUESTO_DIFERIDO
+  PASIVO_IMPUESTO_DIFERIDO
+  PERIODIFICACION_GASTO
+  PERIODIFICACION_INGRESO
+  DIFERENCIA_CAMBIO_NEGATIVA
+  DIFERENCIA_CAMBIO_POSITIVA
+  // ── Declaradas ahora, mapeadas por su épica (sin default obligatorio) ──
+  RETENCIONES_CAPITAL_SOPORTADAS
+  SS_DEUDORA
+  ANTICIPOS_REMUNERACIONES
+  SUELDOS_DEFAULT
+  SS_EMPRESA_DEFAULT
+  CLIENTES_DUDOSO_COBRO
+  DETERIORO_CLIENTES
+  DOTACION_DETERIORO_CREDITOS
+  REVERSION_DETERIORO_CREDITOS
+  PERDIDA_CREDITOS_INCOBRABLES
+  CUENTA_PUENTE_TESORERIA
+  COMISIONES_BANCARIAS
+  REMANENTE
+  RESULTADOS_NEGATIVOS_ANTERIORES
+
+  @@map("account_key")
+}
+
+enum TaxKind {
+  IVA
+  IRPF
+  RECARGO
+  EXENTO
+
+  @@map("tax_kind")
+}
+
+/// A qué lado del hecho económico aplica el tipo. Una sola fila por tipo
+/// impositivo (C-2): la dirección la fija el asiento tipo, no el impuesto.
+enum TaxAppliesTo {
+  SALE
+  PURCHASE
+  BOTH
+
+  @@map("tax_applies_to")
+}
+
+/// Método de redondeo de cuotas del documento (R-IVA-4). Lo consume el motor en E3.
+enum TaxRoundingMode {
+  PER_TIPO
+  PER_LINEA
+
+  @@map("tax_rounding_mode")
+}
+
+/// Origen de la fila: distingue lo sembrado de lo que ha tocado la organización.
+/// Sin él `importNpgc` idempotente no puede refrescar sin pisar ediciones del usuario.
+enum AccountOrigin {
+  SEED
+  MANUAL
+  CSV_IMPORT
+
+  @@map("account_origin")
+}
+
+/// Cuenta CONTABLE. Se llama `LedgerAccount` porque `Account` lo ocupa
+/// better-auth (§2.2, D2-9). La tabla física es `accounts`.
+model LedgerAccount {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code   String  @db.VarChar(12)
+  name   String  @db.VarChar(255)
+  /// Longitud del código (1–4 oficial; >4 subcuenta propia).
+  level  Int
+  /// Prefijo estricto más largo que EXISTE en el plan (no `code[:-1]`, ver T-6).
+  parentCode String? @map("parent_code") @db.VarChar(12)
+
+  nature    Nature
+  statement Statement?
+  /// Epígrafe del modelo NORMAL (columna `epigrafe` del seed).
+  epigraph  String?    @db.VarChar(255)
+  /// Epígrafe del modelo PYMES/abreviado. Se guardan LOS DOS (C-1).
+  epigraphPymes String? @map("epigraph_pymes") @db.VarChar(255)
+  /// Cuenta de saldo indistinto (551, 552, 5523–5525, 554, 555 · 7 en el seed).
+  bidirectional Boolean @default(false)
+  /// Contra-cuenta: naturaleza contraria a su masa (165 en el seed). El
+  /// renderizador RESTA, no suma (R-13).
+  isContra      Boolean @default(false) @map("is_contra")
+
+  analyticType     AnalyticType?     @map("analytic_type")
+  cashflowCategory CashflowCategory? @map("cashflow_category")
+
+  /// Solo las hojas reciben líneas de asiento (I-E2-2).
+  isPostable Boolean       @default(true) @map("is_postable")
+  isActive   Boolean       @default(true) @map("is_active")
+  /// Mapeada o usada por un TaxRate: no desactivable ni borrable.
+  isSystem   Boolean       @default(false) @map("is_system")
+  origin     AccountOrigin @default(MANUAL)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent          LedgerAccount?           @relation("AccountTree", fields: [organizationId, parentCode], references: [organizationId, code], onDelete: NoAction, onUpdate: NoAction)
+  children        LedgerAccount[]          @relation("AccountTree")
+  accountMaps     OrganizationAccountMap[]
+  taxRatesMain    TaxRate[]                @relation("TaxRateAccount")
+  taxRatesCounter TaxRate[]                @relation("TaxRateCounterAccount")
+
+  @@unique([organizationId, code])
+  @@index([organizationId, parentCode])
+  @@index([organizationId, isActive, isPostable])
+  @@index([organizationId, statement])
+  @@map("accounts")
+}
+
+model OrganizationAccountMap {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  key         AccountKey
+  accountCode String        @map("account_code") @db.VarChar(12)
+  account     LedgerAccount @relation(fields: [organizationId, accountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, key])
+  @@index([organizationId, accountCode])
+  @@map("organization_account_maps")
+}
+
+model TaxRate {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code String  @db.VarChar(24)
+  name String  @db.VarChar(128)
+  kind TaxKind
+  /// Puntos básicos: 21 % = 2100, 5,2 % = 520, 1,75 % = 175 (E-1).
+  rateBps   Int          @map("rate_bps")
+  appliesTo TaxAppliesTo @default(BOTH) @map("applies_to")
+
+  /// Cuenta del lado VENTA (repercutido 477 / retención que practicamos 4751).
+  accountCode String        @map("account_code") @db.VarChar(12)
+  account     LedgerAccount @relation("TaxRateAccount", fields: [organizationId, accountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
+  /// Cuenta del lado COMPRA (soportado 472 / retención que nos practican 473).
+  counterAccountCode String?        @map("counter_account_code") @db.VarChar(12)
+  counterAccount     LedgerAccount? @relation("TaxRateCounterAccount", fields: [organizationId, counterAccountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Recargo de equivalencia → el tipo de IVA al que acompaña (C-2).
+  linkedTaxRateId String?   @map("linked_tax_rate_id") @db.Uuid
+  linkedTaxRate   TaxRate?  @relation("TaxRateLink", fields: [linkedTaxRateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  linkedBy        TaxRate[] @relation("TaxRateLink")
+
+  /// Vigencia siempre explícita (C-7): un asiento de 2024 no coge el tipo de 2026.
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+  isActive  Boolean   @default(true) @map("is_active")
+  isSystem  Boolean   @default(false) @map("is_system")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, code, validFrom])
+  @@index([organizationId, kind, validFrom])
+  @@index([organizationId, accountCode])
+  @@map("tax_rates")
+}
+
+/// Registro de auditoría de configuración. Append-only en la barrera 2 (ADR-0008).
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Null solo para mutaciones de sistema (seed de alta de organización, CLI).
+  userId String? @map("user_id") @db.Uuid
+
+  entity   String  @db.VarChar(64)
+  entityId String  @map("entity_id") @db.VarChar(64)
+  action   String  @db.VarChar(64)
+  before   Json?
+  after    Json?
+  reason   String? @db.VarChar(512)
+  ts       DateTime @default(now())
+
+  @@index([organizationId, ts])
+  @@index([organizationId, entity, entityId, ts])
+  @@map("audit_logs")
 }

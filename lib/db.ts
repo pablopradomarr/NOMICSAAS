@@ -48,6 +48,11 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "Progress",
   "Membership",
   "Invitation",
+  // E2 — plan de cuentas e impuestos (docs/design/E2-plan-cuentas.md §2.2)
+  "LedgerAccount",
+  "OrganizationAccountMap",
+  "TaxRate",
+  "AuditLog",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */

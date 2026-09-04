@@ -1,4 +1,6 @@
-import { TenantClient } from "@/lib/db"
+import { TenantClient, tenantTransaction } from "@/lib/db"
+import type { PgcVariant } from "@/prisma/client"
+import { importNpgc } from "@/models/accounts"
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_CURRENCIES,
@@ -16,8 +18,15 @@ export {
   DEFAULT_SETTINGS,
 } from "@/models/defaults-data"
 
-/** Semilla de proyectos, categorías, monedas, campos y settings de UNA organización. */
-export async function createOrganizationDefaults(db: TenantClient) {
+/**
+ * Semilla de proyectos, categorías, monedas, campos y settings de UNA
+ * organización. Desde E2 siembra además el plan contable NPGC, el mapa de
+ * cuentas de sistema y los tipos impositivos (§4.3).
+ */
+export async function createOrganizationDefaults(
+  db: TenantClient,
+  opts: { pgcVariant?: PgcVariant; now?: Date; userId?: string | null } = {}
+) {
   const organizationId = db.$organizationId
 
   for (const project of DEFAULT_PROJECTS) {
@@ -67,6 +76,25 @@ export async function createOrganizationDefaults(db: TenantClient) {
       create: { ...setting, organizationId },
     })
   }
+
+  // E2 (§4.3) — plan de cuentas, mapa de sistema y tipos impositivos.
+  // `importNpgc` es idempotente: repetir el alta no crea nada nuevo y NO pisa lo
+  // que el ADMIN haya editado (`origin ≠ SEED`). La variante sale de la propia
+  // organización si no se pasa: es su modelo de cuentas anuales.
+  // La lectura va dentro de `tenantTransaction` para que corra con
+  // `app.current_org` fijado: `Organization` no está en TENANT_MODELS y hoy la
+  // salva la cláusula de escape de RLS, que E3 retira.
+  const variant =
+    opts.pgcVariant ??
+    (await tenantTransaction(organizationId, async (tx) => tx.organization.findFirst({ where: { id: organizationId } })))
+      ?.pgcVariant ??
+    "PYMES"
+  await importNpgc(organizationId, variant, {
+    useSubaccounts: true,
+    createSoftwareAccounts: false,
+    actor: { userId: opts.userId ?? null },
+    now: opts.now,
+  })
 }
 
 export async function isDatabaseEmpty(db: TenantClient) {
