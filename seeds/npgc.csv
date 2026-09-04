@@ -1,0 +1,907 @@
+codigo,nombre,nivel,padre,grupo,naturaleza,estado_financiero,epigrafe,tipo_analitico
+1,Financiación básica,1,,1,ACREEDORA,,,
+10,Capital,2,1,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital,
+100,Capital social,3,10,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado,
+101,Fondo social,3,10,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado,
+102,Capital,3,10,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado,
+103,Socios por desembolsos no exigidos,3,10,1,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 2. (Capital no exigido),
+1030,"Socios por desembolsos no exigidos, capital social",4,103,1,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 2. (Capital no exigido),
+1034,"Socios por desembolsos no exigidos, capital pendiente de inscripción",4,103,1,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+104,Socios por aportaciones no dinerarias pendientes,3,10,1,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 2. (Capital no exigido),
+1040,"Socios por aportaciones no dinerarias pendientes, capital social",4,104,1,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 2. (Capital no exigido),
+1044,"Socios por aportaciones no dinerarias pendientes, capital pendiente de inscripción",4,104,1,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+108,Acciones o participaciones propias en situaciones especiales,3,10,1,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / IV. (Acciones y participaciones en patrimonio propias),
+109,Acciones o participaciones propias para reducción de capital,3,10,1,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / IV. (Acciones y participaciones en patrimonio propias),
+11,Reservas y otros instrumentos de patrimonio,2,1,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios,
+110,Prima de emisión o asunción,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / II. Prima de emisión,
+111,Otros instrumentos de patrimonio neto,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / IX. Otros instrumentos de patrimonio neto,
+1110,Patrimonio neto por emisión de instrumentos financieros compuestos,4,111,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / IX. Otros instrumentos de patrimonio neto,
+1111,Resto de instrumentos de patrimonio neto,4,111,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / IX. Otros instrumentos de patrimonio neto,
+112,Reserva legal,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 1. Legal y estatutarias,
+113,Reservas voluntarias,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+114,Reservas especiales,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+1140,Reservas para acciones o participaciones de la sociedad dominante,4,114,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+1141,Reservas estatutarias,4,114,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 1. Legal y estatutarias,
+1142,Reserva por capital amortizado,4,114,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+1143,Reserva por fondo de comercio,4,114,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+1144,Reservas por acciones propias aceptadas en garantía,4,114,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+115,Reservas por pérdidas y ganancias actuariales y otros ajustes,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+118,Aportaciones de socios o propietarios,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / VI. Otras aportaciones de socios,
+119,Diferencias por ajuste del capital a euros,3,11,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas,
+12,Resultados pendientes de aplicación,2,1,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores,
+120,Remanente,3,12,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente,
+121,Resultados negativos de ejercicios anteriores,3,12,1,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 2. (Resultados negativos de ejercicios anteriores),
+129,Resultado del ejercicio,3,12,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio,
+13,"Subvenciones, donaciones y ajustes por cambios de valor",2,1,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto,
+130,Subvenciones oficiales de capital,3,13,1,ACREEDORA,BALANCE_PN,"A) Patrimonio neto / A-3) Subvenciones, donaciones y legados recibidos",
+131,Donaciones y legados de capital,3,13,1,ACREEDORA,BALANCE_PN,"A) Patrimonio neto / A-3) Subvenciones, donaciones y legados recibidos",
+132,"Otras subvenciones, donaciones y legados",3,13,1,ACREEDORA,BALANCE_PN,"A) Patrimonio neto / A-3) Subvenciones, donaciones y legados recibidos",
+133,Ajustes por valoración en activos financieros a valor razonable con cambios en el patrimonio neto,3,13,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-2) Ajustes por cambios de valor / I. Activos financieros a valor razonable con cambios en el patrimonio neto,
+134,Operaciones de cobertura,3,13,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-2) Ajustes por cambios de valor / II. Operaciones de cobertura,
+1340,Cobertura de flujos de efectivo,4,134,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-2) Ajustes por cambios de valor / II. Operaciones de cobertura,
+1341,Cobertura de una inversión neta en un negocio en el extranjero,4,134,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-2) Ajustes por cambios de valor / V. Otros,
+135,Diferencias de conversión,3,13,1,ACREEDORA,BALANCE_PN,A) Patrimonio neto / A-2) Ajustes por cambios de valor / IV. Diferencia de conversión,
+136,"Ajustes por valoración en activos no corrientes y grupos enajenables de elementos, mantenidos para la venta",3,13,1,ACREEDORA,BALANCE_PN,"A) Patrimonio neto / A-2) Ajustes por cambios de valor / III. Activos no corrientes y pasivos vinculados, mantenidos para la venta",
+137,Ingresos fiscales a distribuir en varios ejercicios,3,13,1,ACREEDORA,BALANCE_PN,"A) Patrimonio neto / A-3) Subvenciones, donaciones y legados recibidos",
+1370,Ingresos fiscales por diferencias permanentes a distribuir en varios ejercicios,4,137,1,ACREEDORA,BALANCE_PN,"A) Patrimonio neto / A-3) Subvenciones, donaciones y legados recibidos",
+1371,Ingresos fiscales por deducciones y bonificaciones a distribuir en varios ejercicios,4,137,1,ACREEDORA,BALANCE_PN,"A) Patrimonio neto / A-3) Subvenciones, donaciones y legados recibidos",
+14,Provisiones,2,1,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo,
+140,Provisión por retribuciones a largo plazo al personal,3,14,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo / 1. Obligaciones por prestaciones a largo plazo al personal,
+141,Provisión para impuestos,3,14,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo / 4. Otras provisiones,
+142,Provisión para otras responsabilidades,3,14,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo / 4. Otras provisiones,
+143,"Provisión por desmantelamiento, retiro o rehabilitación del inmovilizado",3,14,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo / 4. Otras provisiones,
+145,Provisión para actuaciones medioambientales,3,14,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo / 2. Actuaciones medioambientales,
+146,Provisión para reestructuraciones,3,14,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo / 3. Provisiones por reestructuración,
+147,Provisión por transacciones con pagos basados en instrumentos de patrimonio,3,14,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / I. Provisiones a largo plazo / 4. Otras provisiones,
+15,Deudas a largo plazo con características especiales,2,1,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+150,Acciones o participaciones a largo plazo consideradas como pasivos financieros,3,15,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+153,Desembolsos no exigidos por acciones o participaciones consideradas como pasivos financieros,3,15,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1533,"Desembolsos no exigidos, empresas del grupo",4,153,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1534,"Desembolsos no exigidos, empresas asociadas",4,153,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1535,"Desembolsos no exigidos, otras partes vinculadas",4,153,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1536,Otros desembolsos no exigidos,4,153,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+154,Aportaciones no dinerarias pendientes por acciones o participaciones consideradas como pasivos financieros,3,15,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1543,"Aportaciones no dinerarias pendientes, empresas del grupo",4,154,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1544,"Aportaciones no dinerarias pendientes, empresas asociadas",4,154,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1545,"Aportaciones no dinerarias pendientes, otras partes vinculadas",4,154,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+1546,Otras aportaciones no dinerarias pendientes,4,154,1,DEUDORA,BALANCE_PASIVO,B) Pasivo no corriente / VII. Deuda con características especiales a largo plazo,
+16,Deudas a largo plazo con partes vinculadas,2,1,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+160,Deudas a largo plazo con entidades de crédito vinculadas,3,16,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1603,"Deudas a largo plazo con entidades de crédito, empresas del grupo",4,160,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1604,"Deudas a largo plazo con entidades de crédito, empresas asociadas",4,160,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1605,Deudas a largo plazo con otras entidades de crédito vinculadas,4,160,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 2. Deudas con entidades de crédito,
+161,"Proveedores de inmovilizado a largo plazo, partes vinculadas",3,16,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1613,"Proveedores de inmovilizado a largo plazo, empresas del grupo",4,161,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1614,"Proveedores de inmovilizado a largo plazo, empresas asociadas",4,161,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1615,"Proveedores de inmovilizado a largo plazo, otras partes vinculadas",4,161,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+162,"Acreedores por arrendamiento financiero a largo plazo, partes vinculadas",3,16,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1623,"Acreedores por arrendamiento financiero a largo plazo, empresas del grupo",4,162,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1624,"Acreedores por arrendamiento financiero a largo plazo, empresas asociadas",4,162,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1625,"Acreedores por arrendamiento financiero a largo plazo, otras partes vinculadas",4,162,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 3. Acreedores por arrendamiento financiero,
+163,Otras deudas a largo plazo con partes vinculadas,3,16,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1633,"Otras deudas a largo plazo, empresas del grupo",4,163,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1634,"Otras deudas a largo plazo, empresas asociadas",4,163,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / III. Deudas con empresas del grupo y asociadas a largo plazo,
+1635,"Otras deudas a largo plazo, con otras partes vinculadas",4,163,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+17,"Deudas a largo plazo por préstamos recibidos, empréstitos y otros conceptos",2,1,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo,
+170,Deudas a largo plazo con entidades de crédito,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 2. Deudas con entidades de crédito,
+171,Deudas a largo plazo,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+172,"Deudas a largo plazo transformables en subvenciones, donaciones y legados",3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+173,Proveedores de inmovilizado a largo plazo,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+174,Acreedores por arrendamiento financiero a largo plazo,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 3. Acreedores por arrendamiento financiero,
+175,Efectos a pagar a largo plazo,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+176,Pasivos por derivados financieros a largo plazo,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 4. Derivados,
+1765,"Pasivos por derivados financieros a largo plazo, cartera de negociación",4,176,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 4. Derivados,
+1768,"Pasivos por derivados financieros a largo plazo, instrumentos de cobertura",4,176,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 4. Derivados,
+177,Obligaciones y bonos,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 1. Obligaciones y otros valores negociables,
+178,Obligaciones y bonos convertibles,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 1. Obligaciones y otros valores negociables,
+179,Deudas representadas en otros valores negociables,3,17,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 1. Obligaciones y otros valores negociables,
+18,"Pasivos por fianzas, garantías y otros conceptos a largo plazo",2,1,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+180,Fianzas recibidas a largo plazo,3,18,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+181,Anticipos recibidos por ventas o prestaciones de servicios a largo plazo,3,18,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / V. Periodificaciones a largo plazo,
+185,Depósitos recibidos a largo plazo,3,18,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+189,Garantías financieras a largo plazo,3,18,1,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / II. Deudas a largo plazo / 5. Otros pasivos financieros,
+19,Situaciones transitorias de financiación,2,1,1,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+190,Acciones o participaciones emitidas,3,19,1,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+192,Suscriptores de acciones,3,19,1,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+194,Capital emitido pendiente de inscripción,3,19,1,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+195,Acciones o participaciones emitidas consideradas como pasivos financieros,3,19,1,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / VII. Deuda con características especiales a corto plazo,
+197,Suscriptores de acciones consideradas como pasivos financieros,3,19,1,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / VII. Deuda con características especiales a corto plazo,
+199,Acciones o participaciones emitidas consideradas como pasivos financieros pendientes de inscripción,3,19,1,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / VII. Deuda con características especiales a corto plazo,
+2,Activo no corriente,1,,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente,
+20,Inmovilizaciones intangibles,2,2,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible,
+200,Investigación,3,20,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 6. Investigación,
+201,Desarrollo,3,20,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 1. Desarrollo,
+202,Concesiones administrativas,3,20,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 2. Concesiones,
+203,Propiedad industrial,3,20,2,DEUDORA,BALANCE_ACTIVO,"A) Activo no corriente / I. Inmovilizado intangible / 3. Patentes, licencias, marcas y similares",
+204,Fondo de comercio,3,20,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 4. Fondo de comercio,
+205,Derechos de traspaso,3,20,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 7. Otro inmovilizado intangible,
+206,Aplicaciones informáticas,3,20,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 5. Aplicaciones informáticas,
+209,Anticipos para inmovilizaciones intangibles,3,20,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 7. Otro inmovilizado intangible,
+21,Inmovilizaciones materiales,2,2,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material,
+210,Terrenos y bienes naturales,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 1. Terrenos y construcciones,
+211,Construcciones,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 1. Terrenos y construcciones,
+212,Instalaciones técnicas,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+213,Maquinaria,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+214,Utillaje,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+215,Otras instalaciones,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+216,Mobiliario,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+217,Equipos para procesos de información,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+218,Elementos de transporte,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+219,Otro inmovilizado material,3,21,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+22,Inversiones inmobiliarias,2,2,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / III. Inversiones inmobiliarias,
+220,Inversiones en terrenos y bienes naturales,3,22,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / III. Inversiones inmobiliarias / 1. Terrenos,
+221,Inversiones en construcciones,3,22,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / III. Inversiones inmobiliarias / 2. Construcciones,
+23,Inmovilizaciones materiales en curso,2,2,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 3. Inmovilizado en curso y anticipos,
+230,Adaptación de terrenos y bienes naturales,3,23,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 3. Inmovilizado en curso y anticipos,
+231,Construcciones en curso,3,23,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 3. Inmovilizado en curso y anticipos,
+232,Instalaciones técnicas en montaje,3,23,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 3. Inmovilizado en curso y anticipos,
+233,Maquinaria en montaje,3,23,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 3. Inmovilizado en curso y anticipos,
+237,Equipos para procesos de información en montaje,3,23,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 3. Inmovilizado en curso y anticipos,
+239,Anticipos para inmovilizaciones materiales,3,23,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 3. Inmovilizado en curso y anticipos,
+24,Inversiones financieras a largo plazo en partes vinculadas,2,2,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo,
+240,Participaciones a largo plazo en partes vinculadas,3,24,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2403,Participaciones a largo plazo en empresas del grupo,4,240,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2404,Participaciones a largo plazo en empresas asociadas,4,240,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2405,Participaciones a largo plazo en otras partes vinculadas,4,240,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 1. Instrumentos de patrimonio,
+241,Valores representativos de deuda a largo plazo de partes vinculadas,3,24,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 3. Valores representativos de deuda,
+2413,Valores representativos de deuda a largo plazo de empresas del grupo,4,241,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 3. Valores representativos de deuda,
+2414,Valores representativos de deuda a largo plazo de empresas asociadas,4,241,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 3. Valores representativos de deuda,
+2415,Valores representativos de deuda a largo plazo de otras partes vinculadas,4,241,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 3. Valores representativos de deuda,
+242,Créditos a largo plazo a partes vinculadas,3,24,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 2. Créditos a empresas,
+2423,Créditos a largo plazo a empresas del grupo,4,242,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 2. Créditos a empresas,
+2424,Créditos a largo plazo a empresas asociadas,4,242,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 2. Créditos a empresas,
+2425,Créditos a largo plazo a otras partes vinculadas,4,242,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 2. Créditos a terceros,
+249,Desembolsos pendientes sobre participaciones a largo plazo en partes vinculadas,3,24,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2493,Desembolsos pendientes sobre participaciones a largo plazo en empresas del grupo,4,249,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2494,Desembolsos pendientes sobre participaciones a largo plazo en empresas asociadas,4,249,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2495,Desembolsos pendientes sobre participaciones a largo plazo en otras partes vinculadas,4,249,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 1. Instrumentos de patrimonio,
+25,Otras inversiones financieras a largo plazo,2,2,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo,
+250,Inversiones financieras a largo plazo en instrumentos de patrimonio,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 1. Instrumentos de patrimonio,
+251,Valores representativos de deuda a largo plazo,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 3. Valores representativos de deuda,
+252,Créditos a largo plazo,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 2. Créditos a terceros,
+253,Créditos a largo plazo por enajenación de inmovilizado,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 2. Créditos a terceros,
+254,Créditos a largo plazo al personal,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 2. Créditos a terceros,
+255,Activos por derivados financieros a largo plazo,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 4. Derivados,
+2550,"Activos por derivados financieros a largo plazo, cartera de negociación",4,255,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 4. Derivados,
+2553,"Activos por derivados financieros a largo plazo, instrumentos de cobertura",4,255,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 4. Derivados,
+257,Derechos de reembolso derivados de contratos de seguro relativos a retribuciones a largo plazo al personal,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 5. Otros activos financieros,
+258,Imposiciones a largo plazo,3,25,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 5. Otros activos financieros,
+259,Desembolsos pendientes sobre participaciones en el patrimonio neto a largo plazo,3,25,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 1. Instrumentos de patrimonio,
+26,Fianzas y depósitos constituidos a largo plazo,2,2,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 5. Otros activos financieros,
+260,Fianzas constituidas a largo plazo,3,26,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 5. Otros activos financieros,
+265,Depósitos constituidos a largo plazo,3,26,2,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 5. Otros activos financieros,
+28,Amortización acumulada del inmovilizado,2,2,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente,
+280,Amortización acumulada del inmovilizado intangible,3,28,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible,
+2800,Amortización acumulada de investigación,4,280,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 6. Investigación,
+2801,Amortización acumulada de desarrollo,4,280,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 1. Desarrollo,
+2802,Amortización acumulada de concesiones administrativas,4,280,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 2. Concesiones,
+2803,Amortización acumulada de propiedad industrial,4,280,2,ACREEDORA,BALANCE_ACTIVO,"A) Activo no corriente / I. Inmovilizado intangible / 3. Patentes, licencias, marcas y similares",
+2804,Amortización acumulada de fondo de comercio,4,280,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 4. Fondo de comercio,
+2805,Amortización acumulada de derechos de traspaso,4,280,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 7. Otro inmovilizado intangible,
+2806,Amortización acumulada de aplicaciones informáticas,4,280,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 5. Aplicaciones informáticas,
+281,Amortización acumulada del inmovilizado material,3,28,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material,
+2811,Amortización acumulada de construcciones,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 1. Terrenos y construcciones,
+2812,Amortización acumulada de instalaciones técnicas,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2813,Amortización acumulada de maquinaria,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2814,Amortización acumulada de utillaje,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2815,Amortización acumulada de otras instalaciones,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2816,Amortización acumulada de mobiliario,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2817,Amortización acumulada de equipos para procesos de información,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2818,Amortización acumulada de elementos de transporte,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2819,Amortización acumulada de otro inmovilizado material,4,281,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+282,Amortización acumulada de las inversiones inmobiliarias,3,28,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / III. Inversiones inmobiliarias / 2. Construcciones,
+29,Deterioro de valor de activos no corrientes,2,2,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente,
+290,Deterioro de valor del inmovilizado intangible,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible,
+2900,Deterioro de valor de investigación,4,290,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 6. Investigación,
+2901,Deterioro de valor de desarrollo,4,290,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 1. Desarrollo,
+2902,Deterioro de valor de concesiones administrativas,4,290,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 2. Concesiones,
+2903,Deterioro de valor de propiedad industrial,4,290,2,ACREEDORA,BALANCE_ACTIVO,"A) Activo no corriente / I. Inmovilizado intangible / 3. Patentes, licencias, marcas y similares",
+2905,Deterioro de valor de derechos de traspaso,4,290,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 7. Otro inmovilizado intangible,
+2906,Deterioro de valor de aplicaciones informáticas,4,290,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / I. Inmovilizado intangible / 5. Aplicaciones informáticas,
+291,Deterioro de valor del inmovilizado material,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material,
+2910,Deterioro de valor de terrenos y bienes naturales,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 1. Terrenos y construcciones,
+2911,Deterioro de valor de construcciones,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 1. Terrenos y construcciones,
+2912,Deterioro de valor de instalaciones técnicas,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2913,Deterioro de valor de maquinaria,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2914,Deterioro de valor de utillaje,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2915,Deterioro de valor de otras instalaciones,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2916,Deterioro de valor de mobiliario,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2917,Deterioro de valor de equipos para procesos de información,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2918,Deterioro de valor de elementos de transporte,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+2919,Deterioro de valor de otro inmovilizado material,4,291,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material,
+292,Deterioro de valor de las inversiones inmobiliarias,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / III. Inversiones inmobiliarias,
+2920,Deterioro de valor de los terrenos y bienes naturales,4,292,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / III. Inversiones inmobiliarias / 1. Terrenos,
+2921,Deterioro de valor de construcciones,4,292,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / III. Inversiones inmobiliarias / 2. Construcciones,
+293,Deterioro de valor de participaciones a largo plazo en partes vinculadas,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2933,Deterioro de valor de participaciones a largo plazo en empresas del grupo,4,293,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2934,Deterioro de valor de participaciones a largo plazo en empresas asociadas,4,293,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 1. Instrumentos de patrimonio,
+2935,Deterioro de valor de participaciones a largo plazo en otras partes vinculadas,4,293,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 1. Instrumentos de patrimonio,
+294,Deterioro de valor de valores representativos de deuda a largo plazo de partes vinculadas,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 3. Valores representativos de deuda,
+2943,Deterioro de valor de valores representativos de deuda a largo plazo de empresas del grupo,4,294,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 3. Valores representativos de deuda,
+2944,Deterioro de valor de valores representativos de deuda a largo plazo de empresas asociadas,4,294,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 3. Valores representativos de deuda,
+2945,Deterioro de valor de valores representativos de deuda a largo plazo de otras partes vinculadas,4,294,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 3. Valores representativos de deuda,
+295,Deterioro de valor de créditos a largo plazo a partes vinculadas,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 2. Créditos a empresas,
+2953,Deterioro de valor de créditos a largo plazo a empresas del grupo,4,295,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 2. Créditos a empresas,
+2954,Deterioro de valor de créditos a largo plazo a empresas asociadas,4,295,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / IV. Inversiones en empresas del grupo y asociadas a largo plazo / 2. Créditos a empresas,
+2955,Deterioro de valor de créditos a largo plazo a otras partes vinculadas,4,295,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 2. Créditos a terceros,
+296,Deterioro de valor de participaciones en el patrimonio neto a largo plazo,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 1. Instrumentos de patrimonio,
+297,Deterioro de valor de valores representativos de deuda a largo plazo,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 3. Valores representativos de deuda,
+298,Deterioro de valor de créditos a largo plazo,3,29,2,ACREEDORA,BALANCE_ACTIVO,A) Activo no corriente / V. Inversiones financieras a largo plazo / 2. Créditos a terceros,
+3,Existencias,1,,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias,
+30,Comerciales,2,3,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 1. Comerciales,
+300,Mercaderías A,3,30,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 1. Comerciales,
+301,Mercaderías B,3,30,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 1. Comerciales,
+31,Materias primas,2,3,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+310,Materias primas A,3,31,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+311,Materias primas B,3,31,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+32,Otros aprovisionamientos,2,3,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+320,Elementos y conjuntos incorporables,3,32,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+321,Combustibles,3,32,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+322,Repuestos,3,32,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+325,Materiales diversos,3,32,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+326,Embalajes,3,32,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+327,Envases,3,32,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+328,Material de oficina,3,32,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+33,Productos en curso,2,3,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+330,Productos en curso A,3,33,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+331,Productos en curso B,3,33,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+34,Productos semiterminados,2,3,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+340,Productos semiterminados A,3,34,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+341,Productos semiterminados B,3,34,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+35,Productos terminados,2,3,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 4. Productos terminados,
+350,Productos terminados A,3,35,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 4. Productos terminados,
+351,Productos terminados B,3,35,3,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 4. Productos terminados,
+36,"Subproductos, residuos y materiales recuperados",2,3,3,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+360,Subproductos A,3,36,3,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+361,Subproductos B,3,36,3,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+365,Residuos A,3,36,3,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+366,Residuos B,3,36,3,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+368,Materiales recuperados A,3,36,3,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+369,Materiales recuperados B,3,36,3,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+39,Deterioro de valor de las existencias,2,3,3,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias,
+390,Deterioro de valor de las mercaderías,3,39,3,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 1. Comerciales,
+391,Deterioro de valor de las materias primas,3,39,3,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+392,Deterioro de valor de otros aprovisionamientos,3,39,3,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 2. Materias primas y otros aprovisionamientos,
+393,Deterioro de valor de los productos en curso,3,39,3,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+394,Deterioro de valor de los productos semiterminados,3,39,3,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 3. Productos en curso,
+395,Deterioro de valor de los productos terminados,3,39,3,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 4. Productos terminados,
+396,"Deterioro de valor de los subproductos, residuos y materiales recuperados",3,39,3,ACREEDORA,BALANCE_ACTIVO,"B) Activo corriente / II. Existencias / 5. Subproductos, residuos y materiales recuperados",
+4,Acreedores y deudores por operaciones comerciales,1,,4,DEUDORA,,,
+40,Proveedores,2,4,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+400,Proveedores,3,40,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+4000,Proveedores (euros),4,400,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+4004,Proveedores (moneda extranjera),4,400,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+4009,"Proveedores, facturas pendientes de recibir o de formalizar",4,400,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+401,"Proveedores, efectos comerciales a pagar",3,40,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+403,"Proveedores, empresas del grupo",3,40,4,ACREEDORA,BALANCE_PASIVO,"C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 2. Proveedores, empresas del grupo y asociadas",
+4030,"Proveedores, empresas del grupo (euros)",4,403,4,ACREEDORA,BALANCE_PASIVO,"C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 2. Proveedores, empresas del grupo y asociadas",
+4031,"Efectos comerciales a pagar, empresas del grupo",4,403,4,ACREEDORA,BALANCE_PASIVO,"C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 2. Proveedores, empresas del grupo y asociadas",
+4034,"Proveedores, empresas del grupo (moneda extranjera)",4,403,4,ACREEDORA,BALANCE_PASIVO,"C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 2. Proveedores, empresas del grupo y asociadas",
+4036,"Envases y embalajes a devolver a proveedores, empresas del grupo",4,403,4,ACREEDORA,BALANCE_PASIVO,"C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 2. Proveedores, empresas del grupo y asociadas",
+4039,"Proveedores, empresas del grupo, facturas pendientes de recibir o de formalizar",4,403,4,ACREEDORA,BALANCE_PASIVO,"C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 2. Proveedores, empresas del grupo y asociadas",
+404,"Proveedores, empresas asociadas",3,40,4,ACREEDORA,BALANCE_PASIVO,"C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 2. Proveedores, empresas del grupo y asociadas",
+405,"Proveedores, otras partes vinculadas",3,40,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+406,Envases y embalajes a devolver a proveedores,3,40,4,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores,
+407,Anticipos a proveedores,3,40,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / II. Existencias / 6. Anticipos a proveedores,
+41,Acreedores varios,2,4,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios,
+410,Acreedores por prestaciones de servicios,3,41,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios,
+4100,Acreedores por prestaciones de servicios (euros),4,410,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios,
+4104,Acreedores por prestaciones de servicios (moneda extranjera),4,410,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios,
+4109,"Acreedores por prestaciones de servicios, facturas pendientes de recibir o de formalizar",4,410,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios,
+411,"Acreedores, efectos comerciales a pagar",3,41,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios,
+419,Acreedores por operaciones en común,3,41,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios,
+43,Clientes,2,4,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+430,Clientes,3,43,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+4300,Clientes (euros),4,430,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+4304,Clientes (moneda extranjera),4,430,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+4309,"Clientes, facturas pendientes de formalizar",4,430,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+431,"Clientes, efectos comerciales a cobrar",3,43,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+4310,Efectos comerciales en cartera,4,431,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+4311,Efectos comerciales descontados,4,431,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+4312,Efectos comerciales en gestión de cobro,4,431,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+4315,Efectos comerciales impagados,4,431,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+432,"Clientes, operaciones de «factoring»",3,43,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+433,"Clientes, empresas del grupo",3,43,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4330,"Clientes, empresas del grupo (euros)",4,433,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4331,"Efectos comerciales a cobrar, empresas del grupo",4,433,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4332,"Clientes, empresas del grupo, operaciones de «factoring»",4,433,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4334,"Clientes, empresas del grupo (moneda extranjera)",4,433,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4336,"Clientes, empresas del grupo de dudoso cobro",4,433,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4337,"Envases y embalajes a devolver a clientes, empresas del grupo",4,433,4,ACREEDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4339,"Clientes, empresas del grupo, facturas pendientes de formalizar",4,433,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+434,"Clientes, empresas asociadas",3,43,4,DEUDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+435,"Clientes, otras partes vinculadas",3,43,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+436,Clientes de dudoso cobro,3,43,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+437,Envases y embalajes a devolver por clientes,3,43,4,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+438,Anticipos de clientes,3,43,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 7. Anticipos de clientes,
+44,Deudores varios,2,4,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+440,Deudores,3,44,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+4400,Deudores (euros),4,440,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+4404,Deudores (moneda extranjera),4,440,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+4409,"Deudores, facturas pendientes de formalizar",4,440,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+441,"Deudores, efectos comerciales a cobrar",3,44,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+4410,"Deudores, efectos comerciales en cartera",4,441,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+4411,"Deudores, efectos comerciales descontados",4,441,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+4412,"Deudores, efectos comerciales en gestión de cobro",4,441,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+4415,"Deudores, efectos comerciales impagados",4,441,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+446,Deudores de dudoso cobro,3,44,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+449,Deudores por operaciones en común,3,44,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+46,Personal,2,4,4,DEUDORA,,,
+460,Anticipos de remuneraciones,3,46,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 4. Personal,
+465,Remuneraciones pendientes de pago,3,46,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 4. Personal (remuneraciones pendientes de pago),
+466,Remuneraciones mediante sistemas de aportación definida pendientes de pago,3,46,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 4. Personal (remuneraciones pendientes de pago),
+47,Administraciones públicas,2,4,4,DEUDORA,,,
+470,"Hacienda Pública, deudora por diversos conceptos",3,47,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas,
+4700,"Hacienda Pública, deudora por IVA",4,470,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas,
+4708,"Hacienda Pública, deudora por subvenciones concedidas",4,470,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas,
+4709,"Hacienda Pública, deudora por devolución de impuestos",4,470,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 5. Activos por impuesto corriente,
+471,"Organismos de la Seguridad Social, deudores",3,47,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas,
+472,"Hacienda Pública, IVA soportado",3,47,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas,
+473,"Hacienda Pública, retenciones y pagos a cuenta",3,47,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas,
+474,Activos por impuesto diferido,3,47,4,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / VI. Activos por impuesto diferido,
+4740,Activos por diferencias temporarias deducibles,4,474,4,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / VI. Activos por impuesto diferido,
+4742,Derechos por deducciones y bonificaciones pendientes de aplicar,4,474,4,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / VI. Activos por impuesto diferido,
+4745,Crédito por pérdidas a compensar del ejercicio,4,474,4,DEUDORA,BALANCE_ACTIVO,A) Activo no corriente / VI. Activos por impuesto diferido,
+475,"Hacienda Pública, acreedora por conceptos fiscales",3,47,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas,
+4750,"Hacienda Pública, acreedora por IVA",4,475,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas,
+4751,"Hacienda Pública, acreedora por retenciones practicadas",4,475,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas,
+4752,"Hacienda Pública, acreedora por impuesto sobre sociedades",4,475,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente,
+4758,"Hacienda Pública, acreedora por subvenciones a reintegrar",4,475,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas,
+476,"Organismos de la Seguridad Social, acreedores",3,47,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas,
+477,"Hacienda Pública, IVA repercutido",3,47,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas,
+479,Pasivos por diferencias temporarias imponibles,3,47,4,ACREEDORA,BALANCE_PASIVO,B) Pasivo no corriente / IV. Pasivos por impuesto diferido,
+48,Ajustes por periodificación,2,4,4,DEUDORA,,,
+480,Gastos anticipados,3,48,4,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VI. Periodificaciones a corto plazo,
+485,Ingresos anticipados,3,48,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / VI. Periodificaciones a corto plazo,
+49,Deterioro de valor de créditos comerciales y provisiones a corto plazo,2,4,4,ACREEDORA,,,
+490,Deterioro de valor de créditos por operaciones comerciales,3,49,4,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+493,Deterioro de valor de créditos por operaciones comerciales con partes vinculadas,3,49,4,ACREEDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4933,Deterioro de valor de créditos por operaciones comerciales con empresas del grupo,4,493,4,ACREEDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4934,Deterioro de valor de créditos por operaciones comerciales con empresas asociadas,4,493,4,ACREEDORA,BALANCE_ACTIVO,"B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 2. Clientes, empresas del grupo y asociadas",
+4935,Deterioro de valor de créditos por operaciones comerciales con otras partes vinculadas,4,493,4,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios,
+499,Provisiones por operaciones comerciales,3,49,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+4994,Provisión por contratos onerosos,4,499,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+4999,Provisión para otras operaciones comerciales,4,499,4,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5,Cuentas financieras,1,,5,DEUDORA,,,
+50,"Empréstitos, deudas con características especiales y otras emisiones análogas a corto plazo",2,5,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 1. Obligaciones y otros valores negociables,
+500,Obligaciones y bonos a corto plazo,3,50,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 1. Obligaciones y otros valores negociables,
+501,Obligaciones y bonos convertibles a corto plazo,3,50,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 1. Obligaciones y otros valores negociables,
+502,Acciones o participaciones a corto plazo consideradas como pasivos financieros,3,50,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / VII. Deuda con características especiales a corto plazo,
+505,Deudas representadas en otros valores negociables a corto plazo,3,50,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 1. Obligaciones y otros valores negociables,
+506,Intereses a corto plazo de empréstitos y otras emisiones análogas,3,50,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 1. Obligaciones y otros valores negociables,
+507,Dividendos de acciones o participaciones consideradas como pasivos financieros,3,50,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / VII. Deuda con características especiales a corto plazo,
+509,Valores negociables amortizados,3,50,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+5090,Obligaciones y bonos amortizados,4,509,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+5091,Obligaciones y bonos convertibles amortizados,4,509,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+5095,Otros valores negociables amortizados,4,509,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+51,Deudas a corto plazo con partes vinculadas,2,5,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+510,Deudas a corto plazo con entidades de crédito vinculadas,3,51,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5103,"Deudas a corto plazo con entidades de crédito, empresas del grupo",4,510,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5104,"Deudas a corto plazo con entidades de crédito, empresas asociadas",4,510,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5105,Deudas a corto plazo con otras entidades de crédito vinculadas,4,510,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 2. Deudas con entidades de crédito,
+511,"Proveedores de inmovilizado a corto plazo, partes vinculadas",3,51,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5113,"Proveedores de inmovilizado a corto plazo, empresas del grupo",4,511,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5114,"Proveedores de inmovilizado a corto plazo, empresas asociadas",4,511,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5115,"Proveedores de inmovilizado a corto plazo, otras partes vinculadas",4,511,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+512,"Acreedores por arrendamiento financiero a corto plazo, partes vinculadas",3,51,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5123,"Acreedores por arrendamiento financiero a corto plazo, empresas del grupo",4,512,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5124,"Acreedores por arrendamiento financiero a corto plazo, empresas asociadas",4,512,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5125,"Acreedores por arrendamiento financiero a corto plazo, otras partes vinculadas",4,512,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 3. Acreedores por arrendamiento financiero,
+513,Otras deudas a corto plazo con partes vinculadas,3,51,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5133,Otras deudas a corto plazo con empresas del grupo,4,513,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5134,Otras deudas a corto plazo con empresas asociadas,4,513,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5135,Otras deudas a corto plazo con otras partes vinculadas,4,513,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+514,Intereses a corto plazo de deudas con partes vinculadas,3,51,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5143,"Intereses a corto plazo de deudas, empresas del grupo",4,514,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5144,"Intereses a corto plazo de deudas, empresas asociadas",4,514,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5145,"Intereses a corto plazo de deudas, otras partes vinculadas",4,514,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+52,Deudas a corto plazo por préstamos recibidos y otros conceptos,2,5,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo,
+520,Deudas a corto plazo con entidades de crédito,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 2. Deudas con entidades de crédito,
+5200,Préstamos a corto plazo de entidades de crédito,4,520,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 2. Deudas con entidades de crédito,
+5201,Deudas a corto plazo por crédito dispuesto,4,520,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 2. Deudas con entidades de crédito,
+5208,Deudas por efectos descontados,4,520,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 2. Deudas con entidades de crédito,
+5209,Deudas por operaciones de «factoring»,4,520,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 2. Deudas con entidades de crédito,
+521,Deudas a corto plazo,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+522,"Deudas a corto plazo transformables en subvenciones, donaciones y legados",3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+523,Proveedores de inmovilizado a corto plazo,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+524,Acreedores por arrendamiento financiero a corto plazo,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 3. Acreedores por arrendamiento financiero,
+525,Efectos a pagar a corto plazo,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+526,Dividendo activo a pagar,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+527,Intereses a corto plazo de deudas con entidades de crédito,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 2. Deudas con entidades de crédito,
+528,Intereses a corto plazo de deudas,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+529,Provisiones a corto plazo,3,52,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5290,Provisión a corto plazo por retribuciones al personal,4,529,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5291,Provisión a corto plazo para impuestos,4,529,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5292,Provisión a corto plazo para otras responsabilidades,4,529,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5293,"Provisión a corto plazo por desmantelamiento, retiro o rehabilitación del inmovilizado",4,529,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5295,Provisión a corto plazo para actuaciones medioambientales,4,529,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5296,Provisión a corto plazo para reestructuraciones,4,529,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+5297,Provisión a corto plazo por transacciones con pagos basados en instrumentos de patrimonio,4,529,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / II. Provisiones a corto plazo,
+53,Inversiones financieras a corto plazo en partes vinculadas,2,5,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo,
+530,Participaciones a corto plazo en partes vinculadas,3,53,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5303,Participaciones a corto plazo en empresas del grupo,4,530,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5304,Participaciones a corto plazo en empresas asociadas,4,530,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5305,Participaciones a corto plazo en otras partes vinculadas,4,530,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 1. Instrumentos de patrimonio,
+531,Valores representativos de deuda a corto plazo de partes vinculadas,3,53,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5313,Valores representativos de deuda a corto plazo de empresas del grupo,4,531,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5314,Valores representativos de deuda a corto plazo de empresas asociadas,4,531,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5315,Valores representativos de deuda a corto plazo de otras partes vinculadas,4,531,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 3. Valores representativos de deuda,
+532,Créditos a corto plazo a partes vinculadas,3,53,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5323,Créditos a corto plazo a empresas del grupo,4,532,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5324,Créditos a corto plazo a empresas asociadas,4,532,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5325,Créditos a corto plazo a otras partes vinculadas,4,532,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 2. Créditos a empresas,
+533,Intereses a corto plazo de valores representativos de deuda de partes vinculadas,3,53,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5333,Intereses a corto plazo de valores representativos de deuda de empresas del grupo,4,533,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5334,Intereses a corto plazo de valores representativos de deuda de empresas asociadas,4,533,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5335,Intereses a corto plazo de valores representativos de deuda de otras partes vinculadas,4,533,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 3. Valores representativos de deuda,
+534,Intereses a corto plazo de créditos a partes vinculadas,3,53,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5343,Intereses a corto plazo de créditos a empresas del grupo,4,534,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5344,Intereses a corto plazo de créditos a empresas asociadas,4,534,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5345,Intereses a corto plazo de créditos a otras partes vinculadas,4,534,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 2. Créditos a empresas,
+535,Dividendo a cobrar de inversiones financieras en partes vinculadas,3,53,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros,
+5353,Dividendo a cobrar de empresas del grupo,4,535,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros,
+5354,Dividendo a cobrar de empresas asociadas,4,535,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros,
+5355,Dividendo a cobrar de otras partes vinculadas,4,535,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros,
+539,Desembolsos pendientes sobre participaciones a corto plazo en partes vinculadas,3,53,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5393,Desembolsos pendientes sobre participaciones a corto plazo en empresas del grupo,4,539,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5394,Desembolsos pendientes sobre participaciones a corto plazo en empresas asociadas,4,539,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5395,Desembolsos pendientes sobre participaciones a corto plazo en otras partes vinculadas,4,539,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 1. Instrumentos de patrimonio,
+54,Otras inversiones financieras a corto plazo,2,5,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo,
+540,Inversiones financieras a corto plazo en instrumentos de patrimonio,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 1. Instrumentos de patrimonio,
+541,Valores representativos de deuda a corto plazo,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 3. Valores representativos de deuda,
+542,Créditos a corto plazo,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 2. Créditos a empresas,
+543,Créditos a corto plazo por enajenación de inmovilizado,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 2. Créditos a empresas,
+544,Créditos a corto plazo al personal,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 4. Personal,
+545,Dividendo a cobrar,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros,
+546,Intereses a corto plazo de valores representativos de deuda,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 3. Valores representativos de deuda,
+547,Intereses a corto plazo de créditos,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 2. Créditos a empresas,
+548,Imposiciones a corto plazo,3,54,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros,
+549,Desembolsos pendientes sobre participaciones en el patrimonio neto a corto plazo,3,54,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 1. Instrumentos de patrimonio,
+55,Otras cuentas no bancarias,2,5,5,DEUDORA,,,
+550,Titular de la explotación,3,55,5,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado,
+551,Cuenta corriente con socios y administradores,3,55,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros,
+552,Cuenta corriente con otras personas y entidades vinculadas,3,55,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros,
+5523,Cuenta corriente con empresas del grupo,4,552,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros,
+5524,Cuenta corriente con empresas asociadas,4,552,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros,
+5525,Cuenta corriente con otras partes vinculadas,4,552,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros,
+553,Cuentas corrientes en fusiones y escisiones,3,55,5,DEUDORA,,,
+5530,Socios de sociedad disuelta,4,553,5,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+5531,"Socios, cuenta de fusión",4,553,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+5532,Socios de sociedad escindida,4,553,5,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+5533,"Socios, cuenta de escisión",4,553,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+554,Cuenta corriente con uniones temporales de empresas y comunidades de bienes,3,55,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios,
+555,Partidas pendientes de aplicación,3,55,5,DEUDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+556,Desembolsos exigidos sobre participaciones en el patrimonio neto,3,55,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+5563,"Desembolsos exigidos sobre participaciones, empresas del grupo",4,556,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5564,"Desembolsos exigidos sobre participaciones, empresas asociadas",4,556,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo,
+5565,"Desembolsos exigidos sobre participaciones, otras partes vinculadas",4,556,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+5566,Desembolsos exigidos sobre participaciones de otras empresas,4,556,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+557,Dividendo activo a cuenta,3,55,5,DEUDORA,BALANCE_PN,A) Patrimonio neto / A-1) Fondos propios / VIII. (Dividendo a cuenta),
+558,Socios por desembolsos exigidos,3,55,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 7. Accionistas (socios) por desembolsos exigidos,
+5580,Socios por desembolsos exigidos sobre acciones o participaciones ordinarias,4,558,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 7. Accionistas (socios) por desembolsos exigidos,
+5585,Socios por desembolsos exigidos sobre acciones o participaciones consideradas como pasivos financieros,4,558,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 7. Accionistas (socios) por desembolsos exigidos,
+559,Derivados financieros a corto plazo,3,55,5,DEUDORA,,,
+5590,"Activos por derivados financieros a corto plazo, cartera de negociación",4,559,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 4. Derivados,
+5593,"Activos por derivados financieros a corto plazo, instrumentos de cobertura",4,559,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 4. Derivados,
+5595,"Pasivos por derivados financieros a corto plazo, cartera de negociación",4,559,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 4. Derivados,
+5598,"Pasivos por derivados financieros a corto plazo, instrumentos de cobertura",4,559,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 4. Derivados,
+56,Fianzas y depósitos recibidos y constituidos a corto plazo y ajustes por periodificación,2,5,5,DEUDORA,,,
+560,Fianzas recibidas a corto plazo,3,56,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+561,Depósitos recibidos a corto plazo,3,56,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+565,Fianzas constituidas a corto plazo,3,56,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros,
+566,Depósitos constituidos a corto plazo,3,56,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros,
+567,Intereses pagados por anticipado,3,56,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VI. Periodificaciones a corto plazo,
+568,Intereses cobrados por anticipado,3,56,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / VI. Periodificaciones a corto plazo,
+569,Garantías financieras a corto plazo,3,56,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros,
+57,Tesorería,2,5,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería,
+570,"Caja, euros",3,57,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería,
+571,"Caja, moneda extranjera",3,57,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería,
+572,"Bancos e instituciones de crédito c/c vista, euros",3,57,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería,
+573,"Bancos e instituciones de crédito c/c vista, moneda extranjera",3,57,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería,
+574,"Bancos e instituciones de crédito, cuentas de ahorro, euros",3,57,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería,
+575,"Bancos e instituciones de crédito, cuentas de ahorro, moneda extranjera",3,57,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería,
+576,Inversiones a corto plazo de gran liquidez,3,57,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 2. Otros activos líquidos equivalentes,
+58,Activos no corrientes mantenidos para la venta y activos y pasivos asociados,2,5,5,DEUDORA,,,
+580,Inmovilizado,3,58,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+581,Inversiones con personas y entidades vinculadas,3,58,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+582,Inversiones financieras,3,58,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+583,"Existencias, deudores comerciales y otras cuentas a cobrar",3,58,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+584,Otros activos,3,58,5,DEUDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+585,Provisiones,3,58,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / I. Pasivos vinculados con activos no corrientes mantenidos para la venta,
+586,Deudas con características especiales,3,58,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / I. Pasivos vinculados con activos no corrientes mantenidos para la venta,
+587,Deudas con personas y entidades vinculadas,3,58,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / I. Pasivos vinculados con activos no corrientes mantenidos para la venta,
+588,Acreedores comerciales y otras cuentas a pagar,3,58,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / I. Pasivos vinculados con activos no corrientes mantenidos para la venta,
+589,Otros pasivos,3,58,5,ACREEDORA,BALANCE_PASIVO,C) Pasivo corriente / I. Pasivos vinculados con activos no corrientes mantenidos para la venta,
+59,Deterioro del valor de inversiones financieras a corto plazo y de activos no corrientes mantenidos para la venta,2,5,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente,
+593,Deterioro de valor de participaciones a corto plazo en partes vinculadas,3,59,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5933,Deterioro de valor de participaciones a corto plazo en empresas del grupo,4,593,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5934,Deterioro de valor de participaciones a corto plazo en empresas asociadas,4,593,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 1. Instrumentos de patrimonio,
+5935,Deterioro de valor de participaciones a corto plazo en otras partes vinculadas,4,593,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 1. Instrumentos de patrimonio,
+594,Deterioro de valor de valores representativos de deuda a corto plazo de partes vinculadas,3,59,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5943,Deterioro de valor de valores representativos de deuda a corto plazo de empresas del grupo,4,594,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5944,Deterioro de valor de valores representativos de deuda a corto plazo de empresas asociadas,4,594,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 3. Valores representativos de deuda,
+5945,Deterioro de valor de valores representativos de deuda a corto plazo de otras partes vinculadas,4,594,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 3. Valores representativos de deuda,
+595,Deterioro de valor de créditos a corto plazo a partes vinculadas,3,59,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5953,Deterioro de valor de créditos a corto plazo a empresas del grupo,4,595,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5954,Deterioro de valor de créditos a corto plazo a empresas asociadas,4,595,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 2. Créditos a empresas,
+5955,Deterioro de valor de créditos a corto plazo a otras partes vinculadas,4,595,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 2. Créditos a empresas,
+596,Deterioro de valor de participaciones a corto plazo,3,59,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 1. Instrumentos de patrimonio,
+597,Deterioro de valor de valores representativos de deuda a corto plazo,3,59,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 3. Valores representativos de deuda,
+598,Deterioro de valor de créditos a corto plazo,3,59,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / V. Inversiones financieras a corto plazo / 2. Créditos a empresas,
+599,Deterioro de valor de activos no corrientes mantenidos para la venta,3,59,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+5990,Deterioro de valor de inmovilizado no corriente mantenido para la venta,4,599,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+5991,Deterioro de valor de inversiones con personas y entidades vinculadas no corrientes mantenidas para la venta,4,599,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+5992,Deterioro de valor de inversiones financieras no corrientes mantenidas para la venta,4,599,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+5993,"Deterioro de valor de existencias, deudores comerciales y otras cuentas a cobrar integrados en un grupo enajenable mantenido para la venta",4,599,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+5994,Deterioro de valor de otros activos mantenidos para la venta,4,599,5,ACREEDORA,BALANCE_ACTIVO,B) Activo corriente / I. Activos no corrientes mantenidos para la venta,
+6,Compras y gastos,1,,6,DEUDORA,PYG,,
+60,Compras,2,6,6,DEUDORA,PYG,4. Aprovisionamientos,COSTE_DIRECTO_MC1
+600,Compras de mercaderías,3,60,6,DEUDORA,PYG,4. Aprovisionamientos / a) Consumo de mercaderías,COSTE_DIRECTO_MC1
+601,Compras de materias primas,3,60,6,DEUDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+602,Compras de otros aprovisionamientos,3,60,6,DEUDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+606,Descuentos sobre compras por pronto pago,3,60,6,ACREEDORA,PYG,4. Aprovisionamientos,COSTE_DIRECTO_MC1
+6060,Descuentos sobre compras por pronto pago de mercaderías,4,606,6,ACREEDORA,PYG,4. Aprovisionamientos / a) Consumo de mercaderías,COSTE_DIRECTO_MC1
+6061,Descuentos sobre compras por pronto pago de materias primas,4,606,6,ACREEDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+6062,Descuentos sobre compras por pronto pago de otros aprovisionamientos,4,606,6,ACREEDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+607,Trabajos realizados por otras empresas,3,60,6,DEUDORA,PYG,4. Aprovisionamientos / c) Trabajos realizados por otras empresas,COSTE_DIRECTO_MC1
+608,Devoluciones de compras y operaciones similares,3,60,6,ACREEDORA,PYG,4. Aprovisionamientos,COSTE_DIRECTO_MC1
+6080,Devoluciones de compras de mercaderías,4,608,6,ACREEDORA,PYG,4. Aprovisionamientos / a) Consumo de mercaderías,COSTE_DIRECTO_MC1
+6081,Devoluciones de compras de materias primas,4,608,6,ACREEDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+6082,Devoluciones de compras de otros aprovisionamientos,4,608,6,ACREEDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+609,«Rappels» por compras,3,60,6,ACREEDORA,PYG,4. Aprovisionamientos,COSTE_DIRECTO_MC1
+6090,«Rappels» por compras de mercaderías,4,609,6,ACREEDORA,PYG,4. Aprovisionamientos / a) Consumo de mercaderías,COSTE_DIRECTO_MC1
+6091,«Rappels» por compras de materias primas,4,609,6,ACREEDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+6092,«Rappels» por compras de otros aprovisionamientos,4,609,6,ACREEDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+61,Variación de existencias,2,6,6,DEUDORA,PYG,4. Aprovisionamientos,COSTE_DIRECTO_MC1
+610,Variación de existencias de mercaderías,3,61,6,DEUDORA,PYG,4. Aprovisionamientos / a) Consumo de mercaderías,COSTE_DIRECTO_MC1
+611,Variación de existencias de materias primas,3,61,6,DEUDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+612,Variación de existencias de otros aprovisionamientos,3,61,6,DEUDORA,PYG,4. Aprovisionamientos / b) Consumo de materias primas y otras materias consumibles,COSTE_DIRECTO_MC1
+62,Servicios exteriores,2,6,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+620,Gastos en investigación y desarrollo del ejercicio,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+621,Arrendamientos y cánones,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+622,Reparaciones y conservación,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+623,Servicios de profesionales independientes,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+624,Transportes,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+625,Primas de seguros,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+626,Servicios bancarios y similares,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+627,"Publicidad, propaganda y relaciones públicas",3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+628,Suministros,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+629,Otros servicios,3,62,6,DEUDORA,PYG,7. Otros gastos de explotación / a) Servicios exteriores,INDIRECTO_CECO
+63,Tributos,2,6,6,DEUDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+630,Impuesto sobre beneficios,3,63,6,DEUDORA,PYG,20. Impuestos sobre beneficios,NO_ANALITICO
+6300,Impuesto corriente,4,630,6,DEUDORA,PYG,20. Impuestos sobre beneficios,NO_ANALITICO
+6301,Impuesto diferido,4,630,6,DEUDORA,PYG,20. Impuestos sobre beneficios,NO_ANALITICO
+631,Otros tributos,3,63,6,DEUDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+633,Ajustes negativos en la imposición sobre beneficios,3,63,6,DEUDORA,PYG,20. Impuestos sobre beneficios,NO_ANALITICO
+634,Ajustes negativos en la imposición indirecta,3,63,6,DEUDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+6341,Ajustes negativos en IVA de activo corriente,4,634,6,DEUDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+6342,Ajustes negativos en IVA de inversiones,4,634,6,DEUDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+636,Devolución de impuestos,3,63,6,ACREEDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+638,Ajustes positivos en la imposición sobre beneficios,3,63,6,ACREEDORA,PYG,20. Impuestos sobre beneficios,NO_ANALITICO
+639,Ajustes positivos en la imposición indirecta,3,63,6,ACREEDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+6391,Ajustes positivos en IVA de activo corriente,4,639,6,ACREEDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+6392,Ajustes positivos en IVA de inversiones,4,639,6,ACREEDORA,PYG,7. Otros gastos de explotación / b) Tributos,INDIRECTO_CECO
+64,Gastos de personal,2,6,6,DEUDORA,PYG,6. Gastos de personal,COSTE_DIRECTO_MC2
+640,Sueldos y salarios,3,64,6,DEUDORA,PYG,"6. Gastos de personal / a) Sueldos, salarios y asimilados",COSTE_DIRECTO_MC2
+641,Indemnizaciones,3,64,6,DEUDORA,PYG,"6. Gastos de personal / a) Sueldos, salarios y asimilados",COSTE_DIRECTO_MC2
+642,Seguridad Social a cargo de la empresa,3,64,6,DEUDORA,PYG,6. Gastos de personal / b) Cargas sociales,COSTE_DIRECTO_MC2
+643,Retribuciones a largo plazo mediante sistemas de aportación definida,3,64,6,DEUDORA,PYG,6. Gastos de personal / b) Cargas sociales,COSTE_DIRECTO_MC2
+644,Retribuciones a largo plazo mediante sistemas de prestación definida,3,64,6,DEUDORA,PYG,6. Gastos de personal / c) Provisiones,COSTE_DIRECTO_MC2
+6440,Contribuciones anuales,4,644,6,DEUDORA,PYG,6. Gastos de personal / c) Provisiones,COSTE_DIRECTO_MC2
+6442,Otros costes,4,644,6,DEUDORA,PYG,6. Gastos de personal / c) Provisiones,COSTE_DIRECTO_MC2
+645,Retribuciones al personal mediante instrumentos de patrimonio,3,64,6,DEUDORA,PYG,6. Gastos de personal,COSTE_DIRECTO_MC2
+6450,Retribuciones al personal liquidados con instrumentos de patrimonio,4,645,6,DEUDORA,PYG,"6. Gastos de personal / a) Sueldos, salarios y asimilados",COSTE_DIRECTO_MC2
+6457,Retribuciones al personal liquidados en efectivo basado en instrumentos de patrimonio,4,645,6,DEUDORA,PYG,6. Gastos de personal / c) Provisiones,COSTE_DIRECTO_MC2
+649,Otros gastos sociales,3,64,6,DEUDORA,PYG,6. Gastos de personal / b) Cargas sociales,COSTE_DIRECTO_MC2
+65,Otros gastos de gestión,2,6,6,DEUDORA,PYG,7. Otros gastos de explotación,NO_ANALITICO
+650,Pérdidas de créditos comerciales incobrables,3,65,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",NO_ANALITICO
+651,Resultados de operaciones en común,3,65,6,DEUDORA,PYG,7. Otros gastos de explotación / d) Otros gastos de gestión corriente,NO_ANALITICO
+6510,Beneficio transferido (gestor),4,651,6,DEUDORA,PYG,7. Otros gastos de explotación / d) Otros gastos de gestión corriente,NO_ANALITICO
+6511,Pérdida soportada (partícipe o asociado no gestor),4,651,6,DEUDORA,PYG,7. Otros gastos de explotación / d) Otros gastos de gestión corriente,NO_ANALITICO
+659,Otras pérdidas en gestión corriente,3,65,6,DEUDORA,PYG,7. Otros gastos de explotación / d) Otros gastos de gestión corriente,NO_ANALITICO
+66,Gastos financieros,2,6,6,DEUDORA,PYG,15. Gastos financieros,FINANCIERO
+660,Gastos financieros por actualización de provisiones,3,66,6,DEUDORA,PYG,15. Gastos financieros / c) Por actualización de provisiones,FINANCIERO
+661,Intereses de obligaciones y bonos,3,66,6,DEUDORA,PYG,15. Gastos financieros,FINANCIERO
+6610,"Intereses de obligaciones y bonos a largo plazo, empresas del grupo",4,661,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6611,"Intereses de obligaciones y bonos a largo plazo, empresas asociadas",4,661,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6612,"Intereses de obligaciones y bonos a largo plazo, otras partes vinculadas",4,661,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6613,"Intereses de obligaciones y bonos a largo plazo, otras empresas",4,661,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6615,"Intereses de obligaciones y bonos a corto plazo, empresas del grupo",4,661,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6616,"Intereses de obligaciones y bonos a corto plazo, empresas asociadas",4,661,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6617,"Intereses de obligaciones y bonos a corto plazo, otras partes vinculadas",4,661,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6618,"Intereses de obligaciones y bonos a corto plazo, otras empresas",4,661,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+662,Intereses de deudas,3,66,6,DEUDORA,PYG,15. Gastos financieros,FINANCIERO
+6620,"Intereses de deudas, empresas del grupo",4,662,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6621,"Intereses de deudas, empresas asociadas",4,662,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6622,"Intereses de deudas, otras partes vinculadas",4,662,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6623,Intereses de deudas con entidades de crédito,4,662,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6624,"Intereses de deudas, otras empresas",4,662,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+663,Pérdidas por valoración de instrumentos financieros por su valor razonable,3,66,6,DEUDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+6630,Pérdidas de cartera de negociación,4,663,6,DEUDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+6631,Pérdidas de designados por la empresa,4,663,6,DEUDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+6632,Pérdidas de activos financieros a valor razonable con cambios en el patrimonio neto,4,663,6,DEUDORA,PYG,16. Variación de valor razonable en instrumentos financieros / b) Imputación al resultado del ejercicio por activos financieros a valor razonable con cambios en el patrimonio neto,FINANCIERO
+6633,Pérdidas de instrumentos de cobertura,4,663,6,DEUDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+664,Gastos por dividendos de acciones o participaciones consideradas como pasivos financieros,3,66,6,DEUDORA,PYG,15. Gastos financieros,FINANCIERO
+6640,"Dividendos de pasivos, empresas del grupo",4,664,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6641,"Dividendos de pasivos, empresas asociadas",4,664,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6642,"Dividendos de pasivos, otras partes vinculadas",4,664,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6643,"Dividendos de pasivos, otras empresas",4,664,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+665,Intereses por descuento de efectos y operaciones de «factoring»,3,66,6,DEUDORA,PYG,15. Gastos financieros,FINANCIERO
+6650,Intereses por descuento de efectos en entidades de crédito del grupo,4,665,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6651,Intereses por descuento de efectos en entidades de crédito asociadas,4,665,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6652,Intereses por descuento de efectos en otras entidades de crédito vinculadas,4,665,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6653,Intereses por descuento de efectos en otras entidades de crédito,4,665,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6654,Intereses por operaciones de «factoring» con entidades de crédito del grupo,4,665,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6655,Intereses por operaciones de «factoring» con entidades de crédito asociadas,4,665,6,DEUDORA,PYG,15. Gastos financieros / a) Por deudas con empresas del grupo y asociadas,FINANCIERO
+6656,Intereses por operaciones de «factoring» con otras entidades de crédito vinculadas,4,665,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+6657,Intereses por operaciones de «factoring» con otras entidades de crédito,4,665,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+666,Pérdidas en participaciones y valores representativos de deuda,3,66,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6660,"Pérdidas en valores representativos de deuda a largo plazo, empresas del grupo",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6661,"Pérdidas en valores representativos de deuda a largo plazo, empresas asociadas",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6662,"Pérdidas en valores representativos de deuda a largo plazo, otras partes vinculadas",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6663,"Pérdidas en participaciones y valores representativos de deuda a largo plazo, otras empresas",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6665,"Pérdidas en participaciones y valores representativos de deuda a corto plazo, empresas del grupo",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6666,"Pérdidas en participaciones y valores representativos de deuda a corto plazo, empresas asociadas",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6667,"Pérdidas en valores representativos de deuda a corto plazo, otras partes vinculadas",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6668,"Pérdidas en valores representativos de deuda a corto plazo, otras empresas",4,666,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+667,Pérdidas de créditos no comerciales,3,66,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6670,"Pérdidas de créditos a largo plazo, empresas del grupo",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6671,"Pérdidas de créditos a largo plazo, empresas asociadas",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6672,"Pérdidas de créditos a largo plazo, otras partes vinculadas",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6673,"Pérdidas de créditos a largo plazo, otras empresas",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6675,"Pérdidas de créditos a corto plazo, empresas del grupo",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6676,"Pérdidas de créditos a corto plazo, empresas asociadas",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6677,"Pérdidas de créditos a corto plazo, otras partes vinculadas",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+6678,"Pérdidas de créditos a corto plazo, otras empresas",4,667,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+668,Diferencias negativas de cambio,3,66,6,DEUDORA,PYG,17. Diferencias de cambio,FINANCIERO
+669,Otros gastos financieros,3,66,6,DEUDORA,PYG,15. Gastos financieros / b) Por deudas con terceros,FINANCIERO
+67,Pérdidas procedentes de activos no corrientes y gastos excepcionales,2,6,6,DEUDORA,PYG,,EXTRAORDINARIO
+670,Pérdidas procedentes del inmovilizado intangible,3,67,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+671,Pérdidas procedentes del inmovilizado material,3,67,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+672,Pérdidas procedentes de las inversiones inmobiliarias,3,67,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+673,Pérdidas procedentes de participaciones a largo plazo en partes vinculadas,3,67,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+6733,"Pérdidas procedentes de participaciones a largo plazo, empresas del grupo",4,673,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+6734,"Pérdidas procedentes de participaciones a largo plazo, empresas asociadas",4,673,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+6735,"Pérdidas procedentes de participaciones a largo plazo, otras partes vinculadas",4,673,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+675,Pérdidas por operaciones con obligaciones propias,3,67,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+678,Gastos excepcionales,3,67,6,DEUDORA,PYG,13. Otros resultados,EXTRAORDINARIO
+68,Dotaciones para amortizaciones,2,6,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
+680,Amortización del inmovilizado intangible,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
+681,Amortización del inmovilizado material,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
+682,Amortización de las inversiones inmobiliarias,3,68,6,DEUDORA,PYG,8. Amortización del inmovilizado,INDIRECTO_CECO
+69,Pérdidas por deterioro y otras dotaciones,2,6,6,DEUDORA,PYG,,INDIRECTO_CECO
+690,Pérdidas por deterioro del inmovilizado intangible,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
+691,Pérdidas por deterioro del inmovilizado material,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
+692,Pérdidas por deterioro de las inversiones inmobiliarias,3,69,6,DEUDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
+693,Pérdidas por deterioro de existencias,3,69,6,DEUDORA,PYG,4. Aprovisionamientos,INDIRECTO_CECO
+6930,Pérdidas por deterioro de productos terminados y en curso de fabricación,4,693,6,DEUDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
+6931,Pérdidas por deterioro de mercaderías,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
+6932,Pérdidas por deterioro de materias primas,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
+6933,Pérdidas por deterioro de otros aprovisionamientos,4,693,6,DEUDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
+694,Pérdidas por deterioro de créditos por operaciones comerciales,3,69,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
+695,Dotación a la provisión por operaciones comerciales,3,69,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
+6954,Dotación a la provisión por contratos onerosos,4,695,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
+6959,Dotación a la provisión para otras operaciones comerciales,4,695,6,DEUDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
+696,Pérdidas por deterioro de participaciones y valores representativos de deuda a largo plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6960,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas del grupo",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6961,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas asociadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6962,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras partes vinculadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6963,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras empresas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6965,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, empresas del grupo",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6966,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, empresas asociadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6967,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, otras partes vinculadas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6968,"Pérdidas por deterioro en valores representativos de deuda a largo plazo, otras empresas",4,696,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+697,Pérdidas por deterioro de créditos a largo plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6970,"Pérdidas por deterioro de créditos a largo plazo, empresas del grupo",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6971,"Pérdidas por deterioro de créditos a largo plazo, empresas asociadas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6972,"Pérdidas por deterioro de créditos a largo plazo, otras partes vinculadas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6973,"Pérdidas por deterioro de créditos a largo plazo, otras empresas",4,697,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+698,Pérdidas por deterioro de participaciones y valores representativos de deuda a corto plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6980,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas del grupo",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6981,"Pérdidas por deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas asociadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6985,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, empresas del grupo",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6986,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, empresas asociadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6987,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, otras partes vinculadas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6988,"Pérdidas por deterioro en valores representativos de deuda a corto plazo, otras empresas",4,698,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+699,Pérdidas por deterioro de créditos a corto plazo,3,69,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6990,"Pérdidas por deterioro de créditos a corto plazo, empresas del grupo",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6991,"Pérdidas por deterioro de créditos a corto plazo, empresas asociadas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6992,"Pérdidas por deterioro de créditos a corto plazo, otras partes vinculadas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+6993,"Pérdidas por deterioro de créditos a corto plazo, otras empresas",4,699,6,DEUDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7,Ventas e ingresos,1,,7,ACREEDORA,PYG,,
+70,"Ventas de mercaderías, de producción propia, de servicios, etc.",2,7,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios,INGRESO_DIRECTO
+700,Ventas de mercaderías,3,70,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+701,Ventas de productos terminados,3,70,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+702,Ventas de productos semiterminados,3,70,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+703,Ventas de subproductos y residuos,3,70,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+704,Ventas de envases y embalajes,3,70,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+705,Prestaciones de servicios,3,70,7,ACREEDORA,PYG,1. Importe neto de la cifra de negocios / b) Prestaciones de servicios,INGRESO_DIRECTO
+706,Descuentos sobre ventas por pronto pago,3,70,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7060,Descuentos sobre ventas por pronto pago de mercaderías,4,706,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7061,Descuentos sobre ventas por pronto pago de productos terminados,4,706,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7062,Descuentos sobre ventas por pronto pago de productos semiterminados,4,706,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7063,Descuentos sobre ventas por pronto pago de subproductos y residuos,4,706,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7064,Descuentos sobre ventas por pronto pago de envases y embalajes,4,706,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+708,Devoluciones de ventas y operaciones similares,3,70,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7080,Devoluciones de ventas de mercaderías,4,708,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7081,Devoluciones de ventas de productos terminados,4,708,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7082,Devoluciones de ventas de productos semiterminados,4,708,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7083,Devoluciones de ventas de subproductos y residuos,4,708,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7084,Devoluciones de ventas de envases y embalajes,4,708,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+709,«Rappels» sobre ventas,3,70,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7090,«Rappels» sobre ventas de mercaderías,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7091,«Rappels» sobre ventas de productos terminados,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7092,«Rappels» sobre ventas de productos semiterminados,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7093,«Rappels» sobre ventas de subproductos y residuos,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+7094,«Rappels» sobre ventas de envases y embalajes,4,709,7,DEUDORA,PYG,1. Importe neto de la cifra de negocios / a) Ventas,INGRESO_DIRECTO
+71,Variación de existencias,2,7,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
+710,Variación de existencias de productos en curso,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
+711,Variación de existencias de productos semiterminados,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
+712,Variación de existencias de productos terminados,3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
+713,"Variación de existencias de subproductos, residuos y materiales recuperados",3,71,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,NO_ANALITICO
+73,Trabajos realizados para la empresa,2,7,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
+730,Trabajos realizados para el inmovilizado intangible,3,73,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
+731,Trabajos realizados para el inmovilizado material,3,73,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
+732,Trabajos realizados en inmovilizado material en curso,3,73,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
+733,Trabajos realizados para las inversiones inmobiliarias,3,73,7,ACREEDORA,PYG,3. Trabajos realizados por la empresa para su activo,NO_ANALITICO
+74,"Subvenciones, donaciones y legados",2,7,7,ACREEDORA,PYG,5. Otros ingresos de explotación / b) Subvenciones de explotación incorporadas al resultado del ejercicio,NO_ANALITICO
+740,"Subvenciones, donaciones y legados a la explotación",3,74,7,ACREEDORA,PYG,5. Otros ingresos de explotación / b) Subvenciones de explotación incorporadas al resultado del ejercicio,NO_ANALITICO
+746,"Subvenciones, donaciones y legados de capital transferidos al resultado del ejercicio",3,74,7,ACREEDORA,PYG,9. Imputación de subvenciones de inmovilizado no financiero y otras,NO_ANALITICO
+747,"Otras subvenciones, donaciones y legados transferidos al resultado del ejercicio",3,74,7,ACREEDORA,PYG,5. Otros ingresos de explotación / b) Subvenciones de explotación incorporadas al resultado del ejercicio,NO_ANALITICO
+75,Otros ingresos de gestión,2,7,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+751,Resultados de operaciones en común,3,75,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+7510,Pérdida transferida (gestor),4,751,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+7511,Beneficio atribuido (partícipe o asociado no gestor),4,751,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+752,Ingresos por arrendamientos,3,75,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+753,Ingresos de propiedad industrial cedida en explotación,3,75,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+754,Ingresos por comisiones,3,75,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+755,Ingresos por servicios al personal,3,75,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+759,Ingresos por servicios diversos,3,75,7,ACREEDORA,PYG,5. Otros ingresos de explotación / a) Ingresos accesorios y otros de gestión corriente,NO_ANALITICO
+76,Ingresos financieros,2,7,7,ACREEDORA,PYG,14. Ingresos financieros,FINANCIERO
+760,Ingresos de participaciones en instrumentos de patrimonio,3,76,7,ACREEDORA,PYG,14. Ingresos financieros / a) De participaciones en instrumentos de patrimonio,FINANCIERO
+7600,"Ingresos de participaciones en instrumentos de patrimonio, empresas del grupo",4,760,7,ACREEDORA,PYG,14. Ingresos financieros / a) De participaciones en instrumentos de patrimonio,FINANCIERO
+7601,"Ingresos de participaciones en instrumentos de patrimonio, empresas asociadas",4,760,7,ACREEDORA,PYG,14. Ingresos financieros / a) De participaciones en instrumentos de patrimonio,FINANCIERO
+7602,"Ingresos de participaciones en instrumentos de patrimonio, otras partes vinculadas",4,760,7,ACREEDORA,PYG,14. Ingresos financieros / a) De participaciones en instrumentos de patrimonio,FINANCIERO
+7603,"Ingresos de participaciones en instrumentos de patrimonio, otras empresas",4,760,7,ACREEDORA,PYG,14. Ingresos financieros / a) De participaciones en instrumentos de patrimonio,FINANCIERO
+761,Ingresos de valores representativos de deuda,3,76,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+7610,"Ingresos de valores representativos de deuda, empresas del grupo",4,761,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+7611,"Ingresos de valores representativos de deuda, empresas asociadas",4,761,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+7612,"Ingresos de valores representativos de deuda, otras partes vinculadas",4,761,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+7613,"Ingresos de valores representativos de deuda, otras empresas",4,761,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+762,Ingresos de créditos,3,76,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+7620,Ingresos de créditos a largo plazo,4,762,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+7621,Ingresos de créditos a corto plazo,4,762,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+763,Beneficios por valoración de instrumentos financieros por su valor razonable,3,76,7,ACREEDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+7630,Beneficios de cartera de negociación,4,763,7,ACREEDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+7631,Beneficios de designados por la empresa,4,763,7,ACREEDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+7632,Beneficios de activos financieros a valor razonable con cambios en el patrimonio neto,4,763,7,ACREEDORA,PYG,16. Variación de valor razonable en instrumentos financieros / b) Imputación al resultado del ejercicio por activos financieros a valor razonable con cambios en el patrimonio neto,FINANCIERO
+7633,Beneficios de instrumentos de cobertura,4,763,7,ACREEDORA,PYG,16. Variación de valor razonable en instrumentos financieros / a) Cartera de negociación y otros,FINANCIERO
+766,Beneficios en participaciones y valores representativos de deuda,3,76,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7660,"Beneficios en valores representativos de deuda a largo plazo, empresas del grupo",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7661,"Beneficios en valores representativos de deuda a largo plazo, empresas asociadas",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7662,"Beneficios en valores representativos de deuda a largo plazo, otras partes vinculadas",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7663,"Beneficios en participaciones y valores representativos de deuda a largo plazo, otras empresas",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7665,"Beneficios en participaciones y valores representativos de deuda a corto plazo, empresas del grupo",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7666,"Beneficios en participaciones y valores representativos de deuda a corto plazo, empresas asociadas",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7667,"Beneficios en valores representativos de deuda a corto plazo, otras partes vinculadas",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+7668,"Beneficios en valores representativos de deuda a corto plazo, otras empresas",4,766,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,FINANCIERO
+767,Ingresos de activos afectos y de derechos de reembolso relativos a retribuciones a largo plazo,3,76,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+768,Diferencias positivas de cambio,3,76,7,ACREEDORA,PYG,17. Diferencias de cambio,FINANCIERO
+769,Otros ingresos financieros,3,76,7,ACREEDORA,PYG,14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros,FINANCIERO
+77,Beneficios procedentes de activos no corrientes e ingresos excepcionales,2,7,7,ACREEDORA,PYG,,EXTRAORDINARIO
+770,Beneficios procedentes del inmovilizado intangible,3,77,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+771,Beneficios procedentes del inmovilizado material,3,77,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+772,Beneficios procedentes de las inversiones inmobiliarias,3,77,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+773,Beneficios procedentes de participaciones a largo plazo en partes vinculadas,3,77,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+7733,"Beneficios procedentes de participaciones a largo plazo, empresas del grupo",4,773,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+7734,"Beneficios procedentes de participaciones a largo plazo, empresas asociadas",4,773,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+7735,"Beneficios procedentes de participaciones a largo plazo, otras partes vinculadas",4,773,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+774,Diferencia negativa en combinaciones de negocios,3,77,7,ACREEDORA,PYG,12. Diferencia negativa de combinaciones de negocio,EXTRAORDINARIO
+775,Beneficios por operaciones con obligaciones propias,3,77,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / b) Resultados por enajenaciones y otras,EXTRAORDINARIO
+778,Ingresos excepcionales,3,77,7,ACREEDORA,PYG,13. Otros resultados,EXTRAORDINARIO
+79,Excesos y aplicaciones de provisiones y de pérdidas por deterioro,2,7,7,ACREEDORA,PYG,,INDIRECTO_CECO
+790,Reversión del deterioro del inmovilizado intangible,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
+791,Reversión del deterioro del inmovilizado material,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
+792,Reversión del deterioro de las inversiones inmobiliarias,3,79,7,ACREEDORA,PYG,11. Deterioro y resultado por enajenaciones del inmovilizado / a) Deterioros y pérdidas,INDIRECTO_CECO
+793,Reversión del deterioro de existencias,3,79,7,ACREEDORA,PYG,4. Aprovisionamientos,INDIRECTO_CECO
+7930,Reversión del deterioro de productos terminados y en curso de fabricación,4,793,7,ACREEDORA,PYG,2. Variación de existencias de productos terminados y en curso de fabricación,COSTE_DIRECTO_MC1
+7931,Reversión del deterioro de mercaderías,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
+7932,Reversión del deterioro de materias primas,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
+7933,Reversión del deterioro de otros aprovisionamientos,4,793,7,ACREEDORA,PYG,"4. Aprovisionamientos / d) Deterioro de mercaderías, materias primas y otros aprovisionamientos",INDIRECTO_CECO
+794,Reversión del deterioro de créditos por operaciones comerciales,3,79,7,ACREEDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
+795,Exceso de provisiones,3,79,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
+7950,Exceso de provisión por retribuciones al personal,4,795,7,ACREEDORA,PYG,6. Gastos de personal / c) Provisiones,INDIRECTO_CECO
+7951,Exceso de provisión para impuestos,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
+7952,Exceso de provisión para otras responsabilidades,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
+7954,Exceso de provisión por operaciones comerciales,4,795,7,ACREEDORA,PYG,"7. Otros gastos de explotación / c) Pérdidas, deterioro y variación de provisiones por operaciones comerciales",INDIRECTO_CECO
+7955,Exceso de provisión para actuaciones medioambientales,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
+7956,Exceso de provisión para reestructuraciones,4,795,7,ACREEDORA,PYG,10. Excesos de provisiones,INDIRECTO_CECO
+7957,Exceso de provisión por transacciones con pagos basados en instrumentos de patrimonio,4,795,7,ACREEDORA,PYG,6. Gastos de personal / c) Provisiones,INDIRECTO_CECO
+796,Reversión del deterioro de participaciones y valores representativos de deuda a largo plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7960,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas del grupo",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7961,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, empresas asociadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7962,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras partes vinculadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7963,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a largo plazo, otras empresas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7965,"Reversión del deterioro de valores representativos de deuda a largo plazo, empresas del grupo",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7966,"Reversión del deterioro de valores representativos de deuda a largo plazo, empresas asociadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7967,"Reversión del deterioro de valores representativos de deuda a largo plazo, otras partes vinculadas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7968,"Reversión del deterioro de valores representativos de deuda a largo plazo, otras empresas",4,796,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+797,Reversión del deterioro de créditos a largo plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7970,"Reversión del deterioro de créditos a largo plazo, empresas del grupo",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7971,"Reversión del deterioro de créditos a largo plazo, empresas asociadas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7972,"Reversión del deterioro de créditos a largo plazo, otras partes vinculadas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7973,"Reversión del deterioro de créditos a largo plazo, otras empresas",4,797,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+798,Reversión del deterioro de participaciones y valores representativos de deuda a corto plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7980,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas del grupo",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7981,"Reversión del deterioro de participaciones en instrumentos de patrimonio neto a corto plazo, empresas asociadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7985,"Reversión del deterioro en valores representativos de deuda a corto plazo, empresas del grupo",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7986,"Reversión del deterioro en valores representativos de deuda a corto plazo, empresas asociadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7987,"Reversión del deterioro en valores representativos de deuda a corto plazo, otras partes vinculadas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7988,"Reversión del deterioro en valores representativos de deuda a corto plazo, otras empresas",4,798,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+799,Reversión del deterioro de créditos a corto plazo,3,79,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7990,"Reversión del deterioro de créditos a corto plazo, empresas del grupo",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7991,"Reversión del deterioro de créditos a corto plazo, empresas asociadas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7992,"Reversión del deterioro de créditos a corto plazo, otras partes vinculadas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+7993,"Reversión del deterioro de créditos a corto plazo, otras empresas",4,799,7,ACREEDORA,PYG,18. Deterioro y resultado por enajenaciones de instrumentos financieros / a) Deterioros y pérdidas,INDIRECTO_CECO
+8,Gastos imputados al patrimonio neto,1,,8,DEUDORA,ECPN,,
+80,Gastos financieros por valoración de activos y pasivos,2,8,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+800,Pérdidas en activos financieros a valor razonable con cambios en el patrimonio neto,3,80,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+802,Transferencia de beneficios en activos financieros a valor razonable con cambios en el patrimonio neto,3,80,8,DEUDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / VIII. Por valoración de instrumentos financieros,
+81,Gastos en operaciones de cobertura,2,8,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / II. Por coberturas de flujos de efectivo,
+810,Pérdidas por coberturas de flujos de efectivo,3,81,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / II. Por coberturas de flujos de efectivo,
+811,Pérdidas por coberturas de inversiones netas en un negocio en el extranjero,3,81,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / II. Por coberturas de flujos de efectivo,
+812,Transferencia de beneficios por coberturas de flujos de efectivo,3,81,8,DEUDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / IX. Por coberturas de flujos de efectivo,
+813,Transferencia de beneficios por coberturas de inversiones netas en un negocio en el extranjero,3,81,8,DEUDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / IX. Por coberturas de flujos de efectivo,
+82,Gastos por diferencias de conversión,2,8,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VI. Diferencias de conversión,
+820,Diferencias de conversión negativas,3,82,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VI. Diferencias de conversión,
+821,Transferencia de diferencias de conversión positivas,3,82,8,DEUDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / XII. Diferencias de conversión,
+83,Impuesto sobre beneficios,2,8,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+830,Impuesto sobre beneficios,3,83,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+8300,Impuesto corriente,4,830,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+8301,Impuesto diferido,4,830,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+833,Ajustes negativos en la imposición sobre beneficios,3,83,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+834,Ingresos fiscales por diferencias permanentes,3,83,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+835,Ingresos fiscales por deducciones y bonificaciones,3,83,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+836,Transferencia de diferencias permanentes,3,83,8,DEUDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / XIII. Efecto impositivo,
+837,Transferencia de deducciones y bonificaciones,3,83,8,DEUDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / XIII. Efecto impositivo,
+838,Ajustes positivos en la imposición sobre beneficios,3,83,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VII. Efecto impositivo,
+84,"Transferencias de subvenciones, donaciones y legados",2,8,8,DEUDORA,ECPN,"C) Transferencias a la cuenta de pérdidas y ganancias / X. Subvenciones, donaciones y legados recibidos",
+840,Transferencia de subvenciones oficiales de capital,3,84,8,DEUDORA,ECPN,"C) Transferencias a la cuenta de pérdidas y ganancias / X. Subvenciones, donaciones y legados recibidos",
+841,Transferencia de donaciones y legados de capital,3,84,8,DEUDORA,ECPN,"C) Transferencias a la cuenta de pérdidas y ganancias / X. Subvenciones, donaciones y legados recibidos",
+842,"Transferencia de otras subvenciones, donaciones y legados",3,84,8,DEUDORA,ECPN,"C) Transferencias a la cuenta de pérdidas y ganancias / X. Subvenciones, donaciones y legados recibidos",
+85,Gastos por pérdidas actuariales y ajustes en los activos por retribuciones a largo plazo de prestación definida,2,8,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / IV. Por ganancias y pérdidas actuariales y otros ajustes,
+850,Pérdidas actuariales,3,85,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / IV. Por ganancias y pérdidas actuariales y otros ajustes,
+851,Ajustes negativos en activos por retribuciones a largo plazo de prestación definida,3,85,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / IV. Por ganancias y pérdidas actuariales y otros ajustes,
+86,Gastos por activos no corrientes en venta,2,8,8,DEUDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / V. Por activos no corrientes y pasivos vinculados, mantenidos para la venta",
+860,Pérdidas en activos no corrientes y grupos enajenables de elementos mantenidos para la venta,3,86,8,DEUDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / V. Por activos no corrientes y pasivos vinculados, mantenidos para la venta",
+862,Transferencia de beneficios en activos no corrientes y grupos enajenables de elementos mantenidos para la venta,3,86,8,DEUDORA,ECPN,"C) Transferencias a la cuenta de pérdidas y ganancias / XI. Por activos no corrientes y pasivos vinculados, mantenidos para la venta",
+89,Gastos de participaciones en empresas del grupo o asociadas con ajustes valorativos positivos previos,2,8,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+891,Deterioro de participaciones en el capital de empresas del grupo,3,89,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+892,Deterioro de participaciones en el capital de empresas asociadas,3,89,8,DEUDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+9,Ingresos imputados al patrimonio neto,1,,9,ACREEDORA,ECPN,,
+90,Ingresos financieros por valoración de activos y pasivos,2,9,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+900,Beneficios en activos financieros a valor razonable con cambios en el patrimonio neto,3,90,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+902,Transferencia de pérdidas de activos financieros a valor razonable con cambios en el patrimonio neto,3,90,9,ACREEDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / VIII. Por valoración de instrumentos financieros,
+91,Ingresos en operaciones de cobertura,2,9,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / II. Por coberturas de flujos de efectivo,
+910,Beneficios por coberturas de flujos de efectivo,3,91,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / II. Por coberturas de flujos de efectivo,
+911,Beneficios por coberturas de una inversión neta en un negocio en el extranjero,3,91,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / II. Por coberturas de flujos de efectivo,
+912,Transferencia de pérdidas por coberturas de flujos de efectivo,3,91,9,ACREEDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / IX. Por coberturas de flujos de efectivo,
+913,Transferencia de pérdidas por coberturas de una inversión neta en un negocio en el extranjero,3,91,9,ACREEDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / IX. Por coberturas de flujos de efectivo,
+92,Ingresos por diferencias de conversión,2,9,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VI. Diferencias de conversión,
+920,Diferencias de conversión positivas,3,92,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / VI. Diferencias de conversión,
+921,Transferencia de diferencias de conversión negativas,3,92,9,ACREEDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / XII. Diferencias de conversión,
+94,"Ingresos por subvenciones, donaciones y legados",2,9,9,ACREEDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / III. Subvenciones, donaciones y legados recibidos",
+940,Ingresos de subvenciones oficiales de capital,3,94,9,ACREEDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / III. Subvenciones, donaciones y legados recibidos",
+941,Ingresos de donaciones y legados de capital,3,94,9,ACREEDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / III. Subvenciones, donaciones y legados recibidos",
+942,"Ingresos de otras subvenciones, donaciones y legados",3,94,9,ACREEDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / III. Subvenciones, donaciones y legados recibidos",
+95,Ingresos por ganancias actuariales y ajustes en los activos por retribuciones a largo plazo de prestación definida,2,9,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / IV. Por ganancias y pérdidas actuariales y otros ajustes,
+950,Ganancias actuariales,3,95,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / IV. Por ganancias y pérdidas actuariales y otros ajustes,
+951,Ajustes positivos en activos por retribuciones a largo plazo de prestación definida,3,95,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / IV. Por ganancias y pérdidas actuariales y otros ajustes,
+96,Ingresos por activos no corrientes en venta,2,9,9,ACREEDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / V. Por activos no corrientes y pasivos vinculados, mantenidos para la venta",
+960,Beneficios en activos no corrientes y grupos enajenables de elementos mantenidos para la venta,3,96,9,ACREEDORA,ECPN,"B) Ingresos y gastos imputados directamente al patrimonio neto / V. Por activos no corrientes y pasivos vinculados, mantenidos para la venta",
+962,Transferencia de pérdidas en activos no corrientes y grupos enajenables de elementos mantenidos para la venta,3,96,9,ACREEDORA,ECPN,"C) Transferencias a la cuenta de pérdidas y ganancias / XI. Por activos no corrientes y pasivos vinculados, mantenidos para la venta",
+99,Ingresos de participaciones en empresas del grupo o asociadas con ajustes valorativos positivos previos,2,9,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+991,"Recuperación de ajustes valorativos negativos previos, empresas del grupo",3,99,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+992,"Recuperación de ajustes valorativos negativos previos, empresas asociadas",3,99,9,ACREEDORA,ECPN,B) Ingresos y gastos imputados directamente al patrimonio neto / I. Por valoración de instrumentos financieros,
+993,"Transferencia por deterioro de ajustes valorativos negativos previos, empresas del grupo",3,99,9,ACREEDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / VIII. Por valoración de instrumentos financieros,
+994,"Transferencia por deterioro de ajustes valorativos negativos previos, empresas asociadas",3,99,9,ACREEDORA,ECPN,C) Transferencias a la cuenta de pérdidas y ganancias / VIII. Por valoración de instrumentos financieros,
