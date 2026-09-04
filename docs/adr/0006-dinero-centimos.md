@@ -1,6 +1,6 @@
 # ADR-0006 — Dinero en céntimos enteros; moneda base por organización; `ExchangeRate` persistido
 
-**Estado:** PROPUESTO (pendiente de firma: Pablo) · **Nivel:** 2 · **Fecha:** 2026-09-04
+**Estado:** APROBADO por Pablo el 2026-09-04 · **Nivel:** 2 · **Fecha:** 2026-09-04
 
 ## Decisión
 - Todo importe en `Int` céntimos (heredado de TaxHacker `Transaction.total`); agregados SQL en `BIGINT`; tasas en `rateMicro BigInt` (10⁻⁶); porcentajes en permille `Int`.

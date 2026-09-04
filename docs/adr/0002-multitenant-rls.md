@@ -1,6 +1,6 @@
 # ADR-0002 — Multi-tenant por organización, `tenantDb` y RLS en Supabase
 
-**Estado:** PROPUESTO (pendiente de firma: Pablo) · **Nivel:** 2 · **Fecha:** 2026-09-04
+**Estado:** APROBADO por Pablo el 2026-09-04 · **Nivel:** 2 · **Fecha:** 2026-09-04
 
 ## Contexto
 Requisitos R9/R10/R11: varias empresas por usuario, roles ADMIN/EDITOR/VIEWER, Supabase Postgres. TaxHacker aísla por `userId` y tiene una fuga cross-tenant conocida (G-08).

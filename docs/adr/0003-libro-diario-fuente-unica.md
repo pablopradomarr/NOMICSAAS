@@ -1,6 +1,6 @@
 # ADR-0003 — El libro diario es la única fuente de cifras; informes derivados; nada se borra
 
-**Estado:** PROPUESTO (pendiente de firma: Pablo) · **Nivel:** 2 · **Fecha:** 2026-09-04
+**Estado:** APROBADO por Pablo el 2026-09-04 · **Nivel:** 2 · **Fecha:** 2026-09-04
 
 ## Contexto
 R7 exige PyG, balance, cashflow y diario "todo cuadrado". SPEC-FIABILIDAD P1–P3: código calcula, fuente única, snapshot antes de calcular.

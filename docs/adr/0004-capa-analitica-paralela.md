@@ -1,6 +1,6 @@
 # ADR-0004 — Capa analítica paralela: dimensiones en la línea + liquidaciones en `AllocationRun`
 
-**Estado:** PROPUESTO (pendiente de firma: Pablo) · **Nivel:** 2 · **Fecha:** 2026-09-04
+**Estado:** APROBADO por Pablo el 2026-09-04 · **Nivel:** 2 · **Fecha:** 2026-09-04
 
 ## Contexto
 R3–R6: proyectos directos con MC1/MC2/MC3, CECOs tipificados, líneas de negocio, liquidación de CECOs por regla propia. Debe cuadrar con la PyG contable (I4) y ser reversible.

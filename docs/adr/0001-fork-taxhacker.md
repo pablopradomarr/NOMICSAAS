@@ -1,6 +1,6 @@
 # ADR-0001 — Fork de TaxHacker como base; `Transaction` deja de ser fuente contable
 
-**Estado:** PROPUESTO (pendiente de firma: Pablo) · **Nivel:** 2 · **Fecha:** 2026-09-04
+**Estado:** APROBADO por Pablo el 2026-09-04 · **Nivel:** 2 · **Fecha:** 2026-09-04
 
 ## Contexto
 TaxHacker (v0.8.5, MIT) aporta OCR/LLM de documentos, multi-moneda, campos custom, import/export, email-sync, facturas PDF, backups y self-hosting. No tiene partida doble ni multi-tenant; su auditoría (docs/AUDITORIA-FIABILIDAD.md) muestra 6 gaps ALTA en el flujo LLM → cifras.

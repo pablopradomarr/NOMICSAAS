@@ -15,7 +15,7 @@ CLAUDE.md                     reglas del proyecto (leído siempre)
 docs/spec/SPEC-FIABILIDAD.md  principios P1–P7, componentes C1–C7 (inmutable)
 docs/AUDITORIA-FIABILIDAD.md  Fase 1 sobre TaxHacker: 22 gaps (6 ALTA)
 docs/SPEC-FUNCIONAL.md        qué construimos · docs/ARQUITECTURA.md cómo · docs/MODELO-DATOS.md esquema
-docs/ROADMAP.md               épicas E0–E12 · docs/adr/ decisiones (6 PROPUESTAS, pendientes de firma)
+docs/ROADMAP.md               épicas E0–E12 · docs/adr/ decisiones (ADR-0001..0006 APROBADOS 2026-09-04)
 docs/design/                  diseños por épica (los genera /epica) · docs/manual/ manual de usuario
 seeds/npgc.csv                cuadro de cuentas PGC 2007 (906 filas) · seeds/build_npgc.py
 runs/registro.jsonl           log append-only de runs del equipo
@@ -39,7 +39,7 @@ tests/fixtures/               fixtures contables inmutables (los crea qa-tester 
 - El auditor y el revisor nunca reciben la conversación del productor.
 
 ## Primeros pasos
-1. Firmar (o comentar) `docs/adr/0001…0006` cambiando `Estado` a `APROBADO por Pablo el <fecha>`.
+1. ADR-0001..0006 aprobados el 2026-09-04. Nuevas decisiones Nivel 2 → nuevo ADR PROPUESTO + firma.
 2. `claude` → `/epica E1` (organizaciones y roles; E0 está EN CURSO pero su parte bloqueante ya existe) → revisar `docs/design/E1-*.md` → `/sprint E1`. Completar el resto de E0 (CI, scripts de test, Docker/Supabase) dentro del primer sprint.
 3. Configurar `DATABASE_URL` (Supabase) y `.env` según `README.md` de TaxHacker.
 
