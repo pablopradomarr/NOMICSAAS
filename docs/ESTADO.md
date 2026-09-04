@@ -62,7 +62,8 @@ npm run test:all              # los tres
 6. ✅ DEBE-12..18: `DROP INDEX IF EXISTS`; slug con uuid completo; rate limit en invitación D-3; aceptación en `$transaction`; log Stripe solo id/type + unique parcial `stripe_customer_id`; `log` de Prisma por entorno; validación mimetype/tamaño en uploads.
 7. ✅ PUEDE-19..26 según tiempo (documentar límite de `tenantDb` con relaciones; ESLint `lib/**` + patterns; política RLS `app.current_user()`; monedas duplicadas; `iat` en cookie; `AuthzError` → `ActionState`; alinear contrato de actions; `leaveOrganizationAction`).
 8. ✅ Revisión final APROBADA (3 rondas). E1 CERRADA en ROADMAP; registro en runs/registro.jsonl.
-9. **SIGUIENTE**: `/epica E2` (plan de cuentas e impuestos) → `/sprint E2` → `/epica E3` (diario + retirada de deuda RLS).
+9. ✅ E2 CERRADA (plan de cuentas, mapa, impuestos, AuditLog; revisión APROBADA).
+10. **SIGUIENTE**: `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.
 
 ## Cómo reanudar (sesión nueva)
 1. `git clone https://github.com/pablopradomarr/NOMICSAAS && cd NOMICSAAS && npm install --ignore-scripts --engine-strict=false`
