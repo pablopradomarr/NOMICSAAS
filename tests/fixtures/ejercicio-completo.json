@@ -1,0 +1,3349 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "docs/design/fixtures/build_ejercicio_completo.py",
+  "note": "Fixture INMUTABLE. Cifras ilustrativas, ningun dato real. No editar a mano: regenerar con el script.",
+  "organization": {
+    "slug": "fixture-erp",
+    "name": "Fixture Proyectos SL",
+    "baseCurrency": "EUR",
+    "pgcVariant": "PYMES",
+    "taxRoundingMode": "PER_TIPO",
+    "prorrataBps": 9000,
+    "redondeoToleranciaCents": 1,
+    "analyticsRequired": true,
+    "useSubaccounts": false,
+    "createSoftwareAccounts": false
+  },
+  "fiscalYear": {
+    "code": "2026",
+    "startDate": "2026-01-01",
+    "endDate": "2026-12-31",
+    "status": "OPEN"
+  },
+  "fiscalYearsExtra": [
+    {
+      "code": "2027",
+      "startDate": "2027-01-01",
+      "endDate": "2027-12-31",
+      "status": "OPEN"
+    }
+  ],
+  "accountsExtra": [],
+  "businessLines": [
+    {
+      "code": "BL-CONS",
+      "name": "Consultoria",
+      "sortOrder": 1
+    },
+    {
+      "code": "BL-DEV",
+      "name": "Desarrollo de producto",
+      "sortOrder": 2
+    }
+  ],
+  "projects": [
+    {
+      "code": "P-01",
+      "name": "Implantacion ERP Cliente Alfa",
+      "businessLineCode": "BL-CONS",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "P-02",
+      "name": "Oficina de proyectos Cliente Beta",
+      "businessLineCode": "BL-CONS",
+      "status": "ACTIVE"
+    },
+    {
+      "code": "P-03",
+      "name": "Plataforma SaaS Gamma",
+      "businessLineCode": "BL-DEV",
+      "status": "ACTIVE"
+    }
+  ],
+  "costCenters": [
+    {
+      "code": "CC-GA",
+      "name": "General y administracion",
+      "kind": "G_A",
+      "marginLevel": "EBITDA",
+      "allocatable": true
+    },
+    {
+      "code": "CC-MKT",
+      "name": "Marketing y ventas",
+      "kind": "MARKETING_VENTAS",
+      "marginLevel": "EBITDA",
+      "allocatable": true
+    },
+    {
+      "code": "CC-OPS",
+      "name": "Operaciones indirectas",
+      "kind": "OPERACIONES_INDIRECTAS",
+      "marginLevel": "MC3",
+      "allocatable": true
+    },
+    {
+      "code": "CC-DEV",
+      "name": "Desarrollo de producto",
+      "kind": "DESARROLLO_PRODUCTO",
+      "marginLevel": "MC3",
+      "allocatable": true
+    },
+    {
+      "code": "CC-FIN",
+      "name": "Financiero",
+      "kind": "FINANCIERO",
+      "marginLevel": "EBITDA",
+      "allocatable": false
+    },
+    {
+      "code": "CC-NA",
+      "name": "Sin asignar",
+      "kind": "SIN_ASIGNAR",
+      "marginLevel": "EBITDA",
+      "allocatable": false
+    }
+  ],
+  "entries": [
+    {
+      "ref": "AP-2026",
+      "date": "2026-01-01",
+      "kind": "OPENING",
+      "fiscalYearCode": "2026",
+      "description": "Apertura del ejercicio 2026",
+      "sourceType": "SYSTEM",
+      "template": "APERTURA_EJERCICIO",
+      "lines": [
+        {
+          "accountCode": "216",
+          "debitCents": 1200000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "217",
+          "debitCents": 600000,
+          "creditCents": 0,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 3000000,
+          "creditCents": 0,
+          "lineNo": 3
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 4000000,
+          "creditCents": 0,
+          "lineNo": 4
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 180000,
+          "lineNo": 5
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 60000,
+          "lineNo": 6
+        },
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 0,
+          "creditCents": 1500000,
+          "lineNo": 7
+        },
+        {
+          "accountCode": "100",
+          "debitCents": 0,
+          "creditCents": 3000000,
+          "lineNo": 8
+        },
+        {
+          "accountCode": "113",
+          "debitCents": 0,
+          "creditCents": 500000,
+          "lineNo": 9
+        },
+        {
+          "accountKey": "REMANENTE",
+          "debitCents": 0,
+          "creditCents": 3560000,
+          "lineNo": 10
+        }
+      ],
+      "entryNumber": 1
+    },
+    {
+      "ref": "R-001",
+      "date": "2026-01-15",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - subcontrata Delta (P-01)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountKey": "SUBCONTRATACION_DEFAULT",
+          "debitCents": 200000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 42000,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 0,
+          "creditCents": 242000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 2
+    },
+    {
+      "ref": "F-001",
+      "date": "2026-01-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/001 - Alfa (IVA 21 % + 10 %)",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 737000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 500000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 120000,
+          "projectCode": "P-01",
+          "lineNo": 3
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 105000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 4
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 12000,
+          "taxRateCode": "IVA_10",
+          "lineNo": 5
+        }
+      ],
+      "entryNumber": 3
+    },
+    {
+      "ref": "R-002",
+      "date": "2026-01-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - alquiler oficina (IRPF 19 %)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountCode": "621",
+          "debitCents": 120000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 25200,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 122400,
+          "lineNo": 3
+        },
+        {
+          "accountKey": "IRPF_ALQUILERES_A_PAGAR",
+          "debitCents": 0,
+          "creditCents": 22800,
+          "taxRateCode": "IRPF_ALQ_19",
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 4
+    },
+    {
+      "ref": "NOM-01",
+      "date": "2026-01-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Nomina mes 01",
+      "sourceType": "MANUAL",
+      "template": "NOMINA",
+      "lines": [
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 300000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 125000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 75000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 3
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 96000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 4
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 40000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 5
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 24000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 6
+        },
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 0,
+          "creditCents": 393250,
+          "lineNo": 7
+        },
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 8
+        },
+        {
+          "accountKey": "IRPF_TRABAJO_A_PAGAR",
+          "debitCents": 0,
+          "creditCents": 75000,
+          "taxRateCode": "IRPF_TRABAJO_VAR",
+          "lineNo": 9
+        }
+      ],
+      "entryNumber": 5
+    },
+    {
+      "ref": "AM-01",
+      "date": "2026-01-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 01",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 6
+    },
+    {
+      "ref": "PNOM-01",
+      "date": "2026-02-03",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de nomina mes 01",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_NOMINA",
+      "lines": [
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 393250,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 393250,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 7
+    },
+    {
+      "ref": "ANT-C-01",
+      "date": "2026-02-05",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Anticipo de cliente Gamma s/ proyecto P-03",
+      "sourceType": "MANUAL",
+      "template": "ANTICIPO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 242000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "ANTICIPOS_CLIENTES",
+          "debitCents": 0,
+          "creditCents": 200000,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 42000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 8
+    },
+    {
+      "ref": "AJ-001",
+      "date": "2026-02-10",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Gasto de 2025 no registrado (importe no significativo)",
+      "sourceType": "MANUAL",
+      "template": "AJUSTE_EJERCICIO_CERRADO",
+      "lines": [
+        {
+          "accountCode": "678",
+          "debitCents": 35000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 35000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 9
+    },
+    {
+      "ref": "R-003",
+      "date": "2026-02-12",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - profesional independiente (P-02)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountCode": "623",
+          "debitCents": 150000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 31500,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 159000,
+          "lineNo": 3
+        },
+        {
+          "accountKey": "IRPF_PROFESIONALES_A_PAGAR",
+          "debitCents": 0,
+          "creditCents": 22500,
+          "taxRateCode": "IRPF_PROF_15",
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 10
+    },
+    {
+      "ref": "F-002",
+      "date": "2026-02-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/002 - Beta (IRPF 15 % retenido)",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 848000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IRPF_RETENIDO_CLIENTES",
+          "debitCents": 120000,
+          "creditCents": 0,
+          "taxRateCode": "IRPF_PROF_15",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 800000,
+          "projectCode": "P-02",
+          "lineNo": 3
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 168000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 11
+    },
+    {
+      "ref": "PA-001",
+      "date": "2026-02-25",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago total proveedor Delta",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_PROVEEDOR",
+      "lines": [
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 242000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 242000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 12
+    },
+    {
+      "ref": "CO-001",
+      "date": "2026-02-28",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Cobro total factura 2026/001",
+      "sourceType": "BANK_IMPORT",
+      "template": "COBRO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 737000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 737000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 13
+    },
+    {
+      "ref": "PSS-01",
+      "date": "2026-02-28",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de Seguridad Social mes 01",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_SEGURIDAD_SOCIAL",
+      "lines": [
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 191750,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 14
+    },
+    {
+      "ref": "AM-02",
+      "date": "2026-02-28",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 02",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 15
+    },
+    {
+      "ref": "ANT-N-01",
+      "date": "2026-03-05",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Anticipo de remuneraciones a empleado",
+      "sourceType": "MANUAL",
+      "template": "ASIENTO_MANUAL",
+      "lines": [
+        {
+          "accountKey": "ANTICIPOS_REMUNERACIONES",
+          "debitCents": 50000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 50000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 16
+    },
+    {
+      "ref": "R-004",
+      "date": "2026-03-10",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - suministros (prorrata 90 %)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountCode": "628",
+          "debitCents": 81680,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 15120,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 96800,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 17
+    },
+    {
+      "ref": "AJ-002",
+      "date": "2026-03-15",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Correccion de error material de 2025 contra reservas",
+      "sourceType": "MANUAL",
+      "template": "AJUSTE_EJERCICIO_CERRADO",
+      "lines": [
+        {
+          "accountCode": "113",
+          "debitCents": 250000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 250000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 18
+    },
+    {
+      "ref": "F-003",
+      "date": "2026-03-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/003 - Gamma (anticipo aplicado)",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "ANTICIPOS_CLIENTES",
+          "debitCents": 200000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 42000,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 484000,
+          "creditCents": 0,
+          "lineNo": 3
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 600000,
+          "projectCode": "P-03",
+          "lineNo": 4
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 126000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 5
+        }
+      ],
+      "entryNumber": 19
+    },
+    {
+      "ref": "CO-002",
+      "date": "2026-03-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Cobro parcial factura 2026/002",
+      "sourceType": "BANK_IMPORT",
+      "template": "COBRO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 400000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 400000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 20
+    },
+    {
+      "ref": "AM-03",
+      "date": "2026-03-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 03",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 21
+    },
+    {
+      "ref": "IVA-Q1",
+      "date": "2026-03-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Liquidacion de IVA 1T 2026 (modelo 303)",
+      "sourceType": "SYSTEM",
+      "template": "REGULARIZACION_IVA",
+      "lines": [
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 411000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 0,
+          "creditCents": 113820,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "HP_ACREEDORA_IVA",
+          "debitCents": 0,
+          "creditCents": 297180,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 22
+    },
+    {
+      "ref": "ANT-P-01",
+      "date": "2026-04-03",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Anticipo a proveedor Delta",
+      "sourceType": "MANUAL",
+      "template": "ANTICIPO_PROVEEDOR",
+      "lines": [
+        {
+          "accountKey": "ANTICIPOS_PROVEEDORES",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 21000,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 121000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 23
+    },
+    {
+      "ref": "R-005",
+      "date": "2026-04-08",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - atenciones a clientes (IVA no deducible)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountCode": "629",
+          "debitCents": 60500,
+          "creditCents": 0,
+          "costCenterCode": "CC-MKT",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 60500,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 24
+    },
+    {
+      "ref": "F-004",
+      "date": "2026-04-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/004 - minorista (recargo 5,2 %)",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 378600,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 300000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 63000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 15600,
+          "taxRateCode": "REQ_5_2",
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 25
+    },
+    {
+      "ref": "P-IVA-Q1",
+      "date": "2026-04-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago del modelo 303 1T 2026",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_IMPUESTO",
+      "lines": [
+        {
+          "accountKey": "HP_ACREEDORA_IVA",
+          "debitCents": 297180,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 297180,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 26
+    },
+    {
+      "ref": "P-IRPF-Q1",
+      "date": "2026-04-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de retenciones 1T 2026 (modelos 111 y 115)",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_RETENCIONES",
+      "lines": [
+        {
+          "accountKey": "IRPF_A_PAGAR",
+          "debitCents": 120300,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 120300,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 27
+    },
+    {
+      "ref": "CO-003",
+      "date": "2026-04-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Cobro con comision bancaria",
+      "sourceType": "BANK_IMPORT",
+      "template": "COBRO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 299500,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "COMISIONES_BANCARIAS",
+          "debitCents": 500,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 300000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 28
+    },
+    {
+      "ref": "NOM-04",
+      "date": "2026-04-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Nomina mes 04",
+      "sourceType": "MANUAL",
+      "template": "NOMINA",
+      "lines": [
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 300000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 125000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 75000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 3
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 96000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 4
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 40000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 5
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 24000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 6
+        },
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 0,
+          "creditCents": 343250,
+          "lineNo": 7
+        },
+        {
+          "accountKey": "ANTICIPOS_REMUNERACIONES",
+          "debitCents": 0,
+          "creditCents": 50000,
+          "lineNo": 8
+        },
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 9
+        },
+        {
+          "accountKey": "IRPF_TRABAJO_A_PAGAR",
+          "debitCents": 0,
+          "creditCents": 75000,
+          "taxRateCode": "IRPF_TRABAJO_VAR",
+          "lineNo": 10
+        }
+      ],
+      "entryNumber": 29
+    },
+    {
+      "ref": "AM-04",
+      "date": "2026-04-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 04",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 30
+    },
+    {
+      "ref": "PNOM-04",
+      "date": "2026-05-04",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de nomina mes 04",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_NOMINA",
+      "lines": [
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 343250,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 343250,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 31
+    },
+    {
+      "ref": "AB-001",
+      "date": "2026-05-10",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Abono 2026/R-001 rectificativa de la factura 2026/001",
+      "sourceType": "INVOICE_OUT",
+      "template": "ABONO_EMITIDO",
+      "lines": [
+        {
+          "accountKey": "DEVOLUCION_VENTAS",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 21000,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 121000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 32
+    },
+    {
+      "ref": "R-006",
+      "date": "2026-05-14",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida UE - inversion del sujeto pasivo",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA_ISP",
+      "lines": [
+        {
+          "accountCode": "623",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "costCenterCode": "CC-DEV",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO_ISP",
+          "debitCents": 21000,
+          "creditCents": 0,
+          "taxRateCode": "IVA_ISP",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "lineNo": 3
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO_ISP",
+          "debitCents": 0,
+          "creditCents": 21000,
+          "taxRateCode": "IVA_ISP",
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 33
+    },
+    {
+      "ref": "F-005",
+      "date": "2026-05-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/005",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 484000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 400000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 84000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 34
+    },
+    {
+      "ref": "CO-004",
+      "date": "2026-05-29",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Cobro en divisa con diferencia negativa de cambio",
+      "sourceType": "BANK_IMPORT",
+      "template": "COBRO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 495000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "DIFERENCIA_CAMBIO_NEGATIVA",
+          "debitCents": 5000,
+          "creditCents": 0,
+          "costCenterCode": "CC-FIN",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 500000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 35
+    },
+    {
+      "ref": "PSS-04",
+      "date": "2026-05-29",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de Seguridad Social mes 04",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_SEGURIDAD_SOCIAL",
+      "lines": [
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 191750,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 36
+    },
+    {
+      "ref": "AM-05",
+      "date": "2026-05-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 05",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 37
+    },
+    {
+      "ref": "AB-R-001",
+      "date": "2026-06-05",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Abono recibido - rectificativa de subcontrata Delta",
+      "sourceType": "DOCUMENT",
+      "template": "ABONO_RECIBIDO",
+      "lines": [
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 60500,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "DEVOLUCION_COMPRAS",
+          "debitCents": 0,
+          "creditCents": 50000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 0,
+          "creditCents": 10500,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 38
+    },
+    {
+      "ref": "F-006",
+      "date": "2026-06-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/006",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 544500,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 450000,
+          "projectCode": "P-02",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 94500,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 39
+    },
+    {
+      "ref": "PA-002",
+      "date": "2026-06-25",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago parcial acreedor",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_PROVEEDOR",
+      "lines": [
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 40
+    },
+    {
+      "ref": "CO-005",
+      "date": "2026-06-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Cobro en divisa con diferencia positiva de cambio",
+      "sourceType": "BANK_IMPORT",
+      "template": "COBRO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 306000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 300000,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "DIFERENCIA_CAMBIO_POSITIVA",
+          "debitCents": 0,
+          "creditCents": 6000,
+          "costCenterCode": "CC-FIN",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 41
+    },
+    {
+      "ref": "AM-06",
+      "date": "2026-06-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 06",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 42
+    },
+    {
+      "ref": "PER-G-01",
+      "date": "2026-06-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Periodificacion de gasto anticipado (seguro)",
+      "sourceType": "MANUAL",
+      "template": "PERIODIFICACION_GASTO",
+      "lines": [
+        {
+          "accountKey": "PERIODIFICACION_GASTO",
+          "debitCents": 60000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "628",
+          "debitCents": 0,
+          "creditCents": 60000,
+          "costCenterCode": "CC-GA",
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 43
+    },
+    {
+      "ref": "PER-I-01",
+      "date": "2026-06-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Periodificacion de ingreso anticipado (P-03)",
+      "sourceType": "MANUAL",
+      "template": "PERIODIFICACION_INGRESO",
+      "lines": [
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 90000,
+          "creditCents": 0,
+          "projectCode": "P-03",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "PERIODIFICACION_INGRESO",
+          "debitCents": 0,
+          "creditCents": 90000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 44
+    },
+    {
+      "ref": "IVA-Q2",
+      "date": "2026-06-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Liquidacion de IVA 2T 2026 (modelo 303)",
+      "sourceType": "SYSTEM",
+      "template": "REGULARIZACION_IVA",
+      "lines": [
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 257100,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 0,
+          "creditCents": 31500,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "HP_ACREEDORA_IVA",
+          "debitCents": 0,
+          "creditCents": 225600,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 45
+    },
+    {
+      "ref": "R-007",
+      "date": "2026-07-09",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - subcontrata (P-03)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountKey": "SUBCONTRATACION_DEFAULT",
+          "debitCents": 250000,
+          "creditCents": 0,
+          "projectCode": "P-03",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 52500,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 0,
+          "creditCents": 302500,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 46
+    },
+    {
+      "ref": "TR-001",
+      "date": "2026-07-15",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Traspaso de banco a caja",
+      "sourceType": "BANK_IMPORT",
+      "template": "TRASPASO_TESORERIA",
+      "lines": [
+        {
+          "accountKey": "CAJA",
+          "debitCents": 30000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 30000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 47
+    },
+    {
+      "ref": "F-007",
+      "date": "2026-07-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/007",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 605000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 500000,
+          "projectCode": "P-03",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 105000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 48
+    },
+    {
+      "ref": "P-IVA-Q2",
+      "date": "2026-07-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago del modelo 303 2T 2026",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_IMPUESTO",
+      "lines": [
+        {
+          "accountKey": "HP_ACREEDORA_IVA",
+          "debitCents": 225600,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 225600,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 49
+    },
+    {
+      "ref": "P-IRPF-Q2",
+      "date": "2026-07-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de retenciones 2T 2026 (modelos 111 y 115)",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_RETENCIONES",
+      "lines": [
+        {
+          "accountKey": "IRPF_A_PAGAR",
+          "debitCents": 75000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 75000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 50
+    },
+    {
+      "ref": "CO-006",
+      "date": "2026-07-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Cobro con diferencia de redondeo de 1 centimo",
+      "sourceType": "BANK_IMPORT",
+      "template": "COBRO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 120999,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "REDONDEO_GASTO",
+          "debitCents": 1,
+          "creditCents": 0,
+          "costCenterCode": "CC-FIN",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 121000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 51
+    },
+    {
+      "ref": "NOM-07",
+      "date": "2026-07-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Nomina mes 07",
+      "sourceType": "MANUAL",
+      "template": "NOMINA",
+      "lines": [
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 300000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 125000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 75000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 3
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 96000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 4
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 40000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 5
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 24000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 6
+        },
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 0,
+          "creditCents": 393250,
+          "lineNo": 7
+        },
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 8
+        },
+        {
+          "accountKey": "IRPF_TRABAJO_A_PAGAR",
+          "debitCents": 0,
+          "creditCents": 75000,
+          "taxRateCode": "IRPF_TRABAJO_VAR",
+          "lineNo": 9
+        }
+      ],
+      "entryNumber": 52
+    },
+    {
+      "ref": "AM-07",
+      "date": "2026-07-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 07",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 53
+    },
+    {
+      "ref": "PNOM-07",
+      "date": "2026-08-03",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de nomina mes 07",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_NOMINA",
+      "lines": [
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 393250,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 393250,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 54
+    },
+    {
+      "ref": "R-009",
+      "date": "2026-08-14",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - equipos para procesos de informacion",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountCode": "217",
+          "debitCents": 1500000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 315000,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 1815000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 55
+    },
+    {
+      "ref": "F-008",
+      "date": "2026-08-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/008",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 423500,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 350000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 73500,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 56
+    },
+    {
+      "ref": "PA-003",
+      "date": "2026-08-25",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago con diferencia de redondeo de 1 centimo",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_PROVEEDOR",
+      "lines": [
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 60500,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 60499,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "REDONDEO_INGRESO",
+          "debitCents": 0,
+          "creditCents": 1,
+          "costCenterCode": "CC-FIN",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 57
+    },
+    {
+      "ref": "PSS-07",
+      "date": "2026-08-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de Seguridad Social mes 07",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_SEGURIDAD_SOCIAL",
+      "lines": [
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 191750,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 58
+    },
+    {
+      "ref": "AM-08",
+      "date": "2026-08-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 08",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 12500,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 12500,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 59
+    },
+    {
+      "ref": "R-008",
+      "date": "2026-09-09",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - subcontrata (P-02)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountKey": "SUBCONTRATACION_DEFAULT",
+          "debitCents": 180000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 37800,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 0,
+          "creditCents": 217800,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 60
+    },
+    {
+      "ref": "F-009",
+      "date": "2026-09-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/009",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 726000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 600000,
+          "projectCode": "P-02",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 126000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 61
+    },
+    {
+      "ref": "AM-09",
+      "date": "2026-09-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 09",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 43750,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 43750,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 62
+    },
+    {
+      "ref": "PER-G-02",
+      "date": "2026-09-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Devengo del gasto anticipado (seguro)",
+      "sourceType": "MANUAL",
+      "template": "DEVENGO_PERIODIFICACION_GASTO",
+      "lines": [
+        {
+          "accountCode": "628",
+          "debitCents": 60000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "PERIODIFICACION_GASTO",
+          "debitCents": 0,
+          "creditCents": 60000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 63
+    },
+    {
+      "ref": "IVA-Q3",
+      "date": "2026-09-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Liquidacion de IVA 3T 2026 (modelo 303)",
+      "sourceType": "SYSTEM",
+      "template": "REGULARIZACION_IVA",
+      "lines": [
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 304500,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 0,
+          "creditCents": 405300,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "HP_DEUDORA_IVA",
+          "debitCents": 100800,
+          "creditCents": 0,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 64
+    },
+    {
+      "ref": "R-ERR",
+      "date": "2026-10-10",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida duplicada (error)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountKey": "SUBCONTRATACION_DEFAULT",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 21000,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 0,
+          "creditCents": 121000,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 65
+    },
+    {
+      "ref": "REV-R-ERR",
+      "date": "2026-10-15",
+      "kind": "REVERSAL",
+      "fiscalYearCode": "2026",
+      "description": "Contra-asiento de anulacion de la factura duplicada",
+      "sourceType": "SYSTEM",
+      "template": "CONTRA_ASIENTO",
+      "reversesRef": "R-ERR",
+      "lines": [
+        {
+          "accountKey": "PROVEEDORES",
+          "debitCents": 121000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "SUBCONTRATACION_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 0,
+          "creditCents": 21000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 66
+    },
+    {
+      "ref": "F-010",
+      "date": "2026-10-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/010",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 665500,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 550000,
+          "projectCode": "P-03",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 115500,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 67
+    },
+    {
+      "ref": "P-IRPF-Q3",
+      "date": "2026-10-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de retenciones 3T 2026 (modelos 111 y 115)",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_RETENCIONES",
+      "lines": [
+        {
+          "accountKey": "IRPF_A_PAGAR",
+          "debitCents": 75000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 75000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 68
+    },
+    {
+      "ref": "NOM-10",
+      "date": "2026-10-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Nomina mes 10",
+      "sourceType": "MANUAL",
+      "template": "NOMINA",
+      "lines": [
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 300000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 125000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "SUELDOS_DEFAULT",
+          "debitCents": 75000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 3
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 96000,
+          "creditCents": 0,
+          "projectCode": "P-01",
+          "lineNo": 4
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 40000,
+          "creditCents": 0,
+          "projectCode": "P-02",
+          "lineNo": 5
+        },
+        {
+          "accountKey": "SS_EMPRESA_DEFAULT",
+          "debitCents": 24000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 6
+        },
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 0,
+          "creditCents": 393250,
+          "lineNo": 7
+        },
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 8
+        },
+        {
+          "accountKey": "IRPF_TRABAJO_A_PAGAR",
+          "debitCents": 0,
+          "creditCents": 75000,
+          "taxRateCode": "IRPF_TRABAJO_VAR",
+          "lineNo": 9
+        }
+      ],
+      "entryNumber": 69
+    },
+    {
+      "ref": "AM-10",
+      "date": "2026-10-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 10",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 43750,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 43750,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 70
+    },
+    {
+      "ref": "PER-I-02",
+      "date": "2026-10-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Devengo del ingreso anticipado (P-03)",
+      "sourceType": "MANUAL",
+      "template": "DEVENGO_PERIODIFICACION_INGRESO",
+      "lines": [
+        {
+          "accountKey": "PERIODIFICACION_INGRESO",
+          "debitCents": 90000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 90000,
+          "projectCode": "P-03",
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 71
+    },
+    {
+      "ref": "PNOM-10",
+      "date": "2026-11-03",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de nomina mes 10",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_NOMINA",
+      "lines": [
+        {
+          "accountKey": "REMUNERACIONES_PENDIENTES",
+          "debitCents": 393250,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 393250,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 72
+    },
+    {
+      "ref": "R-010",
+      "date": "2026-11-06",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura recibida - suministros (prorrata 90 %)",
+      "sourceType": "DOCUMENT",
+      "template": "FACTURA_RECIBIDA",
+      "lines": [
+        {
+          "accountCode": "628",
+          "debitCents": 91890,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 17010,
+          "creditCents": 0,
+          "taxRateCode": "IVA_21",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "ACREEDORES",
+          "debitCents": 0,
+          "creditCents": 108900,
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 73
+    },
+    {
+      "ref": "F-011",
+      "date": "2026-11-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/011",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 580800,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 480000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 100800,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 74
+    },
+    {
+      "ref": "PSS-10",
+      "date": "2026-11-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Pago de Seguridad Social mes 10",
+      "sourceType": "BANK_IMPORT",
+      "template": "PAGO_SEGURIDAD_SOCIAL",
+      "lines": [
+        {
+          "accountKey": "SS_ACREEDORA",
+          "debitCents": 191750,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 191750,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 75
+    },
+    {
+      "ref": "AM-11",
+      "date": "2026-11-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 11",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 43750,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 43750,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 76
+    },
+    {
+      "ref": "MAN-001",
+      "date": "2026-11-30",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Reclasificacion a clientes de dudoso cobro",
+      "sourceType": "MANUAL",
+      "template": "ASIENTO_MANUAL",
+      "lines": [
+        {
+          "accountKey": "CLIENTES_DUDOSO_COBRO",
+          "debitCents": 121000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 121000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 77
+    },
+    {
+      "ref": "F-012",
+      "date": "2026-12-20",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/012",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 847000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 700000,
+          "projectCode": "P-02",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 147000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 78
+    },
+    {
+      "ref": "AM-12",
+      "date": "2026-12-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Amortizacion del inmovilizado material - mes 12",
+      "sourceType": "SYSTEM",
+      "template": "AMORTIZACION_MENSUAL",
+      "lines": [
+        {
+          "accountCode": "681",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "costCenterCode": "CC-GA",
+          "lineNo": 1
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 43750,
+          "creditCents": 0,
+          "costCenterCode": "CC-OPS",
+          "lineNo": 2
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 43750,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 79
+    },
+    {
+      "ref": "IVA-Q4",
+      "date": "2026-12-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Liquidacion de IVA 4T 2026 (modelo 303)",
+      "sourceType": "SYSTEM",
+      "template": "REGULARIZACION_IVA",
+      "lines": [
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 363300,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "IVA_SOPORTADO",
+          "debitCents": 0,
+          "creditCents": 17010,
+          "lineNo": 2
+        },
+        {
+          "accountKey": "HP_DEUDORA_IVA",
+          "debitCents": 0,
+          "creditCents": 100800,
+          "lineNo": 3
+        },
+        {
+          "accountKey": "HP_ACREEDORA_IVA",
+          "debitCents": 0,
+          "creditCents": 245490,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 80
+    },
+    {
+      "ref": "IS-2026",
+      "date": "2026-12-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Gasto por impuesto sobre beneficios del ejercicio",
+      "sourceType": "SYSTEM",
+      "template": "IMPUESTO_BENEFICIOS",
+      "lines": [
+        {
+          "accountKey": "IMPUESTO_BENEFICIOS_GASTO",
+          "debitCents": 499108,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "HP_ACREEDORA_IS",
+          "debitCents": 0,
+          "creditCents": 499108,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 81
+    },
+    {
+      "ref": "REG-2026",
+      "date": "2026-12-31",
+      "kind": "REGULARIZATION",
+      "fiscalYearCode": "2026",
+      "description": "Regularizacion de gastos e ingresos del ejercicio 2026",
+      "sourceType": "SYSTEM",
+      "template": "REGULARIZACION_RESULTADO",
+      "lines": [
+        {
+          "accountCode": "607",
+          "debitCents": 0,
+          "creditCents": 630000,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "608",
+          "debitCents": 50000,
+          "creditCents": 0,
+          "lineNo": 2
+        },
+        {
+          "accountCode": "621",
+          "debitCents": 0,
+          "creditCents": 120000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "623",
+          "debitCents": 0,
+          "creditCents": 250000,
+          "lineNo": 4
+        },
+        {
+          "accountCode": "626",
+          "debitCents": 0,
+          "creditCents": 500,
+          "lineNo": 5
+        },
+        {
+          "accountCode": "628",
+          "debitCents": 0,
+          "creditCents": 173570,
+          "lineNo": 6
+        },
+        {
+          "accountCode": "629",
+          "debitCents": 0,
+          "creditCents": 60500,
+          "lineNo": 7
+        },
+        {
+          "accountCode": "630",
+          "debitCents": 0,
+          "creditCents": 499108,
+          "lineNo": 8
+        },
+        {
+          "accountCode": "640",
+          "debitCents": 0,
+          "creditCents": 2000000,
+          "lineNo": 9
+        },
+        {
+          "accountCode": "642",
+          "debitCents": 0,
+          "creditCents": 640000,
+          "lineNo": 10
+        },
+        {
+          "accountCode": "668",
+          "debitCents": 0,
+          "creditCents": 5000,
+          "lineNo": 11
+        },
+        {
+          "accountCode": "669",
+          "debitCents": 0,
+          "creditCents": 1,
+          "lineNo": 12
+        },
+        {
+          "accountCode": "678",
+          "debitCents": 0,
+          "creditCents": 35000,
+          "lineNo": 13
+        },
+        {
+          "accountCode": "681",
+          "debitCents": 0,
+          "creditCents": 395000,
+          "lineNo": 14
+        },
+        {
+          "accountCode": "705",
+          "debitCents": 6350000,
+          "creditCents": 0,
+          "lineNo": 15
+        },
+        {
+          "accountCode": "708",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "lineNo": 16
+        },
+        {
+          "accountCode": "768",
+          "debitCents": 6000,
+          "creditCents": 0,
+          "lineNo": 17
+        },
+        {
+          "accountCode": "769",
+          "debitCents": 1,
+          "creditCents": 0,
+          "lineNo": 18
+        },
+        {
+          "accountCode": "129",
+          "debitCents": 0,
+          "creditCents": 1497322,
+          "lineNo": 19
+        }
+      ],
+      "entryNumber": 82
+    },
+    {
+      "ref": "CIE-2026",
+      "date": "2026-12-31",
+      "kind": "CLOSING",
+      "fiscalYearCode": "2026",
+      "description": "Cierre del ejercicio 2026",
+      "sourceType": "SYSTEM",
+      "template": "CIERRE_EJERCICIO",
+      "lines": [
+        {
+          "accountCode": "100",
+          "debitCents": 3000000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "113",
+          "debitCents": 250000,
+          "creditCents": 0,
+          "lineNo": 2
+        },
+        {
+          "accountCode": "120",
+          "debitCents": 3560000,
+          "creditCents": 0,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "129",
+          "debitCents": 1497322,
+          "creditCents": 0,
+          "lineNo": 4
+        },
+        {
+          "accountCode": "216",
+          "debitCents": 0,
+          "creditCents": 1200000,
+          "lineNo": 5
+        },
+        {
+          "accountCode": "217",
+          "debitCents": 0,
+          "creditCents": 2100000,
+          "lineNo": 6
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 300000,
+          "creditCents": 0,
+          "lineNo": 7
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 335000,
+          "creditCents": 0,
+          "lineNo": 8
+        },
+        {
+          "accountCode": "400",
+          "debitCents": 1959800,
+          "creditCents": 0,
+          "lineNo": 9
+        },
+        {
+          "accountCode": "407",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "lineNo": 10
+        },
+        {
+          "accountCode": "410",
+          "debitCents": 2587100,
+          "creditCents": 0,
+          "lineNo": 11
+        },
+        {
+          "accountCode": "430",
+          "debitCents": 0,
+          "creditCents": 7723900,
+          "lineNo": 12
+        },
+        {
+          "accountCode": "436",
+          "debitCents": 0,
+          "creditCents": 121000,
+          "lineNo": 13
+        },
+        {
+          "accountCode": "473",
+          "debitCents": 0,
+          "creditCents": 120000,
+          "lineNo": 14
+        },
+        {
+          "accountCode": "4750",
+          "debitCents": 245490,
+          "creditCents": 0,
+          "lineNo": 15
+        },
+        {
+          "accountCode": "4751",
+          "debitCents": 75000,
+          "creditCents": 0,
+          "lineNo": 16
+        },
+        {
+          "accountCode": "4752",
+          "debitCents": 499108,
+          "creditCents": 0,
+          "lineNo": 17
+        },
+        {
+          "accountCode": "570",
+          "debitCents": 0,
+          "creditCents": 30000,
+          "lineNo": 18
+        },
+        {
+          "accountCode": "572",
+          "debitCents": 0,
+          "creditCents": 2913920,
+          "lineNo": 19
+        }
+      ],
+      "entryNumber": 83
+    },
+    {
+      "ref": "AP-2027",
+      "date": "2027-01-01",
+      "kind": "OPENING",
+      "fiscalYearCode": "2027",
+      "description": "Apertura del ejercicio 2027",
+      "sourceType": "SYSTEM",
+      "template": "APERTURA_EJERCICIO",
+      "lines": [
+        {
+          "accountCode": "100",
+          "debitCents": 0,
+          "creditCents": 3000000,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "113",
+          "debitCents": 0,
+          "creditCents": 250000,
+          "lineNo": 2
+        },
+        {
+          "accountCode": "120",
+          "debitCents": 0,
+          "creditCents": 3560000,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "129",
+          "debitCents": 0,
+          "creditCents": 1497322,
+          "lineNo": 4
+        },
+        {
+          "accountCode": "216",
+          "debitCents": 1200000,
+          "creditCents": 0,
+          "lineNo": 5
+        },
+        {
+          "accountCode": "217",
+          "debitCents": 2100000,
+          "creditCents": 0,
+          "lineNo": 6
+        },
+        {
+          "accountCode": "2816",
+          "debitCents": 0,
+          "creditCents": 300000,
+          "lineNo": 7
+        },
+        {
+          "accountCode": "2817",
+          "debitCents": 0,
+          "creditCents": 335000,
+          "lineNo": 8
+        },
+        {
+          "accountCode": "400",
+          "debitCents": 0,
+          "creditCents": 1959800,
+          "lineNo": 9
+        },
+        {
+          "accountCode": "407",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "lineNo": 10
+        },
+        {
+          "accountCode": "410",
+          "debitCents": 0,
+          "creditCents": 2587100,
+          "lineNo": 11
+        },
+        {
+          "accountCode": "430",
+          "debitCents": 7723900,
+          "creditCents": 0,
+          "lineNo": 12
+        },
+        {
+          "accountCode": "436",
+          "debitCents": 121000,
+          "creditCents": 0,
+          "lineNo": 13
+        },
+        {
+          "accountCode": "473",
+          "debitCents": 120000,
+          "creditCents": 0,
+          "lineNo": 14
+        },
+        {
+          "accountCode": "4750",
+          "debitCents": 0,
+          "creditCents": 245490,
+          "lineNo": 15
+        },
+        {
+          "accountCode": "4751",
+          "debitCents": 0,
+          "creditCents": 75000,
+          "lineNo": 16
+        },
+        {
+          "accountCode": "4752",
+          "debitCents": 0,
+          "creditCents": 499108,
+          "lineNo": 17
+        },
+        {
+          "accountCode": "570",
+          "debitCents": 30000,
+          "creditCents": 0,
+          "lineNo": 18
+        },
+        {
+          "accountCode": "572",
+          "debitCents": 2913920,
+          "creditCents": 0,
+          "lineNo": 19
+        }
+      ],
+      "entryNumber": 1
+    }
+  ],
+  "expected": {
+    "entryCount": 84,
+    "entryCount2026": 83,
+    "totalDebitCents": 67193629,
+    "totalCreditCents": 67193629,
+    "totalDebitCents2026": 52884809,
+    "totalCreditCents2026": 52884809,
+    "resultadoAntesRegularizacionCents": 1497322,
+    "resultadoAntesImpuestoCents": 1996430,
+    "impuestoBeneficiosCents": 499108,
+    "saldo129Cents": 1497322,
+    "balancesBeforeClosingCents": {
+      "430": 7723900,
+      "436": 121000,
+      "400": -1959800,
+      "410": -2587100,
+      "472": 0,
+      "477": 0,
+      "4750": -245490,
+      "4700": 0,
+      "4751": -75000,
+      "4752": -499108,
+      "476": 0,
+      "465": 0,
+      "572": 2913920,
+      "570": 30000,
+      "473": 120000,
+      "407": 100000,
+      "438": 0,
+      "480": 0,
+      "485": 0,
+      "129": -1497322,
+      "113": -250000,
+      "120": -3560000,
+      "100": -3000000,
+      "216": 1200000,
+      "217": 2100000,
+      "2816": -300000,
+      "2817": -335000,
+      "460": 0
+    },
+    "balancesBeforeRegularizationCents": {
+      "430": 7723900,
+      "436": 121000,
+      "400": -1959800,
+      "410": -2587100,
+      "472": 0,
+      "477": 0,
+      "4750": -245490,
+      "4700": 0,
+      "4751": -75000,
+      "4752": -499108,
+      "476": 0,
+      "465": 0,
+      "572": 2913920,
+      "570": 30000,
+      "473": 120000,
+      "407": 100000,
+      "438": 0,
+      "480": 0,
+      "485": 0,
+      "129": 0,
+      "113": -250000,
+      "120": -3560000,
+      "100": -3000000,
+      "216": 1200000,
+      "217": 2100000,
+      "2816": -300000,
+      "2817": -335000,
+      "460": 0
+    },
+    "templateCoverage": {
+      "ABONO_EMITIDO": 1,
+      "ABONO_RECIBIDO": 1,
+      "AJUSTE_EJERCICIO_CERRADO": 2,
+      "AMORTIZACION_MENSUAL": 12,
+      "ANTICIPO_CLIENTE": 1,
+      "ANTICIPO_PROVEEDOR": 1,
+      "APERTURA_EJERCICIO": 2,
+      "ASIENTO_MANUAL": 2,
+      "CIERRE_EJERCICIO": 1,
+      "COBRO_CLIENTE": 6,
+      "CONTRA_ASIENTO": 1,
+      "DEVENGO_PERIODIFICACION_GASTO": 1,
+      "DEVENGO_PERIODIFICACION_INGRESO": 1,
+      "FACTURA_EMITIDA_SERVICIOS": 12,
+      "FACTURA_RECIBIDA": 10,
+      "FACTURA_RECIBIDA_ISP": 1,
+      "IMPUESTO_BENEFICIOS": 1,
+      "NOMINA": 4,
+      "PAGO_IMPUESTO": 2,
+      "PAGO_NOMINA": 4,
+      "PAGO_PROVEEDOR": 3,
+      "PAGO_RETENCIONES": 3,
+      "PAGO_SEGURIDAD_SOCIAL": 4,
+      "PERIODIFICACION_GASTO": 1,
+      "PERIODIFICACION_INGRESO": 1,
+      "REGULARIZACION_IVA": 4,
+      "REGULARIZACION_RESULTADO": 1,
+      "TRASPASO_TESORERIA": 1
+    },
+    "ivaQuarters": [
+      {
+        "quarter": 1,
+        "repercutidoCents": 411000,
+        "soportadoCents": 113820,
+        "compensadoCents": 0,
+        "resultadoCents": 297180
+      },
+      {
+        "quarter": 2,
+        "repercutidoCents": 257100,
+        "soportadoCents": 31500,
+        "compensadoCents": 0,
+        "resultadoCents": 225600
+      },
+      {
+        "quarter": 3,
+        "repercutidoCents": 304500,
+        "soportadoCents": 405300,
+        "compensadoCents": 0,
+        "resultadoCents": -100800
+      },
+      {
+        "quarter": 4,
+        "repercutidoCents": 363300,
+        "soportadoCents": 17010,
+        "compensadoCents": 100800,
+        "resultadoCents": 245490
+      }
+    ],
+    "irpfQuarters": [
+      {
+        "quarter": 1,
+        "saldoCents": 120300
+      },
+      {
+        "quarter": 2,
+        "saldoCents": 75000
+      },
+      {
+        "quarter": 3,
+        "saldoCents": 75000
+      }
+    ],
+    "invariants": {
+      "I1_all_entries_balanced": true,
+      "I2_balance_sheet_diff_cents": 0,
+      "I3_pyg_equals_129_diff_cents": 0,
+      "I7_entry_numbers_contiguous": true
+    }
+  }
+}

@@ -51,23 +51,52 @@ enum TaxAppliesTo { SALE PURCHASE BOTH }
 // `validFrom` SIEMPRE explícita (2025-01-01 en los tipos de IVA sembrados): un asiento de 2024 no puede coger el tipo de 2026. No se siembra ningún tipo derogado; IGIC/IPSI se cargan por organización desde el editor.
 // Restricciones SQL: CHECK rate_bps 0..10000 · CHECK kind='EXENTO' ⇒ rate_bps=0 · CHECK valid_to >= valid_from · EXCLUDE USING gist (organization_id, code, daterange(valid_from, valid_to, '[]')) contra solapes de vigencia.
 ```
-Política fiscal por organización (la consume el motor en E3, reglas R-IVA-1…R-IVA-8): `Organization.prorrataPermille Int?`, `Organization.taxRoundingMode TaxRoundingMode` (`PER_TIPO` por defecto: una cuota por tipo impositivo) y `Organization.redondeoToleranciaCents Int` (default 1; por encima, el asiento se bloquea). `Organization.pgcVariant` es **inmutable** en cuanto existe un asiento posteado.
+Política fiscal por organización (la consume el motor en E3, reglas R-IVA-1…R-IVA-8): `Organization.prorrataBps Int?` (**renombrado desde `prorrataPermille` en E3, O-7**: puntos básicos, la misma escala que `TaxRate.rateBps`), `Organization.taxRoundingMode TaxRoundingMode` (`PER_TIPO` por defecto: una cuota por tipo impositivo) y `Organization.redondeoToleranciaCents Int` (default 1; por encima, el asiento se bloquea). `Organization.pgcVariant` es **inmutable** en cuanto existe un asiento posteado.
 
 Seed `seeds/npgc.csv` (13 columnas: `codigo,nombre,nivel,padre,grupo,naturaleza,estado_financiero,epigrafe,tipo_analitico,bidireccional,is_contra,pymes,epigrafe_pymes`): 906 filas · **794** en PGC PYMES (`pymes = 1`; el criterio contable —reglas P-01…P-13— vive en `build_npgc.py`, no en TypeScript) · 165 contra-cuentas · 7 bidireccionales.
 
 ## Ejercicios y diario
+> Actualizado por **E3** (`docs/design/E3-libro-diario.md` ronda 2) tras la validación contable (`docs/design/E3-asientos-tipo.md`, veredicto CONFORME CON OBSERVACIONES). Las observaciones O-1, O-2, O-4 y O-7 se incorporan aquí; O-3 (`templateVersion`) → E8, O-5 (extremos de OPENING/CLOSING) → E9, O-6 (divisa en la línea) → E8, O-8 (`isForecast`) → E10, O-9 (`INVOICE_IN`) → E8.
+
 ```prisma
-model FiscalYear { id; organizationId; code String; startDate Date; endDate Date; status FyStatus OPEN; lastEntryNumber Int 0; closedAt?; @@unique([organizationId,code]) }
+model FiscalYear { id; organizationId; code String; startDate Date; endDate Date; status FyStatus OPEN; lastEntryNumber Int 0; closedAt?; closedById?; @@unique([organizationId,code]) @@map("fiscal_years") }
 enum FyStatus { OPEN CLOSED }
-model PeriodLock { id; organizationId; fiscalYearId; month Int; lockedAt; lockedBy; @@unique([organizationId,fiscalYearId,month]) }
-model JournalEntry { id; organizationId; fiscalYearId; entryNumber Int; entryDate Date; description String; kind EntryKind;  // PyG excluye kind ∈ {REGULARIZATION, CLOSING, OPENING} sourceType SourceType; sourceId String?; transactionId?; fileId?; extractionRunId?; templateCode String?; reversesEntryId?; voidedAt?; voidedBy?; voidReason?; postedBy; postedAt; lines JournalLine[]
-  @@unique([organizationId,fiscalYearId,entryNumber]) @@index([organizationId,entryDate]) }
+model PeriodLock { id; organizationId; fiscalYearId; month Int; lockedAt; lockedById?; reason?; @@unique([organizationId,fiscalYearId,month]) @@map("period_locks") }
+model JournalEntry { id; organizationId; fiscalYearId; entryNumber Int
+  documentDate Date?; accrualDate Date?; entryDate Date   // TRES fechas, ver abajo
+  description String; kind EntryKind;  // PyG excluye kind ∈ {REGULARIZATION, CLOSING, OPENING}
+  taxRoundingMode TaxRoundingMode      // SELLADO en el asiento (R-IVA-4): la política de la organización es mutable
+  sourceType SourceType; sourceId String?; transactionId?; fileId?; extractionRunId?; templateCode String?
+  reversesEntryId?; voidedAt?; voidedById?; voidReason?; postedById; postedAt; entryHash String
+  lines JournalLine[]
+  @@unique([organizationId,fiscalYearId,entryNumber])
+  @@unique([organizationId,id,entryDate,fiscalYearId,kind])   // destino de la FK de denormalización
+  @@index([organizationId,entryDate]) @@map("journal_entries") }
 enum EntryKind { NORMAL OPENING CLOSING REGULARIZATION REVERSAL RECURRING }
 enum SourceType { MANUAL DOCUMENT INVOICE_OUT BANK_IMPORT CSV_IMPORT RECURRING SYSTEM }
-model JournalLine { id; organizationId; entryId; lineNo Int; accountCode String; debitCents Int; creditCents Int; description String?; projectId?; costCenterId?; businessLineId?; analyticType AnalyticType?; taxRateId?; counterpartyId?; dueDate Date?; entryDate Date; fiscalYearId; entryKind EntryKind (denormalizado)
-  @@index([organizationId,entryDate]) @@index([organizationId,accountCode,entryDate]) @@index([organizationId,projectId]) @@index([organizationId,costCenterId]) }
+model JournalLine { id; organizationId; entryId; lineNo Int; accountCode String; debitCents Int; creditCents Int; description String?
+  projectId?; costCenterId?; businessLineId?; analyticType AnalyticType?   // los tres ids: nullable y SIN FK hasta E4
+  taxRateId?; taxBaseCents Int?; counterpartyId?; dueDate Date?            // dueDate: UNA línea 43x/40x por vencimiento
+  entryDate Date; fiscalYearId; entryKind EntryKind                        // denormalizado, impuesto por FK compuesta
+  @@unique([entryId,lineNo])
+  @@index([organizationId,entryDate]) @@index([organizationId,accountCode,entryDate])
+  @@index([organizationId,projectId]) @@index([organizationId,costCenterId]) @@map("journal_lines") }
 ```
-Constraints SQL: `CHECK(debit>=0 AND credit>=0 AND (debit=0)<>(credit=0))`; FK compuesta `(organization_id, account_code)`; constraint trigger diferido Σdebit=Σcredit por entry; RLS; sin DELETE.
+Política fiscal: `Organization.prorrataBps Int?` — **puntos básicos, no por mil** (O-7: `TaxRate.rateBps` ya está en bps y `applyBps(cuota, prorrataBps)` no puede mezclar escalas). La cuota **no deducible incrementa el precio de adquisición** de la línea de gasto/inmovilizado (art. 103 LIVA, NRV 2ª y 10ª); se aplica desde E3. La regularización anual de prorrata y la de bienes de inversión (arts. 105–110 LIVA) van contra 634/639 en E9.
+
+**Las tres fechas.** `documentDate` = expedición del documento; **selecciona el `TaxRate` vigente** (un documento de 2025 contabilizado en 2026 lleva el tipo de 2025). `accrualDate` = devengo (NRV 14ª), default `documentDate`. `entryDate` = fecha contable, la **única** que manda en ejercicio, mes de bloqueo, informes y `ledgerHash`; la fija `resolveEntryDate`, no el usuario: si el mes del devengo está bloqueado → primer día del primer mes abierto ≥ devengo (con la coletilla obligatoria `[devengo YYYY-MM-DD]` en la descripción); si su ejercicio está `CLOSED` → no se postea ahí, se usa T-22 en el ejercicio abierto; futura respecto de `refDate` → error.
+
+**Numeración (N-1…N-7).** `entryNumber` entero ≥ 1, correlativo por `(organizationId, fiscalYearId)`, sin huecos: `SELECT … FOR UPDATE` sobre `fiscal_years` → `+1` → `INSERT`, todo en la misma transacción. Nunca una secuencia de Postgres: deja huecos al hacer rollback. Un asiento que falla validación no consume número; un número no se reutiliza ni se reasigna. Con fecha retroactiva **no se renumera**: el diario se presenta ordenado por `(entryDate, entryNumber)` y la Auditoría lista los fuera de secuencia como Info. `OPENING` es el nº 1 del ejercicio y `CLOSING` el último.
+
+**Bloqueo de periodos (B-1…B-5).** Bloqueo **secuencial** (no se bloquea el mes *n* con *n−1* abierto); desbloquear *n* arrastra *n+1…12*; solo ADMIN, con motivo, a `AuditLog`, y solo con el ejercicio `OPEN`. Cerrar el ejercicio exige los 12 meses bloqueados, regularización y cierre posteados e invariantes en PASS. **`FyStatus = CLOSED` no es reversible**: reabrir equivale a reformular cuentas ya rendidas (arts. 253, 272, 279 LSC).
+
+**Anulación.** Solo contra-asiento (`reversesEntryId`), espejo exacto que copia e invierte columnas sin recalcular nada. Fecha: la del original si su mes sigue abierto; si no, primer día del primer mes abierto ≥ esa fecha. Un `REVERSAL` **no se anula con otro `REVERSAL`** y hay **como máximo uno** por asiento anulado. `voidedAt/voidedBy/voidReason` son informativos y **ninguna query filtra por ellos**.
+
+**Ejercicio cerrado.** Documento cuyo devengo cae en un ejercicio `CLOSED`: asiento en el ejercicio abierto contra **113/121** si el error es material o hay cambio de criterio (NRV 22ª), o **678/778** si no es significativo (epígrafe 13, dentro del resultado de explotación). Las cuentas **679/779 no existen** en el PGC 2007 y no están en `seeds/npgc.csv`.
+
+Constraints SQL: `CHECK(debit>=0 AND credit>=0 AND (debit=0)<>(credit=0))`; FK compuesta `(organization_id, account_code)`; FK compuesta de denormalización `(organization_id, entry_id, entry_date, fiscal_year_id, entry_kind)`; constraint trigger diferido con Σdebe=Σhaber, **≥ 2 líneas y ≥ 1 a cada lado**; trigger de periodo (ejercicio OPEN + mes no bloqueado); trigger de cuenta postable y activa; índice único parcial de anulación; trigger anti contra-contra-asiento; `EXCLUDE` de solape de ejercicios; RLS estricta con `FORCE`; sin DELETE y sin UPDATE salvo las tres columnas de anulación (GRANT de columna).
+
+**Asientos tipo:** las 28 plantillas (T-01…T-28), su aritmética, sus 13 comprobaciones comunes (C-1…C-13) y los invariantes propios I-E3-1…7 están en `docs/design/E3-asientos-tipo.md`. Fixtures inmutables verificados: `tests/fixtures/ejercicio-{minimo,completo}.json`, generados por `docs/design/fixtures/build_ejercicio_completo.py` (84 asientos, 326 líneas, 28/28 plantillas).
 
 ## Analítica
 ```prisma
@@ -111,7 +140,11 @@ model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int
 | Mapa de sistema resoluble (I-plan-1): toda `AccountKey` obligatoria → cuenta existente, activa y postable | `validateAccountMap` + revalidación al sembrar + check de Auditoría |
 | `statement` de cuenta oficial de nivel ≤ 3: inmutable; `epigraph`: ADMIN + motivo + `AuditLog`, prohibido con líneas en ejercicio `CLOSED` | código (R-10a/R-10b) |
 | Fecha en ejercicio OPEN y mes no bloqueado | código + trigger |
-| Numeración sin huecos | `FOR UPDATE` sobre `fiscal_years` |
+| Numeración sin huecos | `FOR UPDATE` sobre `fiscal_years` (N-1…N-4); orden por fecha (N-5) es presentación, no restricción |
+| Asiento con ≥ 2 líneas y ≥ 1 a cada lado | constraint trigger diferido |
+| Denormalización de `entryDate`/`fiscalYearId`/`entryKind` coherente con el asiento | FK compuesta contra `@@unique([organizationId,id,entryDate,fiscalYearId,kind])` |
+| Un solo contra-asiento por asiento, y nunca de un `REVERSAL` | índice único parcial + trigger |
+| Método de redondeo y fechas del documento reproducibles | `taxRoundingMode`, `documentDate`, `accrualDate` sellados en el asiento |
 | 6/7 con destino analítico si `analyticsRequired` | código |
 | Nada se borra: asientos, líneas, cuentas con movimientos, runs | RLS `FOR DELETE USING(false)` + código |
 | Anulación solo por contra-asiento; sin flag que excluya líneas de informes | código + ausencia de columna `voided` en líneas |

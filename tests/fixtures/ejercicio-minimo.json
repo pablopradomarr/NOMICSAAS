@@ -1,0 +1,204 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "docs/design/fixtures/build_ejercicio_completo.py",
+  "note": "Fixture INMUTABLE minimo. Cifras ilustrativas.",
+  "organization": {
+    "slug": "fixture-erp",
+    "name": "Fixture Proyectos SL",
+    "baseCurrency": "EUR",
+    "pgcVariant": "PYMES",
+    "taxRoundingMode": "PER_TIPO",
+    "prorrataBps": 9000,
+    "redondeoToleranciaCents": 1,
+    "analyticsRequired": true,
+    "useSubaccounts": false,
+    "createSoftwareAccounts": false
+  },
+  "fiscalYear": {
+    "code": "2026",
+    "startDate": "2026-01-01",
+    "endDate": "2026-12-31",
+    "status": "OPEN"
+  },
+  "fiscalYearsExtra": [],
+  "accountsExtra": [],
+  "businessLines": [
+    {
+      "code": "BL-CONS",
+      "name": "Consultoria",
+      "sortOrder": 1
+    }
+  ],
+  "projects": [
+    {
+      "code": "P-01",
+      "name": "Implantacion ERP Cliente Alfa",
+      "businessLineCode": "BL-CONS",
+      "status": "ACTIVE"
+    }
+  ],
+  "costCenters": [
+    {
+      "code": "CC-GA",
+      "name": "General y administracion",
+      "kind": "G_A",
+      "marginLevel": "EBITDA",
+      "allocatable": true
+    }
+  ],
+  "entries": [
+    {
+      "ref": "AP",
+      "date": "2026-01-01",
+      "kind": "OPENING",
+      "fiscalYearCode": "2026",
+      "description": "Apertura del ejercicio 2026",
+      "sourceType": "SYSTEM",
+      "template": "APERTURA_EJERCICIO",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 500000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "100",
+          "debitCents": 0,
+          "creditCents": 500000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 1
+    },
+    {
+      "ref": "F1",
+      "date": "2026-03-31",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Factura emitida 2026/001",
+      "sourceType": "INVOICE_OUT",
+      "template": "FACTURA_EMITIDA_SERVICIOS",
+      "lines": [
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 121000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "VENTAS_DEFAULT",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "projectCode": "P-01",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "IVA_REPERCUTIDO",
+          "debitCents": 0,
+          "creditCents": 21000,
+          "taxRateCode": "IVA_21",
+          "lineNo": 3
+        }
+      ],
+      "entryNumber": 2
+    },
+    {
+      "ref": "CO",
+      "date": "2026-04-15",
+      "kind": "NORMAL",
+      "fiscalYearCode": "2026",
+      "description": "Cobro de la factura 2026/001",
+      "sourceType": "BANK_IMPORT",
+      "template": "COBRO_CLIENTE",
+      "lines": [
+        {
+          "accountKey": "BANCO_DEFAULT",
+          "debitCents": 121000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 121000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 3
+    },
+    {
+      "ref": "REG",
+      "date": "2026-12-31",
+      "kind": "REGULARIZATION",
+      "fiscalYearCode": "2026",
+      "description": "Regularizacion de gastos e ingresos",
+      "sourceType": "SYSTEM",
+      "template": "REGULARIZACION_RESULTADO",
+      "lines": [
+        {
+          "accountCode": "705",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "129",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "lineNo": 2
+        }
+      ],
+      "entryNumber": 4
+    },
+    {
+      "ref": "CIE",
+      "date": "2026-12-31",
+      "kind": "CLOSING",
+      "fiscalYearCode": "2026",
+      "description": "Cierre del ejercicio 2026",
+      "sourceType": "SYSTEM",
+      "template": "CIERRE_EJERCICIO",
+      "lines": [
+        {
+          "accountCode": "100",
+          "debitCents": 500000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
+          "accountCode": "129",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "lineNo": 2
+        },
+        {
+          "accountCode": "477",
+          "debitCents": 21000,
+          "creditCents": 0,
+          "lineNo": 3
+        },
+        {
+          "accountCode": "572",
+          "debitCents": 0,
+          "creditCents": 621000,
+          "lineNo": 4
+        }
+      ],
+      "entryNumber": 5
+    }
+  ],
+  "expected": {
+    "entryCount": 5,
+    "totalDebitCents": 1463000,
+    "totalCreditCents": 1463000,
+    "resultadoAntesRegularizacionCents": 100000,
+    "saldo129Cents": 100000,
+    "balancesBeforeClosingCents": {
+      "572": 621000,
+      "477": -21000,
+      "100": -500000,
+      "129": -100000
+    }
+  }
+}

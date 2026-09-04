@@ -32,7 +32,7 @@ Cada `JournalLine` de cuenta grupo 6/7 debe tener exactamente UNO de: `projectId
 | `MC2` | MC1 − `COSTE_DIRECTO_MC2` | 64x personal imputado directamente + 62x directos (viajes, materiales del proyecto) |
 | `MC3` | MC2 − CECOs con `marginLevel = MC3` imputados (`INDIRECTO_CECO`) | OPERACIONES_INDIRECTAS, DESARROLLO_PRODUCTO (según config) |
 | `EBITDA` | Σ MC3 − CECOs con `marginLevel = EBITDA` (`INDIRECTO_CECO`) | MARKETING_VENTAS, G_A |
-| `EBIT` | EBITDA − `AMORTIZACION_DETERIORO` | 68x/69x/79x (nunca dentro de un CECO) |
+| `EBIT` | EBITDA − `AMORTIZACION_DETERIORO` | 68x/69x/79x. **No se imputa vía CECO** (nunca entra en un `AllocationRun`): si el activo está afecto a un proyecto, la línea lleva `projectId` directo y se descuenta en la columna del proyecto **por debajo de MC3**; si no, va a un CECO y se descuenta en la columna de amortización. En ambos casos el importe cae en el nivel EBIT, nunca en MC1/MC2/MC3 (E3, decisión aprobada) |
 | `BAI` | EBIT − `FINANCIERO` ± `EXTRAORDINARIO` | 66x/76x, 67x/77x |
 | `RESULTADO` | BAI − impuesto (630, `NO_ANALITICO`) | |
 
