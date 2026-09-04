@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-04 ~17:00 Europe/Madrid · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-04 (cierre E1) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
 ## Hecho
 | Épica | Estado | Commits |
@@ -59,8 +59,8 @@ npm run test:all              # los tres
 5. ✅ DEBE-10/11 CI: `test:integration` obligatorio y falla si falta `DATABASE_URL_TEST`; versionar tests QA; test de migración con fixture `tests/fixtures/taxhacker-pre-e1.sql`.
 6. ✅ DEBE-12..18: `DROP INDEX IF EXISTS`; slug con uuid completo; rate limit en invitación D-3; aceptación en `$transaction`; log Stripe solo id/type + unique parcial `stripe_customer_id`; `log` de Prisma por entorno; validación mimetype/tamaño en uploads.
 7. ✅ PUEDE-19..26 según tiempo (documentar límite de `tenantDb` con relaciones; ESLint `lib/**` + patterns; política RLS `app.current_user()`; monedas duplicadas; `iat` en cookie; `AuthzError` → `ActionState`; alinear contrato de actions; `leaveOrganizationAction`).
-8. **SIGUIENTE**: re-lanzar `revisor-codigo` (contexto limpio) → APROBADO → `documentador` (ROADMAP E1 = CERRADA, manual) → `runs/registro.jsonl` → push.
-9. Después: `/epica E2` (plan de cuentas e impuestos) → `/sprint E2` → `/epica E3` (diario).
+8. ✅ Revisión final APROBADA (3 rondas). E1 CERRADA en ROADMAP; registro en runs/registro.jsonl.
+9. **SIGUIENTE**: `/epica E2` (plan de cuentas e impuestos) → `/sprint E2` → `/epica E3` (diario + retirada de deuda RLS).
 
 ## Cómo reanudar (sesión nueva)
 1. `git clone https://github.com/pablopradomarr/NOMICSAAS && cd NOMICSAAS && npm install --ignore-scripts --engine-strict=false`
