@@ -111,16 +111,22 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - run: npm ci
       - run: npx prisma generate
+      # Ronda 3 (A): la credencial de `app_runtime` va ANTES de la primera suite.
+      # `test:integration` ya abre conexiones como ese rol (el humo de RLS de
+      # lib/db.test.ts y e1-rls*.test.ts), así que darle contraseña después
+      # dejaba esos tests fallando o conectando por casualidad.
+      # Las migraciones las aplica el globalSetup de cada suite; este paso sólo
+      # crea el rol y le pone credencial, así que no necesita el esquema.
+      - name: Credencial del rol de runtime (las migraciones ya no fijan contraseñas)
+        run: ./scripts/dev-db-setup.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp_test
       # Falla el job si DATABASE_URL_TEST no está: los tests de fuga entre
       # tenants y el de migración NO pueden saltarse en CI (#10).
       - run: npm run test:integration
       # Ronda 2 (#6): la suite anterior corre como PROPIETARIO, que ignora RLS.
       # Ésta ejecuta el código real de `models/` conectando como `app_runtime`
       # (NOBYPASSRLS): es la única que demuestra que la barrera 2 filtra.
-      - name: Credencial del rol de runtime (las migraciones ya no fijan contraseñas)
-        run: ./scripts/dev-db-setup.sh
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp_test
       - run: npm run test:integration:rls
 
   pureza-motor:

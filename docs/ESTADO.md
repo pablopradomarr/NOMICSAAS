@@ -22,6 +22,15 @@ npx tsx scripts/migrate-uploads-to-org.ts --apply    # ejecuta (idempotente)
 ```
 Resuelve la organización destino por `files.uploaded_by_id` y, en su defecto, por la organización personal del usuario. Sin este paso, los ficheros anteriores dejan de encontrarse (las filas de `files` no cambian: sólo cambia el directorio raíz).
 
+### Deuda RLS a retirar en E3
+ADR-0007 está aprobado y es inmutable, así que la deuda que introduce E1-fix se anota aquí. Las tres se retiran en la misma migración de E3 (Nivel 2, ADR nuevo), cuando todo el código de negocio corra dentro de `tenantTransaction`:
+
+| Deuda | Dónde | Riesgo real hoy | Condición para retirarla |
+|---|---|---|---|
+| `WITH CHECK` de `organizations` con `OR app.current_user() IS NOT NULL` | `20260904150000_e1_rls_round2` | Un usuario identificado podría insertar una organización con el id que quisiera **si esquivara la barrera 1**; hoy sólo `createOrganizationWithOwner` escribe en esa tabla, y fija `app.current_org` con el uuid que acaba de generar. | Que TODA alta de organización pase por ese camino (ya lo hace) y un test lo garantice ⇒ dejar sólo `id = app.current_org()`. |
+| Cláusula de escape `OR app.current_org() IS NULL` en los `USING` | `20260904120300_e1_rls` (todas las tablas de negocio) | Una lectura que olvide fijar el GUC ve TODAS las organizaciones; la barrera 1 (`tenantDb`) es la que filtra. | Verificar en CI que ninguna query de negocio corre fuera de transacción (lint `no-restricted-imports` + suite `test:integration:rls`) ⇒ borrar el `OR …  IS NULL`. |
+| Una transacción por operación en `tenantDb` | `lib/db.ts` | Ninguno de seguridad: es coste (BEGIN + dos `set_config` + COMMIT por consulta y una conexión del pool ocupada). | Código de negocio agrupado dentro de `tenantTransaction` ⇒ la envoltura por operación deja de hacer falta. |
+
 ### Deuda anotada: una transacción por operación
 `tenantDb(orgId)` envuelve CADA operación en su propia transacción para poder fijar `app.current_org`/`app.current_user` (`SET LOCAL`) y que RLS filtre: son tres viajes extra a la base (BEGIN + dos `set_config` + COMMIT) y una conexión del pool ocupada mientras dura. Es el precio de tener la barrera 2 activa sin refactorizar de golpe los 32 ficheros heredados (ADR-0007). **En E3**, cuando el código de negocio esté agrupado dentro de `tenantTransaction`, la envoltura por operación deja de hacer falta: dentro de esa función todas las operaciones comparten una sola transacción. `tenantDb(org).$transaction()` lanza un error explícito que remite a `tenantTransaction`.
 

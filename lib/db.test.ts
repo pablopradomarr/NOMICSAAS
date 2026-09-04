@@ -226,13 +226,11 @@ describe.skipIf(!TEST_DATABASE_URL)("tenantDb contra BD real (aislamiento I10)",
 
   it("RLS bloquea la otra organización para el rol app_runtime (barrera 2)", async () => {
     const { Client } = await import("pg")
-    const url = new URL(TEST_DATABASE_URL as string)
-    const client = new Client({
-      host: url.hostname,
-      port: Number(url.port || 5432),
-      database: url.pathname.slice(1),
-      user: "app_runtime",
-    })
+    // Ronda 3 (A): usuario Y contraseña salen de `tests/support/env.ts`
+    // (`APP_RUNTIME_PASSWORD`). Antes se pasaba `user: "app_runtime"` sin
+    // contraseña: sólo funciona con `trust` en pg_hba, no en CI.
+    const { appRuntimeDatabaseUrl } = await import("@/tests/support/env")
+    const client = new Client({ connectionString: appRuntimeDatabaseUrl(TEST_DATABASE_URL as string) })
     await client.connect()
     try {
       await client.query("BEGIN")

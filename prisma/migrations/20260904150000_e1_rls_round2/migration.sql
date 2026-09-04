@@ -38,6 +38,14 @@ CREATE POLICY tenant_isolation ON "organizations"
     -- Alta: la aplicación genera el uuid y lo fija en app.current_org antes del
     -- INSERT, así que la comprobación es exacta. Se mantiene la variante por
     -- usuario para el alta hecha sin conocer el id de antemano.
+    --
+    -- DEUDA: `OR app.current_user() IS NOT NULL` permite a cualquier usuario
+    -- identificado insertar una organización con el id que quiera. La barrera 1
+    -- lo impide (sólo `createOrganizationWithOwner` escribe aquí), pero la
+    -- barrera 2 no. Se retira en E3 junto con la cláusula de escape de USING,
+    -- cuando todas las altas pasen por el camino que fija app.current_org.
+    -- Anotado en docs/ESTADO.md §"Deuda RLS a retirar en E3" (ADR-0007 está
+    -- aprobado y es inmutable: no se edita).
     "id" = app.current_org()
     OR app.current_user() IS NOT NULL
   );

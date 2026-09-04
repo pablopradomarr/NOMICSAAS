@@ -6,12 +6,13 @@
  * organización. Este script mueve los directorios heredados a su sitio.
  *
  * Cómo decide la organización de destino, FICHERO A FICHERO (ronda 2, #10):
- *   1. Se busca la fila de `files` cuyo `path` coincide con la ruta relativa del
- *      fichero dentro del directorio heredado y se usa SU `organization_id`.
- *      Es el único criterio correcto: un usuario puede pertenecer a varias
- *      organizaciones y tener en su antiguo directorio ficheros de todas ellas
- *      (la versión anterior mandaba el directorio entero a la organización del
- *      PRIMER fichero del usuario, mezclando tenants).
+ *   1. El nombre del fichero almacenado es el uuid de su fila en `files`, así que
+ *      se resuelve por clave primaria (`files.id`). Si el nombre no es un uuid,
+ *      se busca por `path` ACOTANDO por `uploadedById`. Es el único criterio
+ *      correcto: un usuario puede pertenecer a varias organizaciones y tener en
+ *      su antiguo directorio ficheros de todas ellas (la versión inicial mandaba
+ *      el directorio entero a la organización del PRIMER fichero del usuario,
+ *      mezclando tenants).
  *   2. Los ficheros que no están en `files` (previews regenerables, `static/`,
  *      restos) van a la organización personal del usuario, o a su única
  *      membresía si no la hubiera.
@@ -43,7 +44,7 @@ type Movimiento = {
   target: string
   organizationId: string
   /** Cómo se resolvió la organización (para el informe). */
-  origen: "files.path" | "organización personal" | "única membresía"
+  origen: "files.id" | "files.path" | "organización personal" | "única membresía"
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -129,15 +130,28 @@ async function main() {
     const fallback = await fallbackOrganizationId(user.id)
 
     for (const relative of await listFiles(from)) {
-      // `files.path` guarda exactamente la ruta relativa al directorio raíz del
-      // usuario, con separadores POSIX.
-      const registrado = await prisma.file.findFirst({
-        where: { path: relative.split(path.sep).join("/") },
-        select: { organizationId: true },
-      })
+      // Ronda 3 (B): el nombre del fichero almacenado ES el uuid de la fila de
+      // `files` (`unsortedFilePath`/`getTransactionFileUploadPath` lo componen
+      // así), de modo que se resuelve por CLAVE PRIMARIA. Si no lo fuera, se cae
+      // a `path`, pero ACOTANDO por `uploadedById`: dos organizaciones distintas
+      // pueden tener filas con el mismo `path` relativo y `findFirst` a secas
+      // devolvía una cualquiera.
+      const posixPath = relative.split(path.sep).join("/")
+      const fileUuid = path.basename(relative, path.extname(relative))
 
-      const destino = registrado
-        ? { id: registrado.organizationId, origen: "files.path" as const }
+      const registrado = UUID_RE.test(fileUuid)
+        ? await prisma.file.findUnique({ where: { id: fileUuid }, select: { organizationId: true } })
+        : null
+
+      const porRuta =
+        registrado ??
+        (await prisma.file.findFirst({
+          where: { path: posixPath, uploadedById: user.id },
+          select: { organizationId: true },
+        }))
+
+      const destino = porRuta
+        ? { id: porRuta.organizationId, origen: registrado ? ("files.id" as const) : ("files.path" as const) }
         : fallback
 
       if (!destino) {
