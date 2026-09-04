@@ -115,6 +115,12 @@ describe("parseBps / formatBps (sin Float en ningún paso)", () => {
     }
   })
 
+  it("no acepta `number`: la conversión ×100 sobre flotante es de quien llama (hallazgo 11)", () => {
+    expect(parseBps(21 as unknown as string)).toBeNull()
+    // La vía correcta, sin pérdida: texto.
+    expect(parseBps(String(21.7))).toBe(2170)
+  })
+
   it("formatBps es la inversa para la UI", () => {
     expect(formatBps(2100)).toBe("21")
     expect(formatBps(520)).toBe("5,2")

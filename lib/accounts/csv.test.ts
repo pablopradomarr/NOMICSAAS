@@ -6,7 +6,9 @@ import {
   parseCustomPlanCsv,
   parseNpgcCsv,
   planDiff,
+  MAX_IMPORT_ROWS,
   resolveImportedParents,
+  rowNumbersByCode,
   seedRowsToPlanAccounts,
 } from "@/lib/accounts/csv"
 import type { PlanAccount } from "@/lib/accounts/types"
@@ -29,6 +31,24 @@ describe("parseCsvRows", () => {
       ["a", "b"],
       ["uno, dos", 'di "hola"'],
     ])
+  })
+
+  it("respeta el delimitador dentro de comillas (hallazgo 6)", () => {
+    // Con el `split(";").join(",")` anterior, este `;` partía el campo en dos.
+    expect(parseCsvRows('Cuenta;Descripción\n705;"Servicios; consultoría"\n', ";")).toEqual([
+      ["Cuenta", "Descripción"],
+      ["705", "Servicios; consultoría"],
+    ])
+    // Y una coma dentro de un fichero con `;` sigue siendo texto, no separador.
+    expect(parseCsvRows("Cuenta;Descripción\n705;Servicios, varios\n", ";")).toEqual([
+      ["Cuenta", "Descripción"],
+      ["705", "Servicios, varios"],
+    ])
+  })
+
+  it("rechaza delimitadores imposibles", () => {
+    expect(() => parseCsvRows("a,b\n", '"')).toThrow(TypeError)
+    expect(() => parseCsvRows("a,b\n", ";;")).toThrow(TypeError)
   })
 
   it("ignora líneas en blanco y CRLF", () => {
@@ -190,6 +210,35 @@ describe("parseCustomPlanCsv (criterio 7, riesgo R4)", () => {
   it("un fichero sin filas de datos falla; sin las columnas obligatorias, también", () => {
     expect(parseCustomPlanCsv("Cuenta;Descripción\n", mapping, defaults).ok).toBe(false)
     expect(parseCustomPlanCsv("A;B\n1;2\n", mapping, defaults).ok).toBe(false)
+  })
+
+  it("un `;` dentro de comillas sobrevive al import completo (hallazgo 6)", () => {
+    const csv = 'Cuenta;Descripción;Masa;Epígrafe\n705;"Servicios; consultoría";PyG;\n'
+    const result = parseCustomPlanCsv(csv, mapping, defaults)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value[0].name).toBe("Servicios; consultoría")
+  })
+
+  it("rechaza un fichero con más de MAX_IMPORT_ROWS filas (hallazgo 8)", () => {
+    const filas = Array.from({ length: MAX_IMPORT_ROWS + 1 }, (_, i) => `${700000 + i};Cuenta ${i};PyG;`).join("\n")
+    const result = parseCustomPlanCsv(`Cuenta;Descripción;Masa;Epígrafe\n${filas}\n`, mapping, defaults)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.errors[0].message).toContain(String(MAX_IMPORT_ROWS))
+  })
+
+  it("el error de padre huérfano señala el nº de fila del fichero (hallazgo 9)", () => {
+    const csv = "Cuenta;Descripción;Masa;Epígrafe\n705;Servicios;PyG;\n999999;Rara;PyG;\n"
+    const parsed = parseCustomPlanCsv(csv, mapping, defaults)
+    if (!parsed.ok) throw new Error("import fallido")
+    const numeros = rowNumbersByCode(csv, mapping, ";")
+    expect(numeros.get("999999")).toBe(2)
+    const resolved = resolveImportedParents(parsed.value, buildPlan([]), numeros)
+    expect(resolved.ok).toBe(false)
+    if (!resolved.ok) {
+      const huerfana = resolved.errors.find((e) => e.message.includes("999999"))
+      expect(huerfana?.row).toBe(2)
+    }
   })
 
   it("resolveImportedParents cuelga las filas del plan existente", () => {

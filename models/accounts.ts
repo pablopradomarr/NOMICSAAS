@@ -14,11 +14,11 @@ import {
   parseCustomPlanCsv,
   planDiff,
   resolveImportedParents,
+  rowNumbersByCode,
   seedRowsToPlanAccounts,
 } from "@/lib/accounts/csv"
 import { checkAnalyticCoherence as checkCoherencePure } from "@/lib/accounts/epigraphs"
 import {
-  ACCOUNT_KEY_DEFAULT_CODE,
   defaultAccountMap,
   extraAccountsToCreate,
   REQUIRED_ACCOUNT_KEYS,
@@ -45,12 +45,19 @@ import {
   NewAccountInput,
   validateNewAccount,
 } from "@/lib/accounts/validate"
-import { TenantClient, TenantTransactionClient, tenantDb, tenantTransaction } from "@/lib/db"
+import {
+  SEED_TRANSACTION_OPTIONS,
+  TenantClient,
+  TenantTransactionClient,
+  TenantTransactionOptions,
+  tenantDb,
+  tenantTransaction,
+} from "@/lib/db"
 import { seedTaxRates, VIGENCIA_IVA_2025 } from "@/lib/taxes/rates"
 import { writeAuditLog } from "@/models/audit-log"
 import { loadNpgcSeed, NPGC_SEED_SHA_SETTING } from "@/models/npgc-seed"
 import type { LedgerAccount, Prisma } from "@/prisma/client"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 type AnyClient = TenantClient | TenantTransactionClient
 
@@ -159,7 +166,9 @@ export async function createAccount(
   organizationId: string,
   input: NewAccountInput,
   actor: Actor,
-  reason?: string | null
+  reason?: string | null,
+  /** R-15: catálogo cerrado de la variante. Sin él, el epígrafe no se comprueba. */
+  opts: { epigraphCatalog?: ReadonlySet<string> } = {}
 ): Promise<{ ok: true; account: LedgerAccount } | { ok: false; errors: AccountError[] }> {
   return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
     const plan = await getPlan(tx)
@@ -168,7 +177,7 @@ export async function createAccount(
       ? await getAccountUsage(tx, parentCode)
       : { movementCount: 0, childCount: 0, mappedKeys: [], taxRateCodes: [] }
 
-    const validated = validateNewAccount(input, plan, parentUsage)
+    const validated = validateNewAccount(input, plan, parentUsage, { epigraphCatalog: opts.epigraphCatalog })
     if (!validated.ok) return { ok: false as const, errors: validated.errors }
 
     const { parentDemoted } = applyNewAccount(plan, validated.value)
@@ -253,7 +262,11 @@ export async function setAccountActive(
       return fail<LedgerAccount>(err("ACCOUNT_NOT_FOUND", "code", `La cuenta ${code} no existe en esta organización`))
     }
     if (!isActive) {
-      const check = canDeactivateAccount(account, plan)
+      // El uso REAL (mapa + tipos impositivos), no sólo el flag `isSystem`:
+      // un `isSystem` desincronizado dejaría desactivar una cuenta que el mapa
+      // sigue necesitando (revisión, hallazgo 4).
+      const usage = await getAccountUsage(tx, code)
+      const check = canDeactivateAccount(account, plan, usage)
       if (!check.ok) return check as Result<LedgerAccount>
     }
     const before = await tx.ledgerAccount.findFirst({ where: { code } })
@@ -331,6 +344,8 @@ export type ImportNpgcOptions = {
   now?: Date
   /** No escribe nada: devuelve el recuento que se HABRÍA aplicado. */
   dryRun?: boolean
+  /** Límites de la transacción; por defecto `SEED_TRANSACTION_OPTIONS` (60 s). */
+  transaction?: TenantTransactionOptions
   reason?: string | null
 }
 
@@ -365,7 +380,10 @@ export async function importNpgc(
   }
   const incoming = seedRowsToPlanAccounts(filtered.value, "SEED")
 
-  return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
+  return await tenantTransaction(
+    organizationId,
+    actor.userId ?? undefined,
+    async (tx) => {
     const before = await getPlan(tx)
     const diff = planDiff(before, incoming, "seed")
 
@@ -381,63 +399,112 @@ export async function importNpgc(
       }
     }
 
-    // Orden ascendente por código: el padre existe antes que el hijo (FK compuesta).
-    const ordered = [...diff.create].sort((a, b) => (a.code < b.code ? -1 : 1))
-    for (const account of ordered) {
-      await tx.ledgerAccount.create({ data: accountCreateData(organizationId, account) })
+    // ── Alta del plan: un `createMany` POR NIVEL ────────────────────────────
+    // El bucle fila a fila eran ~800 INSERT en una sola transacción (≈1,1 s de
+    // ida y vuelta). Agrupar por longitud de código respeta la FK compuesta
+    // `(organization_id, parent_code)`: el padre siempre tiene menos dígitos que
+    // el hijo, así que el nivel N-1 está confirmado antes de insertar el nivel N.
+    const byLevel = new Map<number, PlanAccount[]>()
+    for (const account of diff.create) {
+      const bucket = byLevel.get(account.level)
+      if (bucket) bucket.push(account)
+      else byLevel.set(account.level, [account])
     }
-    for (const change of diff.postableChanges) {
-      await tx.ledgerAccount.updateMany({ where: { code: change.code }, data: { isPostable: change.isPostable } })
+    for (const level of [...byLevel.keys()].sort((a, b) => a - b)) {
+      const rows = byLevel.get(level) ?? []
+      await tx.ledgerAccount.createMany({ data: rows.map((a) => accountCreateData(organizationId, a)) })
+    }
+    // Los cambios de `isPostable` van en dos updateMany (uno por valor), no en uno por cuenta.
+    for (const value of [true, false]) {
+      const codes = diff.postableChanges.filter((c) => c.isPostable === value).map((c) => c.code)
+      if (codes.length > 0) {
+        await tx.ledgerAccount.updateMany({ where: { code: { in: codes } }, data: { isPostable: value } })
+      }
     }
 
-    // Subcuentas operativas y, si se piden, las de convención de software.
-    let plan = await getPlan(tx)
+    // El plan resultante se compone EN MEMORIA a partir del que ya se leyó: cada
+    // `getPlan(tx)` intermedio era una consulta de 900 filas para saber algo que
+    // esta misma función acaba de escribir.
+    const postableByCode = new Map(diff.postableChanges.map((c) => [c.code, c.isPostable]))
+    const working: PlanAccount[] = [
+      ...[...before.byCode.values()].map((a) => {
+        const change = postableByCode.get(a.code)
+        return change === undefined ? a : { ...a, isPostable: change }
+      }),
+      ...diff.create,
+    ]
+    let plan = buildPlan(working)
+
+    // ── Subcuentas operativas y, si se piden, las de convención de software ──
     const extras = extraAccountsToCreate(plan, { useSubaccounts, createSoftwareAccounts })
-    for (const extra of extras.sort((a, b) => (a.code < b.code ? -1 : 1))) {
+    const extraAccounts: PlanAccount[] = []
+    const demoted = new Set<string>()
+    for (const extra of [...extras].sort((a, b) => (a.code < b.code ? -1 : 1))) {
       const parentCode = findParent(plan, extra.code)
       const parent = parentCode ? plan.byCode.get(parentCode) : undefined
       if (!parent) continue
-      await tx.ledgerAccount.create({
-        data: accountCreateData(organizationId, {
-          code: extra.code,
-          name: extra.name,
-          level: extra.code.length,
-          parentCode: parent.code,
-          nature: parent.nature,
-          statement: parent.statement,
-          epigraph: parent.epigraph,
-          epigraphPymes: parent.epigraphPymes,
-          bidirectional: parent.bidirectional,
-          isContra: parent.isContra,
-          analyticType: parent.analyticType,
-          cashflowCategory: parent.cashflowCategory,
-          isPostable: true,
-          isActive: true,
-          isSystem: false,
-          origin: "SEED",
-        }),
-      })
-      await tx.ledgerAccount.updateMany({ where: { code: parent.code }, data: { isPostable: false } })
-      plan = await getPlan(tx)
+      const account: PlanAccount = {
+        code: extra.code,
+        name: extra.name,
+        level: extra.code.length,
+        parentCode: parent.code,
+        nature: parent.nature,
+        statement: parent.statement,
+        epigraph: parent.epigraph,
+        epigraphPymes: parent.epigraphPymes,
+        bidirectional: parent.bidirectional,
+        isContra: parent.isContra,
+        analyticType: parent.analyticType,
+        cashflowCategory: parent.cashflowCategory,
+        isPostable: true,
+        isActive: true,
+        isSystem: false,
+        origin: "SEED",
+      }
+      extraAccounts.push(account)
+      demoted.add(parent.code)
+      // El plan en memoria incluye ya la subcuenta: la siguiente del lote
+      // (47511 tras 47510) resuelve su padre contra el estado correcto.
+      plan = buildPlan([
+        ...[...plan.byCode.values()].map((a) => (a.code === parent.code ? { ...a, isPostable: false } : a)),
+        account,
+      ])
+    }
+    if (extraAccounts.length > 0) {
+      const extrasByLevel = new Map<number, PlanAccount[]>()
+      for (const account of extraAccounts) {
+        const bucket = extrasByLevel.get(account.level)
+        if (bucket) bucket.push(account)
+        else extrasByLevel.set(account.level, [account])
+      }
+      for (const level of [...extrasByLevel.keys()].sort((a, b) => a - b)) {
+        const rows = extrasByLevel.get(level) ?? []
+        await tx.ledgerAccount.createMany({ data: rows.map((a) => accountCreateData(organizationId, a)) })
+      }
+      await tx.ledgerAccount.updateMany({ where: { code: { in: [...demoted] } }, data: { isPostable: false } })
     }
 
-    // Mapa de cuentas de sistema.
+    // ── Mapa de cuentas de sistema ──────────────────────────────────────────
     const { entries, unresolved } = defaultAccountMap(plan, { useSubaccounts, createSoftwareAccounts })
-    for (const entry of entries) {
-      await tx.organizationAccountMap.upsert({
-        where: { organizationId_key: { organizationId, key: entry.key } },
-        update: {},
-        create: { organizationId, key: entry.key, accountCode: entry.accountCode },
+    const existingMap = await tx.organizationAccountMap.findMany({ select: { key: true, accountCode: true } })
+    const existingKeys = new Set(existingMap.map((m) => m.key))
+    // Idempotencia: una clave ya mapeada NO se toca (el ADMIN pudo remapearla).
+    const nuevas = entries.filter((entry) => !existingKeys.has(entry.key))
+    if (nuevas.length > 0) {
+      await tx.organizationAccountMap.createMany({
+        data: nuevas.map((entry) => ({ organizationId, key: entry.key, accountCode: entry.accountCode })),
       })
     }
-    const mapped = await tx.organizationAccountMap.findMany({ select: { key: true, accountCode: true } })
+    const mapped = [...existingMap, ...nuevas.map((e) => ({ key: e.key, accountCode: e.accountCode }))]
     const systemCodes = [...new Set(mapped.map((m) => m.accountCode))]
     if (systemCodes.length > 0) {
       await tx.ledgerAccount.updateMany({ where: { code: { in: systemCodes } }, data: { isSystem: true } })
     }
+    plan = buildPlan(
+      [...plan.byCode.values()].map((a) => (systemCodes.includes(a.code) ? { ...a, isSystem: true } : a))
+    )
 
     // I-plan-1: si el mapa no resuelve, se revierte TODO.
-    plan = await getPlan(tx)
     const mapCheck = validateAccountMap(mapped, plan, REQUIRED_ACCOUNT_KEYS)
     if (!mapCheck.ok) {
       throw new Error(
@@ -446,41 +513,41 @@ export async function importNpgc(
       )
     }
 
-    // Tipos impositivos de sistema (§3.1).
+    // ── Tipos impositivos de sistema (§3.1) ─────────────────────────────────
+    // Sin fallback a `ACCOUNT_KEY_DEFAULT_CODE`: si una clave no está mapeada, su
+    // código "de libro" puede no existir o no ser postable en esta organización,
+    // y el tipo apuntaría a una cuenta que la FK rechazaría. No se siembra.
     const byKey = new Map(mapped.map((m) => [m.key, m.accountCode]))
-    const taxSeeds = seedTaxRates((key) => byKey.get(key) ?? ACCOUNT_KEY_DEFAULT_CODE[key] ?? null, {
+    const taxSeeds = seedTaxRates((key) => byKey.get(key) ?? null, {
       ivaValidFrom: VIGENCIA_IVA_2025,
       orgValidFrom: opts.now ?? VIGENCIA_IVA_2025,
     })
     const existingTaxCodes = new Set((await tx.taxRate.findMany({ select: { code: true } })).map((t) => t.code))
-    const idByCode = new Map<string, string>()
-    // Dos pasadas: los recargos enlazan por id al IVA que acompañan.
-    for (const pass of [0, 1]) {
-      for (const row of taxSeeds) {
-        const isRecargo = row.kind === "RECARGO"
-        if ((pass === 0) === isRecargo) continue
-        if (existingTaxCodes.has(row.code)) continue
-        const created = await tx.taxRate.create({
-          data: {
-            organizationId,
-            code: row.code,
-            name: row.name,
-            kind: row.kind,
-            rateBps: row.rateBps,
-            appliesTo: row.appliesTo,
-            accountCode: row.accountCode,
-            counterAccountCode: row.counterAccountCode,
-            linkedTaxRateId: row.linkedCode ? (idByCode.get(row.linkedCode) ?? null) : null,
-            validFrom: row.validFrom,
-            validTo: row.validTo,
-            isActive: true,
-            isSystem: true,
-          },
-        })
-        idByCode.set(created.code, created.id)
-      }
+    const pendientes = taxSeeds.filter((row) => !existingTaxCodes.has(row.code))
+    // Los ids se generan aquí para poder resolver `linkedTaxRateId` (recargo →
+    // IVA) sin dos pasadas de INSERT: un solo `createMany` para todo el catálogo.
+    const idByCode = new Map(pendientes.map((row) => [row.code, randomUUID()]))
+    if (pendientes.length > 0) {
+      await tx.taxRate.createMany({
+        data: pendientes.map((row) => ({
+          id: idByCode.get(row.code) as string,
+          organizationId,
+          code: row.code,
+          name: row.name,
+          kind: row.kind,
+          rateBps: row.rateBps,
+          appliesTo: row.appliesTo,
+          accountCode: row.accountCode,
+          counterAccountCode: row.counterAccountCode,
+          linkedTaxRateId: row.linkedCode ? (idByCode.get(row.linkedCode) ?? null) : null,
+          validFrom: row.validFrom,
+          validTo: row.validTo,
+          isActive: true,
+          isSystem: true,
+        })),
+      })
     }
-    const taxRateCount = await tx.taxRate.count()
+    const taxRateCount = existingTaxCodes.size + pendientes.length
 
     // sha256 del seed con el que se sembró (R7): E7 detecta planes con seed viejo.
     if (seed.sha256) {
@@ -523,7 +590,11 @@ export async function importNpgc(
       unresolvedKeys: unresolved,
       dryRun: false,
     }
-  })
+    },
+    // Una siembra son ~900 cuentas + 57 claves + 28 tipos en UNA transacción: el
+    // presupuesto por defecto de Prisma (5 s) la aborta a mitad.
+    opts.transaction ?? SEED_TRANSACTION_OPTIONS
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -560,10 +631,13 @@ export async function importCustomPlan(
 ): Promise<Result<ImportCustomPlanResult>> {
   const parsed = parseCustomPlanCsv(csvText, mapping, { ...opts.defaults, epigraphCatalog: opts.epigraphCatalog })
   if (!parsed.ok) return parsed as Result<ImportCustomPlanResult>
+  // Nº de fila original de cada código: los errores de jerarquía apuntan a la
+  // línea del fichero del usuario, no a un código suelto (hallazgo 9).
+  const rowNumbers = rowNumbersByCode(csvText, mapping, opts.defaults.delimiter ?? ",")
 
   return await tenantTransaction(organizationId, opts.actor.userId ?? undefined, async (tx) => {
     const plan = await getPlan(tx)
-    const resolved = resolveImportedParents(parsed.value, plan)
+    const resolved = resolveImportedParents(parsed.value, plan, rowNumbers)
     if (!resolved.ok) return resolved as Result<ImportCustomPlanResult>
 
     const incoming = seedRowsToPlanAccounts(resolved.value, "CSV_IMPORT")

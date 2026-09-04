@@ -59,7 +59,7 @@ export async function createAccountAction(
   formData: FormData
 ): Promise<ActionState<{ code: string }>> {
   return await withOrg(Role.ADMIN, async ({ org, user }) => {
-    const validated = createAccountFormSchema.safeParse(Object.fromEntries(formData))
+    const validated = createAccountFormSchema(catalogFor(org.pgcVariant)).safeParse(Object.fromEntries(formData))
     if (!validated.success) return invalid(validated.error)
 
     const result = await createAccount(
@@ -72,7 +72,11 @@ export async function createAccountAction(
         analyticType: validated.data.analyticType ?? undefined,
         cashflowCategory: validated.data.cashflowCategory ?? undefined,
       },
-      { userId: user.id }
+      { userId: user.id },
+      null,
+      // R-15 en el alta: el epígrafe de la subcuenta nueva tiene que existir en
+      // el catálogo cerrado de la variante, igual que al editar.
+      { epigraphCatalog: catalogFor(org.pgcVariant) }
     )
     if (!result.ok) return { success: false, error: formatErrors(result.errors) }
     revalidatePath(ACCOUNTS_PATH)

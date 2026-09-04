@@ -1,7 +1,11 @@
 "use client"
 
 import { renameAccountAction } from "@/app/(app)/settings/accounts/actions"
-import { AccountRowActions } from "@/components/accounts/account-row-actions"
+import {
+  AccountActionsHost,
+  AccountRowMenu,
+  type AccountActionTarget,
+} from "@/components/accounts/account-row-actions"
 import {
   ANALYTIC_TYPE_LABELS,
   CASHFLOW_LABELS,
@@ -102,6 +106,7 @@ export function AccountsTree({
   }, [expanded, organizationId])
 
   const codes = useMemo(() => new Set(accounts.map((account) => account.code)), [accounts])
+  const [actionTarget, setActionTarget] = useState<AccountActionTarget | null>(null)
 
   const filtered = useMemo(() => {
     return accounts.filter((account) => {
@@ -389,10 +394,8 @@ export function AccountsTree({
                   </td>
                   <td className="px-2">
                     {canEdit && (
-                      <AccountRowActions
+                      <AccountRowMenu
                         account={account}
-                        catalog={catalog}
-                        suggestedChildCode={suggestChildCode(account.code, codes)}
                         canDelete={!account.isSystem && !hasChildren && mapped.length === 0}
                         deleteBlockedReason={
                           account.isSystem
@@ -401,6 +404,7 @@ export function AccountsTree({
                               ? "Tiene subcuentas: bórralas primero (R-08)"
                               : null
                         }
+                        onAction={(action) => setActionTarget({ account, action })}
                       />
                     )}
                   </td>
@@ -410,6 +414,15 @@ export function AccountsTree({
           </tbody>
         </table>
       </div>
+
+      {/* Hallazgo 7: UN solo juego de diálogos para todo el árbol, montado sólo
+          cuando hay una acción abierta — no uno por cada una de las ~900 filas. */}
+      <AccountActionsHost
+        target={actionTarget}
+        catalog={catalog}
+        suggestedChildCode={actionTarget ? suggestChildCode(actionTarget.account.code, codes) : ""}
+        onClose={() => setActionTarget(null)}
+      />
 
       {pending && <p className="text-sm text-muted-foreground">Guardando…</p>}
       {!canEdit && (

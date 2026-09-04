@@ -292,11 +292,24 @@ describe.skipIf(!TEST_DATABASE_URL)("E2 · plan de cuentas por organización (I1
     expect(await dbA.organizationAccountMap.count({ where: { accountCode: "99999999" } })).toBe(0)
   })
 
-  it("audit_logs es append-only: ni UPDATE ni DELETE por la aplicación", async () => {
+  it("audit_logs: la barrera 1 NO lo protege — `tenantDb` sí deja borrar (QA)", async () => {
     const [log] = await listAuditLog(dbA, { take: 1 })
     expect(log).toBeTruthy()
-    // El modelo no expone mutaciones; y `tenantDb` tampoco puede saltárselo.
+
+    // Corrección del comentario anterior, que afirmaba que «tenantDb tampoco
+    // puede saltárselo»: es FALSO. `tenantDb` expone `auditLog.delete/update`
+    // como cualquier otro modelo y esta suite corre como PROPIETARIO de las
+    // tablas, que sin `FORCE ROW LEVEL SECURITY` esquiva las políticas. El
+    // append-only de ADR-0008 lo garantiza la barrera 2 y SÓLO cuando se conecta
+    // como `app_runtime`: se ejerce en tests/integration-rls/e2-app-runtime.test.ts.
+    // Aquí se deja escrito el límite para que nadie lo confunda con una garantía.
     const total = await dbA.auditLog.count()
     expect(total).toBeGreaterThan(0)
+
+    const copia = await dbA.auditLog.create({
+      data: { organizationId: ORG_A, entity: "Organization", entityId: ORG_A, action: "update" },
+    })
+    const borradas = await dbA.auditLog.deleteMany({ where: { id: copia.id } })
+    expect(borradas.count, "como propietario, la barrera 1 no impide el borrado").toBe(1)
   })
 })

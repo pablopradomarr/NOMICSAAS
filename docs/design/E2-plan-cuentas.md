@@ -572,7 +572,7 @@ Todas empiezan por `withOrg(Role.ADMIN, …)` — la matriz de `supabase-multite
 | | `deleteAccountAction` | ADMIN | `{ code, reason }` |
 | | `importPlanCsvAction` | ADMIN | `{ file, mapping, dryRun }` — `dryRun: true` devuelve el `PlanDiff` para previsualizar; nada se escribe |
 | | `reseedPlanAction` | ADMIN | `{ variant, reason }` — re-lanza `importNpgc` (idempotente, solo crea las que faltan) |
-| `app/(app)/settings/accounts/map/actions.ts` | `setAccountMapEntryAction` | ADMIN | `{ key, accountCode, reason }` |
+| `app/(app)/settings/account-map/actions.ts` | `setAccountMapEntryAction` | ADMIN | `{ key, accountCode, reason }` |
 | | `createSoftwareAccountsAction` | ADMIN | `{ keys: ("4720"|"4730"|"4760"|"4770")[], reason }` — §2.5, bajo demanda |
 | `app/(app)/settings/taxes/actions.ts` | `createTaxRateAction` / `updateTaxRateAction` / `closeTaxRateAction` | ADMIN | `{ code, name, kind, rateBps, appliesTo, accountCode, counterAccountCode?, linkedTaxRateId?, validFrom, validTo? }` |
 | | `updateTaxPolicyAction` | ADMIN | `{ prorrataPermille?, taxRoundingMode, redondeoToleranciaCents }` — parámetros de organización (D2-8) |
@@ -630,9 +630,12 @@ Rutas nuevas bajo `settings/` (`components/settings/side-nav.tsx` gana dos entra
 | Ruta | Contenido | VIEWER / EDITOR | ADMIN |
 |---|---|---|---|
 | `/settings/accounts` | Árbol del plan | Solo lectura: sin botones, sin edición inline, sin menú contextual | Todo |
-| `/settings/accounts/map` | Claves de sistema → cuenta, en dos bloques: **43 obligatorias** (con aviso si alguna no resuelve) y 14 *pendientes de su épica*, plegadas | Lectura | `Select` de cuenta con buscador + motivo |
+| `/settings/account-map` | Claves de sistema → cuenta, en dos bloques: **43 obligatorias** (con aviso si alguna no resuelve) y 14 *pendientes de su épica*, plegadas | Lectura | `Select` de cuenta con buscador + motivo |
 | `/settings/accounts/import` | Import CSV en 3 pasos | 403 (no aparece en el nav) | Sí |
+| `/settings/audit` | Registro de auditoría de configuración (§7), con filtros por entidad, acción y autor | **404** | Lectura |
 | `/settings/taxes` | Tipos con vigencia (agrupados por `kind`, con la línea de tiempo de cada `code`) + panel de **política fiscal** (prorrata, método de redondeo, tolerancia) | Lectura | Alta / edición / cerrar vigencia / editar política |
+
+> **Rutas, corregidas en la revisión de ronda 1 (hallazgo 17).** El mapa de cuentas cuelga de `/settings/account-map`, no de `/settings/accounts/map`: como ruta anidada, Next la resolvería contra el `layout` del plan de cuentas y —más importante— `revalidatePath("/settings/accounts")` invalidaría también el mapa en cada renombrado de cuenta. Son dos pantallas independientes con dos ciclos de caché distintos. Se añade además `/settings/audit`, que en el diseño original vivía sólo en §7 como concepto: es la pantalla que consume `AuditLog` y **es exclusiva de ADMIN** (VIEWER y EDITOR reciben 404) — el registro contiene los `before`/`after` completos de la configuración fiscal y quién hizo cada cambio, que es información de gobierno, no de consulta.
 
 **Componentes** (`components/settings/`, base shadcn ya presente en `crud.tsx`, `page-header.tsx`):
 
@@ -707,7 +710,7 @@ Cambios de la ronda 2 marcados **(R2)**.
 | **T8** | Migración `20260905110000_e2_rls` (políticas de las 4 tablas, `audit_logs` append-only, GRANTs) + deuda anotada en `docs/ESTADO.md` | T1 | **2** | 5 |
 | **T9** | `forms/accounts.ts` / `forms/taxes.ts` (zod, `rateBps` desde `"1,75"`) + las **13** server actions de §4.2 **(R2: +`createSoftwareAccountsAction`, +`updateTaxPolicyAction`, +`validateVariantChange` en la action de organización)** | T6 | 1 | 9 |
 | **T10** | UI plan de cuentas: `/settings/accounts` + `accounts-tree` (marcas `(−)` y `(↔)`, epígrafe por variante), `accounts-search`, `account-row-actions`, `new-account-dialog`, `side-nav` **(R2: +1 h)** | T9 | 1 | 13 |
-| **T11** | UI `/settings/accounts/map` (2 bloques), `/settings/taxes` (+ `tax-policy-form`, línea de tiempo de vigencia) **(R2)**, `/settings/accounts/import` + cerrar los 6 `TODO(E2): auditLog(...)` de E1 | T9, T10 | 1 | 12 |
+| **T11** | UI `/settings/account-map` (2 bloques), `/settings/taxes` (+ `tax-policy-form`, línea de tiempo de vigencia) **(R2)**, `/settings/accounts/import` + cerrar los 6 `TODO(E2): auditLog(...)` de E1 | T9, T10 | 1 | 12 |
 | **T12** | Tests de integración: `e2-accounts.test.ts` (seed idempotente por variante, subcuenta, borrado bloqueado, R-10a/R-10b), `e2-tenant-leak.test.ts`, `tests/integration-rls/e2-app-runtime.test.ts` | T7, T8, T9 | 1 | 10 |
 | **T13** | **Resto de E0**: `@playwright/test`, `playwright.config.ts`, `auth.setup.ts`, `login.spec.ts`, `accounts.spec.ts`, script `test:e2e`, job de CI | T10 | 1 | 8 |
 | **T14** | Docs: **`docs/MODELO-DATOS.md` §Plan de cuentas e impuestos reescrita (R2)**, `.claude/skills/pgc-npgc/SKILL.md` (13 columnas del seed, catálogo de `TaxRate`, `LedgerAccount`), `docs/ESTADO.md`, ROADMAP E2 → CERRADA, `runs/registro.jsonl`; ADR-0008 a APROBADO | T12, T13 | 1 | 4 |
@@ -785,3 +788,30 @@ Cambios de la ronda 2 marcados **(R2)**.
 | **T-7** | `COMPRAS_DEFAULT → 607` o renombrar la clave | **Aplazado a E3**: se conserva `COMPRAS_DEFAULT → 600` y se añade `SUBCONTRATACION_DEFAULT → 607` | `COMPRAS_DEFAULT` es el nombre canónico de `docs/MODELO-DATOS.md`; qué clave usa por defecto la factura recibida de una empresa de servicios se decide con las plantillas de asiento, en E3 |
 
 Ninguno de los siete descartes toca una corrección contable: son decisiones de alcance (qué épica lo implementa) o de matriz de roles del proyecto. **Con eso, el diseño se declara CONFORME a la validación contable de ronda 2.**
+
+---
+
+## 11. Revisión (ronda 1) — resoluciones
+
+Revisión en contexto limpio sobre `bc16710` (T1–T8) y `a0ce6e9` (T9–T13): **CAMBIOS REQUERIDOS**, 7 DEBE + 10 PUEDE + 1 hallazgo de QA. Todos resueltos; ninguno cambia una regla contable.
+
+| # | Hallazgo | Resolución |
+|---|---|---|
+| **1** | `audit_logs` no era append-only a nivel de PRIVILEGIO: el `ALTER DEFAULT PRIVILEGES` de E1 concede los cuatro verbos a toda tabla nueva, y el comentario de la migración de E2 afirmaba lo contrario | Migración `20260905120000_e2_audit_logs_revoke` con `REVOKE UPDATE, DELETE`; el comentario falso se corrige EN ELLA (la de E2 ya está aplicada y editarla rompería su checksum). Test con `aclexplode` sobre el ACL real + test de que el intento da `permission denied`. Se retira el `GRANT … ON ALL TABLES` de `vitest.integration.rls.setup.ts`, que volvía a conceder lo revocado |
+| **2** | `importNpgc` insertaba ~900 filas de una en una y releía el plan entero varias veces; el `timeout` de 5 s de Prisma no daba margen | `createMany` agrupado POR NIVEL (la FK compuesta exige padre antes que hijo), plan compuesto en memoria, mapa y tipos en un `createMany` cada uno (ids generados en cliente para enlazar el recargo). `tenantTransaction` acepta `{ timeout, maxWait }`; la siembra usa `SEED_TRANSACTION_OPTIONS` (60 s / 10 s). **Medido en local: mediana 1086 ms → 469 ms (3 siembras PYMES de 798 cuentas)** |
+| **3** | R-15 sólo se aplicaba al editar: un alta podía inventarse un epígrafe | `validateNewAccount(…, { epigraphCatalog })` → `EPIGRAPH_UNKNOWN`; `createAccountFormSchema(catalogo)` lo acota también en el borde, y la action inyecta el catálogo de la variante |
+| **4** | `updateTaxRate` no tocaba `isSystem` y la desactivación se fiaba del flag | `updateTaxRate` marca la cuenta nueva y libera la anterior si no la reclama nadie; `setAccountActive` consulta `getAccountUsage` y `canDeactivateAccount(account, plan, usage)` bloquea por mapa y por tipos vigentes, no sólo por el flag |
+| **5** | `/settings/audit` era visible para VIEWER/EDITOR | `requireOrg(VIEWER)` + `notFound()` si el rol no es ADMIN; el enlace del menú pasa a `adminOnly: true` |
+| **6** | `parseCustomPlanCsv` normalizaba el delimitador con `split(";").join(",")`, partiendo cualquier `;` dentro de comillas | `parseCsvRows(text, delimiter)` respeta el delimitador dentro del parser; test con `"Servicios; consultoría"` que antes se partía en dos columnas |
+| **7** | Cada fila del árbol montaba su menú **y sus tres diálogos** (~900 filas) | Los diálogos se hoistean a UNO solo por árbol (`AccountActionsHost`) y la fila queda con `AccountRowMenu`. Es la opción más simple: no añade dependencia de virtualización y el DOM de la tabla no cambia (búsqueda del navegador y e2e intactos) |
+| 8 | Sin tope de filas en el import | `MAX_IMPORT_ROWS = 5000`, comprobado antes de construir nada → `CSV_ROW` |
+| 9 | El error de padre huérfano no decía la línea | `resolveImportedParents(rows, plan, rowNumberByCode)` + `rowNumbersByCode()`; `importCustomPlan` los pasa |
+| 10 | La simetría del redondeo de `applyBps` no estaba documentada | Nota bajo R-IVA-2 en `docs/design/E2-validacion-contable.md` (añadida, sin reescribir la regla): half-up sobre la magnitud, porque una rectificativa debe anular exactamente su factura |
+| 11 | `parseBps` aceptaba `number` y hacía `×100` sobre flotante | Sólo acepta texto; la conversión desde `number` queda en `forms/tax-rates.ts`, explícita y documentada |
+| 12 | Fallback muerto `?? ACCOUNT_KEY_DEFAULT_CODE[key]` al sembrar tipos | Eliminado: si una clave no está mapeada, su tipo no se siembra (el código "de libro" puede no existir o no ser postable en esa organización) |
+| 13 | La FK del árbol era `ON UPDATE NO ACTION` y las otras tres `CASCADE` | Unificada a `CASCADE` en la migración nueva y en el schema (E3 implementa la recodificación en cascada de R-21) |
+| 14 | `tests/e2e/session.ts` daba por hecho `SELF_HOSTED_MODE=true` | Lee `config.selfHosted.isEnabled` de `lib/config`, la misma fuente que la app |
+| 15 | `tests/integration/e2-qa-attack.test.ts` sin commitear y con 5 `no-unused-vars` | Arreglados los 5 (imports no usados y desestructuración con `_`), sin tocar su lógica |
+| 16 | `RATE_OVERLAP` no decía qué hacer | El mensaje indica la vigencia que estorba y que hay que cerrarla con «Cerrar vigencia» antes de crear el nuevo tipo |
+| 17 | Las rutas implementadas no coincidían con §6/§4.2 | Diseño actualizado: `/settings/account-map` y `/settings/audit`, con el motivo del cambio de ruta y el rol de cada pantalla |
+| **QA** | El comentario de `e2-accounts.test.ts` afirmaba que «`tenantDb` tampoco puede saltárselo» | Falso y corregido: el test ahora DEMUESTRA que como propietario sí se puede borrar, y `docs/ESTADO.md` anota que el append-only depende de conectar como `app_runtime` hasta que E3 active `FORCE ROW LEVEL SECURITY` |

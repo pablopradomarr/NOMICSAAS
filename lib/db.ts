@@ -449,13 +449,30 @@ function tenantTransactionFacade(organizationId: string, tx: object): TenantTran
   ) as unknown as TenantTransactionClient
 }
 
+/**
+ * Límites de la transacción. Prisma corta a los 5 s por defecto (`timeout`) y
+ * espera 2 s por una conexión libre (`maxWait`): suficiente para una mutación de
+ * formulario, NO para una siembra de plan contable (900 cuentas + mapa + tipos),
+ * que aborta a mitad con «Transaction already closed» y deja al usuario sin
+ * plan. Quien haga un lote largo debe declarar su presupuesto explícitamente.
+ */
+export type TenantTransactionOptions = { timeout?: number; maxWait?: number }
+
+/** Presupuesto de las operaciones de siembra/importación masiva (E2, T7). */
+export const SEED_TRANSACTION_OPTIONS: TenantTransactionOptions = { timeout: 60_000, maxWait: 10_000 }
+
 export async function tenantTransaction<T>(
   organizationId: string,
   userIdOrFn: string | undefined | ((tx: TenantTransactionClient) => Promise<T>),
-  maybeFn?: (tx: TenantTransactionClient) => Promise<T>
+  fnOrOptions?: ((tx: TenantTransactionClient) => Promise<T>) | TenantTransactionOptions,
+  maybeOptions?: TenantTransactionOptions
 ): Promise<T> {
   const userId = typeof userIdOrFn === "function" ? undefined : userIdOrFn
-  const fn = typeof userIdOrFn === "function" ? userIdOrFn : maybeFn
+  const fn = typeof userIdOrFn === "function" ? userIdOrFn : (typeof fnOrOptions === "function" ? fnOrOptions : undefined)
+  const options: TenantTransactionOptions | undefined =
+    typeof userIdOrFn === "function"
+      ? (fnOrOptions as TenantTransactionOptions | undefined)
+      : (maybeOptions ?? (typeof fnOrOptions === "function" ? undefined : fnOrOptions))
   if (!fn) throw new TenantError("tenantTransaction: falta la función de transacción")
   assertUuid(organizationId)
 
@@ -463,7 +480,8 @@ export async function tenantTransaction<T>(
   if (outer && outer.organizationId === organizationId) {
     // Reentrante: ya hay transacción de tenant abierta para esta organización.
     // Abrir otra tomaría una segunda conexión del pool mientras la primera sigue
-    // viva → interbloqueo bajo carga. Se reutiliza la que hay (#9).
+    // viva → interbloqueo bajo carga. Se reutiliza la que hay (#9). Los límites
+    // los fijó quien abrió la transacción externa: aquí ya no se pueden ampliar.
     return await fn(tenantTransactionFacade(organizationId, outer.client))
   }
 
@@ -476,7 +494,7 @@ export async function tenantTransaction<T>(
       { organizationId, userId, client: tx as unknown as ClientByModel },
       async () => fn(tenantTransactionFacade(organizationId, tx))
     )
-  })
+  }, options)
 }
 
 /**

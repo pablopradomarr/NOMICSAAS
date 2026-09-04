@@ -115,7 +115,8 @@ export function checkStatementGroup(code: string, statement: Statement | null): 
 export function validateNewAccount(
   input: NewAccountInput,
   plan: Plan,
-  parentUsage: AccountUsage
+  parentUsage: AccountUsage,
+  opts: { epigraphCatalog?: ReadonlySet<string> } = {}
 ): Result<PlanAccount> {
   const errors: AccountError[] = []
 
@@ -154,6 +155,22 @@ export function validateNewAccount(
   const statement = input.statement !== undefined ? input.statement : (parent?.statement ?? null)
   const statementError = checkStatementGroup(code, statement)
   if (statementError) errors.push(statementError)
+
+  // R-15 también en el ALTA, no sólo en la edición: una subcuenta nueva con un
+  // epígrafe inventado no agrega en ningún informe y nadie se entera hasta que
+  // el balance no cuadra. Si no se pasa catálogo, no se comprueba (el seed y los
+  // tests que construyen planes a mano no lo necesitan).
+  if (opts.epigraphCatalog && input.epigraph !== undefined && input.epigraph !== null) {
+    if (!opts.epigraphCatalog.has(input.epigraph)) {
+      errors.push(
+        err(
+          "EPIGRAPH_UNKNOWN",
+          "epigraph",
+          `«${input.epigraph}» no pertenece al catálogo de epígrafes de la variante (R-15)`
+        )
+      )
+    }
+  }
 
   if (errors.length > 0) return { ok: false, errors }
 
@@ -320,7 +337,7 @@ export function validateAccountUpdate(
   // R-06: desactivar una cuenta de sistema, prohibido; motivo obligatorio.
   if (patch.isActive !== undefined && patch.isActive !== before.isActive) {
     if (patch.isActive === false) {
-      const deactivation = canDeactivateAccount(before, ctx.plan)
+      const deactivation = canDeactivateAccount(before, ctx.plan, ctx.usage)
       if (!deactivation.ok) errors.push(...deactivation.errors)
       if (!patch.reason?.trim()) {
         errors.push(err("REASON_REQUIRED", "reason", "Desactivar una cuenta exige un motivo"))
@@ -337,16 +354,41 @@ export function validateAccountUpdate(
  * R-06 + R-09: desactivar nunca borra historia. No se permite en cuentas de
  * sistema ni con hijos activos (la cascada NO se hace: se listan y decide el usuario).
  */
-export function canDeactivateAccount(account: PlanAccount, plan: Plan): Result<void> {
+export function canDeactivateAccount(account: PlanAccount, plan: Plan, usage?: AccountUsage): Result<void> {
   const errors: AccountError[] = []
   if (account.isSystem) {
     errors.push(
       err(
         "SYSTEM_ACCOUNT",
         "isActive",
-        `La cuenta ${account.code} está mapeada como cuenta de sistema o la usa un tipo impositivo: no se puede desactivar (R-06)`
+        `La cuenta ${account.code} está marcada como cuenta de sistema: no se puede desactivar (R-06)`
       )
     )
+  }
+  // El flag `isSystem` es un CACHE, y un cache puede quedarse atrás: si un
+  // remapeo o el alta de un tipo impositivo no lo actualizó, desactivar la
+  // cuenta dejaría el mapa apuntando a una cuenta inactiva y rompería I-plan-1.
+  // Cuando el llamante trae el uso real, manda el uso.
+  if (usage) {
+    if (usage.mappedKeys.length > 0 && !account.isSystem) {
+      errors.push(
+        err(
+          "IS_MAPPED",
+          "isActive",
+          `La cuenta ${account.code} resuelve las claves de sistema ${usage.mappedKeys.join(", ")}: ` +
+            "remapéalas antes de desactivarla (I-plan-1)"
+        )
+      )
+    }
+    if (usage.taxRateCodes.length > 0 && !account.isSystem) {
+      errors.push(
+        err(
+          "IS_TAXED",
+          "isActive",
+          `La usan los tipos impositivos ${usage.taxRateCodes.join(", ")}: no se puede desactivar`
+        )
+      )
+    }
   }
   const activeChildren = childrenOf(plan, account.code).filter((c) => c.isActive)
   if (activeChildren.length > 0) {

@@ -30,7 +30,12 @@ export default async function setup() {
     )
     await client.query(`ALTER ROLE app_runtime WITH LOGIN NOBYPASSRLS PASSWORD '${appRuntimePassword()}'`)
     await client.query(`GRANT USAGE ON SCHEMA public TO app_runtime`)
-    await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime`)
+    // Los privilegios de tabla los conceden LAS MIGRACIONES (E1 sobre todas las
+    // tablas + `ALTER DEFAULT PRIVILEGES` para las que nazcan después). El
+    // `GRANT … ON ALL TABLES` que había aquí volvía a conceder UPDATE y DELETE
+    // sobre `audit_logs` justo después de que la migración de E2 los revocara,
+    // de modo que la suite no podía comprobar el append-only a nivel de
+    // privilegio y el entorno de test divergía del real (revisión, hallazgo 1).
   } finally {
     await client.end()
   }

@@ -56,15 +56,16 @@ export function formatBps(bps: number): string {
  * Texto de la UI → puntos básicos. `"21"`, `"21%"`, `"5,2"`, `"1,75"` → 2100,
  * 2100, 520, 175. Devuelve `null` si no es interpretable o se sale de rango.
  * Sin `parseFloat` en ningún paso (ADR-0006).
+ *
+ * SÓLO acepta texto. Admitir `number` obligaba a hacer `input * 100` sobre un
+ * flotante —justo lo que ADR-0006 prohíbe para cifras que acaban en un asiento—
+ * y `21.7 * 100 = 2169.9999…` habría entrado como 2170 por redondeo silencioso.
+ * Quien tenga un número lo pasa a texto y elige él la representación
+ * (revisión, hallazgo 11).
  */
-export function parseBps(input: string | number | null | undefined): number | null {
+export function parseBps(input: string | null | undefined): number | null {
   if (input === null || input === undefined) return null
-  if (typeof input === "number") {
-    if (!Number.isFinite(input)) return null
-    // Un número ya viene en tanto por ciento: 21 → 2100.
-    const scaled = Math.round(input * 100)
-    return scaled >= 0 && scaled <= MAX_RATE_BPS ? scaled : null
-  }
+  if (typeof input !== "string") return null
   const raw = input.trim().replace(/\s|%/g, "")
   if (raw === "") return null
   if (!/^\d{1,3}([.,]\d{1,2})?$/.test(raw)) return null

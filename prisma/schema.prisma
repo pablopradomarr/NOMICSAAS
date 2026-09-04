@@ -555,7 +555,7 @@ model LedgerAccount {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  parent          LedgerAccount?           @relation("AccountTree", fields: [organizationId, parentCode], references: [organizationId, code], onDelete: NoAction, onUpdate: NoAction)
+  parent          LedgerAccount?           @relation("AccountTree", fields: [organizationId, parentCode], references: [organizationId, code], onDelete: NoAction, onUpdate: Cascade)
   children        LedgerAccount[]          @relation("AccountTree")
   accountMaps     OrganizationAccountMap[]
   taxRatesMain    TaxRate[]                @relation("TaxRateAccount")

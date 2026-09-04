@@ -128,8 +128,12 @@ export function validateTaxRate(
         err(
           "RATE_OVERLAP",
           "validFrom",
-          `Ya existe un tipo ${input.code} vigente en ese periodo (desde ${other.validFrom.toISOString().slice(0, 10)}): ` +
-            "cierra su vigencia antes de crear el nuevo"
+          `Ya existe un tipo ${input.code} vigente en ese periodo (desde ` +
+            `${other.validFrom.toISOString().slice(0, 10)}` +
+            `${other.validTo ? ` hasta ${other.validTo.toISOString().slice(0, 10)}` : ", sin fecha de fin"}). ` +
+            `Cierra su vigencia con «Cerrar vigencia» poniéndole un fin anterior a ` +
+            `${input.validFrom.toISOString().slice(0, 10)} y vuelve a crear el nuevo: los tipos no se ` +
+            "editan, se suceden."
         )
       )
     }

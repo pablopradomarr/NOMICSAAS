@@ -68,7 +68,7 @@ const settingsItems = [
   { title: "Plan de cuentas", href: "/settings/accounts", icon: ListTree, adminOnly: false },
   { title: "Mapa de cuentas", href: "/settings/account-map", icon: Waypoints, adminOnly: false },
   { title: "Impuestos", href: "/settings/taxes", icon: Percent, adminOnly: false },
-  { title: "Auditoría de cambios", href: "/settings/audit", icon: ScrollText, adminOnly: false },
+  { title: "Auditoría de cambios", href: "/settings/audit", icon: ScrollText, adminOnly: true },
   { title: "LLM settings", href: "/settings/llm", icon: Sparkles, adminOnly: true },
   { title: "Fields", href: "/settings/fields", icon: FormInput, adminOnly: true },
   { title: "Categories", href: "/settings/categories", icon: Tags, adminOnly: true },

@@ -123,6 +123,28 @@ export async function updateTaxRate(
     if (!validated.ok) return validated as Result<TaxRate>
 
     const after = await tx.taxRate.update({ where: { id }, data: patch })
+
+    // R-06: si el tipo cambia de cuenta, la NUEVA pasa a ser de sistema y la
+    // anterior deja de serlo si ya no la reclama nadie. Sin esto, cambiar la
+    // cuenta de un tipo dejaba la vieja bloqueada para siempre y la nueva
+    // desprotegida — desactivable, aunque el motor la necesitara.
+    const nuevas = [after.accountCode, after.counterAccountCode].filter((c): c is string => c !== null)
+    await tx.ledgerAccount.updateMany({ where: { code: { in: nuevas } }, data: { isSystem: true } })
+
+    const liberadas = [before.accountCode, before.counterAccountCode]
+      .filter((c): c is string => c !== null)
+      .filter((c) => !nuevas.includes(c))
+    for (const code of liberadas) {
+      const [mapeada, comoCuenta, comoContrapartida] = await Promise.all([
+        tx.organizationAccountMap.count({ where: { accountCode: code } }),
+        tx.taxRate.count({ where: { accountCode: code } }),
+        tx.taxRate.count({ where: { counterAccountCode: code } }),
+      ])
+      if (mapeada === 0 && comoCuenta === 0 && comoContrapartida === 0) {
+        await tx.ledgerAccount.updateMany({ where: { code }, data: { isSystem: false } })
+      }
+    }
+
     await writeAuditLog(tx, {
       entity: "TaxRate",
       entityId: after.id,

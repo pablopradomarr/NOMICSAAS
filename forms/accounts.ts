@@ -46,20 +46,34 @@ export const statementSchema = nullableEnum(Statement, "Estado financiero descon
 export const analyticTypeSchema = nullableEnum(AnalyticType, "Tipo analítico desconocido")
 export const cashflowCategorySchema = nullableEnum(CashflowCategory, "Categoría de cashflow desconocida")
 
-/** Alta de subcuenta. El padre se resuelve en el servidor por prefijo (T-6). */
-export const createAccountFormSchema = z.object({
-  code: accountCodeSchema,
-  name: accountNameSchema,
-  statement: statementSchema,
-  epigraph: z
-    .string()
-    .trim()
-    .max(255)
-    .optional()
-    .transform((value) => (value && value !== "" ? value : null)),
-  analyticType: analyticTypeSchema,
-  cashflowCategory: cashflowCategorySchema,
-})
+/** Epígrafe opcional; `""` significa «heredar el del padre», no cadena vacía. */
+const epigraphSchema = z
+  .string()
+  .trim()
+  .max(255)
+  .optional()
+  .transform((value) => (value && value !== "" ? value : null))
+
+/**
+ * Alta de subcuenta. El padre se resuelve en el servidor por prefijo (T-6).
+ *
+ * R-15: el epígrafe se acota al catálogo CERRADO de la variante. El catálogo se
+ * deriva del seed, así que no puede vivir en el schema estático: la server
+ * action lo inyecta con `createAccountFormSchema(catalogo)`. La variante sin
+ * argumento sigue existiendo para los tests de forma pura.
+ */
+export const createAccountFormSchema = (epigraphCatalog?: ReadonlySet<string>) =>
+  z.object({
+    code: accountCodeSchema,
+    name: accountNameSchema,
+    statement: statementSchema,
+    epigraph: epigraphSchema.refine(
+      (value) => value === null || !epigraphCatalog || epigraphCatalog.has(value),
+      "Ese epígrafe no existe en el modelo de cuentas anuales de la organización"
+    ),
+    analyticType: analyticTypeSchema,
+    cashflowCategory: cashflowCategorySchema,
+  })
 
 /** R-19: renombrar siempre se permite, incluso en cuentas de sistema. */
 export const renameAccountFormSchema = z.object({
@@ -138,6 +152,6 @@ export const importPlanCsvFormSchema = z.object({
   reason: optionalReasonSchema,
 })
 
-export type CreateAccountForm = z.infer<typeof createAccountFormSchema>
+export type CreateAccountForm = z.infer<ReturnType<typeof createAccountFormSchema>>
 export type UpdateAccountClassificationForm = z.infer<typeof updateAccountClassificationFormSchema>
 export type ImportPlanCsvForm = z.infer<typeof importPlanCsvFormSchema>

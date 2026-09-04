@@ -144,33 +144,36 @@ describe.skipIf(!OWNER_URL)("E2 · accounts / maps / tax_rates / audit_logs como
     expect(planB.byCode.get("705")?.name).not.toBe("Secuestrada")
   })
 
-  it("ADR-0008 · audit_logs es append-only: UPDATE y DELETE afectan a 0 filas propias", async () => {
-    await asRuntime(ORG_A, async (client) => {
-      const antes = await client.query(`SELECT count(*)::int AS n FROM "audit_logs" WHERE organization_id = $1`, [ORG_A])
+  it("ADR-0008 · las políticas por sí solas ya impiden tocar una fila propia (0 filas)", async () => {
+    // Se comprueba con el PROPIETARIO de las tablas, que tiene todos los
+    // privilegios: así lo que se ejerce es la política RESTRICTIVE y no el GRANT.
+    // (Como no hay `FORCE ROW LEVEL SECURITY`, el propietario las esquiva, así
+    // que se usa un rol nuevo con privilegios completos y sin BYPASSRLS.)
+    await owner(async (client) => {
+      await client.query(`DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'e2_audit_probe') THEN
+           CREATE ROLE e2_audit_probe NOSUPERUSER NOBYPASSRLS NOINHERIT;
+         END IF;
+       END $$`)
+      await client.query(`GRANT USAGE ON SCHEMA app, public TO e2_audit_probe`)
+      await client.query(`GRANT EXECUTE ON FUNCTION app.current_org() TO e2_audit_probe`)
+      await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON "audit_logs" TO e2_audit_probe`)
+      await client.query("BEGIN")
+      await client.query("SET LOCAL ROLE e2_audit_probe")
+      await client.query("SELECT set_config('app.current_org', $1, true)", [ORG_A])
+      const antes = await client.query(`SELECT count(*)::int AS n FROM "audit_logs"`)
       expect(antes.rows[0].n).toBeGreaterThan(0)
-
-      // Ni siquiera sobre las PROPIAS filas: la política RESTRICTIVE es USING(false).
-      const update = await client.query(`UPDATE "audit_logs" SET reason = 'manipulado' WHERE organization_id = $1`, [ORG_A])
+      const update = await client.query(`UPDATE "audit_logs" SET reason = 'manipulado'`)
       expect(update.rowCount).toBe(0)
-      const del = await client.query(`DELETE FROM "audit_logs" WHERE organization_id = $1`, [ORG_A])
+      const del = await client.query(`DELETE FROM "audit_logs"`)
       expect(del.rowCount).toBe(0)
-
-      const despues = await client.query(`SELECT count(*)::int AS n FROM "audit_logs" WHERE organization_id = $1`, [ORG_A])
-      expect(despues.rows[0].n).toBe(antes.rows[0].n)
-      const manipulados = await client.query(
-        `SELECT count(*)::int AS n FROM "audit_logs" WHERE reason = 'manipulado'`
-      )
+      const manipulados = await client.query(`SELECT count(*)::int AS n FROM "audit_logs" WHERE reason = 'manipulado'`)
       expect(manipulados.rows[0].n).toBe(0)
+      await client.query("ROLLBACK")
     })
   })
 
   it("ADR-0008 · audit_logs lleva las dos políticas RESTRICTIVE que la hacen inmutable", async () => {
-    // La garantía real es la política, no el GRANT: `vitest.integration.rls.setup.ts`
-    // concede UPDATE/DELETE sobre TODAS las tablas al preparar la base (y el
-    // `ALTER DEFAULT PRIVILEGES` de E1 hace lo propio con las tablas nuevas), así
-    // que el privilegio no es comprobable aquí. La migración de E2 sólo concede
-    // SELECT+INSERT sobre `audit_logs`; el candado que sí se puede afirmar en
-    // cualquier entorno es `USING (false)` en UPDATE y DELETE.
     const politicas = await owner(async (client) =>
       client.query(
         `SELECT policyname, cmd, permissive, qual
@@ -186,6 +189,55 @@ describe.skipIf(!OWNER_URL)("E2 · accounts / maps / tax_rates / audit_logs como
     }
     expect(byName.get("audit_logs_no_update")?.cmd).toBe("UPDATE")
     expect(byName.get("audit_logs_no_delete")?.cmd).toBe("DELETE")
+  })
+
+  it("ADR-0008 · app_runtime tampoco TIENE el privilegio de UPDATE/DELETE sobre audit_logs", async () => {
+    // Segunda cerradura (revisión, hallazgo 1): `20260905120000_e2_audit_logs_revoke`
+    // revoca lo que el `ALTER DEFAULT PRIVILEGES` de E1 concedía de oficio a toda
+    // tabla nueva. Se lee el ACL real de la tabla con aclexplode, no
+    // `role_table_grants` (que resuelve por rol conectado y oculta la herencia).
+    const acl = await owner(async (client) =>
+      client.query(
+        `SELECT a.privilege_type
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace,
+              LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
+         JOIN pg_roles r ON r.oid = a.grantee
+         WHERE n.nspname = 'public' AND c.relname = 'audit_logs' AND r.rolname = 'app_runtime'
+         ORDER BY a.privilege_type`
+      )
+    )
+    const privilegios = acl.rows.map((r) => r.privilege_type)
+    expect(privilegios).toContain("SELECT")
+    expect(privilegios).toContain("INSERT")
+    expect(privilegios).not.toContain("UPDATE")
+    expect(privilegios).not.toContain("DELETE")
+
+    // Y las tres tablas de configuración SÍ los conservan: la revocación es
+    // quirúrgica, no un apagón que rompería el editor del plan.
+    const cuentas = await owner(async (client) =>
+      client.query(
+        `SELECT a.privilege_type
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace,
+              LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
+         JOIN pg_roles r ON r.oid = a.grantee
+         WHERE n.nspname = 'public' AND c.relname = 'accounts' AND r.rolname = 'app_runtime'`
+      )
+    )
+    expect(cuentas.rows.map((r) => r.privilege_type)).toEqual(
+      expect.arrayContaining(["SELECT", "INSERT", "UPDATE", "DELETE"])
+    )
+  })
+
+  it("el intento de UPDATE sobre audit_logs es un ERROR de permisos, no un no-op silencioso", async () => {
+    // Con el privilegio revocado, Postgres corta ANTES de evaluar la política.
+    await expect(
+      asRuntime(ORG_A, async (client) => client.query(`UPDATE "audit_logs" SET reason = 'manipulado'`))
+    ).rejects.toThrow(/permission denied/i)
+    await expect(
+      asRuntime(ORG_A, async (client) => client.query(`DELETE FROM "audit_logs"`))
+    ).rejects.toThrow(/permission denied/i)
   })
 
   it("las cuatro tablas tienen RLS habilitada y su política tenant_isolation", async () => {

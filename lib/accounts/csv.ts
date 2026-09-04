@@ -54,8 +54,16 @@ const ANALYTIC_TYPES = new Set<string>([
 /**
  * Parser CSV mínimo con comillas dobles (RFC 4180). El seed no las usa, pero un
  * plan importado por el usuario sí: un nombre de cuenta con coma es normal.
+ *
+ * `delimiter` es un ÚNICO carácter y se respeta dentro del parser. Antes se
+ * normalizaba el fichero con `text.split(";").join(",")` antes de parsear, lo
+ * que destrozaba cualquier `;` que viviera DENTRO de un campo entrecomillado
+ * ("Servicios; consultoría") partiéndolo en dos columnas (revisión, hallazgo 6).
  */
-export function parseCsvRows(text: string): string[][] {
+export function parseCsvRows(text: string, delimiter: string = ","): string[][] {
+  if (delimiter.length !== 1 || delimiter === '"' || delimiter === "\n" || delimiter === "\r") {
+    throw new TypeError(`parseCsvRows: delimitador inválido ${JSON.stringify(delimiter)}`)
+  }
   const rows: string[][] = []
   let row: string[] = []
   let field = ""
@@ -93,7 +101,7 @@ export function parseCsvRows(text: string): string[][] {
       i++
       continue
     }
-    if (c === ",") {
+    if (c === delimiter) {
       push()
       i++
       continue
@@ -343,6 +351,9 @@ export function planDiff(
 // parseCustomPlanCsv — import de plan propio (§3, R4)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Tope de filas de un plan importado (hallazgo 8). El PGC completo son 906. */
+export const MAX_IMPORT_ROWS = 5000
+
 export type ColumnMapping = {
   code: string
   name: string
@@ -406,10 +417,22 @@ export function parseCustomPlanCsv(
   defaults: ImportDefaults
 ): Result<SeedAccount[]> {
   const delimiter = defaults.delimiter ?? ","
-  const text = delimiter === "," ? csvText : csvText.split(delimiter).join(",")
-  const rows = parseCsvRows(text)
+  const rows = parseCsvRows(csvText, delimiter)
   if (rows.length < 2) {
     return fail(err("CSV_HEADER", "file", "El fichero no tiene ninguna fila de datos"))
+  }
+  // Tope de tamaño: un fichero de 200.000 filas no es un plan contable, es un
+  // error de fichero o un intento de agotar la memoria del servidor. Se corta
+  // ANTES de construir nada (revisión, hallazgo 8).
+  if (rows.length - 1 > MAX_IMPORT_ROWS) {
+    return fail(
+      err(
+        "CSV_ROW",
+        "file",
+        `El fichero trae ${rows.length - 1} filas y el máximo admitido son ${MAX_IMPORT_ROWS}: ` +
+          "un plan contable completo no llega a mil cuentas"
+      )
+    )
   }
   const header = rows[0].map((h) => h.trim())
   const indexOf = (column: string | undefined): number => (column === undefined ? -1 : header.indexOf(column))
@@ -521,16 +544,45 @@ export function parseCustomPlanCsv(
 }
 
 /**
+ * Nº de fila del fichero para cada código, para que los errores posteriores
+ * (resolución de padres) puedan señalar la línea original.
+ */
+export function rowNumbersByCode(csvText: string, mapping: ColumnMapping, delimiter: string = ","): Map<string, number> {
+  const rows = parseCsvRows(csvText, delimiter)
+  const out = new Map<string, number>()
+  if (rows.length === 0) return out
+  const index = rows[0].map((h) => h.trim()).indexOf(mapping.code)
+  if (index < 0) return out
+  for (let r = 1; r < rows.length; r++) {
+    const code = (rows[r][index] ?? "").trim()
+    if (code !== "" && !out.has(code)) out.set(code, r)
+  }
+  return out
+}
+
+/**
  * Resuelve `parentCode` de las filas importadas contra el plan YA EXISTENTE más
  * las propias filas: un plan ajeno no trae jerarquía explícita.
  */
-export function resolveImportedParents(rows: readonly SeedAccount[], existing: Plan): Result<SeedAccount[]> {
+export function resolveImportedParents(
+  rows: readonly SeedAccount[],
+  existing: Plan,
+  /** Nº de fila del fichero por código, para que el error señale la línea (hallazgo 9). */
+  rowNumberByCode?: ReadonlyMap<string, number>
+): Result<SeedAccount[]> {
   const codes = new Set<string>([...existing.codes, ...rows.map((r) => r.code)])
   const errors: AccountError[] = []
   const out = rows.map((row) => {
     const parentCode = resolveParentCodeIn(row.code, codes)
     if (parentCode === null && row.code.length > 1) {
-      errors.push(err("CSV_ROW", "code", `La cuenta ${row.code} no tiene ninguna cuenta padre en el plan`))
+      errors.push(
+        err(
+          "CSV_ROW",
+          "code",
+          `La cuenta ${row.code} no tiene ninguna cuenta padre en el plan: crea antes el grupo o subgrupo del que cuelga`,
+          rowNumberByCode?.get(row.code)
+        )
+      )
     }
     return { ...row, parentCode }
   })

@@ -7,6 +7,7 @@ import { listAuditLog, type AuditAction, type AuditEntity } from "@/models/audit
 import { listOrganizationMembersWithUsers } from "@/models/memberships"
 import { Role } from "@/prisma/client"
 import { Metadata } from "next"
+import { notFound } from "next/navigation"
 
 export const metadata: Metadata = {
   title: "Auditoría de cambios",
@@ -56,16 +57,22 @@ function summarize(value: unknown): string {
 }
 
 /**
- * E2 · T11 — Registro de auditoría de configuración (§7). Sólo lectura, para
- * cualquier miembro (VIEWER incluido): `audit_logs` es append-only también en la
- * base (ADR-0008), así que aquí no hay nada que mutar.
+ * E2 · T11 — Registro de auditoría de configuración (§7). Sólo ADMIN.
+ *
+ * Es de sólo lectura, pero no es información inocua: el registro contiene los
+ * `before`/`after` completos de la configuración fiscal y contable, los motivos
+ * que escribió cada administrador y quién hizo cada cambio. Enseñárselo a un
+ * VIEWER o a un EDITOR es una fuga de información de gobierno, no una función
+ * de consulta (revisión, hallazgo 5). Se responde `notFound()` en vez de 403
+ * para no confirmar siquiera que la página existe.
  */
 export default async function AuditSettingsPage({
   searchParams,
 }: {
   searchParams: Promise<{ entity?: string; action?: string; userId?: string }>
 }) {
-  const { db, org } = await requireOrg(Role.VIEWER)
+  const { db, org, role } = await requireOrg(Role.VIEWER)
+  if (role !== Role.ADMIN) notFound()
   const filters = await searchParams
 
   const entity = ENTITIES.find((option) => option.value === filters.entity)?.value

@@ -12,11 +12,17 @@ import { parseBps } from "@/lib/taxes/bps"
 import { TaxAppliesTo, TaxKind, TaxRoundingMode } from "@/prisma/client"
 import { z } from "zod"
 
-/** `"21"` / `"5,2"` / `"1,75"` → 2100 / 520 / 175. */
+/**
+ * `"21"` / `"5,2"` / `"1,75"` → 2100 / 520 / 175.
+ *
+ * El campo llega como TEXTO del formulario. Un `number` se pasa a texto aquí, no
+ * dentro de `parseBps`: la conversión ×100 sobre un flotante es justo lo que
+ * ADR-0006 prohíbe para una cifra que acabará en un asiento (hallazgo 11).
+ */
 export const rateBpsSchema = z
   .union([z.string(), z.number()])
   .transform((value, ctx) => {
-    const bps = parseBps(value)
+    const bps = parseBps(typeof value === "number" ? (Number.isFinite(value) ? String(value) : null) : value)
     if (bps === null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

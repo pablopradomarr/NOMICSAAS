@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto"
+import { existsSync, readFileSync } from "node:fs"
+import path from "node:path"
 import { Client } from "pg"
 import type { BrowserContext, Page } from "@playwright/test"
 
@@ -15,10 +17,45 @@ import type { BrowserContext, Page } from "@playwright/test"
  * la instalación no es self-hosted.
  */
 
-export const DATABASE_URL =
-  process.env.DATABASE_URL || "postgresql://postgres@localhost:5432/erp"
+/**
+ * Entorno EFECTIVO de la aplicación bajo prueba: el fichero `.env` que Next
+ * carga al arrancar, más lo que ya venga en `process.env` (que manda, igual que
+ * en Next). Playwright no carga `.env` por su cuenta, así que sin esto el
+ * helper leía un entorno VACÍO y no el de la app que está probando.
+ */
+function appEnv(): Record<string, string> {
+  const merged: Record<string, string> = {}
+  for (const file of [".env", ".env.local"]) {
+    const full = path.join(process.cwd(), file)
+    if (!existsSync(full)) continue
+    for (const line of readFileSync(full, "utf8").split("\n")) {
+      const match = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line)
+      if (!match) continue
+      merged[match[1]] = match[2].trim().replace(/^["']|["']$/g, "")
+    }
+  }
+  return { ...merged, ...(process.env as Record<string, string>) }
+}
 
-export const IS_SELF_HOSTED = (process.env.SELF_HOSTED_MODE ?? "true") === "true"
+const ENV = appEnv()
+
+export const DATABASE_URL = ENV.DATABASE_URL || "postgresql://postgres@localhost:5432/erp"
+
+/**
+ * Modo de la instalación, resuelto con la MISMA regla y la misma fuente que
+ * `lib/config` (`SELF_HOSTED_MODE`, con `"true"` por defecto).
+ *
+ * Antes se leía `process.env.SELF_HOSTED_MODE` a secas: como Playwright no
+ * carga `.env`, una instalación con `SELF_HOSTED_MODE=false` se veía aquí como
+ * self-hosted, el helper NO sembraba sesión, la app mandaba el smoke a `/enter`
+ * y el fallo se leía como «no encuentro la cuenta 430» en vez de «no hay
+ * sesión» (revisión, hallazgo 14).
+ *
+ * No se importa `lib/config` directamente porque arrastra `package.json` con un
+ * `import` sin atributo `type: json`, que el cargador ESM de Playwright rechaza
+ * («Module … needs an import attribute») y deja la suite entera sin tests.
+ */
+export const IS_SELF_HOSTED = (ENV.SELF_HOSTED_MODE ?? "true") === "true"
 
 export async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: DATABASE_URL })
