@@ -10,6 +10,122 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// E1 — Organizaciones y roles (docs/design/E1-organizaciones-roles.md)
+// Columnas y tablas NUEVAS siempre en snake_case (@map/@@map). Las heredadas
+// de TaxHacker NO se renombran (riesgo R5, deuda documentada).
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+
+  @@map("role")
+}
+
+enum PgcVariant {
+  GENERAL
+  PYMES
+
+  @@map("pgc_variant")
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+
+  @@map("invitation_status")
+}
+
+model Organization {
+  id                String     @id @default(uuid()) @db.Uuid
+  slug              String     @unique
+  name              String
+  taxId             String?    @map("tax_id")
+  baseCurrency      String     @default("EUR") @map("base_currency")
+  timezone          String     @default("Europe/Madrid")
+  pgcVariant        PgcVariant @default(PYMES) @map("pgc_variant")
+  ledgerEnabled     Boolean    @default(true) @map("ledger_enabled")
+  analyticsRequired Boolean    @default(true) @map("analytics_required")
+  reviewThresholds  Json?      @map("review_thresholds")
+  isPersonal        Boolean    @default(false) @map("is_personal")
+  isActive          Boolean    @default(true) @map("is_active")
+
+  // Datos de emisor de facturas (D-1: viven en la organización)
+  businessName        String? @map("business_name")
+  businessAddress     String? @map("business_address")
+  businessBankDetails String? @map("business_bank_details")
+  businessLogo        String? @map("business_logo")
+
+  // Facturación y cuotas (D-1: plan y consumo por organización)
+  stripeCustomerId    String?   @map("stripe_customer_id")
+  membershipPlan      String?   @map("membership_plan")
+  membershipExpiresAt DateTime? @map("membership_expires_at")
+  storageUsed         Int       @default(0) @map("storage_used")
+  storageLimit        Int       @default(-1) @map("storage_limit")
+  aiBalance           Int       @default(0) @map("ai_balance")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships  Membership[]
+  invitations  Invitation[]
+  settings     Setting[]
+  categories   Category[]
+  projects     Project[]
+  fields       Field[]
+  files        File[]
+  transactions Transaction[]
+  currencies   Currency[]
+  appData      AppData[]
+  progress     Progress[]
+
+  @@index([stripeCustomerId])
+  @@map("organizations")
+}
+
+model Membership {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id") @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           Role
+  invitedById    String?      @map("invited_by_id") @db.Uuid
+  acceptedAt     DateTime?    @map("accepted_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([organizationId, role])
+  @@map("memberships")
+}
+
+model Invitation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  role           Role
+  tokenHash      String           @unique @map("token_hash")
+  status         InvitationStatus @default(PENDING)
+  invitedById    String           @map("invited_by_id") @db.Uuid
+  expiresAt      DateTime         @map("expires_at")
+  acceptedAt     DateTime?        @map("accepted_at")
+  acceptedById   String?          @map("accepted_by_id") @db.Uuid
+  revokedAt      DateTime?        @map("revoked_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  @@index([organizationId, status])
+  @@index([email])
+  @@map("invitations")
+}
+
 model User {
   id                  String        @id @default(uuid()) @db.Uuid
   email               String        @unique
@@ -39,6 +155,12 @@ model User {
   sessions            Session[]
   appData             AppData[]
   progress            Progress[]
+  memberships         Membership[]
+
+  // NOTA E1: las columnas de facturación (stripe_*, membership_*, storage_*,
+  // ai_balance) y de negocio (business_*) se han COPIADO a Organization en la
+  // migración de backfill. Se eliminan de users en T11, cuando el código las
+  // lea desde la organización activa.
 
   @@map("users")
 }
@@ -89,150 +211,179 @@ model Verification {
 }
 
 model Setting {
-  id          String  @id @default(uuid()) @db.Uuid
-  userId      String  @map("user_id") @db.Uuid
-  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  code        String
-  name        String
-  description String?
-  value       String?
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id") @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code           String
+  name           String
+  description    String?
+  value          String?
+  version        Int          @default(1)
+  updatedAt      DateTime     @updatedAt @map("updated_at")
 
+  @@unique([organizationId, code])
   @@unique([userId, code])
   @@map("settings")
 }
 
 model Category {
-  id           String        @id @default(uuid()) @db.Uuid
-  userId       String        @map("user_id") @db.Uuid
-  user         User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  code         String
-  name         String
-  color        String        @default("#000000")
-  llm_prompt   String?
-  transactions Transaction[]
-  createdAt    DateTime      @default(now()) @map("created_at")
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String        @map("user_id") @db.Uuid
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code           String
+  name           String
+  color          String        @default("#000000")
+  llm_prompt     String?
+  transactions   Transaction[]
+  createdAt      DateTime      @default(now()) @map("created_at")
 
+  @@unique([organizationId, code])
   @@unique([userId, code])
   @@map("categories")
 }
 
 model Project {
-  id           String        @id @default(uuid()) @db.Uuid
-  userId       String        @map("user_id") @db.Uuid
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  code         String
-  name         String
-  color        String        @default("#000000")
-  llm_prompt   String?
-  transactions Transaction[]
-  createdAt    DateTime      @default(now()) @map("created_at")
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String        @map("user_id") @db.Uuid
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code           String
+  name           String
+  color          String        @default("#000000")
+  llm_prompt     String?
+  transactions   Transaction[]
+  createdAt      DateTime      @default(now()) @map("created_at")
 
+  @@unique([organizationId, code])
   @@unique([userId, code])
   @@map("projects")
 }
 
 model Field {
-  id                  String   @id @default(uuid()) @db.Uuid
-  userId              String   @map("user_id") @db.Uuid
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                  String       @id @default(uuid()) @db.Uuid
+  organizationId      String       @map("organization_id") @db.Uuid
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId              String       @map("user_id") @db.Uuid
+  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   code                String
   name                String
-  type                String   @default("string")
+  type                String       @default("string")
   llm_prompt          String?
   options             Json?
-  createdAt           DateTime @default(now()) @map("created_at")
-  isVisibleInList     Boolean  @default(false) @map("is_visible_in_list")
-  isVisibleInAnalysis Boolean  @default(false) @map("is_visible_in_analysis")
-  isRequired          Boolean  @default(false) @map("is_required")
-  isExtra             Boolean  @default(true) @map("is_extra")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  isVisibleInList     Boolean      @default(false) @map("is_visible_in_list")
+  isVisibleInAnalysis Boolean      @default(false) @map("is_visible_in_analysis")
+  isRequired          Boolean      @default(false) @map("is_required")
+  isExtra             Boolean      @default(true) @map("is_extra")
 
+  @@unique([organizationId, code])
   @@unique([userId, code])
   @@map("fields")
 }
 
 model File {
-  id                String   @id @default(uuid()) @db.Uuid
-  userId            String   @map("user_id") @db.Uuid
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String       @id @default(uuid()) @db.Uuid
+  organizationId    String       @map("organization_id") @db.Uuid
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId            String       @map("user_id") @db.Uuid
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   filename          String
   path              String
   mimetype          String
   metadata          Json?
-  isReviewed        Boolean  @default(false) @map("is_reviewed")
-  isSplitted        Boolean  @default(false) @map("is_splitted")
-  cachedParseResult Json?    @map("cached_parse_result")
-  createdAt         DateTime @default(now()) @map("created_at")
+  isReviewed        Boolean      @default(false) @map("is_reviewed")
+  isSplitted        Boolean      @default(false) @map("is_splitted")
+  cachedParseResult Json?        @map("cached_parse_result")
+  createdAt         DateTime     @default(now()) @map("created_at")
 
+  @@index([organizationId, createdAt])
+  @@index([organizationId, isReviewed])
   @@map("files")
 }
 
 model Transaction {
-  id                    String    @id @default(uuid()) @db.Uuid
-  userId                String    @map("user_id") @db.Uuid
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                    String       @id @default(uuid()) @db.Uuid
+  organizationId        String       @map("organization_id") @db.Uuid
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId                String       @map("user_id") @db.Uuid
+  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   name                  String?
   description           String?
   merchant              String?
   total                 Int?
-  currencyCode          String?   @map("currency_code")
-  convertedTotal        Int?      @map("converted_total")
-  convertedCurrencyCode String?   @map("converted_currency_code")
-  type                  String?   @default("expense")
-  items                 Json      @default("[]")
+  currencyCode          String?      @map("currency_code")
+  convertedTotal        Int?         @map("converted_total")
+  convertedCurrencyCode String?      @map("converted_currency_code")
+  type                  String?      @default("expense")
+  items                 Json         @default("[]")
   note                  String?
-  files                 Json      @default("[]")
+  files                 Json         @default("[]")
   extra                 Json?
-  category              Category? @relation(fields: [categoryCode, userId], references: [code, userId])
-  categoryCode          String?   @map("category_code")
-  project               Project?  @relation(fields: [projectCode, userId], references: [code, userId])
-  projectCode           String?   @map("project_code")
-  issuedAt              DateTime? @map("issued_at")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  category              Category?    @relation(fields: [categoryCode, organizationId], references: [code, organizationId])
+  categoryCode          String?      @map("category_code")
+  project               Project?     @relation(fields: [projectCode, organizationId], references: [code, organizationId])
+  projectCode           String?      @map("project_code")
+  issuedAt              DateTime?    @map("issued_at")
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
   text                  String?
 
   @@index([userId])
-  @@index([projectCode])
-  @@index([categoryCode])
-  @@index([issuedAt])
-  @@index([name])
-  @@index([merchant])
-  @@index([total])
+  @@index([organizationId, issuedAt])
+  @@index([organizationId, categoryCode])
+  @@index([organizationId, projectCode])
+  @@index([organizationId, merchant])
+  @@index([organizationId, total])
+  @@index([organizationId, name])
   @@map("transactions")
 }
 
 model Currency {
-  id     String  @id @default(uuid()) @db.Uuid
-  userId String? @map("user_id") @db.Uuid
-  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  code   String
-  name   String
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String?       @map("organization_id") @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String?       @map("user_id") @db.Uuid
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code           String
+  name           String
 
+  @@unique([organizationId, code])
   @@unique([userId, code])
   @@map("currencies")
 }
 
 model AppData {
-  id     String @id @default(uuid()) @db.Uuid
-  app    String
-  userId String @map("user_id") @db.Uuid
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  data   Json
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  app            String
+  userId         String       @map("user_id") @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  data           Json
 
+  @@unique([organizationId, userId, app])
   @@unique([userId, app])
   @@map("app_data")
 }
 
 model Progress {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  data      Json?
-  current   Int      @default(0)
-  total     Int      @default(0)
-  createdAt DateTime @default(now()) @map("created_at")
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id") @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           String
+  data           Json?
+  current        Int          @default(0)
+  total          Int          @default(0)
+  createdAt      DateTime     @default(now()) @map("created_at")
 
   @@index([userId])
+  @@index([organizationId, userId])
   @@map("progress")
 }

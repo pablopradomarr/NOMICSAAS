@@ -16,13 +16,15 @@ export {
   DEFAULT_SETTINGS,
 } from "@/models/defaults-data"
 
+// TRANSICIÓN E1 (T9): `userId` se usa también como organizationId porque la
+// organización personal creada en el backfill tiene id = users.id.
 export async function createUserDefaults(userId: string) {
   // Default projects
   for (const project of DEFAULT_PROJECTS) {
     await prisma.project.upsert({
       where: { userId_code: { code: project.code, userId } },
       update: { name: project.name, color: project.color, llm_prompt: project.llm_prompt },
-      create: { ...project, userId },
+      create: { ...project, userId, organizationId: userId },
     })
   }
 
@@ -31,7 +33,7 @@ export async function createUserDefaults(userId: string) {
     await prisma.category.upsert({
       where: { userId_code: { code: category.code, userId } },
       update: { name: category.name, color: category.color, llm_prompt: category.llm_prompt },
-      create: { ...category, userId },
+      create: { ...category, userId, organizationId: userId },
     })
   }
 
@@ -57,7 +59,7 @@ export async function createUserDefaults(userId: string) {
         isRequired: field.isRequired,
         isExtra: field.isExtra,
       },
-      create: { ...field, userId },
+      create: { ...field, userId, organizationId: userId },
     })
   }
 
@@ -66,7 +68,7 @@ export async function createUserDefaults(userId: string) {
     await prisma.setting.upsert({
       where: { userId_code: { code: setting.code, userId } },
       update: { name: setting.name, description: setting.description, value: setting.value },
-      create: { ...setting, userId },
+      create: { ...setting, userId, organizationId: userId },
     })
   }
 }

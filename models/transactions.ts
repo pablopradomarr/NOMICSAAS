@@ -163,6 +163,8 @@ export const createTransaction = async (userId: string, data: TransactionData): 
       extra: extra,
       items: data.items as Prisma.InputJsonValue,
       userId,
+      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
+      organizationId: userId,
     },
   })
 

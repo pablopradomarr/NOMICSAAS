@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db"
 import { Prisma } from "@/prisma/client"
 import { cache } from "react"
+import { ensurePersonalOrganization } from "./organizations"
 import { isDatabaseEmpty } from "./defaults"
 import { createUserDefaults } from "./defaults"
 
@@ -21,11 +22,17 @@ export const getSelfHostedUser = cache(async () => {
 })
 
 export const getOrCreateSelfHostedUser = cache(async () => {
-  return await prisma.user.upsert({
+  const user = await prisma.user.upsert({
     where: { email: SELF_HOSTED_USER.email },
     update: SELF_HOSTED_USER,
     create: SELF_HOSTED_USER,
   })
+
+  // E1: todo usuario necesita su organización personal (y su membresía ADMIN)
+  // antes de que se creen datos de negocio.
+  await ensurePersonalOrganization(user, new Date())
+
+  return user
 })
 
 export async function getOrCreateCloudUser(email: string, data: Prisma.UserCreateInput) {
@@ -34,6 +41,8 @@ export async function getOrCreateCloudUser(email: string, data: Prisma.UserCreat
     update: data,
     create: data,
   })
+
+  await ensurePersonalOrganization(user, new Date())
 
   if (await isDatabaseEmpty(user.id)) {
     await createUserDefaults(user.id)

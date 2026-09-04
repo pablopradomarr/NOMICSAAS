@@ -172,7 +172,8 @@ export async function resetLLMSettingsAction() {
     await prisma.setting.upsert({
       where: { userId_code: { code: setting.code, userId: user.id } },
       update: { value: setting.value },
-      create: { ...setting, userId: user.id },
+      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
+      create: { ...setting, userId: user.id, organizationId: user.id },
     })
   }
 
@@ -186,7 +187,8 @@ export async function resetFieldsAndCategoriesAction() {
     await prisma.category.upsert({
       where: { userId_code: { code: category.code, userId: user.id } },
       update: { name: category.name, color: category.color, llm_prompt: category.llm_prompt, createdAt: new Date() },
-      create: { ...category, userId: user.id, createdAt: new Date() },
+      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
+      create: { ...category, userId: user.id, organizationId: user.id, createdAt: new Date() },
     })
   }
   await prisma.category.deleteMany({
@@ -217,7 +219,8 @@ export async function resetFieldsAndCategoriesAction() {
         isRequired: field.isRequired,
         isExtra: field.isExtra,
       },
-      create: { ...field, userId: user.id, createdAt: new Date() },
+      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
+      create: { ...field, userId: user.id, organizationId: user.id, createdAt: new Date() },
     })
   }
   await prisma.field.deleteMany({

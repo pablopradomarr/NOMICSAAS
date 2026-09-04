@@ -13,6 +13,7 @@ export const setAppData = async (user: User, app: string, data: any) => {
   await prisma.appData.upsert({
     where: { userId_app: { userId: user.id, app } },
     update: { data },
-    create: { userId: user.id, app, data },
+    // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
+    create: { userId: user.id, organizationId: user.id, app, data },
   })
 }

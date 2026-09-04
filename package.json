@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "email:sync": "tsx \"app/(app)/apps/email/scripts/fetch-emails.ts\"",
     "test": "vitest run",
+    "test:integration": "DATABASE_URL_TEST=postgresql://postgres@localhost:5432/erp_test vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

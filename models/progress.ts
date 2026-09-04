@@ -12,6 +12,8 @@ export const getOrCreateProgress = async (
     create: {
       id,
       user: { connect: { id: userId } },
+      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
+      organization: { connect: { id: userId } },
       type: type || "unknown",
       data,
       total,

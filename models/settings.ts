@@ -146,6 +146,8 @@ export const updateSettings = cache(async (userId: string, code: string, value: 
       value,
       name: code,
       userId,
+      // TRANSICIÓN E1 (T9): la organización personal tiene id = users.id.
+      organizationId: userId,
     },
   })
 })
