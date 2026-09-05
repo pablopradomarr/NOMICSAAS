@@ -1106,3 +1106,14 @@ Revisión de código en contexto limpio (**CAMBIOS REQUERIDOS**), QA (**FAIL** p
 | **AUD-2** | `--out` de `load-fixture` sólo aceptaba fichero | Acepta directorio: escribe `<dir>/validacion-<fixture>.json`. El rechazo del **doble cierre** ya estaba cubierto y ahora es explícito en `e3-ledger.test.ts` |
 
 **Pendiente consciente:** #11 y #14 quedan fuera de esta ronda por coste frente a beneficio; #12 y #13 sí entran, como pedía la revisión.
+
+### Ronda 2 (cierre)
+
+| # | Petición | Resolución |
+|---|---|---|
+| 1 | `fiscalYearId` en la provenance desde las páginas | `/ledger/sumas-saldos` y `/ledger/mayor` lo pasan en `params`; test de integración que **ejecuta** `registros_origen` parametrizada y comprueba que las líneas devueltas suman exactamente la celda |
+| 2 | Idempotencia en la UI | `manual-entry-form` y `template-form` generan el uuid al montar, lo envían en cada intento y lo **regeneran** si el servidor rechaza por validación; `ui-actions.postTemplateFormAction` lo reenvía. Test: doble submit ⇒ 1 asiento, y otra clave ⇒ otro asiento |
+| 3 | Reentrada | `runLedgerTransaction` anidado lanza `LedgerNestingError` (no se traduce a `LedgerResult`: si se tradujera, la transacción externa seguiría hacia el COMMIT). Test |
+| 4 | `refDate` determinista | `fixtureRefDate(file)` en `tests/support/fixtures.ts`; el cargador y los tests la pasan explícita y `run-invariants.ts` acepta `--ref-date` (documentado en la cabecera del script y en el runbook de `ESTADO.md`) |
+| 5 | #11 · #12 · #14 | `voidEntry` resuelve primero la fecha del contra-asiento y la usa como `refDate` por defecto (antes, anular un mes cerrado daba `FUTURE_DATE`); el detalle del `RAISE` viaja en el mensaje; la fila de totales del asiento manual lleva «previsualización (no contabilizado)» |
+| 6 | #7b | Runbook en `docs/ESTADO.md`: orden marca→backfill bajo `FORCE`, cierre manual de la FK `posted_by_id` si quedó `NOT VALID`, y reproducibilidad (`--ref-date`, `GIT_SHA`) |

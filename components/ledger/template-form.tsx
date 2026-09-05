@@ -48,6 +48,13 @@ export function TemplateForm({
   const [counts, setCounts] = useState<Record<string, number>>(() => initialCounts(spec))
   const [preview, setPreview] = useState<EntryPreview | null>(null)
   const [errors, setErrors] = useState<string[]>([])
+  /**
+   * #8 · clave de idempotencia del formulario: se genera al MONTAR y se reenvía
+   * en cada intento, de modo que un doble clic no contabiliza dos asientos. Si
+   * el servidor rechaza por validación se REGENERA: lo que se envía después ya
+   * es otro asiento, y reutilizar la clave devolvería el anterior.
+   */
+  const [idempotencyKey, setIdempotencyKey] = useState<string>(() => crypto.randomUUID())
 
   const set = (key: string, value: string) => {
     setRaw((current) => ({ ...current, [key]: value }))
@@ -69,9 +76,10 @@ export function TemplateForm({
   const post = () =>
     startTransition(async () => {
       setErrors([])
-      const state = await postTemplateFormAction(spec.code, raw)
+      const state = await postTemplateFormAction(spec.code, raw, idempotencyKey)
       if (!state.success || !state.data?.entryId) {
         setErrors(state.data?.errors ?? [state.error ?? "No se ha podido contabilizar el asiento"])
+        setIdempotencyKey(crypto.randomUUID())
         return
       }
       router.push(`/ledger/${state.data.entryId}`)

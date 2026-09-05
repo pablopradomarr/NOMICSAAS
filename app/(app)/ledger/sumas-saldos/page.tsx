@@ -79,7 +79,16 @@ export default async function SumasSaldosPage({
   const report = buildSumasSaldos(
     lines,
     reportAccounts,
-    { organizationId: org.id, from, to, baseCurrency: org.baseCurrency },
+    {
+      organizationId: org.id,
+      from,
+      to,
+      baseCurrency: org.baseCurrency,
+      // #10: el informe está acotado al ejercicio, así que la provenance de cada
+      // celda también: `registros_origen` tiene que devolver EXACTAMENTE las
+      // líneas que suman la cifra, no todas las del rango de fechas.
+      ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}),
+    },
     {
       runId: header.runId,
       ledgerHash,

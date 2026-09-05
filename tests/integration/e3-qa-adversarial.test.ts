@@ -784,6 +784,47 @@ describe.skipIf(!TEST_DATABASE_URL)("QA E3 · pruebas adversariales", () => {
   })
 
   // ───────────────────────────────────────────────────────────────────────────
+  // (k) #8 — doble submit del formulario: un solo asiento
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it("(k) doble submit con la MISMA clave de idempotencia contabiliza UN asiento", async () => {
+    currentUser = { id: EDITOR_USER, email: "qa-editor@test.local", name: "QA Editor" }
+    const { postManualEntryAction } = await import("@/app/(app)/ledger/actions")
+
+    const fy = await tenantDb(ORG_A).fiscalYear.findFirstOrThrow({ where: { id: fy2026 } })
+    const antes = fy.lastEntryNumber
+    const idempotencyKey = "9a9a9a9a-1b1b-4c4c-8d8d-e5e5e5e5e5e5"
+    const envio = {
+      idempotencyKey,
+      documentDate: "2026-03-15",
+      description: "Doble clic en Contabilizar",
+      lines: [
+        { accountCode: "572", debit: "121,00", credit: "" },
+        { accountCode: "705", debit: "", credit: "121,00" },
+      ],
+    }
+
+    const primero = await postManualEntryAction(envio)
+    const segundo = await postManualEntryAction(envio)
+
+    expect(primero.success, JSON.stringify(primero)).toBe(true)
+    expect(segundo.success, JSON.stringify(segundo)).toBe(true)
+    expect(segundo.data?.entryId).toBe(primero.data?.entryId)
+    expect(segundo.data?.entryNumber).toBe(primero.data?.entryNumber)
+
+    const despues = await tenantDb(ORG_A).fiscalYear.findFirstOrThrow({ where: { id: fy2026 } })
+    expect(despues.lastEntryNumber).toBe(antes + 1)
+    // Por clave, no por descripción: si el mes del devengo está bloqueado, el
+    // motor desplaza la fecha y añade la coletilla «[devengo …]».
+    expect(await tenantDb(ORG_A).journalEntry.count({ where: { idempotencyKey } })).toBe(1)
+
+    // Otra clave = otro asiento: la idempotencia no bloquea repetir a propósito.
+    const tercero = await postManualEntryAction({ ...envio, idempotencyKey: "9a9a9a9a-1b1b-4c4c-8d8d-e5e5e5e5e5e6" })
+    expect(tercero.success, JSON.stringify(tercero)).toBe(true)
+    expect(tercero.data?.entryId).not.toBe(primero.data?.entryId)
+  }, 60_000)
+
+  // ───────────────────────────────────────────────────────────────────────────
   // (j)/(g) roles en server actions del diario
   // ───────────────────────────────────────────────────────────────────────────
 

@@ -70,6 +70,9 @@ export default async function MayorPage({
     from,
     to,
     baseCurrency: org.baseCurrency,
+    // #10: mismo motivo que en sumas y saldos — la celda se reproduce con su
+    // ejercicio, no sólo con su rango de fechas.
+    ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}),
     ...(account ? { accountCodes: [account] } : {}),
   })
 

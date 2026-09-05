@@ -89,12 +89,22 @@ export async function previewTemplateAction(templateCode: string, raw: RawInput)
 /** Contabiliza la plantilla con los valores en bruto del formulario. EDITOR (lo exige T9). */
 export async function postTemplateFormAction(
   templateCode: string,
-  raw: RawInput
+  raw: RawInput,
+  /**
+   * #8 · idempotencia de formulario: el cliente genera un uuid al MONTAR el
+   * formulario y lo reenvía en cada intento. Un doble clic o un reintento del
+   * navegador devuelven el asiento ya creado en vez de duplicarlo.
+   */
+  idempotencyKey?: string
 ): Promise<ActionState<{ entryId?: string; entryNumber?: number; errors?: string[] }>> {
   const spec = specFor(templateCode)
   if (!spec) return { success: false, error: "Plantilla no disponible" }
 
-  const state = await postFromTemplateAction({ templateCode, input: coerceRawInput(spec, raw) })
+  const state = await postFromTemplateAction({
+    templateCode,
+    input: coerceRawInput(spec, raw),
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+  })
   if (!state.success || !state.data) {
     return { success: false, error: state.error ?? "No se ha podido contabilizar el asiento" }
   }

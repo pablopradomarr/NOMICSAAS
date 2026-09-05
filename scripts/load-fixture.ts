@@ -2,6 +2,12 @@
  * E3 · T13 — Cargador de los fixtures inmutables en una base de datos real.
  *
  *   npx tsx scripts/load-fixture.ts --org <uuid> --fixture tests/fixtures/ejercicio-completo.json
+ *                                    [--user <uuid>] [--out <fichero|directorio>] [--ref-date AAAA-MM-DD]
+ *
+ * `--ref-date` es «hoy» al validar (I8: `entryDate ≤ refDate`). Por defecto se
+ * deriva del PROPIO fichero (`fixtureRefDate`), nunca del reloj: si dependiera
+ * del reloj, cargar `ejercicio-completo` —que llega a 2027— daría distinto
+ * resultado según el día en que se ejecute.
  *
  * Qué hace, en este orden:
  *   1. Aplica al `Organization` la política del fixture (moneda, variante PGC,
@@ -33,7 +39,7 @@ import {
   runLedgerInvariants,
   type LedgerModelError,
 } from "@/models/ledger"
-import { loadFixture, readFixture, type FixtureName } from "@/tests/support/fixtures"
+import { fixtureRefDate, loadFixture, readFixture, type FixtureName } from "@/tests/support/fixtures"
 import { existsSync, statSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -44,6 +50,8 @@ export type LoadFixtureOptions = {
   userId?: string | null
   /** Si el fixture trae un ejercicio ya cerrado, se crea abierto igualmente. */
   seedPlan?: boolean
+  /** «Hoy» al validar. Por defecto, `fixtureRefDate(file)`: determinista (#4). */
+  refDate?: LocalDate
 }
 
 export type LoadFixtureReport = {
@@ -117,7 +125,10 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
   }
 
   // ── 3. Asientos, por `postEntry` ──────────────────────────────────────────
-  const refDate = loaded.ctx.refDate
+  // #4: la fecha de referencia es función del FICHERO, no del reloj. Con `new
+  // Date()` la carga del fixture completo (que llega a 2027) fallaría por I8
+  // según el día en que se ejecute.
+  const refDate = opts.refDate ?? fixtureRefDate(file)
   const idByRef = new Map<string, string>()
 
   // Los ids de tipo impositivo del fixture son sintéticos y deterministas: hay
@@ -214,7 +225,13 @@ const describe = (errors: readonly LedgerModelError[]): string =>
 // CLI
 // ─────────────────────────────────────────────────────────────────────────────
 
-function parseArgs(argv: string[]): { org: string; fixture: string; user: string | null; out: string | null } {
+function parseArgs(argv: string[]): {
+  org: string
+  fixture: string
+  user: string | null
+  out: string | null
+  refDate: string | null
+} {
   const value = (flag: string): string | null => {
     const index = argv.indexOf(flag)
     return index >= 0 ? (argv[index + 1] ?? null) : null
@@ -222,7 +239,7 @@ function parseArgs(argv: string[]): { org: string; fixture: string; user: string
   const org = value("--org")
   const fixture = value("--fixture") ?? "tests/fixtures/ejercicio-minimo.json"
   if (!org) throw new Error("Uso: npx tsx scripts/load-fixture.ts --org <uuid> --fixture <ruta> [--out validacion.json]")
-  return { org, fixture, user: value("--user"), out: value("--out") }
+  return { org, fixture, user: value("--user"), out: value("--out"), refDate: value("--ref-date") }
 }
 
 /**
@@ -245,13 +262,14 @@ async function main() {
     organizationId: args.org,
     fixture,
     userId: args.user,
+    ...(args.refDate ? { refDate: args.refDate } : {}),
   })
 
   say(`· ${report.entryCount} asientos · Σdebe ${report.totalDebitCents} · Σhaber ${report.totalCreditCents}`)
   say(`· ledgerHash ${report.ledgerHash}`)
 
   if (args.out) {
-    const refDate: LocalDate = loadFixture(fixture).ctx.refDate
+    const refDate: LocalDate = args.refDate ?? fixtureRefDate(readFixture(fixture))
     const run = await runLedgerInvariants(args.org, { refDate, noCache: true })
     const target = await resolveOutPath(args.out, fixture)
     await writeFile(target, JSON.stringify({ ...run.validacion, sello: run.sello }, null, 2) + "\n", "utf8")

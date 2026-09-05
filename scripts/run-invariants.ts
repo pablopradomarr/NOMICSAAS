@@ -18,6 +18,13 @@
  *
  * Uso:
  *   DATABASE_URL_MAINTENANCE=… npx tsx scripts/run-invariants.ts [--org <uuid>]
+ *                                     [--out <fichero>] [--ref-date AAAA-MM-DD]
+ *
+ * `--ref-date` es «hoy» para I8 (`entryDate ≤ refDate`). Por defecto, la fecha
+ * de hoy en Europe/Madrid. Se declara explícitamente cuando el resultado tiene
+ * que ser REPRODUCIBLE —los fixtures llegan a 2027 y un run del año que viene
+ * no puede dar otra cosa que el de hoy—: los tests y la carga de fixtures pasan
+ * siempre la suya (ronda 2, #4).
  *
  * Salida: `validacion.json` en el formato de `docs/design/E3-libro-diario.md` §5
  *   { run_id, ledgerHash, gitSha, checks: [{ id, status, evidencia, query }] }
@@ -53,12 +60,19 @@ function todayIso(): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date())
 }
 
-function parseArgs(argv: string[]): { organizationId: string | null; out: string } {
-  const orgIndex = argv.indexOf("--org")
-  const outIndex = argv.indexOf("--out")
+function parseArgs(argv: string[]): { organizationId: string | null; out: string; refDate: string | null } {
+  const value = (flag: string): string | null => {
+    const index = argv.indexOf(flag)
+    return index >= 0 ? (argv[index + 1] ?? null) : null
+  }
+  const refDate = value("--ref-date")
+  if (refDate && !/^\d{4}-\d{2}-\d{2}$/.test(refDate)) {
+    throw new Error(`--ref-date debe ser AAAA-MM-DD, no ${refDate}`)
+  }
   return {
-    organizationId: orgIndex >= 0 ? (argv[orgIndex + 1] ?? null) : null,
-    out: outIndex >= 0 ? (argv[outIndex + 1] ?? "validacion.json") : "validacion.json",
+    organizationId: value("--org"),
+    out: value("--out") ?? "validacion.json",
+    refDate,
   }
 }
 
@@ -110,8 +124,8 @@ async function checkI10(client: Client, organizationId: string | null): Promise<
 }
 
 async function main() {
-  const { organizationId, out } = parseArgs(process.argv.slice(2))
-  const refDate = todayIso()
+  const { organizationId, out, refDate: refDateArg } = parseArgs(process.argv.slice(2))
+  const refDate = refDateArg ?? todayIso()
 
   // I10: barrido SIN filtro de tenant. Es la única forma de ver un cruce.
   const crossOrg = await withMaintenanceClient(async (client) => checkI10(client, organizationId))

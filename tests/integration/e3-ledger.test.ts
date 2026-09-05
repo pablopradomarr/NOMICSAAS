@@ -35,9 +35,11 @@ const {
   runLedgerInvariants,
   voidEntry,
 } = await import("@/models/ledger")
-const { getLedgerContext } = await import("@/models/ledger")
+const { getLedgerContext, runLedgerTransaction } = await import("@/models/ledger")
 const { buildEntry } = await import("@/lib/ledger/post")
-const { readFixture } = await import("@/tests/support/fixtures")
+const { fixtureRefDate, readFixture } = await import("@/tests/support/fixtures")
+const { buildSumasSaldos } = await import("@/lib/ledger/reports/sumas-saldos")
+const { getLinesForPeriod } = await import("@/models/ledger")
 
 type Draft = Awaited<ReturnType<typeof buildEntry>>
 
@@ -55,6 +57,8 @@ const actor = { userId: USER }
 /** #4: sin git-sha el sello es REQUIERE REVISIÓN por definición; los tests que
  *  comprueban OTRA cosa declaran uno, como hará el build. */
 const GIT_SHA = "c0e828f0000000000000000000000000000000ab"
+/** #4: «hoy» sale del PROPIO fixture, nunca del reloj (I8 sería no determinista). */
+const REF_MINIMO = fixtureRefDate(readFixture("ejercicio-minimo"))
 
 async function owner<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: TEST_DATABASE_URL })
@@ -384,6 +388,89 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
   })
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Ronda 2 · una mutación del diario no puede abrir otra (reentrada)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it("runLedgerTransaction anidado se rechaza con un error explícito", async () => {
+    await expect(
+      runLedgerTransaction(ORG_MIN, USER, async () => {
+        // `tenantTransaction` es reentrante, así que esto NO abriría una
+        // transacción nueva: atraparía su propio LedgerAbort y devolvería un
+        // fallo mientras la externa sigue viva y acaba en COMMIT.
+        return await runLedgerTransaction(ORG_MIN, USER, async () => "no debería llegar")
+      })
+    ).rejects.toThrow(/runLedgerTransaction anidado/)
+
+    // Y el aviso dice qué usar en su lugar.
+    await expect(
+      runLedgerTransaction(ORG_MIN, USER, async () => runLedgerTransaction(ORG_MIN, USER, async () => 1))
+    ).rejects.toThrow(/postEntryTx/)
+  }, 60_000)
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // #10 · la provenance de una celda REPRODUCE la cifra
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it(
+    "#10 · `registros_origen` de una celda de sumas y saldos devuelve justo las líneas que la suman",
+    async () => {
+      const fiscalYearId = (
+        await tenantDb(ORG_FULL).fiscalYear.findFirstOrThrow({ where: { code: "2026" } })
+      ).id
+
+      // Hasta el 30-12: el asiento de cierre (31-12) deja todas las cuentas a
+      // cero, y una celda a cero no demuestra nada.
+      const FROM = "2026-01-01"
+      const TO = "2026-12-30"
+
+      const { rows, cell } = await tenantTransaction(ORG_FULL, USER, async (tx) => {
+        const lines = await getLinesForPeriod(tx, { from: FROM, to: TO, fiscalYearId })
+        const report = buildSumasSaldos(
+          lines,
+          [...new Set(lines.map((l) => l.accountCode))].map((code) => ({ code, name: code })),
+          {
+            organizationId: ORG_FULL,
+            from: FROM,
+            to: TO,
+            baseCurrency: "EUR",
+            fiscalYearId,
+          },
+          {
+            runId: "test",
+            ledgerHash: "0".repeat(64),
+            gitSha: GIT_SHA,
+            baseCurrency: "EUR",
+            module: "lib/ledger/reports/sumas-saldos.ts",
+          }
+        )
+        // Una hoja con movimiento y saldo distinto de cero.
+        const leaf = report.leaves.find((r) => r.balanceCents !== 0 && r.provenance)
+        if (!leaf?.provenance) throw new Error("ninguna hoja con saldo trae provenance")
+        return { rows: leaf, cell: leaf.provenance }
+      })
+
+      expect(cell.registros_origen).toContain("fiscal_year_id = $")
+      expect(cell.parametros).toContain(fiscalYearId)
+      expect(cell.calculado_por).toContain("lib/ledger/reports/sumas-saldos.ts@")
+
+      // Se EJECUTA la consulta de la provenance, parametrizada, y se comprueba
+      // que las líneas que devuelve suman exactamente la cifra de la celda.
+      const suma = await tenantTransaction(ORG_FULL, USER, async (tx) => {
+        const ids = await tx.$queryRawUnsafe<{ id: string }[]>(cell.registros_origen, ...cell.parametros)
+        const [{ saldo }] = await tx.$queryRaw<{ saldo: bigint }[]>`
+          SELECT COALESCE(SUM(debit_cents - credit_cents), 0)::bigint AS saldo
+            FROM journal_lines
+           WHERE organization_id = ${ORG_FULL}::uuid AND id = ANY(${ids.map((r) => r.id)}::uuid[])`
+        return Number(saldo)
+      })
+
+      expect(suma).toBe(rows.balanceCents)
+      expect(cell.valor).toBe(rows.balanceCents)
+    },
+    120_000
+  )
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Revisión ronda 1 · BLOQUEA #1 — una transacción que falla NO puede confirmar
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -588,7 +675,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
   it(
     "criterio 14 · una línea alterada por SQL: la corta el trigger y, con los triggers caídos, la delatan I1 e I-E3-7",
     async () => {
-      const before = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31", noCache: true, gitSha: GIT_SHA })
+      const before = await runLedgerInvariants(ORG_MIN, { refDate: REF_MINIMO, noCache: true, gitSha: GIT_SHA })
       expect(before.validacion.checks.filter((c) => c.status === "FAIL")).toEqual([])
       expect(before.sello.sello).toBe("VALIDADO AUTOMÁTICAMENTE")
       const hashBefore = await tenantTransaction(ORG_MIN, USER, async (tx) => computeLedgerHash(tx))
@@ -632,7 +719,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
           await client.query(`ALTER TABLE journal_lines FORCE ROW LEVEL SECURITY`)
         })
 
-        const after = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31", noCache: true, gitSha: GIT_SHA })
+        const after = await runLedgerInvariants(ORG_MIN, { refDate: REF_MINIMO, noCache: true, gitSha: GIT_SHA })
         const failed = after.validacion.checks.filter((c) => c.status === "FAIL").map((c) => c.id)
         expect(failed).toContain("I1")
         expect(failed).toContain("I-E3-7")
@@ -652,7 +739,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
         })
       }
 
-      const restored = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31", noCache: true, gitSha: GIT_SHA })
+      const restored = await runLedgerInvariants(ORG_MIN, { refDate: REF_MINIMO, noCache: true, gitSha: GIT_SHA })
       expect(restored.validacion.checks.filter((c) => c.status === "FAIL")).toEqual([])
     },
     180_000

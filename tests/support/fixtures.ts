@@ -189,8 +189,7 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
   }))
   const rateByCode = new Map(rates.map((r) => [r.code, r]))
 
-  const lastDate = file.entries.reduce((a, e) => (e.date > a ? e.date : a), file.entries[0]?.date ?? "2026-01-01")
-  const refDate = opts.refDate ?? nextDay(lastDate)
+  const refDate = opts.refDate ?? fixtureRefDate(file)
 
   const ctx: LedgerContext = {
     organizationId,
@@ -325,6 +324,22 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
   })
 
   return { file, plan, ctx, rates, fiscalYears, drafts, posted, discardedDimensions: discarded }
+}
+
+/**
+ * `refDate` («hoy») de un fixture, DETERMINISTA (ronda 2, #4).
+ *
+ * Es la fecha del último asiento del fichero —que en `ejercicio-completo` es la
+ * apertura de 2027— y nunca `new Date()`: I8 exige `entryDate ≤ refDate`, así
+ * que hacerla depender del reloj convertiría un invariante en un test que
+ * cambia de resultado según el día. El cargador, los tests y
+ * `scripts/load-fixture.ts` usan ÉSTA.
+ */
+export function fixtureRefDate(file: FixtureFile): LocalDate {
+  const last = file.entries.reduce((a, e) => (e.date > a ? e.date : a), file.entries[0]?.date ?? file.fiscalYear.endDate)
+  // El día siguiente al último asiento: así ningún asiento del fichero es
+  // «futuro» y la fecha sigue siendo función pura del contenido.
+  return nextDay(last)
 }
 
 /** Día siguiente sin construir un `Date` con hora (I8, caso 29-feb). */

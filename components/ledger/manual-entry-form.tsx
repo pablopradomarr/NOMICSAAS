@@ -64,6 +64,13 @@ export function ManualEntryForm({
   const [rows, setRows] = useState<DraftRow[]>([emptyRow(), emptyRow()])
   const [error, setError] = useState<string | null>(null)
   const [lineErrors, setLineErrors] = useState<Record<number, string>>({})
+  /**
+   * #8 · clave de idempotencia del formulario: se genera al MONTAR y se reenvía
+   * en cada intento, de modo que un doble clic no contabiliza dos asientos. Al
+   * fallar la validación se REGENERA: lo que se envía después ya es otro
+   * asiento y reutilizar la clave devolvería el anterior.
+   */
+  const [idempotencyKey, setIdempotencyKey] = useState<string>(() => crypto.randomUUID())
 
   const update = (key: string, patch: Partial<DraftRow>) =>
     setRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)))
@@ -98,6 +105,7 @@ export function ManualEntryForm({
     setLineErrors({})
     startTransition(async () => {
       const state = await postManualEntryAction({
+        idempotencyKey,
         description: description.trim(),
         documentDate: documentDate || undefined,
         accrualDate: accrualDate || undefined,
@@ -112,6 +120,7 @@ export function ManualEntryForm({
       if (!state.success) {
         setError(state.error ?? "No se ha podido contabilizar el asiento")
         if (state.data?.lineErrors) setLineErrors(state.data.lineErrors)
+        setIdempotencyKey(crypto.randomUUID())
         return
       }
       router.push(state.data?.entryId ? `/ledger/${state.data.entryId}` : "/ledger")
@@ -241,7 +250,12 @@ export function ManualEntryForm({
           <tfoot className="border-t-2 bg-muted/30">
             <tr className="h-9" data-testid="preview-totals">
               <td className="px-2 py-1" colSpan={3}>
-                <span className="text-muted-foreground">Sumas</span>
+                <span className="text-muted-foreground">Sumas</span>{" "}
+                {/* #14: la fila de totales la calcula el NAVEGADOR. Decirlo evita
+                    que alguien la lea como cifra contable antes de contabilizar. */}
+                <span className="text-xs text-muted-foreground" data-testid="preview-label">
+                  previsualización (no contabilizado)
+                </span>
               </td>
               <td className="px-3 py-1 text-right font-medium">
                 <Amount cents={previewDebit} zeroAsDash={false} />

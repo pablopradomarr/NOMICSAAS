@@ -25,7 +25,7 @@ import {
   tenantTransaction,
 } from "@/lib/db"
 import type { AccountKey } from "@/lib/accounts/types"
-import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
+import { fromUtcDate, resolveReversalDate, toUtcDate } from "@/lib/ledger/dates"
 import { entryHash, HashableLine, ledgerHash } from "@/lib/ledger/hash"
 import {
   runInvariants as runInvariantsPure,
@@ -53,6 +53,7 @@ import type {
 } from "@/lib/ledger/types"
 import type { ReportLine } from "@/lib/ledger/reports/types"
 import type { Prisma, TaxRoundingMode } from "@/prisma/client"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { randomUUID } from "node:crypto"
 
 export type AnyClient = TenantClient | TenantTransactionClient
@@ -140,8 +141,34 @@ export function abortWith(errors: readonly LedgerError[]): never {
 }
 
 /**
+ * Marca de «hay una mutación del diario en curso en esta cadena async».
+ *
+ * `tenantTransaction` es REENTRANTE: si se anida, reutiliza la transacción
+ * externa. Para una lectura da igual, pero para una mutación es una trampa —
+ * `runLedgerTransaction` anidado atraparía su propio `LedgerAbort` y devolvería
+ * un `modelFail` mientras la transacción EXTERNA sigue viva y acabaría en
+ * COMMIT: exactamente el fallo que #1 vino a cerrar, disfrazado. Se prohíbe.
+ */
+const ledgerTransactionDepth = new AsyncLocalStorage<{ organizationId: string }>()
+
+/**
+ * Error de programación, no de negocio: NO se traduce a `LedgerResult`. Si se
+ * tradujera, el `runLedgerTransaction` externo lo convertiría en un `modelFail`
+ * y seguiría hacia el COMMIT, que es justo lo que esto viene a impedir.
+ */
+export class LedgerNestingError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "LedgerNestingError"
+  }
+}
+
+/**
  * Envoltura de toda mutación del diario: abre la `tenantTransaction`, y fuera
  * de ella traduce `LedgerAbort` (rollback ya hecho) y los errores de Postgres.
+ *
+ * Prohíbe el anidamiento (ronda 2): dentro de una mutación se usan las
+ * funciones `…Tx(tx, …)`, que abortan lanzando y no atrapan nada.
  */
 export async function runLedgerTransaction<T>(
   organizationId: string,
@@ -149,14 +176,30 @@ export async function runLedgerTransaction<T>(
   fn: (tx: TenantTransactionClient) => Promise<T>,
   options?: TenantTransactionOptions
 ): Promise<LedgerResult<T>> {
+  const outer = ledgerTransactionDepth.getStore()
+  if (outer) {
+    throw new LedgerNestingError(
+      "runLedgerTransaction anidado: una mutación del diario no puede abrir otra " +
+        `(organización externa ${outer.organizationId}, interna ${organizationId}). ` +
+        "Dentro de una transacción usa postEntryTx / lockPeriodTx / unlockPeriodTx, que abortan lanzando."
+    )
+  }
   try {
-    const value = await tenantTransaction(organizationId, userId ?? undefined, fn, options)
+    const value = await ledgerTransactionDepth.run({ organizationId }, async () =>
+      tenantTransaction(organizationId, userId ?? undefined, fn, options)
+    )
     return modelOk(value)
   } catch (error) {
+    // El anidamiento se propaga tal cual: es un bug del llamante, no un fallo
+    // de negocio que la UI deba enseñar.
+    if (error instanceof LedgerNestingError) throw error
     if (error instanceof LedgerAbort) return modelFail<T>(...error.errors)
     return modelFail<T>(translateDbError(error))
   }
 }
+
+/** La mayor de dos fechas locales (comparación lexicográfica: son ISO). */
+const maxDate = (a: LocalDate, b: LocalDate): LocalDate => (a > b ? a : b)
 
 /** Errores del motor → texto legible en español, anclado a su línea. */
 export function formatLedgerErrors(errors: readonly LedgerModelError[]): string {
@@ -214,6 +257,15 @@ export function translateDbError(error: unknown): LedgerModelError {
   }
   if (has("journal_entry_reversal_target_kind") || has("no se anulan con contra-asiento")) {
     return modelErr("REVERSAL_TARGET_KIND", "entryId", "Los asientos de apertura, cierre y regularización no se anulan")
+  }
+  if (has("journal_entries_idempotency_key")) {
+    // Dos envíos EN PARALELO del mismo formulario: el primero gana, el segundo
+    // choca con el índice único parcial. No es un error del usuario.
+    return modelErr(
+      "DB_REJECTED",
+      "idempotencyKey",
+      "Ese formulario ya se está contabilizando: recarga la página para ver el asiento"
+    )
   }
   if (has("journal_entries_one_reversal")) {
     return modelErr("ALREADY_REVERSED", "entryId", "El asiento ya tiene un contra-asiento (I-E3-2)")
@@ -1015,7 +1067,20 @@ export async function voidEntry(
       tx.journalEntry.findFirst({ where: { id: entryId }, select: { transactionId: true } }),
     ])
 
-    const ctx = await getLedgerContext(tx, opts.refDate ?? original.entryDate)
+    /**
+     * #11 · la `refDate` por defecto es **la fecha resuelta del contra-asiento**,
+     * no la del original. Si el mes del original está bloqueado, el espejo nace
+     * el primer día del primer mes abierto ≥ esa fecha, que es POSTERIOR: con la
+     * del original como «hoy», C-11 lo rechazaba por `FUTURE_DATE` y no se podía
+     * anular nada de un mes cerrado. Se resuelve primero la fecha con un
+     * contexto permisivo y se vuelve a componer con ella.
+     */
+    const probe = await getLedgerContext(tx, "9999-12-31")
+    const resolved = resolveReversalDate(original.entryDate, probe, opts.requestedDate ?? null)
+    if (!resolved.ok) abortWith(resolved.errors)
+    const refDate = opts.refDate ?? maxDate(resolved.value.entryDate, todayLocalDate())
+
+    const ctx = await getLedgerContext(tx, refDate)
     const voidOptions: VoidOptions = {
       reason,
       requestedDate: opts.requestedDate ?? null,

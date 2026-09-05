@@ -80,6 +80,22 @@ npm run test:all              # los tres
 3. Leer `CLAUDE.md`, este fichero y `docs/design/E1-revision.md`; seguir el flujo `/sprint` (dev → qa → revisor → auditor si cifras → documentador → registro).
 4. Push: si el proxy devuelve 403, la sesión no tiene el repo autorizado → pedir a Pablo que añada `pablopradomarr/NOMICSAAS` a las fuentes de la sesión o un token fine-grained (Contents + Workflows: RW); mientras, entregar `git format-patch` o zip.
 
+## Runbook de operación (E3)
+
+**Backfills en migraciones bajo `FORCE ROW LEVEL SECURITY` (#7b de la revisión de E3).** El patrón obligatorio es `ALTER TABLE x NO FORCE` → backfill → `ALTER TABLE x FORCE` en la MISMA migración (CLAUDE.md), **y la marca de conversión se escribe ANTES del backfill**, no después: si se escribe después, el guard que la consulta no protege la primera ejecución y en un entorno donde el backfill ya se aplicó (propietario superusuario, que esquiva RLS) los valores se convertirían dos veces. `20260907110000_e3_backfill_prorrata_force` tenía ese orden invertido y lo corrige `20260907120000_e3_prorrata_marker_order`, que además verifica la marca y que la tabla no queda en `NO FORCE`. Tests: `tests/integration/e3-backfill-prorrata.test.ts`.
+
+**FK `journal_entries.posted_by_id → users` (migración `20260907130000`).** Se añade `NOT VALID` y se valida en el acto **sólo si no hay filas huérfanas**; si las hay, la migración deja un `WARNING` y la constraint queda activa para las filas nuevas. Cierre manual del pendiente, una vez corregidas o borradas esas filas:
+
+```sql
+-- 1. Ver qué asientos no tienen autor real:
+SELECT e.id, e.entry_number, e.posted_by_id FROM journal_entries e
+  LEFT JOIN users u ON u.id = e.posted_by_id WHERE u.id IS NULL;
+-- 2. Con la lista revisada (nunca se borran asientos: se corrige el autor), validar:
+ALTER TABLE journal_entries VALIDATE CONSTRAINT journal_entries_posted_by_id_fkey;
+```
+
+**Invariantes reproducibles.** `scripts/run-invariants.ts --org <uuid> [--ref-date AAAA-MM-DD]`: sin `--ref-date` se usa hoy en Europe/Madrid, lo que hace que I8 dependa del día. Para comparar dos ejecuciones (o para los fixtures, que llegan a 2027) hay que pasarla explícita. `GIT_SHA` debe estar en el entorno: sin él, el sello es siempre `REQUIERE REVISIÓN` a propósito, porque no se puede acreditar con qué versión del motor se calculó la cifra.
+
 ## Pendiente de Pablo (no bloquea)
 - Proyecto Supabase (crear o indicar existente) para el entorno preview/prod.
 - Borrar el token temporal `nomicsaas-push` en GitHub cuando ya no haga falta.
