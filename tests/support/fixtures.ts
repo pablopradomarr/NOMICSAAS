@@ -399,3 +399,112 @@ export function balancesOf(
   }
   return out
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-consistencia del fixture (auditoría de fiabilidad, ronda 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Los fixtures son INMUTABLES: no se les añaden campos a `expected` para cubrir
+ * un hueco de la revisión. Lo que sí se puede —y es más fuerte— es comprobar el
+ * fichero **contra sí mismo**: que los saldos declarados en `expected` son
+ * exactamente los que salen de sumar sus propias líneas.
+ *
+ * El auditor echaba en falta los saldos de los grupos 6 y 7 (la PyG). Aquí se
+ * derivan de las líneas del JSON y se contrastan con `balancesBeforeClosingCents`
+ * y con `resultadoAntesRegularizacionCents` / `saldo129Cents`, de modo que una
+ * regeneración del fixture que descuadre la PyG rompe el build aunque las cifras
+ * de balance sigan cuadrando.
+ */
+export type FixtureSelfCheck = {
+  /** Discrepancias encontradas. Vacío = el fichero es coherente consigo mismo. */
+  mismatches: string[]
+  /** Cuentas de grupo 6 y 7 con movimiento (excluidos los asientos de sistema). */
+  pnlAccountCount: number
+  /** `Σ(haber − debe)` de los grupos 6 y 7 = resultado antes de regularizar (I3). */
+  resultadoCents: Cents
+  saldo129Cents: Cents
+}
+
+export function checkFixtureSelfConsistency(name: FixtureName): FixtureSelfCheck {
+  const file = readFixture(name)
+  const mismatches: string[] = []
+
+  /** Saldos `Σdebe − Σhaber` por cuenta, calculados sobre el JSON. */
+  const balanceOf = (excludeKinds: readonly EntryKind[]): Map<string, Cents> => {
+    const out = new Map<string, Cents>()
+    for (const entry of file.entries) {
+      if (excludeKinds.includes(entry.kind)) continue
+      if (entry.fiscalYearCode !== file.fiscalYear.code) continue
+      for (const line of entry.lines) {
+        const code = line.accountCode ?? accountCodeForKey(file, line.accountKey)
+        out.set(code, (out.get(code) ?? 0) + line.debitCents - line.creditCents)
+      }
+    }
+    return out
+  }
+
+  // `balancesBeforeClosingCents` es el saldo del ejercicio principal SIN el
+  // asiento de cierre: la misma definición que usa `scripts/load-fixture.ts`.
+  const beforeClosing = balanceOf(["CLOSING"])
+  for (const [code, expected] of Object.entries(file.expected.balancesBeforeClosingCents)) {
+    const actual = beforeClosing.get(code) ?? 0
+    if (actual !== expected) mismatches.push(`saldo ${code}: el JSON suma ${actual} y declara ${expected}`)
+  }
+  // Y al revés: ninguna cuenta con saldo puede faltar en `expected`.
+  for (const [code, actual] of beforeClosing) {
+    if (actual === 0) continue
+    if (!(code in file.expected.balancesBeforeClosingCents)) {
+      mismatches.push(`la cuenta ${code} suma ${actual} y no aparece en balancesBeforeClosingCents`)
+    }
+  }
+
+  // PyG: los grupos 6 y 7 ANTES de regularizar (I3 del catálogo de invariantes).
+  const operating = balanceOf(["CLOSING", "REGULARIZATION", "OPENING"])
+  const pnl = [...operating.entries()].filter(([code]) => code.startsWith("6") || code.startsWith("7"))
+  const resultadoCents = pnl.reduce((acc, [, saldo]) => acc - saldo, 0)
+
+  const expectedResultado = (file.expected as { resultadoAntesRegularizacionCents?: number })
+    .resultadoAntesRegularizacionCents
+  if (expectedResultado !== undefined && resultadoCents !== expectedResultado) {
+    mismatches.push(
+      `resultado antes de regularizar: los grupos 6/7 del JSON suman ${resultadoCents} y el fichero declara ${expectedResultado}`
+    )
+  }
+
+  // Tras la regularización, ese resultado tiene que estar en la 129.
+  const saldo129Cents = -(beforeClosing.get("129") ?? 0)
+  if (saldo129Cents !== file.expected.saldo129Cents) {
+    mismatches.push(`saldo de la 129: el JSON suma ${saldo129Cents} y declara ${file.expected.saldo129Cents}`)
+  }
+  if (expectedResultado !== undefined && saldo129Cents !== expectedResultado) {
+    mismatches.push(`la 129 (${saldo129Cents}) no recoge el resultado de los grupos 6/7 (${expectedResultado})`)
+  }
+
+  return { mismatches, pnlAccountCount: pnl.filter(([, s]) => s !== 0).length, resultadoCents, saldo129Cents }
+}
+
+/**
+ * Resuelve una `accountKey` del fixture con el mismo mapa que `loadFixture`.
+ * El mapa se memoiza por variante: construirlo parsea las 906 filas del seed y
+ * hacerlo por línea convertía la comprobación en un test de dos minutos.
+ */
+const mapCache = new Map<string, Map<string, string>>()
+
+function accountCodeForKey(file: FixtureFile, key: string | undefined): string {
+  if (!key) throw new Error("Línea del fixture sin cuenta ni clave")
+  const cacheKey = `${file.organization.pgcVariant}|${file.organization.useSubaccounts}|${file.organization.createSoftwareAccounts}`
+  let byKey = mapCache.get(cacheKey)
+  if (!byKey) {
+    const plan = planForVariant(file.organization.pgcVariant)
+    const { entries } = defaultAccountMap(plan, {
+      useSubaccounts: file.organization.useSubaccounts,
+      createSoftwareAccounts: file.organization.createSoftwareAccounts,
+    })
+    byKey = new Map(entries.map((e) => [e.key as string, e.accountCode]))
+    mapCache.set(cacheKey, byKey)
+  }
+  const code = byKey.get(key)
+  if (!code) throw new Error(`La clave ${key} no resuelve a ninguna cuenta`)
+  return code
+}

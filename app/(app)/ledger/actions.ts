@@ -146,7 +146,10 @@ export async function postManualEntryAction(input: unknown): Promise<ActionState
 
     if (!built.ok) return failWithLines(built.errors)
 
-    const posted = await postEntry(org.id, built.value, { userId: user.id }, { refDate })
+    const posted = await postEntry(org.id, built.value, { userId: user.id }, {
+      refDate,
+      idempotencyKey: data.idempotencyKey ?? null,
+    })
     if (!posted.ok) return failWithLines(posted.errors)
 
     revalidatePath(LEDGER_PATH)
@@ -165,7 +168,7 @@ export async function postFromTemplateAction(input: unknown): Promise<ActionStat
       validated.data.templateCode,
       validated.data.input,
       { userId: user.id },
-      { refDate: validated.data.refDate ?? today() }
+      { refDate: validated.data.refDate ?? today(), idempotencyKey: validated.data.idempotencyKey ?? null }
     )
     if (!result.ok) return { success: false, error: formatLedgerErrors(result.errors) }
     revalidatePath(LEDGER_PATH)
@@ -211,7 +214,7 @@ export async function postTransactionAction(input: unknown): Promise<ActionState
       validated.data.templateCode,
       validated.data.input,
       { userId: user.id },
-      { refDate: validated.data.refDate ?? today() }
+      { refDate: validated.data.refDate ?? today(), idempotencyKey: validated.data.idempotencyKey ?? null }
     )
     if (!result.ok) return { success: false, error: formatLedgerErrors(result.errors) }
     revalidatePath(LEDGER_PATH)

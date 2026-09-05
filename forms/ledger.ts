@@ -55,7 +55,15 @@ export const manualEntryLineSchema = z
  * `kind` NO es parámetro: el asiento manual es siempre `NORMAL`. Apertura,
  * cierre, regularización y contra-asiento sólo los produce el motor (§4.2).
  */
+/**
+ * Idempotencia de formulario (#8): la UI genera un uuid al MONTAR el formulario
+ * y lo reenvía en cada intento; el servidor devuelve el asiento ya creado en vez
+ * de duplicarlo. Opcional: un cliente que no lo mande sigue funcionando.
+ */
+export const idempotencyKeySchema = z.string().uuid("La clave de idempotencia debe ser un uuid").optional()
+
 export const manualEntrySchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
   documentDate: localDateSchema.nullish(),
   accrualDate: localDateSchema.nullish(),
   description: z.string().min(1, "El concepto es obligatorio").max(512),
@@ -70,6 +78,7 @@ export type ManualEntryFormInput = z.infer<typeof manualEntrySchema>
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const templatePostSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
   templateCode: operationalTemplateCodeSchema,
   /** Lo valida el schema de la plantilla; aquí sólo se exige que sea un objeto. */
   input: z.record(z.unknown()),
@@ -82,6 +91,7 @@ export const templatePreviewSchema = templatePostSchema
 export type TemplatePreviewFormInput = TemplatePostFormInput
 
 export const postTransactionSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
   transactionId: uuidSchema,
   templateCode: operationalTemplateCodeSchema,
   input: z.record(z.unknown()),

@@ -30,6 +30,7 @@ import { entryHash, HashableLine, ledgerHash } from "@/lib/ledger/hash"
 import {
   runInvariants as runInvariantsPure,
   seal as sealPure,
+  type CheckResult,
   type InvariantInput,
   type Seal,
   type Validacion,
@@ -83,6 +84,7 @@ export type LedgerModelErrorCode =
   | "TEMPLATE_SYSTEM_ONLY"
   | "DB_REJECTED"
   | "PERMISSION_DENIED"
+  | "POSTED_BY_REQUIRED"
 
 export type LedgerModelError = {
   code: LedgerModelErrorCode
@@ -106,6 +108,56 @@ export const modelErr = (
 
 const fromEngine = (errors: readonly LedgerError[]): LedgerModelError[] => errors.map((e) => ({ ...e }))
 
+/**
+ * Aborto de una transacción de tenant (revisión ronda 1, hallazgo BLOQUEA #1).
+ *
+ * Devolver `modelFail(...)` desde dentro de `tenantTransaction` **no deshace
+ * nada**: la promesa se resuelve y Prisma hace COMMIT, de modo que un lote con
+ * el segundo asiento inválido persistía el primero y avanzaba `lastEntryNumber`,
+ * y un cierre con un invariante en FAIL confirmaba T-26/T-27/T-28 y los
+ * bloqueos. La única forma de abortar es **lanzar**: esta excepción lleva los
+ * errores tipados y `runLedgerTransaction` los vuelve a convertir en
+ * `LedgerResult` FUERA de la transacción, ya con el ROLLBACK hecho.
+ */
+export class LedgerAbort extends Error {
+  readonly errors: LedgerModelError[]
+
+  constructor(errors: readonly LedgerModelError[]) {
+    super(errors.map((e) => `${e.code}: ${e.message}`).join(" · ") || "LedgerAbort")
+    this.name = "LedgerAbort"
+    this.errors = [...errors]
+  }
+}
+
+/** Aborta la transacción en curso con errores tipados. Nunca retorna. */
+export function abort(...errors: LedgerModelError[]): never {
+  throw new LedgerAbort(errors)
+}
+
+/** Igual, a partir de los errores del motor puro. */
+export function abortWith(errors: readonly LedgerError[]): never {
+  throw new LedgerAbort(fromEngine(errors))
+}
+
+/**
+ * Envoltura de toda mutación del diario: abre la `tenantTransaction`, y fuera
+ * de ella traduce `LedgerAbort` (rollback ya hecho) y los errores de Postgres.
+ */
+export async function runLedgerTransaction<T>(
+  organizationId: string,
+  userId: string | null | undefined,
+  fn: (tx: TenantTransactionClient) => Promise<T>,
+  options?: TenantTransactionOptions
+): Promise<LedgerResult<T>> {
+  try {
+    const value = await tenantTransaction(organizationId, userId ?? undefined, fn, options)
+    return modelOk(value)
+  } catch (error) {
+    if (error instanceof LedgerAbort) return modelFail<T>(...error.errors)
+    return modelFail<T>(translateDbError(error))
+  }
+}
+
 /** Errores del motor → texto legible en español, anclado a su línea. */
 export function formatLedgerErrors(errors: readonly LedgerModelError[]): string {
   return errors.map((e) => (e.lineNo !== undefined ? `[línea ${e.lineNo}] ${e.message}` : e.message)).join(" · ")
@@ -128,13 +180,31 @@ export function translateDbError(error: unknown): LedgerModelError {
   const message = error instanceof Error ? error.message : String(error)
   const has = (needle: string) => message.includes(needle)
 
+  /**
+   * #13: el trigger ya dice el asiento y la diferencia exacta («asiento X
+   * descuadrado: debe 121000 <> haber 100000 (diferencia 21000)»). Tirar ese
+   * detalle dejaba a quien depura sin la cifra, así que se conserva la línea
+   * del `RAISE` —sólo la primera, sin el CONTEXT ni el stack de Postgres—
+   * detrás del mensaje en español.
+   */
+  const detail = (): string => {
+    const first = message
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0 && !l.startsWith("Invalid") && !l.startsWith("Raw query"))
+    return first ? ` (${first})` : ""
+  }
+
   if (has("journal_entry_balanced") || has("descuadrado")) {
-    return modelErr("UNBALANCED", "lines", "El asiento está descuadrado: Σdebe ≠ Σhaber", { check: "C-1" })
+    return modelErr("UNBALANCED", "lines", `El asiento está descuadrado: Σdebe ≠ Σhaber${detail()}`, { check: "C-1" })
   }
   if (has("journal_entry_both_sides") || has("sin contrapartida")) {
-    return modelErr("ONE_SIDED_ENTRY", "lines", "El asiento necesita al menos una línea al debe y una al haber", {
-      check: "C-4",
-    })
+    return modelErr(
+      "ONE_SIDED_ENTRY",
+      "lines",
+      `El asiento necesita al menos una línea al debe y una al haber${detail()}`,
+      { check: "C-4" }
+    )
   }
   if (has("journal_entry_min_lines") || has("sin líneas")) {
     return modelErr("TOO_FEW_LINES", "lines", "Un asiento tiene al menos dos líneas", { check: "C-4" })
@@ -539,10 +609,59 @@ export async function computeLedgerHash(
   tx: TenantTransactionClient,
   filter: { fiscalYearId?: string; from?: LocalDate; to?: LocalDate } = {}
 ): Promise<string> {
+  const organizationId = tx.$organizationId
+
+  // Revisión ronda 1 (#9): el hash se calcula EN LA BASE, sobre las líneas ya
+  // ordenadas, sin traerse el diario entero a memoria (un ejercicio grande son
+  // cientos de miles de líneas). La forma canónica es la MISMA v1 de
+  // `lib/ledger/hash.ts` — TSV con `∅` para nulos, `\n` entre filas, ordenada
+  // por (entry_date, entry_number, line_no) — y hay un test de integración que
+  // compara ambos caminos sobre el fixture completo, que es lo que impide que
+  // diverjan.
+  const rows = await tx.$queryRaw<{ hash: string }[]>`
+    SELECT encode(
+             sha256(convert_to(COALESCE(string_agg(fila, E'\n' ORDER BY entry_date, entry_number, line_no), ''), 'UTF8')),
+             'hex'
+           ) AS hash
+      FROM (
+        SELECT l.entry_date, e.entry_number, l.line_no,
+               concat_ws(E'\t',
+                 to_char(l.entry_date, 'YYYY-MM-DD'),
+                 e.entry_number::text,
+                 l.line_no::text,
+                 l.account_code,
+                 l.debit_cents::text,
+                 l.credit_cents::text,
+                 l.entry_kind::text,
+                 COALESCE(l.project_id::text, '∅'),
+                 COALESCE(l.cost_center_id::text, '∅'),
+                 COALESCE(l.business_line_id::text, '∅')
+               ) AS fila
+          FROM journal_lines l
+          JOIN journal_entries e ON e.id = l.entry_id AND e.organization_id = l.organization_id
+         WHERE l.organization_id = ${organizationId}::uuid
+           AND (${filter.fiscalYearId ?? null}::uuid IS NULL OR l.fiscal_year_id = ${filter.fiscalYearId ?? null}::uuid)
+           AND (${filter.from ? toUtcDate(filter.from) : null}::date IS NULL
+                OR l.entry_date >= ${filter.from ? toUtcDate(filter.from) : null}::date)
+           AND (${filter.to ? toUtcDate(filter.to) : null}::date IS NULL
+                OR l.entry_date <= ${filter.to ? toUtcDate(filter.to) : null}::date)
+      ) AS canonico`
+
+  return rows[0]?.hash ?? ledgerHash([])
+}
+
+/**
+ * El mismo hash calculado en TypeScript, materializando las líneas. Sólo para
+ * los tests que comprueban que el SQL y el motor puro no han divergido.
+ */
+export async function computeLedgerHashInMemory(
+  tx: TenantTransactionClient,
+  filter: { fiscalYearId?: string; from?: LocalDate; to?: LocalDate } = {}
+): Promise<string> {
   const lines = await getLinesForPeriod(tx, {
     from: filter.from ?? "0001-01-01",
     to: filter.to ?? "9999-12-31",
-    fiscalYearId: filter.fiscalYearId,
+    ...(filter.fiscalYearId ? { fiscalYearId: filter.fiscalYearId } : {}),
   })
   const hashable: HashableLine[] = lines.map((l) => ({
     entryDate: l.entryDate,
@@ -557,6 +676,95 @@ export async function computeLedgerHash(
     businessLineId: null,
   }))
   return ledgerHash(hashable)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Invariantes por agregado SQL (#9): lo que se puede comprobar sin traerse el
+// diario a memoria. Son los dos que más cuestan y los que más importan.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** I1 por SQL: Σdebe = Σhaber POR ASIENTO, con `HAVING`. */
+export async function checkI1Sql(tx: TenantTransactionClient, fiscalYearId?: string): Promise<CheckResult> {
+  const organizationId = tx.$organizationId
+  const rows = await tx.$queryRaw<{ entry_number: number; entry_date: Date; d: bigint; c: bigint }[]>`
+    SELECT e.entry_number, e.entry_date,
+           COALESCE(SUM(l.debit_cents), 0)::bigint AS d,
+           COALESCE(SUM(l.credit_cents), 0)::bigint AS c
+      FROM journal_entries e
+      LEFT JOIN journal_lines l ON l.entry_id = e.id AND l.organization_id = e.organization_id
+     WHERE e.organization_id = ${organizationId}::uuid
+       AND (${fiscalYearId ?? null}::uuid IS NULL OR e.fiscal_year_id = ${fiscalYearId ?? null}::uuid)
+     GROUP BY e.id, e.entry_number, e.entry_date
+    HAVING COALESCE(SUM(l.debit_cents), 0) <> COALESCE(SUM(l.credit_cents), 0)
+        OR count(l.id) < 2
+     ORDER BY e.entry_number
+     LIMIT 20`
+
+  const query =
+    "SELECT e.entry_number, SUM(l.debit_cents), SUM(l.credit_cents) FROM journal_entries e " +
+    "JOIN journal_lines l ON l.entry_id = e.id WHERE e.organization_id = $1 GROUP BY e.id HAVING SUM(l.debit_cents) <> SUM(l.credit_cents)"
+
+  if (rows.length === 0) {
+    return { id: "I1", status: "PASS", evidencia: "Ningún asiento descuadrado (agregado en SQL, por asiento)", query }
+  }
+  return {
+    id: "I1",
+    status: "FAIL",
+    evidencia: rows
+      .map((r) => `nº ${r.entry_number} (${fromUtcDate(r.entry_date)}): debe ${r.d} ≠ haber ${r.c}`)
+      .join(" · "),
+    query,
+  }
+}
+
+/** I7 por SQL: numeración `1..max` sin huecos ni duplicados, por ejercicio. */
+export async function checkI7Sql(tx: TenantTransactionClient, fiscalYearId?: string): Promise<CheckResult> {
+  const organizationId = tx.$organizationId
+  const rows = await tx.$queryRaw<
+    { code: string; total: bigint; distintos: bigint; minimo: number | null; maximo: number | null; last: number }[]
+  >`
+    SELECT fy.code,
+           count(e.id)::bigint AS total,
+           count(DISTINCT e.entry_number)::bigint AS distintos,
+           min(e.entry_number) AS minimo,
+           max(e.entry_number) AS maximo,
+           fy.last_entry_number AS last
+      FROM fiscal_years fy
+      LEFT JOIN journal_entries e ON e.fiscal_year_id = fy.id AND e.organization_id = fy.organization_id
+     WHERE fy.organization_id = ${organizationId}::uuid
+       AND (${fiscalYearId ?? null}::uuid IS NULL OR fy.id = ${fiscalYearId ?? null}::uuid)
+     GROUP BY fy.id, fy.code, fy.last_entry_number
+     ORDER BY fy.code`
+
+  const query =
+    "SELECT fy.code, count(e.id), count(DISTINCT e.entry_number), min(e.entry_number), max(e.entry_number), " +
+    "fy.last_entry_number FROM fiscal_years fy LEFT JOIN journal_entries e ON e.fiscal_year_id = fy.id GROUP BY fy.id"
+
+  const failures: string[] = []
+  for (const row of rows) {
+    const total = Number(row.total)
+    if (total === 0) continue
+    if (Number(row.distintos) !== total) failures.push(`${row.code}: números repetidos`)
+    if (row.minimo !== 1) failures.push(`${row.code}: empieza en ${row.minimo}, no en 1`)
+    if (row.maximo !== total) failures.push(`${row.code}: ${total} asientos y el máximo es ${row.maximo} (hay huecos)`)
+    if (row.last !== row.maximo) {
+      failures.push(`${row.code}: last_entry_number ${row.last} ≠ máximo ${row.maximo}`)
+    }
+  }
+
+  return failures.length === 0
+    ? {
+        id: "I7",
+        status: "PASS",
+        evidencia: `Numeración contigua 1..n en ${rows.length} ejercicio(s) (agregado en SQL)`,
+        query,
+      }
+    : { id: "I7", status: "FAIL", evidencia: failures.join(" · "), query }
+}
+
+/** Nº de asientos, para decidir si se materializa el diario (#9). */
+export async function countEntries(tx: TenantTransactionClient, fiscalYearId?: string): Promise<number> {
+  return await tx.journalEntry.count({ where: fiscalYearId ? { fiscalYearId } : {} })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -592,11 +800,26 @@ function hashableOf(draft: EntryDraft, entryNumber: number): HashableLine[] {
 export async function postEntryTx(
   tx: TenantTransactionClient,
   draft: EntryDraft,
-  actor: Actor
-): Promise<LedgerResult<PostedEntry>> {
+  actor: Actor,
+  opts: { idempotencyKey?: string | null } = {}
+): Promise<PostedEntry> {
   const organizationId = tx.$organizationId
   if (draft.organizationId !== organizationId) {
-    return modelFail(modelErr("TENANT_MISMATCH", "organizationId", "El borrador es de otra organización", { check: "C-13" }))
+    abort(modelErr("TENANT_MISMATCH", "organizationId", "El borrador es de otra organización", { check: "C-13" }))
+  }
+  // Revisión #2: el asiento SIEMPRE lleva quién lo contabilizó. Sin usuario no
+  // se postea (la FK a `users` lo repite en la base de datos).
+  if (!actor.userId) {
+    abort(modelErr("POSTED_BY_REQUIRED", "postedById", "Un asiento necesita el usuario que lo contabiliza"))
+  }
+
+  // Revisión #8: idempotencia de formulario. Si el mismo envío llega dos veces
+  // (doble clic, reintento del navegador), se devuelve el asiento que ya
+  // existe en vez de duplicarlo; el índice único parcial lo repite en la BD.
+  const idempotencyKey = opts.idempotencyKey ?? null
+  if (idempotencyKey) {
+    const existing = await tx.journalEntry.findFirst({ where: { idempotencyKey }, include: { lines: true } })
+    if (existing) return toPostedEntry(existing)
   }
 
   const [fy] = await tx.$queryRaw<FiscalYearRow[]>`
@@ -606,12 +829,10 @@ export async function postEntryTx(
      FOR UPDATE`
 
   if (!fy) {
-    return modelFail(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
+    abort(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
   }
   if (fy.status === "CLOSED") {
-    return modelFail(
-      modelErr("FY_CLOSED", "entryDate", `El ejercicio ${fy.code} está cerrado: registra el documento con T-22`)
-    )
+    abort(modelErr("FY_CLOSED", "entryDate", `El ejercicio ${fy.code} está cerrado: registra el documento con T-22`))
   }
 
   const entryNumber = fy.last_entry_number + 1
@@ -635,7 +856,8 @@ export async function postEntryTx(
         fileId: draft.fileId ?? null,
         templateCode: draft.templateCode ?? null,
         reversesEntryId: draft.reversesEntryId ?? null,
-        postedById: actor.userId ?? organizationId,
+        postedById: actor.userId,
+        idempotencyKey,
         entryHash: hash,
       },
     })
@@ -668,7 +890,7 @@ export async function postEntryTx(
 
     const posted = await getEntry(tx, entry.id)
     if (!posted) {
-      return modelFail(modelErr("ENTRY_NOT_FOUND", "id", "El asiento recién creado no es legible en esta transacción"))
+      abort(modelErr("ENTRY_NOT_FOUND", "id", "El asiento recién creado no es legible en esta transacción"))
     }
 
     await writeAuditLog(tx, {
@@ -694,8 +916,8 @@ export async function postEntryTx(
 
     // Las violaciones NO diferidas (periodo, cuenta, anulación) saltan como
     // excepción desde aquí; las diferidas, al COMMIT. Ambas las traduce el
-    // llamante público (`postEntry`, `voidEntry`, …) con `translateDbError`.
-    return modelOk(posted)
+    // llamante público (`runLedgerTransaction`) con `translateDbError`.
+    return posted
   }
 }
 
@@ -709,20 +931,24 @@ export async function postEntry(
   organizationId: string,
   draft: EntryDraft,
   actor: Actor,
-  opts: { refDate?: LocalDate; check?: CheckDraftOptions; skipCheck?: boolean } = {}
+  /**
+   * Revisión #12: `refDate` es OBLIGATORIA. Con el default anterior
+   * (`draft.entryDate`) un asiento con fecha futura se validaba contra sí mismo
+   * y C-11 nunca podía dar `FUTURE_DATE`. Quien postea decide qué día es hoy.
+   * `skipCheck` es la única excepción: sirve para ejercer la barrera 2 (la BD).
+   */
+  opts:
+    | { refDate: LocalDate; check?: CheckDraftOptions; skipCheck?: false; idempotencyKey?: string | null }
+    | { skipCheck: true; refDate?: LocalDate; check?: CheckDraftOptions; idempotencyKey?: string | null }
 ): Promise<LedgerResult<PostedEntry>> {
-  try {
-    return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
-      if (!opts.skipCheck) {
-        const ctx = await getLedgerContext(tx, opts.refDate ?? draft.entryDate)
-        const checked = checkDraft(draft, ctx, opts.check ?? {})
-        if (!checked.ok) return modelFail<PostedEntry>(...fromEngine(checked.errors))
-      }
-      return await postEntryTx(tx, draft, actor)
-    })
-  } catch (error) {
-    return modelFail(translateDbError(error))
-  }
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
+    if (!opts.skipCheck) {
+      const ctx = await getLedgerContext(tx, opts.refDate)
+      const checked = checkDraft(draft, ctx, opts.check ?? {})
+      if (!checked.ok) abortWith(checked.errors)
+    }
+    return await postEntryTx(tx, draft, actor, { idempotencyKey: opts.idempotencyKey ?? null })
+  })
 }
 
 /**
@@ -734,38 +960,34 @@ export async function postEntries(
   organizationId: string,
   drafts: readonly EntryDraft[],
   actor: Actor,
-  opts: { refDate?: LocalDate; skipCheck?: boolean; transaction?: TenantTransactionOptions } = {}
+  opts: { refDate: LocalDate; skipCheck?: boolean; transaction?: TenantTransactionOptions }
 ): Promise<LedgerResult<PostedEntry[]>> {
-  try {
-    return await tenantTransaction(
-      organizationId,
-      actor.userId ?? undefined,
-      async (tx) => {
-        const ctx = opts.skipCheck ? null : await getLedgerContext(tx, opts.refDate ?? "9999-12-31")
-        const out: PostedEntry[] = []
-        for (const draft of drafts) {
-          if (ctx) {
-            const checked = checkDraft(draft, ctx, {})
-            if (!checked.ok) return modelFail<PostedEntry[]>(...fromEngine(checked.errors))
-          }
-          const posted = await postEntryTx(tx, draft, actor)
-          if (!posted.ok) return modelFail<PostedEntry[]>(...posted.errors)
-          out.push(posted.value)
+  return await runLedgerTransaction(
+    organizationId,
+    actor.userId,
+    async (tx) => {
+      const ctx = opts.skipCheck ? null : await getLedgerContext(tx, opts.refDate)
+      const out: PostedEntry[] = []
+      for (const draft of drafts) {
+        if (ctx) {
+          const checked = checkDraft(draft, ctx, {})
+          // Abortar, no devolver: si el segundo asiento del lote es inválido, el
+          // primero NO puede quedar confirmado (BLOQUEA #1).
+          if (!checked.ok) abortWith(checked.errors)
         }
-        return modelOk(out)
-      },
-      opts.transaction ?? { timeout: 120_000, maxWait: 15_000 }
-    )
-  } catch (error) {
-    return modelFail(translateDbError(error))
-  }
+        out.push(await postEntryTx(tx, draft, actor))
+      }
+      return out
+    },
+    opts.transaction ?? { timeout: 120_000, maxWait: 15_000 }
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Anulación (T-21)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type VoidResult = { reversal: PostedEntry; voided: PostedEntry }
+export type VoidResult = { reversal: PostedEntry; voided: PostedEntry; voidedTransactionId: string | null }
 
 /**
  * Anulación = contra-asiento exacto. La fecha la decide el motor (§2.5 del
@@ -782,51 +1004,60 @@ export async function voidEntry(
   actor: Actor,
   opts: { requestedDate?: LocalDate | null; refDate?: LocalDate } = {}
 ): Promise<LedgerResult<VoidResult>> {
-  try {
-    return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
-      const original = await getEntry(tx, entryId)
-      if (!original) {
-        return modelFail<VoidResult>(modelErr("ENTRY_NOT_FOUND", "entryId", "El asiento no existe en esta organización"))
-      }
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
+    const original = await getEntry(tx, entryId)
+    if (!original) {
+      abort(modelErr("ENTRY_NOT_FOUND", "entryId", "El asiento no existe en esta organización"))
+    }
 
-      const existingReversals = await tx.journalEntry.findMany({
-        where: { reversesEntryId: entryId },
-        select: { id: true },
-      })
+    const [existingReversals, row] = await Promise.all([
+      tx.journalEntry.findMany({ where: { reversesEntryId: entryId }, select: { id: true } }),
+      tx.journalEntry.findFirst({ where: { id: entryId }, select: { transactionId: true } }),
+    ])
 
-      const ctx = await getLedgerContext(tx, opts.refDate ?? original.entryDate)
-      const voidOptions: VoidOptions = {
-        reason,
-        requestedDate: opts.requestedDate ?? null,
-        existingReversals,
-      }
-      const built = buildReversal(original, voidOptions, ctx)
-      if (!built.ok) return modelFail<VoidResult>(...fromEngine(built.errors))
+    const ctx = await getLedgerContext(tx, opts.refDate ?? original.entryDate)
+    const voidOptions: VoidOptions = {
+      reason,
+      requestedDate: opts.requestedDate ?? null,
+      existingReversals,
+    }
+    const built = buildReversal(original, voidOptions, ctx)
+    if (!built.ok) abortWith(built.errors)
 
-      const posted = await postEntryTx(tx, built.value, actor)
-      if (!posted.ok) return modelFail<VoidResult>(...posted.errors)
+    const reversal = await postEntryTx(tx, built.value, actor)
 
-      await tx.journalEntry.update({
-        where: { id: entryId },
-        data: { voidedAt: new Date(), voidedById: actor.userId ?? null, voidReason: reason },
-      })
-
-      await writeAuditLog(tx, {
-        entity: "JournalEntry",
-        entityId: entryId,
-        action: "void",
-        before: { entryNumber: original.entryNumber, voidedAt: null },
-        after: { reversalEntryId: posted.value.id, reversalEntryNumber: posted.value.entryNumber },
-        reason,
-        userId: actor.userId ?? null,
-      })
-
-      const voided = await getEntry(tx, entryId)
-      return modelOk({ reversal: posted.value, voided: voided ?? original })
+    await tx.journalEntry.update({
+      where: { id: entryId },
+      data: { voidedAt: new Date(), voidedById: actor.userId ?? null, voidReason: reason },
     })
-  } catch (error) {
-    return modelFail(translateDbError(error))
-  }
+
+    // QA · criterio 10: si el asiento contabilizaba una operación heredada, la
+    // operación vuelve a VOID **en la misma transacción**. Antes hacía falta
+    // llamar aparte a `voidTransactionPosting`, que ninguna action usaba, y la
+    // `Transaction` se quedaba en POSTED apuntando a un asiento anulado.
+    let voidedTransactionId: string | null = null
+    if (row?.transactionId) {
+      await tx.transaction.update({ where: { id: row.transactionId }, data: { status: "VOID" } })
+      voidedTransactionId = row.transactionId
+    }
+
+    await writeAuditLog(tx, {
+      entity: "JournalEntry",
+      entityId: entryId,
+      action: "void",
+      before: { entryNumber: original.entryNumber, voidedAt: null, transactionId: row?.transactionId ?? null },
+      after: {
+        reversalEntryId: reversal.id,
+        reversalEntryNumber: reversal.entryNumber,
+        transactionStatus: voidedTransactionId ? "VOID" : null,
+      },
+      reason,
+      userId: actor.userId ?? null,
+    })
+
+    const voided = await getEntry(tx, entryId)
+    return { reversal, voided: voided ?? original, voidedTransactionId }
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -861,11 +1092,12 @@ export async function previewTemplate(
   if (!isTemplateCode(templateCode)) {
     return modelFail(modelErr("TEMPLATE_UNKNOWN", "templateCode", `Plantilla desconocida: ${templateCode}`))
   }
-  return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
     const balances = opts.withBalances ? await getAccountBalances(tx, { upTo: opts.refDate }) : undefined
     const ctx = await getLedgerContext(tx, opts.refDate, balances ? { balances } : {})
     const built = buildFromTemplate(templateCode, input, ctx)
-    return built.ok ? modelOk(built.value) : modelFail<EntryDraft>(...fromEngine(built.errors))
+    if (!built.ok) abortWith(built.errors)
+    return built.value
   })
 }
 
@@ -875,8 +1107,11 @@ export async function postFromTemplate(
   templateCode: string,
   input: unknown,
   actor: Actor,
-  opts: { refDate: LocalDate; allowSystem?: boolean; link?: { transactionId?: string; fileId?: string } } = {
-    refDate: "9999-12-31",
+  opts: {
+    refDate: LocalDate
+    allowSystem?: boolean
+    link?: { transactionId?: string; fileId?: string }
+    idempotencyKey?: string | null
   }
 ): Promise<LedgerResult<PostedEntry>> {
   if (!isTemplateCode(templateCode)) {
@@ -891,23 +1126,19 @@ export async function postFromTemplate(
       )
     )
   }
-  try {
-    return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
-      const needsBalances = TEMPLATES[templateCode].block === "C"
-      const balances = needsBalances ? await getAccountBalances(tx, { upTo: opts.refDate }) : undefined
-      const ctx = await getLedgerContext(tx, opts.refDate, balances ? { balances } : {})
-      const built = buildFromTemplate(templateCode, input, ctx)
-      if (!built.ok) return modelFail<PostedEntry>(...fromEngine(built.errors))
-      const draft: EntryDraft = {
-        ...built.value,
-        transactionId: opts.link?.transactionId ?? built.value.transactionId ?? null,
-        fileId: opts.link?.fileId ?? built.value.fileId ?? null,
-      }
-      return await postEntryTx(tx, draft, actor)
-    })
-  } catch (error) {
-    return modelFail(translateDbError(error))
-  }
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
+    const needsBalances = TEMPLATES[templateCode].block === "C"
+    const balances = needsBalances ? await getAccountBalances(tx, { upTo: opts.refDate }) : undefined
+    const ctx = await getLedgerContext(tx, opts.refDate, balances ? { balances } : {})
+    const built = buildFromTemplate(templateCode, input, ctx)
+    if (!built.ok) abortWith(built.errors)
+    const draft: EntryDraft = {
+      ...built.value,
+      transactionId: opts.link?.transactionId ?? built.value.transactionId ?? null,
+      fileId: opts.link?.fileId ?? built.value.fileId ?? null,
+    }
+    return await postEntryTx(tx, draft, actor, { idempotencyKey: opts.idempotencyKey ?? null })
+  })
 }
 
 export type PostedTransaction = { entry: PostedEntry; transactionId: string }
@@ -923,7 +1154,7 @@ export async function postTransactionWithTemplate(
   templateCode: string,
   input: unknown,
   actor: Actor,
-  opts: { refDate: LocalDate }
+  opts: { refDate: LocalDate; idempotencyKey?: string | null }
 ): Promise<LedgerResult<PostedTransaction>> {
   if (!isTemplateCode(templateCode)) {
     return modelFail(modelErr("TEMPLATE_UNKNOWN", "templateCode", `Plantilla desconocida: ${templateCode}`))
@@ -933,45 +1164,38 @@ export async function postTransactionWithTemplate(
       modelErr("TEMPLATE_SYSTEM_ONLY", "templateCode", "Las plantillas de cierre no contabilizan operaciones")
     )
   }
-  try {
-    return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
-      const transaction = await tx.transaction.findFirst({ where: { id: transactionId } })
-      if (!transaction) {
-        return modelFail<PostedTransaction>(
-          modelErr("TRANSACTION_NOT_FOUND", "transactionId", "La operación no existe en esta organización")
-        )
-      }
-      if (transaction.status === "POSTED" || transaction.journalEntryId) {
-        return modelFail<PostedTransaction>(
-          modelErr("TRANSACTION_ALREADY_POSTED", "transactionId", "La operación ya está contabilizada")
-        )
-      }
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
+    const transaction = await tx.transaction.findFirst({ where: { id: transactionId } })
+    if (!transaction) {
+      abort(modelErr("TRANSACTION_NOT_FOUND", "transactionId", "La operación no existe en esta organización"))
+    }
+    if (transaction.status === "POSTED" || transaction.journalEntryId) {
+      abort(modelErr("TRANSACTION_ALREADY_POSTED", "transactionId", "La operación ya está contabilizada"))
+    }
 
-      const ctx = await getLedgerContext(tx, opts.refDate)
-      const built = buildFromTemplate(templateCode, input, ctx)
-      if (!built.ok) return modelFail<PostedTransaction>(...fromEngine(built.errors))
+    const ctx = await getLedgerContext(tx, opts.refDate)
+    const built = buildFromTemplate(templateCode, input, ctx)
+    if (!built.ok) abortWith(built.errors)
 
-      const draft: EntryDraft = {
-        ...built.value,
-        transactionId,
-        fileId: built.value.fileId ?? null,
-      }
-      const posted = await postEntryTx(tx, draft, actor)
-      if (!posted.ok) return modelFail<PostedTransaction>(...posted.errors)
+    const draft: EntryDraft = { ...built.value, transactionId, fileId: built.value.fileId ?? null }
+    const entry = await postEntryTx(tx, draft, actor, { idempotencyKey: opts.idempotencyKey ?? null })
 
-      await tx.transaction.update({
-        where: { id: transactionId },
-        data: { status: "POSTED", journalEntryId: posted.value.id },
-      })
-
-      return modelOk({ entry: posted.value, transactionId })
+    await tx.transaction.update({
+      where: { id: transactionId },
+      data: { status: "POSTED", journalEntryId: entry.id },
     })
-  } catch (error) {
-    return modelFail(translateDbError(error))
-  }
+
+    return { entry, transactionId }
+  })
 }
 
-/** Tras anular el asiento de una operación heredada, la operación queda `VOID`. */
+/**
+ * Anula el asiento de una operación heredada por su `transactionId`.
+ *
+ * Es un atajo: `voidEntry` ya deja la `Transaction` en `VOID` dentro de la misma
+ * transacción del contra-asiento (QA, criterio 10); esto sólo resuelve el id del
+ * asiento a partir de la operación.
+ */
 export async function voidTransactionPosting(
   organizationId: string,
   transactionId: string,
@@ -986,12 +1210,7 @@ export async function voidTransactionPosting(
   if (!entryId) {
     return modelFail(modelErr("TRANSACTION_NOT_FOUND", "transactionId", "La operación no tiene asiento que anular"))
   }
-  const voided = await voidEntry(organizationId, entryId, reason, actor, opts)
-  if (!voided.ok) return voided
-  await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
-    await tx.transaction.update({ where: { id: transactionId }, data: { status: "VOID" } })
-  })
-  return voided
+  return await voidEntry(organizationId, entryId, reason, actor, opts)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1001,15 +1220,74 @@ export async function voidTransactionPosting(
 export type InvariantRun = {
   validacion: Validacion
   sello: Seal
+  /** De dónde salió: `sql` (agregados), `full` (motor puro) o `cache`. */
+  origen: "full" | "sql" | "cache"
+}
+
+/**
+ * Por encima de este número de asientos NO se materializa el diario: los
+ * invariantes que se pueden comprobar por agregado (I1, I7) siguen corriendo en
+ * SQL y el resto se marca INFO en vez de mentir con un PASS. Es el compromiso
+ * del hallazgo #9: nunca `include: { lines: true }` sobre 100.000 asientos.
+ */
+export const MAX_MATERIALIZED_ENTRIES = 20_000
+
+/** Página de lectura del diario cuando sí se materializa. */
+const ENTRY_PAGE_SIZE = 2_000
+
+/**
+ * Caché de invariantes por `ledgerHash` (#9).
+ *
+ * La clave incluye el hash del periodo, así que cualquier cambio en el diario la
+ * invalida por construcción: no hace falta purgarla al postear. Vive en memoria
+ * del proceso y está acotada; en la práctica sirve para que una misma petición
+ * que pinta cabecera de informe + pestaña de auditoría no ejecute dos veces la
+ * misma comprobación.
+ */
+const invariantCache = new Map<string, InvariantRun>()
+const INVARIANT_CACHE_MAX = 32
+
+export const clearInvariantCache = (): void => invariantCache.clear()
+
+function cacheGet(key: string): InvariantRun | undefined {
+  return invariantCache.get(key)
+}
+
+function cachePut(key: string, run: InvariantRun): void {
+  if (invariantCache.size >= INVARIANT_CACHE_MAX) {
+    const oldest = invariantCache.keys().next().value
+    if (oldest !== undefined) invariantCache.delete(oldest)
+  }
+  invariantCache.set(key, run)
+}
+
+/** Lee el diario por páginas, sin un `include` gigante (#9). */
+async function readEntriesPaged(
+  tx: TenantTransactionClient,
+  fiscalYearId: string | undefined,
+  total: number
+): Promise<PostedEntry[]> {
+  const out: PostedEntry[] = []
+  for (let skip = 0; skip < total; skip += ENTRY_PAGE_SIZE) {
+    const page = await getEntries(tx, fiscalYearId ? { fiscalYearId } : {}, { skip, take: ENTRY_PAGE_SIZE })
+    out.push(...page.entries)
+    if (page.entries.length === 0) break
+  }
+  return out
 }
 
 /**
  * Ejecuta I1, I7–I10 e I-E3-1…7 sobre los datos REALES de la organización y
  * devuelve `validacion.json` + su sello.
  *
+ * I1 e I7 se comprueban SIEMPRE por agregado SQL (baratos y exactos). El resto
+ * necesita las líneas: se leen por páginas y sólo hasta
+ * `MAX_MATERIALIZED_ENTRIES`; por encima se declaran INFO, que es lo honesto.
+ *
  * **No se persiste** (§5 y §8.2-T6): E3 no tiene `ReportRun` —llega en E6— y el
- * sello se recalcula en cada render mientras tanto. Quien quiera el fichero lo
- * escribe: `scripts/run-invariants.ts` y `scripts/load-fixture.ts`.
+ * sello se recalcula mientras tanto, con la caché por `ledgerHash` de arriba.
+ * Quien quiera el fichero lo escribe: `scripts/run-invariants.ts` y
+ * `scripts/load-fixture.ts`.
  *
  * I10 se comprueba aquí acotado al tenant (barrera 1); el barrido cross-org que
  * DELATA un cruce sólo puede hacerlo `scripts/run-invariants.ts` como
@@ -1025,44 +1303,94 @@ export async function runLedgerInvariants(
     runId?: string
     requiredTemplateCoverage?: number
     actor?: Actor
+    /** Ignora la caché por `ledgerHash` (los tests de corrupción la necesitan). */
+    noCache?: boolean
   }
 ): Promise<InvariantRun> {
   return await tenantTransaction(organizationId, opts.actor?.userId ?? undefined, async (tx) => {
-    const [entriesPage, fiscalYearRows, periodLocks, accounts, hash] = await Promise.all([
-      getEntries(tx, opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {}, { take: 100_000 }),
-      tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } }),
-      listPeriodLockRefs(tx),
-      tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } }),
-      computeLedgerHash(tx, opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {}),
-    ])
+    const gitSha = opts.gitSha ?? process.env.GIT_SHA ?? "desconocido"
+    const hash = await computeLedgerHash(tx, opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {})
+    const cacheKey = `${organizationId}|${opts.fiscalYearId ?? "*"}|${opts.refDate}|${gitSha}|${hash}`
 
-    const input: InvariantInput = {
-      runId: opts.runId ?? randomUUID(),
-      gitSha: opts.gitSha ?? process.env.GIT_SHA ?? "desconocido",
-      organizationId,
-      ledgerHash: hash,
-      entries: entriesPage.entries,
-      fiscalYears: fiscalYearRows.map((fy) => ({
-        id: fy.id,
-        code: fy.code,
-        startDate: fromUtcDate(fy.startDate),
-        endDate: fromUtcDate(fy.endDate),
-        status: fy.status,
-        lastEntryNumber: fy.lastEntryNumber,
-      })),
-      periodLocks,
-      accounts: accounts.map((a) => ({ ...a, organizationId })),
-      knownTemplateCodes: Object.keys(TEMPLATES),
-      ...(opts.requiredTemplateCoverage !== undefined
-        ? { requiredTemplateCoverage: opts.requiredTemplateCoverage }
-        : {}),
+    if (!opts.noCache) {
+      const cached = cacheGet(cacheKey)
+      if (cached) return { ...cached, origen: "cache" as const }
     }
 
-    const validacion = runInvariantsPure(input, opts.refDate)
+    const [i1, i7, total] = await Promise.all([
+      checkI1Sql(tx, opts.fiscalYearId),
+      checkI7Sql(tx, opts.fiscalYearId),
+      countEntries(tx, opts.fiscalYearId),
+    ])
+
+    let validacion: Validacion
+    let origen: "full" | "sql"
+
+    if (total > MAX_MATERIALIZED_ENTRIES) {
+      origen = "sql"
+      const skipped = (id: string): CheckResult => ({
+        id,
+        status: "INFO",
+        evidencia: `No evaluado en línea: ${total} asientos superan el límite de ${MAX_MATERIALIZED_ENTRIES}. ` +
+          "Ejecuta scripts/run-invariants.ts para el barrido completo",
+      })
+      validacion = {
+        run_id: opts.runId ?? randomUUID(),
+        ledgerHash: hash,
+        gitSha,
+        refDate: opts.refDate,
+        organizationId,
+        checks: [
+          i1,
+          i7,
+          ...["N-5", "I8", "I9", "I10", "I-E3-1", "I-E3-2", "I-E3-3", "I-E3-4", "I-E3-5", "I-E3-6", "I-E3-7"].map(
+            skipped
+          ),
+        ],
+      }
+    } else {
+      origen = "full"
+      const [entries, fiscalYearRows, periodLocks, accounts] = await Promise.all([
+        readEntriesPaged(tx, opts.fiscalYearId, total),
+        tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } }),
+        listPeriodLockRefs(tx),
+        tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } }),
+      ])
+
+      const input: InvariantInput = {
+        runId: opts.runId ?? randomUUID(),
+        gitSha,
+        organizationId,
+        ledgerHash: hash,
+        entries,
+        fiscalYears: fiscalYearRows.map((fy) => ({
+          id: fy.id,
+          code: fy.code,
+          startDate: fromUtcDate(fy.startDate),
+          endDate: fromUtcDate(fy.endDate),
+          status: fy.status,
+          lastEntryNumber: fy.lastEntryNumber,
+        })),
+        periodLocks,
+        accounts: accounts.map((a) => ({ ...a, organizationId })),
+        knownTemplateCodes: Object.keys(TEMPLATES),
+        ...(opts.requiredTemplateCoverage !== undefined
+          ? { requiredTemplateCoverage: opts.requiredTemplateCoverage }
+          : {}),
+      }
+      validacion = runInvariantsPure(input, opts.refDate)
+
+      // I1 e I7 los manda el agregado SQL: ve las MISMAS filas que la BD, no una
+      // copia en memoria, y es lo que delata una corrupción por SQL directo.
+      validacion.checks = validacion.checks.map((c) => (c.id === "I1" ? i1 : c.id === "I7" ? i7 : c))
+    }
+
     const sello = sealPure(validacion, {
-      gitSha: input.gitSha,
+      gitSha,
       ...(opts.lastGitSha !== undefined ? { lastGitSha: opts.lastGitSha } : {}),
     })
-    return { validacion, sello }
+    const run: InvariantRun = { validacion, sello, origen }
+    if (!opts.noCache) cachePut(cacheKey, run)
+    return run
   })
 }

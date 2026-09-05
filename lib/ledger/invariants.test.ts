@@ -378,4 +378,18 @@ describe("sello (§5)", () => {
   it("sin `lastGitSha` (primer run del histórico) no se exige revisión por ese motivo", () => {
     expect(seal(clean, { gitSha: "abc1234" }).sello).toBe("VALIDADO AUTOMÁTICAMENTE")
   })
+
+  // Revisión ronda 1 (#4): sin git-sha no hay trazabilidad del motor.
+  it.each(["", "desconocido", "unknown", "dev", "HEAD", "  "])(
+    "git-sha desconocido (%j): REQUIERE REVISIÓN aunque todo esté en PASS",
+    (gitSha) => {
+      const result = seal(clean, { gitSha })
+      expect(result.sello).toBe("REQUIERE REVISIÓN")
+      expect(result.motivos.join(" ")).toMatch(/git-sha del motor desconocido/)
+    }
+  )
+
+  it("un git-sha real no añade ese motivo", () => {
+    expect(seal(clean, { gitSha: "c0e828f" }).motivos).toEqual([])
+  })
 })

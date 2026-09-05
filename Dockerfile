@@ -40,10 +40,20 @@ COPY . .
 ARG SKIP_PRISMA_GENERATE=false
 RUN if [ "${SKIP_PRISMA_GENERATE}" != "true" ]; then npx prisma generate; fi
 
+# E3 (#4): el git-sha del build viaja en el bundle (next.config.ts lo lee de
+# GIT_SHA y, si falta, de `git rev-parse HEAD`, que aquí no existe porque no se
+# copia el .git). Sin él, el sello de validación no puede afirmar que el motor
+# no ha cambiado y marca REQUIERE REVISIÓN, que es lo correcto pero inútil en
+# producción: pásalo con `docker build --build-arg GIT_SHA=$(git rev-parse HEAD)`.
+ARG GIT_SHA=desconocido
+ENV GIT_SHA=${GIT_SHA}
+
 RUN npm run build
 
 # ── Runtime ──
 FROM base AS runner
+ARG GIT_SHA=desconocido
+ENV GIT_SHA=${GIT_SHA}
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \

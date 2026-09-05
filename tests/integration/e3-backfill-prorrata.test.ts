@@ -100,3 +100,48 @@ describe("estado de la BD tras la cadena de migraciones", () => {
     expect(rows).toEqual([])
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Revisión ronda 1, #7 — la marca va ANTES del backfill
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("20260907120000 · corrección del orden marca/backfill", () => {
+  const correctiva = readFileSync(
+    path.join(process.cwd(), "prisma/migrations/20260907120000_e3_prorrata_marker_order/migration.sql"),
+    "utf8"
+  )
+
+  it("escribe la marca ANTES del UPDATE (es lo que la hace idempotente de verdad)", () => {
+    const marca = correctiva.indexOf("COMMENT ON TABLE")
+    const update = correctiva.indexOf('UPDATE "organizations" SET "prorrata_bps"')
+    expect(marca).toBeGreaterThan(-1)
+    expect(update).toBeGreaterThan(-1)
+    expect(marca).toBeLessThan(update)
+  })
+
+  it("sale sin tocar nada si la marca ya estaba (RETURN antes del backfill)", () => {
+    const guard = correctiva.indexOf("IF v_marked THEN")
+    const update = correctiva.indexOf('UPDATE "organizations" SET "prorrata_bps"')
+    expect(guard).toBeGreaterThan(-1)
+    expect(guard).toBeLessThan(update)
+    expect(correctiva.slice(guard, update)).toContain("RETURN;")
+  })
+
+  it("mantiene el patrón NO FORCE → backfill → FORCE y verifica el estado final", () => {
+    const noForce = correctiva.indexOf("NO FORCE ROW LEVEL SECURITY")
+    const update = correctiva.indexOf('UPDATE "organizations" SET "prorrata_bps"')
+    const force = correctiva.indexOf('ALTER TABLE "organizations" FORCE ROW LEVEL SECURITY')
+    expect(noForce).toBeLessThan(update)
+    expect(update).toBeLessThan(force)
+    expect(correctiva).toContain("ha quedado en NO FORCE ROW LEVEL SECURITY")
+  })
+
+  it("tras la cadena completa, la marca sigue puesta y la escala es de puntos básicos", async () => {
+    const rows = await prisma.$queryRaw<{ comentario: string | null; forzada: boolean }[]>`
+      SELECT obj_description(c.oid, 'pg_class') AS comentario, c.relforcerowsecurity AS forzada
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'organizations'`
+    expect(rows[0].comentario).toContain("prorrata_bps:convertido")
+    expect(rows[0].forzada).toBe(true)
+  })
+})

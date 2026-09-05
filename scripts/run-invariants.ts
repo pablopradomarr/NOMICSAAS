@@ -1,10 +1,13 @@
 /**
- * Comprobación de invariantes — **placeholder de E3-T2** (ADR-0009 §6).
+ * Comprobación de invariantes de la capa 1 (E3 · T6/T8, ADR-0009 §6).
  *
- * El motor completo (I1, I7–I10 y los siete propios de E3) lo entrega T6 en
- * `lib/ledger/invariants.ts`; este script existe ya porque es el OTRO consumidor
- * previsto del rol `app_maintenance` y conviene que su conexión quede fijada
- * antes de que T3 retire la cláusula de escape.
+ * Dos mitades, cada una con el rol que le corresponde (revisión ronda 1, #5):
+ *
+ *  - **I1, I7–I9 e I-E3-1…7**: `models/ledger.runLedgerInvariants(--org)`, que
+ *    corre acotado al tenant (`app_runtime` vía `DATABASE_URL`) y usa el motor
+ *    puro de `lib/ledger/invariants.ts`. Ya no hay «PENDING»: si un invariante
+ *    no se puede evaluar, lo dice él (INFO), no este script.
+ *  - **I10**: barrido cross-org como `app_maintenance`, más abajo.
  *
  * **Por qué `app_maintenance` y no `tenantDb`.** I10 dice que ninguna fila
  * apunta a una entidad de OTRA organización. Con el filtro de tenant puesto, un
@@ -26,7 +29,7 @@ import { randomUUID } from "node:crypto"
 import { writeFile } from "node:fs/promises"
 import type { Client } from "pg"
 
-type CheckStatus = "PASS" | "FAIL" | "WARN" | "PENDING"
+type CheckStatus = "PASS" | "FAIL" | "WARN" | "INFO"
 
 type Check = {
   id: string
@@ -40,11 +43,15 @@ type Validacion = {
   ledgerHash: string | null
   gitSha: string | null
   organizationId: string | null
+  refDate?: string
+  sello?: { sello: string; motivos: string[] }
   checks: Check[]
 }
 
-/** Invariantes cuyo motor llega en T6: se declaran, no se dan por buenos. */
-const PENDIENTES: readonly string[] = ["I1", "I7", "I8", "I9"]
+/** «Hoy» por parámetro: el motor puro nunca lo calcula (CLAUDE.md). */
+function todayIso(): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date())
+}
 
 function parseArgs(argv: string[]): { organizationId: string | null; out: string } {
   const orgIndex = argv.indexOf("--org")
@@ -104,34 +111,60 @@ async function checkI10(client: Client, organizationId: string | null): Promise<
 
 async function main() {
   const { organizationId, out } = parseArgs(process.argv.slice(2))
+  const refDate = todayIso()
 
-  const checks = await withMaintenanceClient(async (client) => {
-    const done: Check[] = [await checkI10(client, organizationId)]
-    for (const id of PENDIENTES) {
-      done.push({
-        id,
-        status: "PENDING",
-        evidencia: "Sin implementar todavía: llega con lib/ledger/invariants.ts (E3-T6)",
-        query: null,
+  // I10: barrido SIN filtro de tenant. Es la única forma de ver un cruce.
+  const crossOrg = await withMaintenanceClient(async (client) => checkI10(client, organizationId))
+
+  // El resto, con el motor puro sobre los datos de la organización.
+  let ledgerHash: string | null = null
+  let gitSha = process.env.GIT_SHA ?? "desconocido"
+  let sello: { sello: string; motivos: string[] } | undefined
+  const checks: Check[] = []
+
+  if (organizationId) {
+    const { runLedgerInvariants } = await import("@/models/ledger")
+    const run = await runLedgerInvariants(organizationId, { refDate, noCache: true })
+    ledgerHash = run.validacion.ledgerHash
+    gitSha = run.validacion.gitSha
+    sello = { sello: run.sello.sello, motivos: run.sello.motivos }
+    for (const check of run.validacion.checks) {
+      if (check.id === "I10") continue // manda el barrido cross-org
+      checks.push({
+        id: check.id,
+        status: check.status as CheckStatus,
+        evidencia: check.evidencia,
+        query: check.query ?? null,
       })
     }
-    return done
-  })
+  } else {
+    checks.push({
+      id: "I1",
+      status: "INFO",
+      evidencia: "Sin --org sólo se ejecuta I10 (barrido cross-org): los demás invariantes son por organización",
+      query: null,
+    })
+  }
+
+  checks.push(crossOrg)
 
   const validacion: Validacion = {
     run_id: randomUUID(),
-    ledgerHash: null,
-    gitSha: process.env.GIT_SHA ?? null,
+    ledgerHash,
+    gitSha,
     organizationId,
+    refDate,
+    ...(sello ? { sello } : {}),
     checks,
   }
 
   await writeFile(out, JSON.stringify(validacion, null, 2) + "\n", "utf8")
 
   for (const check of checks) {
-    console.log(`${check.status.padEnd(7)} ${check.id.padEnd(4)} ${check.evidencia}`)
+    console.log(`${check.status.padEnd(7)} ${check.id.padEnd(8)} ${check.evidencia}`)
   }
-  console.log(`\n· Escrito ${out}`)
+  if (sello) console.log(`\n· ${sello.sello}${sello.motivos.length ? ` — ${sello.motivos.join("; ")}` : ""}`)
+  console.log(`· Escrito ${out}`)
 
   if (checks.some((check) => check.status === "FAIL")) {
     process.exitCode = 1

@@ -49,6 +49,12 @@ const BUSINESS_DELEGATES = [
   "organizationAccountMap",
   "taxRate",
   "auditLog",
+  // E3 (revisión ronda 1, #3): las cuatro tablas del libro diario. Sin ellas,
+  // un `prisma.journalEntry…` fuera de `tenantDb` devolvía VACÍO en silencio.
+  "fiscalYear",
+  "periodLock",
+  "journalEntry",
+  "journalLine",
 ];
 
 const NO_BARE_PRISMA_DELEGATE = {

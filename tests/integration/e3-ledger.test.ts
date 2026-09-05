@@ -27,8 +27,10 @@ const { openFiscalYear, closeFiscalYear } = await import("@/models/fiscal-years"
 const { lockPeriod, unlockPeriod } = await import("@/models/period-locks")
 const {
   computeLedgerHash,
+  computeLedgerHashInMemory,
   getAccountBalances,
   getEntries,
+  postEntries,
   postEntry,
   runLedgerInvariants,
   voidEntry,
@@ -44,10 +46,15 @@ const ORG_MIN_2 = "e3000000-0000-4000-8000-00000000000b"
 const ORG_FULL = "e3000000-0000-4000-8000-00000000000c"
 const ORG_OPS = "e3000000-0000-4000-8000-00000000000d"
 const ORG_OTHER = "e3000000-0000-4000-8000-00000000000e"
+/** Organización propia para el cierre que debe deshacerse entero (#1). */
+const ORG_CLOSE = "e3000000-0000-4000-8000-00000000000f"
 const USER = "e3000000-0000-4000-8000-0000000000a1"
-const ALL_ORGS = [ORG_MIN, ORG_MIN_2, ORG_FULL, ORG_OPS, ORG_OTHER]
+const ALL_ORGS = [ORG_MIN, ORG_MIN_2, ORG_FULL, ORG_OPS, ORG_OTHER, ORG_CLOSE]
 
 const actor = { userId: USER }
+/** #4: sin git-sha el sello es REQUIERE REVISIÓN por definición; los tests que
+ *  comprueban OTRA cosa declaran uno, como hará el build. */
+const GIT_SHA = "c0e828f0000000000000000000000000000000ab"
 
 async function owner<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: TEST_DATABASE_URL })
@@ -158,6 +165,15 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
       for (const [prefix, expected] of Object.entries(byPrefix ?? {})) {
         expect(aggregated.get(prefix) ?? 0, `prefijo ${prefix}`).toBe(expected)
       }
+
+      // #9: el hash se calcula por agregado SQL. Este test es lo que impide que
+      // la forma canónica del SQL y la del motor puro diverjan en silencio.
+      const [enSql, enMemoria] = await tenantTransaction(ORG_FULL, USER, async (tx) => [
+        await computeLedgerHash(tx),
+        await computeLedgerHashInMemory(tx),
+      ])
+      expect(enSql).toBe(enMemoria)
+      expect(enSql).toBe(report.ledgerHash)
     },
     300_000
   )
@@ -368,13 +384,211 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
   })
 
   // ───────────────────────────────────────────────────────────────────────────
+  // Revisión ronda 1 · BLOQUEA #1 — una transacción que falla NO puede confirmar
+  // ───────────────────────────────────────────────────────────────────────────
+
+  describe("atomicidad de las transacciones del diario (#1)", () => {
+    const ORG = ORG_OPS
+
+    it("postEntries con el 2º asiento inválido: 0 asientos nuevos y lastEntryNumber intacto", async () => {
+      const fy = await tenantDb(ORG).fiscalYear.findFirstOrThrow({ where: { code: "2026" } })
+      const antes = fy.lastEntryNumber
+      const cuantos = await tenantDb(ORG).journalEntry.count({ where: { fiscalYearId: fy.id } })
+
+      const bueno = {
+        organizationId: ORG,
+        fiscalYearId: fy.id,
+        entryDate: "2026-06-10",
+        description: "Lote · asiento válido",
+        kind: "NORMAL" as const,
+        sourceType: "MANUAL" as const,
+        taxRoundingMode: "PER_TIPO" as const,
+        lines: [
+          { lineNo: 1, accountCode: "572", debitCents: 10_000, creditCents: 0 },
+          { lineNo: 2, accountCode: "705", debitCents: 0, creditCents: 10_000 },
+        ],
+      }
+      // Descuadrado: el motor lo rechaza y el lote entero tiene que deshacerse.
+      const malo = {
+        ...bueno,
+        description: "Lote · asiento descuadrado",
+        lines: [bueno.lines[0], { ...bueno.lines[1], creditCents: 9_999 }],
+      }
+
+      const result = await postEntries(ORG, [bueno, malo], actor, { refDate: "2026-12-31" })
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.errors.map((e) => e.code)).toContain("UNBALANCED")
+
+      expect(await tenantDb(ORG).journalEntry.count({ where: { fiscalYearId: fy.id } })).toBe(cuantos)
+      expect((await tenantDb(ORG).fiscalYear.findFirstOrThrow({ where: { id: fy.id } })).lastEntryNumber).toBe(antes)
+    }, 60_000)
+
+    it("closeFiscalYear con un invariante en FAIL: 0 asientos, 0 bloqueos y el ejercicio sigue OPEN", async () => {
+      // Organización propia: el cierre postea también la APERTURA del ejercicio
+      // siguiente, y aquí no puede haber ninguno (ni meses bloqueados de otros
+      // casos) o el fallo llegaría por otro camino y el test no probaría nada.
+      const ORG = ORG_CLOSE
+      await importNpgc(ORG, "PYMES", { actor, now: new Date("2024-01-01"), useSubaccounts: false })
+      const fy = await openFiscalYear(ORG, { code: "2024", startDate: "2024-01-01", endDate: "2024-12-31" }, actor)
+      if (!fy.ok) throw new Error(JSON.stringify(fy.errors))
+
+      const draft = await tenantTransaction(ORG, USER, async (tx) => {
+        const ctx = await getLedgerContext(tx, "2024-12-31")
+        return buildEntry(
+          {
+            organizationId: ORG,
+            entryDate: "2024-05-10",
+            description: "Venta de 2024",
+            kind: "NORMAL",
+            sourceType: "MANUAL",
+            lines: [
+              { lineNo: 1, accountCode: "572", debitCents: 20_000, creditCents: 0 },
+              { lineNo: 2, accountCode: "705", debitCents: 0, creditCents: 20_000 },
+            ],
+          },
+          ctx
+        )
+      })
+      if (!draft.ok) throw new Error(JSON.stringify(draft.errors))
+      const posted = await postEntry(ORG, draft.value, actor, { refDate: "2024-12-31" })
+      if (!posted.ok) throw new Error(JSON.stringify(posted.errors))
+
+      // Se corrompe una línea por SQL (triggers caídos): I1 e I-E3-7 pasan a FAIL.
+      const lineId = await owner(async (client) => {
+        const { rows } = await client.query<{ id: string }>(
+          `SELECT id FROM journal_lines WHERE entry_id = $1::uuid AND debit_cents > 0 LIMIT 1`,
+          [posted.value.id]
+        )
+        return rows[0].id
+      })
+      // Se cambia la CUENTA, no el importe: el asiento sigue cuadrado (así el
+      // cierre no falla antes por descuadre) pero el `entryHash` deja de
+      // coincidir → I-E3-7 en FAIL, que es el camino que este test protege.
+      await owner(async (client) => {
+        await client.query(`ALTER TABLE journal_lines NO FORCE ROW LEVEL SECURITY`)
+        await client.query(`ALTER TABLE journal_lines DISABLE TRIGGER ALL`)
+        await client.query(`UPDATE journal_lines SET account_code = '570' WHERE id = $1::uuid`, [lineId])
+        await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER ALL`)
+        await client.query(`ALTER TABLE journal_lines FORCE ROW LEVEL SECURITY`)
+      })
+
+      try {
+        const entriesAntes = await tenantDb(ORG).journalEntry.count({ where: { fiscalYearId: fy.value.id } })
+        const result = await closeFiscalYear(ORG, fy.value.id, actor, "cierre que no debe prosperar")
+
+        expect(result.ok).toBe(false)
+        if (!result.ok) expect(result.errors[0].code).toBe("INVARIANTS_FAILED")
+
+        // Lo que este test protege: NADA de lo que hizo el cierre queda.
+        expect(await tenantDb(ORG).journalEntry.count({ where: { fiscalYearId: fy.value.id } })).toBe(entriesAntes)
+        expect(await tenantDb(ORG).periodLock.count({ where: { fiscalYearId: fy.value.id } })).toBe(0)
+        const after = await tenantDb(ORG).fiscalYear.findFirstOrThrow({ where: { id: fy.value.id } })
+        expect(after.status).toBe("OPEN")
+        expect(after.closedAt).toBeNull()
+      } finally {
+        await owner(async (client) => {
+          await client.query(`ALTER TABLE journal_lines NO FORCE ROW LEVEL SECURITY`)
+          await client.query(`ALTER TABLE journal_lines DISABLE TRIGGER ALL`)
+          await client.query(`UPDATE journal_lines SET account_code = '572' WHERE id = $1::uuid`, [lineId])
+          await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER ALL`)
+          await client.query(`ALTER TABLE journal_lines FORCE ROW LEVEL SECURITY`)
+        })
+      }
+    }, 180_000)
+
+    it("#8 · el mismo `idempotencyKey` no duplica el asiento", async () => {
+      const fy = await tenantDb(ORG).fiscalYear.findFirstOrThrow({ where: { code: "2026" } })
+      const draft = await tenantTransaction(ORG, USER, async (tx) => {
+        const ctx = await getLedgerContext(tx, "2026-12-31")
+        return buildEntry(
+          {
+            organizationId: ORG,
+            entryDate: "2026-06-20",
+            description: "Doble clic del formulario",
+            kind: "NORMAL",
+            sourceType: "MANUAL",
+            lines: [
+              { lineNo: 1, accountCode: "572", debitCents: 7_700, creditCents: 0 },
+              { lineNo: 2, accountCode: "705", debitCents: 0, creditCents: 7_700 },
+            ],
+          },
+          ctx
+        )
+      })
+      if (!draft.ok) throw new Error(JSON.stringify(draft.errors))
+
+      const key = "11111111-2222-4333-8444-555555555555"
+      const antes = (await tenantDb(ORG).fiscalYear.findFirstOrThrow({ where: { id: fy.id } })).lastEntryNumber
+
+      const first = await postEntry(ORG, draft.value, actor, { refDate: "2026-12-31", idempotencyKey: key })
+      const second = await postEntry(ORG, draft.value, actor, { refDate: "2026-12-31", idempotencyKey: key })
+      if (!first.ok || !second.ok) throw new Error("los dos envíos deberían resolverse")
+
+      expect(second.value.id).toBe(first.value.id)
+      expect(second.value.entryNumber).toBe(first.value.entryNumber)
+      expect((await tenantDb(ORG).fiscalYear.findFirstOrThrow({ where: { id: fy.id } })).lastEntryNumber).toBe(
+        antes + 1
+      )
+    }, 60_000)
+
+    it("#2 · sin usuario no se postea: POSTED_BY_REQUIRED", async () => {
+      const fy = await tenantDb(ORG).fiscalYear.findFirstOrThrow({ where: { code: "2026" } })
+      const result = await postEntry(
+        ORG,
+        {
+          organizationId: ORG,
+          fiscalYearId: fy.id,
+          entryDate: "2026-06-21",
+          description: "Sin autor",
+          kind: "NORMAL",
+          sourceType: "MANUAL",
+          taxRoundingMode: "PER_TIPO",
+          lines: [
+            { lineNo: 1, accountCode: "572", debitCents: 1_000, creditCents: 0 },
+            { lineNo: 2, accountCode: "705", debitCents: 0, creditCents: 1_000 },
+          ],
+        },
+        { userId: null },
+        { skipCheck: true }
+      )
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.errors[0].code).toBe("POSTED_BY_REQUIRED")
+    }, 60_000)
+
+    it("#6 · un ejercicio de julio a junio se bloquea en SU secuencia y se puede cerrar", async () => {
+      const fy = await openFiscalYear(ORG, { code: "2029-30", startDate: "2029-07-01", endDate: "2030-06-30" }, actor)
+      if (!fy.ok) throw new Error(JSON.stringify(fy.errors))
+
+      // El primer mes del ejercicio es julio, no enero: bloquear enero primero
+      // rompería la secuencia.
+      const fueraDeOrden = await lockPeriod(ORG, { fiscalYearId: fy.value.id, month: 1 }, actor)
+      expect(fueraDeOrden.ok).toBe(false)
+      if (!fueraDeOrden.ok) expect(fueraDeOrden.errors[0].code).toBe("LOCK_SEQUENCE")
+
+      const julio = await lockPeriod(ORG, { fiscalYearId: fy.value.id, month: 7, reason: "cierre de julio" }, actor)
+      expect(julio.ok, JSON.stringify(julio)).toBe(true)
+
+      // Y el cierre completa el resto en la secuencia correcta: 8..12, 1..6.
+      const closed = await closeFiscalYear(ORG, fy.value.id, actor, "cierre del ejercicio irregular")
+      if (!closed.ok) throw new Error(JSON.stringify(closed.errors))
+      expect(closed.value.fiscalYear.status).toBe("CLOSED")
+      expect(closed.value.lockedMonths.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+
+      // Doble cierre: rechazado.
+      const again = await closeFiscalYear(ORG, fy.value.id, actor, "segundo cierre del mismo ejercicio")
+      expect(again.ok).toBe(false)
+      if (!again.ok) expect(again.errors[0].code).toBe("FY_CLOSED")
+    }, 180_000)
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
   // Criterio 14 · error inyectado por SQL (SPEC-FIABILIDAD C4)
   // ───────────────────────────────────────────────────────────────────────────
 
   it(
     "criterio 14 · una línea alterada por SQL: la corta el trigger y, con los triggers caídos, la delatan I1 e I-E3-7",
     async () => {
-      const before = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31" })
+      const before = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31", noCache: true, gitSha: GIT_SHA })
       expect(before.validacion.checks.filter((c) => c.status === "FAIL")).toEqual([])
       expect(before.sello.sello).toBe("VALIDADO AUTOMÁTICAMENTE")
       const hashBefore = await tenantTransaction(ORG_MIN, USER, async (tx) => computeLedgerHash(tx))
@@ -418,7 +632,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
           await client.query(`ALTER TABLE journal_lines FORCE ROW LEVEL SECURITY`)
         })
 
-        const after = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31" })
+        const after = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31", noCache: true, gitSha: GIT_SHA })
         const failed = after.validacion.checks.filter((c) => c.status === "FAIL").map((c) => c.id)
         expect(failed).toContain("I1")
         expect(failed).toContain("I-E3-7")
@@ -438,7 +652,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
         })
       }
 
-      const restored = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31" })
+      const restored = await runLedgerInvariants(ORG_MIN, { refDate: "2026-12-31", noCache: true, gitSha: GIT_SHA })
       expect(restored.validacion.checks.filter((c) => c.status === "FAIL")).toEqual([])
     },
     180_000

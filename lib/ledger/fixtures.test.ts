@@ -18,6 +18,7 @@ import { buildMayor } from "@/lib/ledger/reports/mayor"
 import { buildSumasSaldos } from "@/lib/ledger/reports/sumas-saldos"
 import {
   balancesOf,
+  checkFixtureSelfConsistency,
   loadFixture,
   toReportAccounts,
   toReportEntries,
@@ -232,4 +233,21 @@ describe("ejercicio-completo — cifras concretas del §4.3 del experto", () => 
     })
     expect(report.balanceTotals.balanced).toBe(true)
   })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auditoría de fiabilidad (ronda 1): el fixture es coherente CONSIGO MISMO
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("auto-consistencia de los fixtures (saldos 6/7 incluidos)", () => {
+  it.each(["ejercicio-minimo", "ejercicio-completo"] as const)(
+    "%s: los saldos declarados salen de sus propias líneas, y la PyG cuadra con la 129",
+    (name) => {
+      const check = checkFixtureSelfConsistency(name)
+      expect(check.mismatches).toEqual([])
+      // I3: el resultado de los grupos 6/7 es exactamente el saldo de la 129.
+      expect(check.resultadoCents).toBe(check.saldo129Cents)
+      expect(check.pnlAccountCount).toBeGreaterThan(0)
+    }
+  )
 })

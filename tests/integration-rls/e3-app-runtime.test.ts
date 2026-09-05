@@ -23,6 +23,8 @@ const USER_A = "e3c00000-0000-4000-8000-0000000000a1"
 const ORGS = [ORG_A, ORG_B]
 
 const actor = { userId: USER_A }
+/** #4: sin git-sha el sello es REQUIERE REVISIÓN por definición. */
+const GIT_SHA = "c0e828f0000000000000000000000000000000ab"
 
 async function owner<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: OWNER_URL })
@@ -235,7 +237,7 @@ describe.skipIf(!OWNER_URL)("E3 · diario, ejercicios y bloqueos como app_runtim
     expect(rejected.ok).toBe(false)
     if (!rejected.ok) expect(rejected.errors[0].code).toBe("FY_CLOSED")
 
-    const run = await runLedgerInvariants(ORG_A, { refDate: "2026-12-31" })
+    const run = await runLedgerInvariants(ORG_A, { refDate: "2026-12-31", gitSha: GIT_SHA, noCache: true })
     expect(run.validacion.checks.filter((c) => c.status === "FAIL")).toEqual([])
     expect(run.sello.sello).toBe("VALIDADO AUTOMÁTICAMENTE")
   }, 120_000)

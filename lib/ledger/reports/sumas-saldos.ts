@@ -92,7 +92,14 @@ export function buildSumasSaldos(
       row.provenance = cellProvenance(
         `sumas_saldos.saldo.${code}`,
         balanceCents,
-        { organizationId: params.organizationId, from: params.from, to: params.to, accountCode: code },
+        {
+          organizationId: params.organizationId,
+          from: params.from,
+          to: params.to,
+          accountCode: code,
+          // #10: si el informe se acota a un ejercicio, la provenance también.
+          ...(params.fiscalYearId ? { fiscalYearId: params.fiscalYearId } : {}),
+        },
         provenanceCtx
       )
     }

@@ -12,13 +12,15 @@
  */
 
 import { tenantTransaction } from "@/lib/db"
-import { firstDayOfMonth, fromUtcDate, lastDayOfMonth, toUtcDate } from "@/lib/ledger/dates"
+import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import { runInvariants as runInvariantsPure } from "@/lib/ledger/invariants"
 import { buildFromTemplate } from "@/lib/ledger/templates"
 import type { Cents, EntryDraft, LocalDate, PostedEntry } from "@/lib/ledger/types"
 import type { Actor } from "@/models/accounts"
 import { writeAuditLog } from "@/models/audit-log"
 import {
+  abort,
+  abortWith,
   AnyClient,
   computeLedgerHash,
   getAccountBalances,
@@ -28,11 +30,10 @@ import {
   listPeriodLockRefs,
   modelErr,
   modelFail,
-  modelOk,
   postEntryTx,
-  translateDbError,
+  runLedgerTransaction,
 } from "@/models/ledger"
-import { lockedMonths, lockPeriodTx } from "@/models/period-locks"
+import { lockedMonths, lockPeriodTx, monthsBetween } from "@/models/period-locks"
 import type { FiscalYear } from "@/prisma/client"
 import { randomUUID } from "node:crypto"
 
@@ -72,19 +73,17 @@ export async function openFiscalYear(
   if (input.endDate < input.startDate) {
     return modelFail(modelErr("FY_DATES", "endDate", "La fecha de fin no puede ser anterior a la de inicio"))
   }
-  try {
-    return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
+    {
       const existing = await tx.fiscalYear.findMany()
       if (existing.some((fy) => fy.code === input.code)) {
-        return modelFail<FiscalYear>(modelErr("FY_DUPLICATE_CODE", "code", `Ya existe el ejercicio ${input.code}`))
+        abort(modelErr("FY_DUPLICATE_CODE", "code", `Ya existe el ejercicio ${input.code}`))
       }
       const overlap = existing.find(
         (fy) => fromUtcDate(fy.startDate) <= input.endDate && fromUtcDate(fy.endDate) >= input.startDate
       )
       if (overlap) {
-        return modelFail<FiscalYear>(
-          modelErr("FY_OVERLAP", "startDate", `El periodo se solapa con el ejercicio ${overlap.code}`)
-        )
+        abort(modelErr("FY_OVERLAP", "startDate", `El periodo se solapa con el ejercicio ${overlap.code}`))
       }
 
       const created = await tx.fiscalYear.create({
@@ -106,11 +105,9 @@ export async function openFiscalYear(
         userId: actor.userId ?? null,
       })
 
-      return modelOk(created)
-    })
-  } catch (error) {
-    return modelFail(translateDbError(error))
-  }
+      return created
+    }
+  })
 }
 
 /** Alias del diseño (§4.1). */
@@ -154,201 +151,172 @@ export async function closeFiscalYear(
   reason: string,
   opts: { skipInvariants?: boolean; refDate?: LocalDate } = {}
 ): Promise<LedgerResult<CloseFiscalYearResult>> {
-  try {
-    return await tenantTransaction(
-      organizationId,
-      actor.userId ?? undefined,
-      async (tx) => {
-        const fy = await tx.fiscalYear.findFirst({ where: { id: fiscalYearId } })
-        if (!fy) {
-          return modelFail<CloseFiscalYearResult>(
-            modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización")
-          )
-        }
-        if (fy.status === "CLOSED") {
-          return modelFail<CloseFiscalYearResult>(
-            modelErr("FY_CLOSED", "fiscalYearId", `El ejercicio ${fy.code} ya está cerrado`)
-          )
-        }
+  return await runLedgerTransaction(
+    organizationId,
+    actor.userId,
+    async (tx) => {
+      const fy = await tx.fiscalYear.findFirst({ where: { id: fiscalYearId } })
+      if (!fy) abort(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
+      if (fy.status === "CLOSED") {
+        abort(modelErr("FY_CLOSED", "fiscalYearId", `El ejercicio ${fy.code} ya está cerrado`))
+      }
 
-        const startDate = fromUtcDate(fy.startDate)
-        const endDate = fromUtcDate(fy.endDate)
-        const refDate = opts.refDate ?? endDate
+      const startDate = fromUtcDate(fy.startDate)
+      const endDate = fromUtcDate(fy.endDate)
+      const refDate = opts.refDate ?? endDate
 
-        // ── 1. Regularización (T-26) ────────────────────────────────────────
-        const balances = await getAccountBalances(tx, { upTo: endDate, fiscalYearId })
-        const pnl = [...balances.entries()].filter(
-          ([code, saldo]) => (code.startsWith("6") || code.startsWith("7")) && saldo !== 0
+      // ── 1. Regularización (T-26) ──────────────────────────────────────────
+      const balances = await getAccountBalances(tx, { upTo: endDate, fiscalYearId })
+      const pnl = [...balances.entries()].filter(
+        ([code, saldo]) => (code.startsWith("6") || code.startsWith("7")) && saldo !== 0
+      )
+
+      let regularizacion: PostedEntry | null = null
+      if (pnl.length > 0) {
+        const ctx = await getLedgerContext(tx, refDate, { balances })
+        const built = buildFromTemplate(
+          "REGULARIZACION_RESULTADO",
+          { entryDate: endDate, description: `Regularización del ejercicio ${fy.code}` },
+          ctx
         )
+        if (!built.ok) abortWith(built.errors)
+        regularizacion = await postEntryTx(tx, built.value, actor)
+      }
 
-        let regularizacion: PostedEntry | null = null
-        if (pnl.length > 0) {
-          const ctx = await getLedgerContext(tx, refDate, { balances })
-          const built = buildFromTemplate(
-            "REGULARIZACION_RESULTADO",
-            { entryDate: endDate, description: `Regularización del ejercicio ${fy.code}` },
-            ctx
-          )
-          if (!built.ok) return modelFail<CloseFiscalYearResult>(...built.errors)
-          const posted = await postEntryTx(tx, built.value, actor)
-          if (!posted.ok) return modelFail<CloseFiscalYearResult>(...posted.errors)
-          regularizacion = posted.value
-        }
-
-        // ── 2. Cierre (T-27) con los saldos ya regularizados ────────────────
-        const afterRegularization = await getAccountBalances(tx, { upTo: endDate, fiscalYearId })
-        const balanceSheet = new Map(
-          [...afterRegularization.entries()].filter(([code, saldo]) => !code.startsWith("6") && !code.startsWith("7") && saldo !== 0)
+      // ── 2. Cierre (T-27) con los saldos ya regularizados ──────────────────
+      const afterRegularization = await getAccountBalances(tx, { upTo: endDate, fiscalYearId })
+      const balanceSheet = new Map(
+        [...afterRegularization.entries()].filter(
+          ([code, saldo]) => !code.startsWith("6") && !code.startsWith("7") && saldo !== 0
         )
+      )
 
-        let cierre: PostedEntry | null = null
-        if (balanceSheet.size > 0) {
-          const ctx = await getLedgerContext(tx, refDate, { balances: afterRegularization })
-          const built = buildFromTemplate(
-            "CIERRE_EJERCICIO",
-            { entryDate: endDate, description: `Cierre del ejercicio ${fy.code}` },
-            ctx
-          )
-          if (!built.ok) return modelFail<CloseFiscalYearResult>(...built.errors)
-          const posted = await postEntryTx(tx, built.value, actor)
-          if (!posted.ok) return modelFail<CloseFiscalYearResult>(...posted.errors)
-          cierre = posted.value
-        }
+      let cierre: PostedEntry | null = null
+      if (balanceSheet.size > 0) {
+        const ctx = await getLedgerContext(tx, refDate, { balances: afterRegularization })
+        const built = buildFromTemplate(
+          "CIERRE_EJERCICIO",
+          { entryDate: endDate, description: `Cierre del ejercicio ${fy.code}` },
+          ctx
+        )
+        if (!built.ok) abortWith(built.errors)
+        cierre = await postEntryTx(tx, built.value, actor)
+      }
 
-        // ── 3. Apertura del siguiente (T-28), espejo exacto (I-E3-6) ────────
-        let apertura: PostedEntry | null = null
-        const next = await tx.fiscalYear.findFirst({
-          where: { startDate: { gt: fy.endDate }, status: "OPEN" },
-          orderBy: { startDate: "asc" },
-        })
-        if (next && balanceSheet.size > 0) {
-          const nextStart = fromUtcDate(next.startDate)
-          const ctx = await getLedgerContext(tx, nextStart, { balances: balanceSheet })
-          const built = buildFromTemplate(
-            "APERTURA_EJERCICIO",
-            {
-              entryDate: nextStart,
-              fiscalYearId: next.id,
-              description: `Apertura del ejercicio ${next.code}`,
-            },
-            ctx
-          )
-          if (!built.ok) return modelFail<CloseFiscalYearResult>(...built.errors)
-          const draft: EntryDraft = { ...built.value, fiscalYearId: next.id }
-          const posted = await postEntryTx(tx, draft, actor)
-          if (!posted.ok) return modelFail<CloseFiscalYearResult>(...posted.errors)
-          apertura = posted.value
-        }
+      // ── 3. Apertura del siguiente (T-28), espejo exacto (I-E3-6) ──────────
+      let apertura: PostedEntry | null = null
+      const next = await tx.fiscalYear.findFirst({
+        where: { startDate: { gt: fy.endDate }, status: "OPEN" },
+        orderBy: { startDate: "asc" },
+      })
+      if (next && balanceSheet.size > 0) {
+        const nextStart = fromUtcDate(next.startDate)
+        const ctx = await getLedgerContext(tx, nextStart, { balances: balanceSheet })
+        const built = buildFromTemplate(
+          "APERTURA_EJERCICIO",
+          { entryDate: nextStart, fiscalYearId: next.id, description: `Apertura del ejercicio ${next.code}` },
+          ctx
+        )
+        if (!built.ok) abortWith(built.errors)
+        const draft: EntryDraft = { ...built.value, fiscalYearId: next.id }
+        apertura = await postEntryTx(tx, draft, actor)
+      }
 
-        // ── 4. B-4: los doce meses bloqueados, secuencialmente (B-2) ────────
-        const already = await lockedMonths(tx, fiscalYearId)
-        const monthsOfFy = monthsBetween(startDate, endDate)
-        for (const month of monthsOfFy) {
-          if (already.includes(month)) continue
-          const locked = await lockPeriodTx(
-            tx,
-            { fiscalYearId, month, reason: `Cierre del ejercicio ${fy.code}` },
-            actor
-          )
-          if (!locked.ok) return modelFail<CloseFiscalYearResult>(...locked.errors)
-        }
-        const finalLocks = await lockedMonths(tx, fiscalYearId)
+      // ── 4. B-4: todos los meses del ejercicio bloqueados, en su secuencia ──
+      const already = await lockedMonths(tx, fiscalYearId)
+      for (const month of monthsBetween(startDate, endDate)) {
+        if (already.includes(month)) continue
+        await lockPeriodTx(tx, { fiscalYearId, month, reason: `Cierre del ejercicio ${fy.code}` }, actor)
+      }
+      const finalLocks = await lockedMonths(tx, fiscalYearId)
 
-        // ── 5. Invariantes (B-4) ────────────────────────────────────────────
-        const ledgerHashValue = await computeLedgerHash(tx, { fiscalYearId })
-        if (!opts.skipInvariants) {
-          const [page, fiscalYearRows, periodLocks, accounts] = await Promise.all([
-            getEntries(tx, { fiscalYearId }, { take: 100_000 }),
-            tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } }),
-            listPeriodLockRefs(tx),
-            tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } }),
-          ])
-          const validacion = runInvariantsPure(
-            {
-              runId: randomUUID(),
-              gitSha: process.env.GIT_SHA ?? "desconocido",
-              organizationId,
-              ledgerHash: ledgerHashValue,
-              entries: page.entries,
-              fiscalYears: fiscalYearRows.map((row) => ({
-                id: row.id,
-                code: row.code,
-                startDate: fromUtcDate(row.startDate),
-                endDate: fromUtcDate(row.endDate),
-                status: row.status,
-                lastEntryNumber: row.lastEntryNumber,
-              })),
-              periodLocks,
-              accounts: accounts.map((a) => ({ ...a, organizationId })),
-            },
-            refDate
-          )
-          const failed = validacion.checks.filter((c) => c.status === "FAIL")
-          if (failed.length > 0) {
-            return modelFail<CloseFiscalYearResult>(
-              modelErr(
-                "INVARIANTS_FAILED",
-                "fiscalYearId",
-                `No se cierra el ejercicio: ${failed.map((c) => `${c.id} (${c.evidencia})`).join(" · ")}`
-              )
-            )
-          }
-        }
-
-        // ── 6. CLOSED ───────────────────────────────────────────────────────
-        const closed = await tx.fiscalYear.update({
-          where: { id: fiscalYearId },
-          data: { status: "CLOSED", closedAt: new Date(), closedById: actor.userId ?? null },
-        })
-
-        await writeAuditLog(tx, {
-          entity: "FiscalYear",
-          entityId: fiscalYearId,
-          action: "close",
-          before: { code: fy.code, status: "OPEN", lastEntryNumber: fy.lastEntryNumber },
-          after: {
-            code: fy.code,
-            status: "CLOSED",
-            lastEntryNumber: closed.lastEntryNumber,
-            regularizacionEntryId: regularizacion?.id ?? null,
-            cierreEntryId: cierre?.id ?? null,
-            aperturaEntryId: apertura?.id ?? null,
-            lockedMonths: finalLocks,
+      // ── 5. Invariantes (B-4) ──────────────────────────────────────────────
+      const ledgerHashValue = await computeLedgerHash(tx, { fiscalYearId })
+      if (!opts.skipInvariants) {
+        const [page, fiscalYearRows, periodLocks, accounts] = await Promise.all([
+          getEntries(tx, { fiscalYearId }, { take: 100_000 }),
+          tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } }),
+          listPeriodLockRefs(tx),
+          tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } }),
+        ])
+        const validacion = runInvariantsPure(
+          {
+            runId: randomUUID(),
+            gitSha: process.env.GIT_SHA ?? "desconocido",
+            organizationId,
             ledgerHash: ledgerHashValue,
+            entries: page.entries,
+            fiscalYears: fiscalYearRows.map((row) => ({
+              id: row.id,
+              code: row.code,
+              startDate: fromUtcDate(row.startDate),
+              endDate: fromUtcDate(row.endDate),
+              status: row.status,
+              lastEntryNumber: row.lastEntryNumber,
+            })),
+            periodLocks,
+            accounts: accounts.map((a) => ({ ...a, organizationId })),
           },
-          reason,
-          userId: actor.userId ?? null,
-        })
+          refDate
+        )
+        const failed = validacion.checks.filter((c) => c.status === "FAIL")
+        if (failed.length > 0) {
+          // Abortar, NO devolver: si se devolviera, Prisma haría COMMIT y el
+          // ejercicio quedaría con T-26/T-27/T-28 y los doce bloqueos puestos
+          // pese a no haber pasado los invariantes (BLOQUEA #1).
+          abort(
+            modelErr(
+              "INVARIANTS_FAILED",
+              "fiscalYearId",
+              `No se cierra el ejercicio: ${failed.map((c) => `${c.id} (${c.evidencia})`).join(" · ")}`
+            )
+          )
+        }
+      }
 
-        return modelOk({
-          fiscalYear: closed,
-          regularizacion,
-          cierre,
-          apertura,
+      // ── 6. CLOSED ─────────────────────────────────────────────────────────
+      const closed = await tx.fiscalYear.update({
+        where: { id: fiscalYearId },
+        data: { status: "CLOSED", closedAt: new Date(), closedById: actor.userId ?? null },
+      })
+
+      await writeAuditLog(tx, {
+        entity: "FiscalYear",
+        entityId: fiscalYearId,
+        action: "close",
+        before: { code: fy.code, status: "OPEN", lastEntryNumber: fy.lastEntryNumber },
+        after: {
+          code: fy.code,
+          status: "CLOSED",
+          lastEntryNumber: closed.lastEntryNumber,
+          regularizacionEntryId: regularizacion?.id ?? null,
+          cierreEntryId: cierre?.id ?? null,
+          aperturaEntryId: apertura?.id ?? null,
           lockedMonths: finalLocks,
           ledgerHash: ledgerHashValue,
-        })
-      },
-      { timeout: 120_000, maxWait: 15_000 }
-    )
-  } catch (error) {
-    return modelFail(translateDbError(error))
-  }
+        },
+        reason,
+        userId: actor.userId ?? null,
+      })
+
+      return {
+        fiscalYear: closed,
+        regularizacion,
+        cierre,
+        apertura,
+        lockedMonths: finalLocks,
+        ledgerHash: ledgerHashValue,
+      }
+    },
+    { timeout: 120_000, maxWait: 15_000 }
+  )
 }
 
-/** Meses naturales que toca un ejercicio (soporta ejercicios irregulares). */
-export function monthsBetween(startDate: LocalDate, endDate: LocalDate): number[] {
-  const out: number[] = []
-  let cursor = firstDayOfMonth(startDate)
-  const last = lastDayOfMonth(endDate)
-  while (cursor <= last) {
-    const month = Number(cursor.slice(5, 7))
-    if (!out.includes(month)) out.push(month)
-    const year = Number(cursor.slice(0, 4))
-    cursor = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, "0")}-01`
-  }
-  return out
-}
+/**
+ * Meses de un ejercicio, en su secuencia. Vive en `models/period-locks.ts`
+ * (lo necesita B-2) y se reexporta aquí, que es donde se busca.
+ */
+export { monthsBetween } from "@/models/period-locks"
 
 /** Saldos de un ejercicio, para la UI de cierre (vista previa de T-26/T-27). */
 export async function getFiscalYearBalances(

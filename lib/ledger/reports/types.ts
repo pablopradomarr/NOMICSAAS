@@ -57,6 +57,12 @@ export type ReportPeriod = {
   from: LocalDate
   to: LocalDate
   baseCurrency: string
+  /**
+   * Ejercicio al que se acota el informe, si se acota (#10). Viaja hasta la
+   * provenance de cada celda para que el drill-down devuelva EXACTAMENTE las
+   * líneas que suman la cifra.
+   */
+  fiscalYearId?: string
 }
 
 /** Fila de cuadre común a los tres informes. */

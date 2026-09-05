@@ -1080,3 +1080,29 @@ Las seis dudas de la ronda 1 están resueltas en `docs/design/E3-asientos-tipo.m
 | **Rama "salvo previsión marcada" de I8** | Se retira del alcance de E3 porque sin O-8 no hay forma de marcar una previsión, y E3 no genera ninguna. Vuelve entera en E10 |
 
 Con esto, el diseño queda **CONFORME**. Pendiente de firma humana: **ADR-0009** (Nivel 2, retirada de escapes RLS y `FORCE`), que es la única decisión de esta épica que no cubre un ADR ya aprobado.
+
+---
+
+## 11. Revisión (ronda 1) — resoluciones
+
+Revisión de código en contexto limpio (**CAMBIOS REQUERIDOS**), QA (**FAIL** por un bug) y auditoría de fiabilidad (**CONFORME con 2 hallazgos operativos**) sobre T8/T9/T13/T14. Qué se ha cambiado y dónde:
+
+| # | Hallazgo | Resolución |
+|---|---|---|
+| **BLOQUEA 1** | `return modelFail()` dentro de `tenantTransaction` **no aborta**: Prisma hacía COMMIT, de modo que un lote con el 2.º asiento inválido persistía el 1.º y avanzaba `lastEntryNumber`, y un cierre con un invariante en FAIL confirmaba T-26/T-27/T-28 y los bloqueos | Excepción tipada `LedgerAbort` + `abort()/abortWith()` y `runLedgerTransaction()`, que traduce **fuera** de la transacción (rollback ya hecho). `postEntryTx`, `lockPeriodTx` y `unlockPeriodTx` devuelven el valor y **lanzan** en el fallo. Tests: lote con 2.º inválido ⇒ 0 asientos y contador intacto; cierre con I-E3-7 en FAIL ⇒ 0 asientos, 0 bloqueos, ejercicio `OPEN` |
+| **QA** | `voidEntryAction` dejaba la `Transaction` en `POSTED` apuntando a un asiento anulado (criterio 10 incumplido) | `voidEntry` pasa la operación a `VOID` **en la misma transacción** que el contra-asiento; `voidTransactionPosting` queda como atajo por `transactionId`. El test del QA deja de documentar el incumplimiento y lo exige |
+| **2** | `postedById = actor.userId ?? organizationId`: asientos «firmados» por la organización | `POSTED_BY_REQUIRED` si no hay usuario + FK `journal_entries.posted_by_id → users(id)` (migración `20260907130000`, `NOT VALID` + `VALIDATE` si no hay huérfanos) |
+| **3** | ESLint no cubría los delegados del diario | `BUSINESS_DELEGATES` += `fiscalYear`, `periodLock`, `journalEntry`, `journalLine` |
+| **4** | `GIT_SHA` nunca se inyectaba: la provenance y el sello mentían en silencio | `next.config.ts` lo resuelve en el build (`GIT_SHA` → `git rev-parse HEAD` → `desconocido`), `Dockerfile` con `ARG`/`ENV`, y **`seal()` marca `REQUIERE REVISIÓN` con sha desconocido** (test parametrizado) |
+| **5** | `scripts/run-invariants.ts` declaraba I1/I7/I8/I9 como `PENDING` | Delega en `runLedgerInvariants` (motor real, acotado al tenant) y conserva I10 por `app_maintenance`. Ya no hay `PENDING`; escribe `refDate` y `sello` en `validacion.json` |
+| **6** | El bloqueo secuencial asumía el calendario natural (1..12) | `monthsBetween(start, end)` da la secuencia **del ejercicio**; B-2 y B-3 operan sobre ella. Test: ejercicio julio–junio, bloqueo de enero rechazado antes de julio y cierre completo |
+| **7** | `20260907110000` escribía la marca **después** del backfill: no era idempotente entre entornos | Migración correctora `20260907120000` con el orden correcto (marca → backfill), verificación de la marca y de `FORCE`. Tests sobre el SQL y sobre el estado final |
+| **8** | Un doble envío del formulario duplicaba el asiento | `idempotencyKey` opcional en `postEntry`/`postFromTemplate`/`postTransactionWithTemplate`, en los schemas zod, y **índice único parcial** `(organization_id, idempotency_key)` |
+| **9** | `runInvariants` materializaba el diario entero con `include` | I1 e I7 por **agregado SQL** (`HAVING`, `count/min/max`), `ledgerHash` por `sha256(string_agg(...))` en SQL —con test que lo compara con el motor puro sobre el fixture completo—, lectura por páginas de 2.000 y caché por `ledgerHash` en memoria. Por encima de `MAX_MATERIALIZED_ENTRIES` (20.000) el resto se declara `INFO`, no `PASS` |
+| **10** | La provenance no acotaba por ejercicio ni por `kind` | `ProvenanceParams` += `fiscalYearId` y `entryKind`, que entran en `registros_origen` y en `parametros`; `ReportPeriod.fiscalYearId` los propaga desde mayor y sumas y saldos |
+| **12** | `refDate` con default `draft.entryDate`: un asiento futuro se validaba contra sí mismo | `refDate` **obligatoria** en `postEntry`/`postEntries` (salvo `skipCheck`, que existe para ejercer la barrera de BD) |
+| **13** | La traducción de errores tiraba el detalle del `RAISE` | El mensaje del trigger (asiento y diferencia exacta) se conserva entre paréntesis tras el texto en español |
+| **AUD-1** | El `expected` del fixture no cubría los saldos de los grupos 6/7 | Los fixtures **no se tocan** (son inmutables): `checkFixtureSelfConsistency()` en `tests/support/fixtures.ts` compara `expected` contra la suma de las **propias líneas del JSON**, incluidos 6/7, el resultado antes de regularizar y el saldo de la 129 |
+| **AUD-2** | `--out` de `load-fixture` sólo aceptaba fichero | Acepta directorio: escribe `<dir>/validacion-<fixture>.json`. El rechazo del **doble cierre** ya estaba cubierto y ahora es explícito en `e3-ledger.test.ts` |
+
+**Pendiente consciente:** #11 y #14 quedan fuera de esta ronda por coste frente a beneficio; #12 y #13 sí entran, como pedía la revisión.

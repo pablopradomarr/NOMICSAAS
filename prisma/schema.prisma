@@ -164,6 +164,8 @@ model User {
   memberships Membership[]
   appData     AppData[]
   progress    Progress[]
+  /// E3 (#2): asientos que este usuario ha contabilizado.
+  postedEntries JournalEntry[] @relation("EntryPostedBy")
 
   // E1 (T11): facturación (stripe_*, membership_*, storage_*, ai_balance) y datos
   // de emisor (business_*) viven ahora en Organization. `users` queda con
@@ -806,8 +808,17 @@ model JournalEntry {
   voidedById String?   @map("voided_by_id") @db.Uuid
   voidReason String?   @map("void_reason") @db.VarChar(512)
 
+  /// Quién contabiliza. FK a `users` desde 20260907130000: un asiento sin autor
+  /// no es trazable (P6 de SPEC-FIABILIDAD, revisión ronda 1 #2).
   postedById String   @map("posted_by_id") @db.Uuid
+  postedBy   User     @relation("EntryPostedBy", fields: [postedById], references: [id], onDelete: Restrict)
   postedAt   DateTime @default(now()) @map("posted_at")
+
+  /// Idempotencia de formulario (revisión ronda 1 #8): la UI genera un uuid al
+  /// montar el formulario y lo reenvía en cada intento, de modo que un doble
+  /// clic o un reintento del navegador no duplican el asiento. Índice único
+  /// PARCIAL por organización.
+  idempotencyKey String? @map("idempotency_key") @db.VarChar(64)
 
   /// sha256 canónico de las líneas del asiento (lib/ledger/hash.ts), I-E3-7.
   entryHash String @map("entry_hash") @db.VarChar(64)

@@ -8,15 +8,36 @@
  * mensaje que la UI enseña.
  */
 
-import { TenantClient, TenantTransactionClient, tenantTransaction } from "@/lib/db"
+import { TenantClient, TenantTransactionClient } from "@/lib/db"
 import type { Actor } from "@/models/accounts"
 import { writeAuditLog } from "@/models/audit-log"
-import { LedgerResult, modelErr, modelFail, modelOk } from "@/models/ledger"
+import { abort, LedgerResult, modelErr, runLedgerTransaction } from "@/models/ledger"
 import type { PeriodLock } from "@/prisma/client"
 
 type AnyClient = TenantClient | TenantTransactionClient
 
 export const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const
+
+/**
+ * Meses naturales que toca un ejercicio, EN SU ORDEN (revisión ronda 1 #6).
+ *
+ * Un ejercicio irregular de julio a junio recorre 7, 8, …, 12, 1, …, 6: la
+ * secuencia de bloqueo (B-2) es ésa, no 1..12. Vive aquí, y no en
+ * `models/fiscal-years.ts`, porque el bloqueo la necesita y el ejercicio importa
+ * del bloqueo (evita el ciclo de importación).
+ */
+export function monthsBetween(startDate: string, endDate: string): number[] {
+  const out: number[] = []
+  let cursor = `${startDate.slice(0, 7)}-01`
+  const last = `${endDate.slice(0, 7)}-31`
+  while (cursor <= last) {
+    const month = Number(cursor.slice(5, 7))
+    if (!out.includes(month)) out.push(month)
+    const year = Number(cursor.slice(0, 4))
+    cursor = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, "0")}-01`
+  }
+  return out
+}
 
 export async function listPeriodLocks(db: AnyClient, fiscalYearId?: string): Promise<PeriodLock[]> {
   return await db.periodLock.findMany({
@@ -40,24 +61,34 @@ export async function lockPeriodTx(
   tx: TenantTransactionClient,
   input: LockInput,
   actor: Actor
-): Promise<LedgerResult<PeriodLock>> {
+): Promise<PeriodLock> {
   if (!Number.isInteger(input.month) || input.month < 1 || input.month > 12) {
-    return modelFail(modelErr("LOCK_SEQUENCE", "month", "El mes debe estar entre 1 y 12"))
+    abort(modelErr("LOCK_SEQUENCE", "month", "El mes debe estar entre 1 y 12"))
   }
 
   const fy = await tx.fiscalYear.findFirst({ where: { id: input.fiscalYearId } })
-  if (!fy) return modelFail(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
+  if (!fy) abort(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
   if (fy.status === "CLOSED") {
-    return modelFail(modelErr("FY_CLOSED", "fiscalYearId", `El ejercicio ${fy.code} está cerrado`))
+    abort(modelErr("FY_CLOSED", "fiscalYearId", `El ejercicio ${fy.code} está cerrado`))
+  }
+
+  // #6: la secuencia es la DEL EJERCICIO, no el calendario natural. En un
+  // ejercicio de julio a junio, el mes anterior al 1 es el 12, no el 0.
+  const sequence = monthsBetween(fy.startDate.toISOString().slice(0, 10), fy.endDate.toISOString().slice(0, 10))
+  const position = sequence.indexOf(input.month)
+  if (position < 0) {
+    abort(
+      modelErr("LOCK_SEQUENCE", "month", `El mes ${input.month} no pertenece al ejercicio ${fy.code}`)
+    )
   }
 
   const already = await lockedMonths(tx, input.fiscalYearId)
   if (already.includes(input.month)) {
-    return modelFail(modelErr("ALREADY_LOCKED", "month", `El mes ${input.month} ya está bloqueado`))
+    abort(modelErr("ALREADY_LOCKED", "month", `El mes ${input.month} ya está bloqueado`))
   }
-  const missing = Array.from({ length: input.month - 1 }, (_, i) => i + 1).filter((m) => !already.includes(m))
+  const missing = sequence.slice(0, position).filter((m) => !already.includes(m))
   if (missing.length > 0) {
-    return modelFail(
+    abort(
       modelErr(
         "LOCK_SEQUENCE",
         "month",
@@ -85,7 +116,7 @@ export async function lockPeriodTx(
     userId: actor.userId ?? null,
   })
 
-  return modelOk(lock)
+  return lock
 }
 
 export async function lockPeriod(
@@ -93,9 +124,7 @@ export async function lockPeriod(
   input: LockInput,
   actor: Actor
 ): Promise<LedgerResult<PeriodLock>> {
-  return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) =>
-    lockPeriodTx(tx, input, actor)
-  )
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => lockPeriodTx(tx, input, actor))
 }
 
 /**
@@ -107,11 +136,11 @@ export async function unlockPeriodTx(
   tx: TenantTransactionClient,
   input: { fiscalYearId: string; month: number; reason: string },
   actor: Actor
-): Promise<LedgerResult<{ unlocked: number[] }>> {
+): Promise<{ unlocked: number[] }> {
   const fy = await tx.fiscalYear.findFirst({ where: { id: input.fiscalYearId } })
-  if (!fy) return modelFail(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
+  if (!fy) abort(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
   if (fy.status === "CLOSED") {
-    return modelFail(
+    abort(
       modelErr(
         "FY_CLOSED",
         "fiscalYearId",
@@ -120,28 +149,37 @@ export async function unlockPeriodTx(
     )
   }
 
+  // B-3 sobre la secuencia del ejercicio: desbloquear un mes desbloquea todos
+  // los POSTERIORES SUYOS, que en un ejercicio irregular no son «los > n».
+  const sequence = monthsBetween(fy.startDate.toISOString().slice(0, 10), fy.endDate.toISOString().slice(0, 10))
+  const position = sequence.indexOf(input.month)
+  if (position < 0) {
+    abort(modelErr("LOCK_NOT_FOUND", "month", `El mes ${input.month} no pertenece al ejercicio ${fy.code}`))
+  }
+  const affected = sequence.slice(position)
+
   const rows = await tx.periodLock.findMany({
-    where: { fiscalYearId: input.fiscalYearId, month: { gte: input.month } },
+    where: { fiscalYearId: input.fiscalYearId, month: { in: affected } },
     orderBy: { month: "asc" },
   })
-  if (rows.length === 0 || !rows.some((r) => r.month === input.month)) {
-    return modelFail(modelErr("LOCK_NOT_FOUND", "month", `El mes ${input.month} no está bloqueado`))
+  if (!rows.some((r) => r.month === input.month)) {
+    abort(modelErr("LOCK_NOT_FOUND", "month", `El mes ${input.month} no está bloqueado`))
   }
 
-  await tx.periodLock.deleteMany({ where: { fiscalYearId: input.fiscalYearId, month: { gte: input.month } } })
+  await tx.periodLock.deleteMany({ where: { fiscalYearId: input.fiscalYearId, month: { in: affected } } })
 
-  const unlocked = rows.map((r) => r.month)
+  const unlocked = affected.filter((m) => rows.some((r) => r.month === m))
   await writeAuditLog(tx, {
     entity: "PeriodLock",
     entityId: input.fiscalYearId,
     action: "unlock",
-    before: { fiscalYearId: input.fiscalYearId, fiscalYearCode: fy.code, lockedMonths: unlocked },
+    before: { fiscalYearId: input.fiscalYearId, fiscalYearCode: fy.code, lockedMonths: rows.map((r) => r.month) },
     after: { fiscalYearId: input.fiscalYearId, unlockedMonths: unlocked },
     reason: input.reason,
     userId: actor.userId ?? null,
   })
 
-  return modelOk({ unlocked })
+  return { unlocked }
 }
 
 export async function unlockPeriod(
@@ -149,7 +187,5 @@ export async function unlockPeriod(
   input: { fiscalYearId: string; month: number; reason: string },
   actor: Actor
 ): Promise<LedgerResult<{ unlocked: number[] }>> {
-  return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) =>
-    unlockPeriodTx(tx, input, actor)
-  )
+  return await runLedgerTransaction(organizationId, actor.userId, async (tx) => unlockPeriodTx(tx, input, actor))
 }

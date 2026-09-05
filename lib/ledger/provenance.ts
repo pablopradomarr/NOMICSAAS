@@ -31,6 +31,17 @@ export type ProvenanceParams = {
   from: LocalDate
   to: LocalDate
   accountCode?: string
+  /**
+   * Revisión ronda 1 (#10). Sin estos dos, el drill-down de una celda no
+   * reproduce la cifra cuando el informe está acotado a un ejercicio o excluye
+   * asientos de sistema: `registros_origen` traía TODAS las líneas del rango de
+   * fechas, que no son las que suman esa celda. Ambos son opcionales y, cuando
+   * vienen, entran en la consulta y en `parametros` en este orden:
+   * `$1 org, $2 from, $3 to, [$n accountCode], [$n fiscalYearId], [$n entryKind]`.
+   */
+  fiscalYearId?: string
+  /** `kind` del asiento: filtra p. ej. la PyG, que excluye CLOSING/OPENING. */
+  entryKind?: string
   /** Consulta que devuelve las líneas que componen la cifra. */
   query?: string
   extraParams?: readonly (string | number)[]
@@ -59,9 +70,20 @@ export function cellProvenance(
   ctx: ProvenanceContext,
   confidence: Confidence = "calculado"
 ): Provenance {
-  const query = params.query ?? (params.accountCode ? ACCOUNT_QUERY : DEFAULT_QUERY)
+  let query = params.query ?? (params.accountCode ? ACCOUNT_QUERY : DEFAULT_QUERY)
   const parametros: (string | number)[] = [params.organizationId, params.from, params.to]
   if (params.accountCode) parametros.push(params.accountCode)
+
+  // #10: el filtro que acota REALMENTE la celda se añade a la consulta, no se
+  // deja implícito. `query` explícita manda: quien la trae ya sabe lo que hace.
+  if (params.query === undefined && params.fiscalYearId) {
+    parametros.push(params.fiscalYearId)
+    query += ` AND fiscal_year_id = $${parametros.length}`
+  }
+  if (params.query === undefined && params.entryKind) {
+    parametros.push(params.entryKind)
+    query += ` AND entry_kind = $${parametros.length}`
+  }
   if (params.extraParams) parametros.push(...params.extraParams)
 
   return {

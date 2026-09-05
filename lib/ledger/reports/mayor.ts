@@ -98,7 +98,14 @@ export function buildMayor(
       account.provenance = cellProvenance(
         `mayor.saldo.${code}`,
         running,
-        { organizationId: params.organizationId, from: params.from, to: params.to, accountCode: code },
+        {
+          organizationId: params.organizationId,
+          from: params.from,
+          to: params.to,
+          accountCode: code,
+          // #10: si el informe se acota a un ejercicio, la provenance también.
+          ...(params.fiscalYearId ? { fiscalYearId: params.fiscalYearId } : {}),
+        },
         provenanceCtx
       )
     }

@@ -34,7 +34,8 @@ import {
   type LedgerModelError,
 } from "@/models/ledger"
 import { loadFixture, readFixture, type FixtureName } from "@/tests/support/fixtures"
-import { writeFile } from "node:fs/promises"
+import { existsSync, statSync } from "node:fs"
+import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 export type LoadFixtureOptions = {
@@ -224,6 +225,18 @@ function parseArgs(argv: string[]): { org: string; fixture: string; user: string
   return { org, fixture, user: value("--user"), out: value("--out") }
 }
 
+/**
+ * `--out` admite fichero o DIRECTORIO (auditoría, ronda 1): con un directorio
+ * —existente o terminado en separador— se escribe `<dir>/validacion-<fixture>.json`,
+ * de modo que cargar los dos fixtures seguidos no pisa el informe del primero.
+ */
+export async function resolveOutPath(out: string, fixture: FixtureName): Promise<string> {
+  const looksLikeDir = out.endsWith(path.sep) || out.endsWith("/") || (existsSync(out) && statSync(out).isDirectory())
+  if (!looksLikeDir) return out
+  await mkdir(out, { recursive: true })
+  return path.join(out, `validacion-${fixture}.json`)
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   const fixture = fixtureNameOf(args.fixture)
@@ -239,10 +252,11 @@ async function main() {
 
   if (args.out) {
     const refDate: LocalDate = loadFixture(fixture).ctx.refDate
-    const run = await runLedgerInvariants(args.org, { refDate })
-    await writeFile(args.out, JSON.stringify({ ...run.validacion, sello: run.sello }, null, 2) + "\n", "utf8")
+    const run = await runLedgerInvariants(args.org, { refDate, noCache: true })
+    const target = await resolveOutPath(args.out, fixture)
+    await writeFile(target, JSON.stringify({ ...run.validacion, sello: run.sello }, null, 2) + "\n", "utf8")
     say(`· ${run.sello.sello}${run.sello.motivos.length ? ` — ${run.sello.motivos.join("; ")}` : ""}`)
-    say(`· escrito ${args.out}`)
+    say(`· escrito ${target}`)
   }
 
   if (report.mismatches.length > 0) {

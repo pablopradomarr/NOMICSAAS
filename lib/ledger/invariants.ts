@@ -474,11 +474,23 @@ export type SealOptions = {
  * `REQUIERE REVISIÓN` + motivo si hay cualquier FAIL, si es el primer run tras
  * un cambio de `gitSha` del motor, o si los WARN superan el umbral.
  */
+/** Valores que significan «no sé con qué versión del motor se calculó esto». */
+const UNKNOWN_SHAS: ReadonlySet<string> = new Set(["", "desconocido", "unknown", "dev", "HEAD"])
+
+export const isKnownGitSha = (sha: string | null | undefined): boolean =>
+  typeof sha === "string" && !UNKNOWN_SHAS.has(sha.trim())
+
 export function seal(validacion: Validacion, opts: SealOptions): Seal {
   const motivos: string[] = []
   const failed = validacion.checks.filter((c) => c.status === "FAIL")
   const warned = validacion.checks.filter((c) => c.status === "WARN")
 
+  // Revisión ronda 1 (#4): sin git-sha no se puede afirmar CON QUÉ motor se
+  // calculó la cifra, así que el sello no puede decir «validado
+  // automáticamente». La trazabilidad (P6/P7) es parte del sello, no un extra.
+  if (!isKnownGitSha(opts.gitSha)) {
+    motivos.push("git-sha del motor desconocido: no se puede acreditar con qué versión se calculó")
+  }
   if (failed.length > 0) {
     motivos.push(`invariantes en FAIL: ${failed.map((c) => c.id).join(", ")}`)
   }
