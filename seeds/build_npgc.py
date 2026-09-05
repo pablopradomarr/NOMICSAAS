@@ -1585,6 +1585,84 @@ TIPO_ANALITICO = {
 BIDIRECCIONAL = {"551", "552", "554", "555"}   # 553 y 559 son contenedores mixtos con hijos unidireccionales
 
 # ---------------------------------------------------------------------------
+# 4.bis CASHFLOW: cuenta -> bucket (E6, tabla de docs/design/E6-validacion-estados.md §3.2)
+# ---------------------------------------------------------------------------
+# El cashflow DIRECTO clasifica cada movimiento de tesoreria por el bucket de su
+# CONTRAPARTIDA, asi que el campo hace falta en casi todo el plan y NO solo en 57x
+# (esto invierte el aviso R-18 de E2, ver O-12).
+#
+# Siete buckets (enum `CashflowBucket` de sistema). La `CashflowCategory` de tres
+# valores del modelo de datos se DERIVA del bucket, no se almacena aparte:
+#     COBROS_CLIENTES · PAGOS_PROVEEDORES · PAGOS_PERSONAL ·
+#     PAGOS_IMPUESTOS · OTROS_EXPLOTACION        -> OPERATING
+#     INVERSION                                   -> INVESTING
+#     FINANCIACION                                -> FINANCING
+#
+# Las cuentas 57x quedan VACIAS a proposito: son la propia tesoreria, no una
+# contrapartida. Un asiento cuyas unicas lineas son 57x (traspaso banco<->caja)
+# tiene variacion 0 y se excluye del informe (R-CF-4).
+# Los grupos 8 y 9 (ECPN) tambien quedan vacios: nunca se enfrentan a tesoreria.
+#
+# Criterios que conviene no perder:
+#   · 476 (Seguridad Social) -> PERSONAL, no impuestos: es coste laboral, no tributo.
+#   · 66x/76x contra tesoreria -> explotacion: el EFE situa los pagos de intereses
+#     y los cobros de intereses/dividendos en 8.b y 8.c, dentro de explotacion.
+#   · 407 (anticipo a proveedor) -> PAGOS_PROVEEDORES y 438 (anticipo de cliente)
+#     -> COBROS_CLIENTES, aunque el balance los presente en Existencias y en
+#     Acreedores: el bucket sigue al flujo, no al epigrafe.
+#   · El impuesto sobre beneficios (linea 8.d del EFE) NO es un bucket: se deriva
+#     dentro de PAGOS_IMPUESTOS por las claves HP_ACREEDORA_IS / HP_DEUDORA_IS del
+#     mapa de la organizacion, para no hardcodear 4752/4709 (R-CF-8).
+CASHFLOW_BUCKET = {
+    # --- explotacion: clientes
+    "43": "COBROS_CLIENTES",
+    "438": "COBROS_CLIENTES",
+    # --- explotacion: proveedores y acreedores
+    "40": "PAGOS_PROVEEDORES",
+    "407": "PAGOS_PROVEEDORES",
+    "41": "PAGOS_PROVEEDORES",
+    # --- explotacion: personal
+    "460": "PAGOS_PERSONAL",
+    "465": "PAGOS_PERSONAL",
+    "466": "PAGOS_PERSONAL",
+    "471": "PAGOS_PERSONAL",
+    "476": "PAGOS_PERSONAL",
+    # --- explotacion: tributos (IVA, retenciones, IS, subvenciones a cobrar)
+    "47": "PAGOS_IMPUESTOS",
+    # --- explotacion: resto
+    "3": "OTROS_EXPLOTACION",     # existencias
+    "44": "OTROS_EXPLOTACION",    # deudores varios
+    "46": "OTROS_EXPLOTACION",    # 46x que no sean 460/465/466
+    "48": "OTROS_EXPLOTACION",    # periodificaciones
+    "49": "OTROS_EXPLOTACION",    # deterioro de creditos comerciales
+    "55": "OTROS_EXPLOTACION",    # partidas pendientes y c/c vinculadas
+    "6": "OTROS_EXPLOTACION",     # gasto pagado al contado (incl. 66x, EFE 8.c)
+    "7": "OTROS_EXPLOTACION",     # ingreso cobrado al contado (incl. 76x, EFE 8.b)
+    # --- inversion
+    "2": "INVERSION",             # inmovilizado, inversiones financieras l/p y sus contra
+    "53": "INVERSION",            # inversiones financieras c/p en partes vinculadas
+    "54": "INVERSION",            # otras inversiones financieras c/p
+    "58": "INVERSION",            # activos no corrientes mantenidos para la venta
+    "59": "INVERSION",            # deterioro de inversiones financieras c/p
+    # --- financiacion
+    "1": "FINANCIACION",          # fondos propios, subvenciones, provisiones y deudas l/p
+    "50": "FINANCIACION",         # emprestitos c/p
+    "51": "FINANCIACION",         # deudas c/p con partes vinculadas
+    "52": "FINANCIACION",         # deudas c/p con entidades de credito y otras
+    "56": "FINANCIACION",         # fianzas y depositos recibidos y constituidos
+    # --- tesoreria: sin bucket (es el sujeto del informe, no la contrapartida)
+    "57": "",
+}
+
+# Bucket -> CashflowCategory (funcion pura, no columna redundante)
+CASHFLOW_CATEGORY = {
+    "COBROS_CLIENTES": "OPERATING", "PAGOS_PROVEEDORES": "OPERATING",
+    "PAGOS_PERSONAL": "OPERATING", "PAGOS_IMPUESTOS": "OPERATING",
+    "OTROS_EXPLOTACION": "OPERATING",
+    "INVERSION": "INVESTING", "FINANCIACION": "FINANCING",
+}
+
+# ---------------------------------------------------------------------------
 # 4.ter PGC PYMES (RD 1515/2007 consolidado con RD 602/2016 y RD 1/2021)
 # ---------------------------------------------------------------------------
 # Reglas P-01..P-13 de docs/design/E2-validacion-contable.md §2.1.
@@ -1711,12 +1789,15 @@ def build_rows():
                 contra = 1
         pym = 1 if en_pymes(codigo) else 0
         epi_p = epigrafe_pymes(estado, epigrafe) if pym else ""
+        cfb = _longest_prefix(codigo, CASHFLOW_BUCKET)
+        cfb = "" if cfb is None else cfb
         rows.append(OrderedDict([
             ("codigo", codigo), ("nombre", nombre), ("nivel", nivel), ("padre", padre),
             ("grupo", grupo), ("naturaleza", nat), ("estado_financiero", estado),
             ("epigrafe", epigrafe), ("tipo_analitico", tipo),
             ("bidireccional", bidi), ("is_contra", contra),
             ("pymes", pym), ("epigrafe_pymes", epi_p),
+            ("cashflow_bucket", cfb),
         ]))
     return rows
 
@@ -1779,18 +1860,79 @@ def validate(rows):
     # una cuenta no puede ser a la vez bidireccional y contra
     assert not [r["codigo"] for r in rows if r["bidireccional"] and r["is_contra"]]
     validate_analytic_coherence(rows)
+    validate_cashflow(rows)
     return Counter(r["grupo"] for r in rows)
 
 
+# Codigos que legitimamente NO llevan bucket: la propia tesoreria y los dos
+# contenedores mixtos de nivel 1 cuyos hijos si lo llevan todos.
+_SIN_BUCKET_OK = ("57",)
+_CONTENEDORES_SIN_BUCKET = {"4", "5"}
+
+
+def validate_cashflow(rows):
+    """`cashflow_bucket` exhaustivo: toda cuenta de los grupos 1-7 que pueda ser
+    contrapartida de un movimiento de tesoreria tiene bucket. La exhaustividad es
+    lo que hace que I6 no pueda fallar en silencio por una cuenta sin clasificar."""
+    valid = set(CASHFLOW_CATEGORY)
+    malos = [r["codigo"] for r in rows if r["cashflow_bucket"] and r["cashflow_bucket"] not in valid]
+    assert not malos, f"cashflow_bucket desconocido en: {malos}"
+    faltan = [r["codigo"] for r in rows
+              if r["grupo"] in "1234567"
+              and not r["codigo"].startswith(_SIN_BUCKET_OK)
+              and r["codigo"] not in _CONTENEDORES_SIN_BUCKET
+              and not r["cashflow_bucket"]]
+    assert not faltan, f"cuentas de grupo 1-7 sin cashflow_bucket: {faltan}"
+    sobran = [r["codigo"] for r in rows
+              if r["cashflow_bucket"] and (r["codigo"].startswith(_SIN_BUCKET_OK)
+                                           or r["grupo"] in "89")]
+    assert not sobran, f"cashflow_bucket en tesoreria o en grupos 8/9: {sobran}"
+    # Coherencia padre-hijo: un hijo solo puede cambiar de bucket si su prefijo
+    # esta declarado explicitamente en CASHFLOW_BUCKET (evita derivas silenciosas).
+    by_code = {r["codigo"]: r for r in rows}
+    incoherentes = [r["codigo"] for r in rows
+                    if r["padre"] and r["padre"] in by_code
+                    and r["cashflow_bucket"] != by_code[r["padre"]]["cashflow_bucket"]
+                    and r["codigo"] not in CASHFLOW_BUCKET
+                    and by_code[r["padre"]]["cashflow_bucket"]]
+    assert not incoherentes, f"hijo con bucket distinto del padre sin regla propia: {incoherentes}"
+
+
+def render(rows):
+    import io
+    buf = io.StringIO(newline="")
+    w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()), lineterminator="\r\n")
+    w.writeheader()
+    w.writerows(rows)
+    return buf.getvalue()
+
+
 def main():
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "npgc.csv")
+    args = [a for a in sys.argv[1:] if a != "--check"]
+    check = "--check" in sys.argv[1:]
+    out = args[0] if args else os.path.join(os.path.dirname(os.path.abspath(__file__)), "npgc.csv")
     rows = build_rows()
     counts = validate(rows)
+    text = render(rows)
+    if check:
+        if not os.path.exists(out):
+            print(f"falta {out}", file=sys.stderr)
+            return 1
+        with open(out, newline="", encoding="utf-8") as fh:
+            if fh.read() != text:
+                print(f"{out} difiere de la reconstruccion", file=sys.stderr)
+                return 1
+        print(f"OK: {out} reproducible byte a byte ({len(rows)} filas)")
+        print_counts(rows, counts)
+        return 0
     with open(out, "w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
-        w.writeheader()
-        w.writerows(rows)
+        fh.write(text)
     print(f"OK: {len(rows)} filas escritas en {out}")
+    print_counts(rows, counts)
+    return 0
+
+
+def print_counts(rows, counts):
     print("grupo | filas | niv1 | niv2 | niv3 | niv4 | pymes")
     for g in sorted(counts):
         lv = Counter(r["nivel"] for r in rows if r["grupo"] == g)
@@ -1803,7 +1945,13 @@ def main():
           f"excluidas de PYMES: {sum(1 for r in rows if r['pymes'] == 0)}")
     ta = Counter(r["tipo_analitico"] for r in rows if r["tipo_analitico"])
     print("tipo_analitico: " + " · ".join(f"{k}={v}" for k, v in sorted(ta.items())))
+    cb = Counter(r["cashflow_bucket"] for r in rows if r["cashflow_bucket"])
+    print("cashflow_bucket: " + " · ".join(f"{k}={v}" for k, v in sorted(cb.items())))
+    cc = Counter(CASHFLOW_CATEGORY[r["cashflow_bucket"]] for r in rows if r["cashflow_bucket"])
+    print("  -> categoria: " + " · ".join(f"{k}={v}" for k, v in sorted(cc.items()))
+          + f" · sin bucket (57x + contenedores + grupos 8/9): "
+          + f"{sum(1 for r in rows if not r['cashflow_bucket'])}")
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

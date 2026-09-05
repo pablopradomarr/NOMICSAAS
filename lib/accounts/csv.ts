@@ -17,11 +17,12 @@ import {
   Plan,
   PlanAccount,
   Result,
+  CashflowBucket,
   SeedAccount,
   Statement,
 } from "@/lib/accounts/types"
 
-/** Cabecera EXACTA del seed regenerado (13 columnas, §3 `parseNpgcCsv`). */
+/** Cabecera EXACTA del seed regenerado (14 columnas tras E6, §3 `parseNpgcCsv`). */
 export const NPGC_HEADER = [
   "codigo",
   "nombre",
@@ -36,6 +37,7 @@ export const NPGC_HEADER = [
   "is_contra",
   "pymes",
   "epigrafe_pymes",
+  "cashflow_bucket",
 ] as const
 
 const NATURES = new Set<string>(["DEUDORA", "ACREEDORA"])
@@ -49,6 +51,16 @@ const ANALYTIC_TYPES = new Set<string>([
   "FINANCIERO",
   "EXTRAORDINARIO",
   "NO_ANALITICO",
+])
+/** Buckets de cashflow del seed (E6). La `CashflowCategory` se DERIVA del bucket. */
+const CASHFLOW_BUCKETS = new Set<string>([
+  "COBROS_CLIENTES",
+  "PAGOS_PROVEEDORES",
+  "PAGOS_PERSONAL",
+  "PAGOS_IMPUESTOS",
+  "OTROS_EXPLOTACION",
+  "INVERSION",
+  "FINANCIACION",
 ])
 
 /**
@@ -128,7 +140,7 @@ const blank = (value: string | undefined): string | null => {
 }
 
 /**
- * Parser del seed. Cabecera exacta de 13 columnas; valida que todo `padre`
+ * Parser del seed. Cabecera exacta de 14 columnas; valida que todo `padre`
  * exista, que `nivel === len(codigo)` y que los enums sean válidos. Todo o nada.
  */
 export function parseNpgcCsv(csvText: string): Result<SeedAccount[]> {
@@ -155,10 +167,10 @@ export function parseNpgcCsv(csvText: string): Result<SeedAccount[]> {
     const line = rows[r]
     const rowNumber = r
     if (line.length !== NPGC_HEADER.length) {
-      errors.push(err("CSV_ROW", "file", `La fila tiene ${line.length} columnas y se esperaban 13`, rowNumber))
+      errors.push(err("CSV_ROW", "file", `La fila tiene ${line.length} columnas y se esperaban ${NPGC_HEADER.length}`, rowNumber))
       continue
     }
-    const [codigo, nombre, nivel, padre, grupo, naturaleza, estado, epigrafe, analitico, bidir, contra, pymes, epiPymes] =
+    const [codigo, nombre, nivel, padre, grupo, naturaleza, estado, epigrafe, analitico, bidir, contra, pymes, epiPymes, cashflow] =
       line.map((v) => v.trim())
 
     if (!ACCOUNT_CODE_RE.test(codigo)) {
@@ -187,6 +199,9 @@ export function parseNpgcCsv(csvText: string): Result<SeedAccount[]> {
     if (analitico !== "" && !ANALYTIC_TYPES.has(analitico)) {
       errors.push(err("CSV_ROW", "tipo_analitico", `Tipo analítico desconocido «${analitico}» en ${codigo}`, rowNumber))
     }
+    if (cashflow !== "" && !CASHFLOW_BUCKETS.has(cashflow)) {
+      errors.push(err("CSV_ROW", "cashflow_bucket", `Bucket de cashflow desconocido «${cashflow}» en ${codigo}`, rowNumber))
+    }
 
     parsed.push({
       code: codigo,
@@ -202,6 +217,7 @@ export function parseNpgcCsv(csvText: string): Result<SeedAccount[]> {
       isContra: contra === "1",
       pymes: pymes === "1",
       epigraphPymes: blank(epiPymes),
+      cashflowBucket: (blank(cashflow) as CashflowBucket | null) ?? null,
     })
   }
 

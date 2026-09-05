@@ -1,0 +1,4661 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "docs/design/fixtures/build_estados_esperados.py",
+  "note": "Estados financieros esperados del fixture tests/fixtures/ejercicio-completo.json. Centimos enteros. Balance: activo con saldo deudor en positivo, pasivo y PN con saldo acreedor en positivo; las contra-cuentas restan solas por el signo de su saldo. PyG: aporte = haber - debe. Cashflow: signo = efecto sobre la tesoreria (cobro +, pago -). Ver docs/design/E6-validacion-estados.md.",
+  "source": {
+    "fixture": "tests/fixtures/ejercicio-completo.json",
+    "seed": "seeds/npgc.csv",
+    "variant": "PYMES",
+    "fiscalYear": "2026",
+    "pygExcludedKinds": [
+      "CLOSING",
+      "OPENING",
+      "REGULARIZATION"
+    ],
+    "cashflowExcludedKinds": [
+      "CLOSING",
+      "OPENING",
+      "REGULARIZATION"
+    ]
+  },
+  "rules": {
+    "R-B1": "saldo(cuenta) = Sigma debit - Sigma credit (positivo = deudor).",
+    "R-B2": "Presentacion: BALANCE_ACTIVO -> +saldo; BALANCE_PASIVO/BALANCE_PN -> -saldo.",
+    "R-B3": "isContra no interviene en el calculo: con R-B2 la contra-cuenta ya resta. Es presentacion (marca '(-)') y check de signo (I-E6-10).",
+    "R-B4": "bidirectional: si saldo >= 0 se presenta en su epigrafe de activo; si saldo < 0 se reclasifica al epigrafe espejo de pasivo (tabla bidirectionalMirror) por -saldo. Nunca en los dos lados (I-E6-5).",
+    "R-B5": "Si el ejercicio no esta regularizado (129 = 0), el resultado del periodo (I3) se inyecta en PN A-1) VII. Si lo esta, se lee de 129. Nunca las dos cosas: si 129 != 0, no se inyecta.",
+    "R-B6": "472/477 no son bidireccionales: el motor las liquida contra 4700/4750 cada trimestre (T-24). Un saldo acreedor en 472 o deudor en 477 a fecha de balance es una ANOMALIA (WARN de Auditoria), no una reclasificacion.",
+    "R-CF-1": "Tesoreria = cuentas con prefijo 57. Saldo inicial = lineas 57x del asiento OPENING del ejercicio.",
+    "R-CF-2": "Universo de flujos = asientos del ejercicio con kind not in {OPENING, CLOSING, REGULARIZATION}.",
+    "R-CF-3": "Metodo directo, regla POR LINEA (no proporcional): para cada asiento con al menos una linea 57x, cada linea NO-57x aporta -(debit-credit) a su bloque. Como el asiento esta cuadrado, la suma de aportes es exactamente el Delta 57x del asiento, asi que el reparto proporcional es innecesario y se rechaza por perder trazabilidad linea a linea.",
+    "R-CF-4": "Asiento cuyas unicas lineas son 57x (traspaso interno): Delta = 0, se excluye del cashflow y se lista en internalTransfers.",
+    "R-CF-5": "Metodo indirecto: particion mecanica y EXHAUSTIVA de las cuentas no-57x en bloques (tabla indirectBlocks). Cada cuenta cae en un bloque y solo en uno, con lo que Sigma bloques = Delta 57x por construccion y con tolerancia 0.",
+    "R-CF-7": "En un asiento que tiene tesoreria, una contrapartida comercial (43x/40x/41x/438/407) y las cuentas de IVA de esa misma operacion (472/477), las lineas de IVA se asignan al bloque comercial y no a PAGOS_IMPUESTOS: el EFE mide cobros y pagos BRUTOS. Aplica solo si el asiento tiene exactamente UN bloque comercial; con varios, el IVA queda en PAGOS_IMPUESTOS y la Auditoria lo lista como WARN.",
+    "R-CF-6": "Los asientos sin ninguna linea 57x que tocan bloques de inversion o financiacion son 'operaciones que no han supuesto flujos de efectivo' (EFE, nota de la memoria): se listan en indirecto.nonCashEntries y explican por que el indirecto reparte importes que el directo no ve."
+  },
+  "bidirectionalMirror": {
+    "551": {
+      "NORMAL": "C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros",
+      "PYMES": "C) Pasivo corriente / II. Deudas a corto plazo / 5. Otros pasivos financieros"
+    },
+    "552": {
+      "NORMAL": "C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo",
+      "PYMES": "C) Pasivo corriente / III. Deudas con empresas del grupo y asociadas a corto plazo"
+    },
+    "5523": {
+      "NORMAL": "C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo",
+      "PYMES": "C) Pasivo corriente / III. Deudas con empresas del grupo y asociadas a corto plazo"
+    },
+    "5524": {
+      "NORMAL": "C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo",
+      "PYMES": "C) Pasivo corriente / III. Deudas con empresas del grupo y asociadas a corto plazo"
+    },
+    "5525": {
+      "NORMAL": "C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros",
+      "PYMES": "C) Pasivo corriente / II. Deudas a corto plazo / 5. Otros pasivos financieros"
+    },
+    "554": {
+      "NORMAL": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+      "PYMES": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios"
+    },
+    "555": {
+      "NORMAL": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+      "PYMES": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios"
+    }
+  },
+  "bidirectionalScenarios": [
+    {
+      "code": "551",
+      "name": "Cuenta corriente con socios y administradores",
+      "seedStatement": "BALANCE_ACTIVO",
+      "NORMAL": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      },
+      "PYMES": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / IV. Inversiones financieras a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / II. Deudas a corto plazo / 5. Otros pasivos financieros",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      }
+    },
+    {
+      "code": "552",
+      "name": "Cuenta corriente con otras personas y entidades vinculadas",
+      "seedStatement": "BALANCE_ACTIVO",
+      "NORMAL": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      },
+      "PYMES": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / III. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / III. Deudas con empresas del grupo y asociadas a corto plazo",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      }
+    },
+    {
+      "code": "5523",
+      "name": "Cuenta corriente con empresas del grupo",
+      "seedStatement": "BALANCE_ACTIVO",
+      "NORMAL": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      },
+      "PYMES": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / III. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / III. Deudas con empresas del grupo y asociadas a corto plazo",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      }
+    },
+    {
+      "code": "5524",
+      "name": "Cuenta corriente con empresas asociadas",
+      "seedStatement": "BALANCE_ACTIVO",
+      "NORMAL": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / IV. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / IV. Deudas con empresas del grupo y asociadas a corto plazo",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      },
+      "PYMES": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / III. Inversiones en empresas del grupo y asociadas a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / III. Deudas con empresas del grupo y asociadas a corto plazo",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      }
+    },
+    {
+      "code": "5525",
+      "name": "Cuenta corriente con otras partes vinculadas",
+      "seedStatement": "BALANCE_ACTIVO",
+      "NORMAL": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / V. Inversiones financieras a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / III. Deudas a corto plazo / 5. Otros pasivos financieros",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      },
+      "PYMES": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / IV. Inversiones financieras a corto plazo / 5. Otros activos financieros",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / II. Deudas a corto plazo / 5. Otros pasivos financieros",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      }
+    },
+    {
+      "code": "554",
+      "name": "Cuenta corriente con uniones temporales de empresas y comunidades de bienes",
+      "seedStatement": "BALANCE_ACTIVO",
+      "NORMAL": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      },
+      "PYMES": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      }
+    },
+    {
+      "code": "555",
+      "name": "Partidas pendientes de aplicación",
+      "seedStatement": "BALANCE_ACTIVO",
+      "NORMAL": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      },
+      "PYMES": {
+        "saldoDeudor": {
+          "saldoCents": 100000,
+          "side": "BALANCE_ACTIVO",
+          "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 3. Deudores varios",
+          "presentedCents": 100000
+        },
+        "saldoAcreedor": {
+          "saldoCents": -100000,
+          "side": "BALANCE_PASIVO",
+          "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+          "presentedCents": 100000
+        },
+        "saldoCero": {
+          "saldoCents": 0,
+          "side": null,
+          "epigraph": null,
+          "presentedCents": 0,
+          "nota": "saldo 0 no se presenta en ningun lado"
+        }
+      }
+    }
+  ],
+  "cashflowAccountMap": {
+    "source": "seeds/npgc.csv columna cashflow_bucket (anadida en E6)",
+    "buckets": {
+      "COBROS_CLIENTES": "OPERATING",
+      "PAGOS_PROVEEDORES": "OPERATING",
+      "PAGOS_PERSONAL": "OPERATING",
+      "PAGOS_IMPUESTOS": "OPERATING",
+      "OTROS_EXPLOTACION": "OPERATING",
+      "INVERSION": "INVESTING",
+      "FINANCIACION": "FINANCING"
+    },
+    "impuestoBeneficiosAccountKeys": [
+      "HP_ACREEDORA_IS",
+      "HP_DEUDORA_IS"
+    ],
+    "accountsUsed": {
+      "100": "FINANCIACION",
+      "113": "FINANCIACION",
+      "120": "FINANCIACION",
+      "129": "FINANCIACION",
+      "216": "INVERSION",
+      "217": "INVERSION",
+      "2816": "INVERSION",
+      "2817": "INVERSION",
+      "4000": "PAGOS_PROVEEDORES",
+      "407": "PAGOS_PROVEEDORES",
+      "4100": "PAGOS_PROVEEDORES",
+      "4300": "COBROS_CLIENTES",
+      "436": "COBROS_CLIENTES",
+      "438": "COBROS_CLIENTES",
+      "460": "PAGOS_PERSONAL",
+      "465": "PAGOS_PERSONAL",
+      "4700": "PAGOS_IMPUESTOS",
+      "472": "PAGOS_IMPUESTOS",
+      "473": "PAGOS_IMPUESTOS",
+      "4750": "PAGOS_IMPUESTOS",
+      "4751": "PAGOS_IMPUESTOS",
+      "4752": "PAGOS_IMPUESTOS",
+      "476": "PAGOS_PERSONAL",
+      "477": "PAGOS_IMPUESTOS",
+      "480": "OTROS_EXPLOTACION",
+      "485": "OTROS_EXPLOTACION",
+      "607": "OTROS_EXPLOTACION",
+      "6080": "OTROS_EXPLOTACION",
+      "621": "OTROS_EXPLOTACION",
+      "623": "OTROS_EXPLOTACION",
+      "626": "OTROS_EXPLOTACION",
+      "628": "OTROS_EXPLOTACION",
+      "629": "OTROS_EXPLOTACION",
+      "6300": "OTROS_EXPLOTACION",
+      "640": "OTROS_EXPLOTACION",
+      "642": "OTROS_EXPLOTACION",
+      "668": "OTROS_EXPLOTACION",
+      "669": "OTROS_EXPLOTACION",
+      "678": "OTROS_EXPLOTACION",
+      "681": "OTROS_EXPLOTACION",
+      "705": "OTROS_EXPLOTACION",
+      "7080": "OTROS_EXPLOTACION",
+      "768": "OTROS_EXPLOTACION",
+      "769": "OTROS_EXPLOTACION"
+    }
+  },
+  "indirectBlocks": [
+    {
+      "prefix": "129",
+      "block": "RESULTADO"
+    },
+    {
+      "prefix": "28",
+      "block": "AJUSTES_NO_MONETARIOS"
+    },
+    {
+      "prefix": "29",
+      "block": "AJUSTES_NO_MONETARIOS"
+    },
+    {
+      "prefix": "39",
+      "block": "AJUSTES_NO_MONETARIOS"
+    },
+    {
+      "prefix": "49",
+      "block": "AJUSTES_NO_MONETARIOS"
+    },
+    {
+      "prefix": "59",
+      "block": "AJUSTES_NO_MONETARIOS"
+    },
+    {
+      "prefix": "14",
+      "block": "AJUSTES_NO_MONETARIOS"
+    },
+    {
+      "prefix": "529",
+      "block": "AJUSTES_NO_MONETARIOS"
+    },
+    {
+      "prefix": "30",
+      "block": "VAR_CIRCULANTE_EXISTENCIAS"
+    },
+    {
+      "prefix": "31",
+      "block": "VAR_CIRCULANTE_EXISTENCIAS"
+    },
+    {
+      "prefix": "32",
+      "block": "VAR_CIRCULANTE_EXISTENCIAS"
+    },
+    {
+      "prefix": "33",
+      "block": "VAR_CIRCULANTE_EXISTENCIAS"
+    },
+    {
+      "prefix": "34",
+      "block": "VAR_CIRCULANTE_EXISTENCIAS"
+    },
+    {
+      "prefix": "35",
+      "block": "VAR_CIRCULANTE_EXISTENCIAS"
+    },
+    {
+      "prefix": "36",
+      "block": "VAR_CIRCULANTE_EXISTENCIAS"
+    },
+    {
+      "prefix": "407",
+      "block": "VAR_CIRCULANTE_ACREEDORES"
+    },
+    {
+      "prefix": "40",
+      "block": "VAR_CIRCULANTE_ACREEDORES"
+    },
+    {
+      "prefix": "41",
+      "block": "VAR_CIRCULANTE_ACREEDORES"
+    },
+    {
+      "prefix": "438",
+      "block": "VAR_CIRCULANTE_ACREEDORES"
+    },
+    {
+      "prefix": "43",
+      "block": "VAR_CIRCULANTE_DEUDORES"
+    },
+    {
+      "prefix": "44",
+      "block": "VAR_CIRCULANTE_DEUDORES"
+    },
+    {
+      "prefix": "460",
+      "block": "VAR_CIRCULANTE_OTROS"
+    },
+    {
+      "prefix": "465",
+      "block": "VAR_CIRCULANTE_OTROS"
+    },
+    {
+      "prefix": "466",
+      "block": "VAR_CIRCULANTE_OTROS"
+    },
+    {
+      "prefix": "47",
+      "block": "VAR_CIRCULANTE_ADMIN_PUBLICAS"
+    },
+    {
+      "prefix": "476",
+      "block": "VAR_CIRCULANTE_ADMIN_PUBLICAS"
+    },
+    {
+      "prefix": "48",
+      "block": "VAR_CIRCULANTE_PERIODIFICACIONES"
+    },
+    {
+      "prefix": "55",
+      "block": "VAR_CIRCULANTE_OTROS"
+    },
+    {
+      "prefix": "20",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "21",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "22",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "23",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "24",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "25",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "26",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "27",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "53",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "54",
+      "block": "INVERSION"
+    },
+    {
+      "prefix": "10",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "11",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "12",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "13",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "15",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "16",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "17",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "18",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "19",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "50",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "51",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "52",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "56",
+      "block": "FINANCIACION"
+    },
+    {
+      "prefix": "6",
+      "block": "RESULTADO"
+    },
+    {
+      "prefix": "7",
+      "block": "RESULTADO"
+    }
+  ],
+  "pygSubtotals": {
+    "NORMAL": {
+      "A.1) RESULTADO DE EXPLOTACION": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "A.2) RESULTADO FINANCIERO": [
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "A.3) RESULTADO ANTES DE IMPUESTOS": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "A.4) RESULTADO DEL EJERCICIO": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ]
+    },
+    "PYMES": {
+      "A.1) RESULTADO DE EXPLOTACION": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "A.2) RESULTADO FINANCIERO": [
+        13,
+        14,
+        15,
+        16,
+        17,
+        18
+      ],
+      "A.3) RESULTADO ANTES DE IMPUESTOS": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18
+      ],
+      "A.4) RESULTADO DEL EJERCICIO": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ]
+    }
+  },
+  "balance": {
+    "PRE_REGULARIZACION": {
+      "descripcion": "31/12/2026 con el diario tal cual: 129 = 0 y el resultado (I3) inyectado en PN A-1) VII (R-B5). Es el balance que ve el usuario durante el ejercicio.",
+      "NORMAL": {
+        "model": "NORMAL",
+        "activo": [
+          {
+            "path": "A) Activo no corriente",
+            "depth": 1,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material",
+            "depth": 2,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "depth": 3,
+            "cents": 2665000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente",
+            "depth": 1,
+            "cents": 11008820,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Existencias",
+            "depth": 2,
+            "cents": 100000,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Existencias / 6. Anticipos a proveedores",
+            "depth": 3,
+            "cents": 100000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar",
+            "depth": 2,
+            "cents": 7964900,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "depth": 3,
+            "cents": 7844900,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 120000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes",
+            "depth": 2,
+            "cents": 2943920,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "depth": 3,
+            "cents": 2943920,
+            "isLeaf": true
+          }
+        ],
+        "patrimonioNeto": [
+          {
+            "path": "A) Patrimonio neto",
+            "depth": 1,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios",
+            "depth": 2,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital",
+            "depth": 3,
+            "cents": 3000000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "depth": 4,
+            "cents": 3000000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas",
+            "depth": 3,
+            "cents": 250000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "depth": 4,
+            "cents": 250000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores",
+            "depth": 3,
+            "cents": 3560000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "depth": 4,
+            "cents": 3560000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "depth": 3,
+            "cents": 1497322,
+            "isLeaf": true
+          }
+        ],
+        "pasivo": [
+          {
+            "path": "C) Pasivo corriente",
+            "depth": 1,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar",
+            "depth": 2,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "depth": 3,
+            "cents": 1959800,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "depth": 3,
+            "cents": 2587100,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "depth": 3,
+            "cents": 499108,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 320490,
+            "isLeaf": true
+          }
+        ],
+        "totalActivoCents": 13673820,
+        "totalPatrimonioNetoCents": 8307322,
+        "totalPasivoCents": 5366498,
+        "totalPasivoYPatrimonioNetoCents": 13673820,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": [
+          {
+            "code": "100",
+            "name": "Capital social",
+            "saldoCents": -3000000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "presentedCents": 3000000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "113",
+            "name": "Reservas voluntarias",
+            "saldoCents": -250000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "presentedCents": 250000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "120",
+            "name": "Remanente",
+            "saldoCents": -3560000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "presentedCents": 3560000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "129",
+            "name": "Resultado del ejercicio (calculado, I3)",
+            "saldoCents": -1497322,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "presentedCents": 1497322,
+            "isContra": false,
+            "isBidirectional": false,
+            "synthetic": true
+          },
+          {
+            "code": "216",
+            "name": "Mobiliario",
+            "saldoCents": 1200000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 1200000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "217",
+            "name": "Equipos para procesos de información",
+            "saldoCents": 2100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 2100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "2816",
+            "name": "Amortización acumulada de mobiliario",
+            "saldoCents": -300000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -300000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "2817",
+            "name": "Amortización acumulada de equipos para procesos de información",
+            "saldoCents": -335000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -335000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "4000",
+            "name": "Proveedores (euros)",
+            "saldoCents": -1959800,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "presentedCents": 1959800,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "407",
+            "name": "Anticipos a proveedores",
+            "saldoCents": 100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Existencias / 6. Anticipos a proveedores",
+            "presentedCents": 100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4100",
+            "name": "Acreedores por prestaciones de servicios (euros)",
+            "saldoCents": -2587100,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "presentedCents": 2587100,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4300",
+            "name": "Clientes (euros)",
+            "saldoCents": 7723900,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 7723900,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "436",
+            "name": "Clientes de dudoso cobro",
+            "saldoCents": 121000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 121000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "473",
+            "name": "Hacienda Pública, retenciones y pagos a cuenta",
+            "saldoCents": 120000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "presentedCents": 120000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4750",
+            "name": "Hacienda Pública, acreedora por IVA",
+            "saldoCents": -245490,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 245490,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4751",
+            "name": "Hacienda Pública, acreedora por retenciones practicadas",
+            "saldoCents": -75000,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 75000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4752",
+            "name": "Hacienda Pública, acreedora por impuesto sobre sociedades",
+            "saldoCents": -499108,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "presentedCents": 499108,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "570",
+            "name": "Caja, euros",
+            "saldoCents": 30000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 30000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "572",
+            "name": "Bancos e instituciones de crédito c/c vista, euros",
+            "saldoCents": 2913920,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 2913920,
+            "isContra": false,
+            "isBidirectional": false
+          }
+        ]
+      },
+      "PYMES": {
+        "model": "PYMES",
+        "activo": [
+          {
+            "path": "A) Activo no corriente",
+            "depth": 1,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material",
+            "depth": 2,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "depth": 3,
+            "cents": 2665000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente",
+            "depth": 1,
+            "cents": 11008820,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / I. Existencias",
+            "depth": 2,
+            "cents": 100000,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / I. Existencias / 6. Anticipos a proveedores",
+            "depth": 3,
+            "cents": 100000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar",
+            "depth": 2,
+            "cents": 7964900,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "depth": 3,
+            "cents": 7844900,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 120000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes",
+            "depth": 2,
+            "cents": 2943920,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "depth": 3,
+            "cents": 2943920,
+            "isLeaf": true
+          }
+        ],
+        "patrimonioNeto": [
+          {
+            "path": "A) Patrimonio neto",
+            "depth": 1,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios",
+            "depth": 2,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital",
+            "depth": 3,
+            "cents": 3000000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "depth": 4,
+            "cents": 3000000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas",
+            "depth": 3,
+            "cents": 250000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "depth": 4,
+            "cents": 250000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores",
+            "depth": 3,
+            "cents": 3560000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "depth": 4,
+            "cents": 3560000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "depth": 3,
+            "cents": 1497322,
+            "isLeaf": true
+          }
+        ],
+        "pasivo": [
+          {
+            "path": "C) Pasivo corriente",
+            "depth": 1,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar",
+            "depth": 2,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "depth": 3,
+            "cents": 1959800,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "depth": 3,
+            "cents": 2587100,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "depth": 3,
+            "cents": 499108,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 320490,
+            "isLeaf": true
+          }
+        ],
+        "totalActivoCents": 13673820,
+        "totalPatrimonioNetoCents": 8307322,
+        "totalPasivoCents": 5366498,
+        "totalPasivoYPatrimonioNetoCents": 13673820,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": [
+          {
+            "code": "100",
+            "name": "Capital social",
+            "saldoCents": -3000000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "presentedCents": 3000000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "113",
+            "name": "Reservas voluntarias",
+            "saldoCents": -250000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "presentedCents": 250000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "120",
+            "name": "Remanente",
+            "saldoCents": -3560000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "presentedCents": 3560000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "129",
+            "name": "Resultado del ejercicio (calculado, I3)",
+            "saldoCents": -1497322,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "presentedCents": 1497322,
+            "isContra": false,
+            "isBidirectional": false,
+            "synthetic": true
+          },
+          {
+            "code": "216",
+            "name": "Mobiliario",
+            "saldoCents": 1200000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 1200000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "217",
+            "name": "Equipos para procesos de información",
+            "saldoCents": 2100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 2100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "2816",
+            "name": "Amortización acumulada de mobiliario",
+            "saldoCents": -300000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -300000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "2817",
+            "name": "Amortización acumulada de equipos para procesos de información",
+            "saldoCents": -335000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -335000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "4000",
+            "name": "Proveedores (euros)",
+            "saldoCents": -1959800,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "presentedCents": 1959800,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "407",
+            "name": "Anticipos a proveedores",
+            "saldoCents": 100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / I. Existencias / 6. Anticipos a proveedores",
+            "presentedCents": 100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4100",
+            "name": "Acreedores por prestaciones de servicios (euros)",
+            "saldoCents": -2587100,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "presentedCents": 2587100,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4300",
+            "name": "Clientes (euros)",
+            "saldoCents": 7723900,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 7723900,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "436",
+            "name": "Clientes de dudoso cobro",
+            "saldoCents": 121000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 121000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "473",
+            "name": "Hacienda Pública, retenciones y pagos a cuenta",
+            "saldoCents": 120000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "presentedCents": 120000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4750",
+            "name": "Hacienda Pública, acreedora por IVA",
+            "saldoCents": -245490,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 245490,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4751",
+            "name": "Hacienda Pública, acreedora por retenciones practicadas",
+            "saldoCents": -75000,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 75000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4752",
+            "name": "Hacienda Pública, acreedora por impuesto sobre sociedades",
+            "saldoCents": -499108,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "presentedCents": 499108,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "570",
+            "name": "Caja, euros",
+            "saldoCents": 30000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 30000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "572",
+            "name": "Bancos e instituciones de crédito c/c vista, euros",
+            "saldoCents": 2913920,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 2913920,
+            "isContra": false,
+            "isBidirectional": false
+          }
+        ]
+      },
+      "saldosPorCuentaCents": {
+        "100": -3000000,
+        "113": -250000,
+        "120": -3560000,
+        "216": 1200000,
+        "217": 2100000,
+        "2816": -300000,
+        "2817": -335000,
+        "4000": -1959800,
+        "407": 100000,
+        "4100": -2587100,
+        "4300": 7723900,
+        "436": 121000,
+        "473": 120000,
+        "4750": -245490,
+        "4751": -75000,
+        "4752": -499108,
+        "570": 30000,
+        "572": 2913920,
+        "607": 630000,
+        "6080": -50000,
+        "621": 120000,
+        "623": 250000,
+        "626": 500,
+        "628": 173570,
+        "629": 60500,
+        "6300": 499108,
+        "640": 2000000,
+        "642": 640000,
+        "668": 5000,
+        "669": 1,
+        "678": 35000,
+        "681": 395000,
+        "705": -6350000,
+        "7080": 100000,
+        "768": -6000,
+        "769": -1
+      }
+    },
+    "POST_REGULARIZACION": {
+      "descripcion": "31/12/2026 tras T-26 (7xx->129, 129->6xx) y ANTES del asiento de cierre. Es el BALANCE FORMULADO: 129 lleva el saldo acreedor del resultado.",
+      "NORMAL": {
+        "model": "NORMAL",
+        "activo": [
+          {
+            "path": "A) Activo no corriente",
+            "depth": 1,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material",
+            "depth": 2,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "depth": 3,
+            "cents": 2665000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente",
+            "depth": 1,
+            "cents": 11008820,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Existencias",
+            "depth": 2,
+            "cents": 100000,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Existencias / 6. Anticipos a proveedores",
+            "depth": 3,
+            "cents": 100000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar",
+            "depth": 2,
+            "cents": 7964900,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "depth": 3,
+            "cents": 7844900,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 120000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes",
+            "depth": 2,
+            "cents": 2943920,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "depth": 3,
+            "cents": 2943920,
+            "isLeaf": true
+          }
+        ],
+        "patrimonioNeto": [
+          {
+            "path": "A) Patrimonio neto",
+            "depth": 1,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios",
+            "depth": 2,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital",
+            "depth": 3,
+            "cents": 3000000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "depth": 4,
+            "cents": 3000000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas",
+            "depth": 3,
+            "cents": 250000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "depth": 4,
+            "cents": 250000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores",
+            "depth": 3,
+            "cents": 3560000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "depth": 4,
+            "cents": 3560000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "depth": 3,
+            "cents": 1497322,
+            "isLeaf": true
+          }
+        ],
+        "pasivo": [
+          {
+            "path": "C) Pasivo corriente",
+            "depth": 1,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar",
+            "depth": 2,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "depth": 3,
+            "cents": 1959800,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "depth": 3,
+            "cents": 2587100,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "depth": 3,
+            "cents": 499108,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 320490,
+            "isLeaf": true
+          }
+        ],
+        "totalActivoCents": 13673820,
+        "totalPatrimonioNetoCents": 8307322,
+        "totalPasivoCents": 5366498,
+        "totalPasivoYPatrimonioNetoCents": 13673820,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": [
+          {
+            "code": "100",
+            "name": "Capital social",
+            "saldoCents": -3000000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "presentedCents": 3000000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "113",
+            "name": "Reservas voluntarias",
+            "saldoCents": -250000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "presentedCents": 250000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "120",
+            "name": "Remanente",
+            "saldoCents": -3560000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "presentedCents": 3560000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "129",
+            "name": "Resultado del ejercicio",
+            "saldoCents": -1497322,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "presentedCents": 1497322,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "216",
+            "name": "Mobiliario",
+            "saldoCents": 1200000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 1200000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "217",
+            "name": "Equipos para procesos de información",
+            "saldoCents": 2100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 2100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "2816",
+            "name": "Amortización acumulada de mobiliario",
+            "saldoCents": -300000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -300000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "2817",
+            "name": "Amortización acumulada de equipos para procesos de información",
+            "saldoCents": -335000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -335000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "4000",
+            "name": "Proveedores (euros)",
+            "saldoCents": -1959800,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "presentedCents": 1959800,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "407",
+            "name": "Anticipos a proveedores",
+            "saldoCents": 100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Existencias / 6. Anticipos a proveedores",
+            "presentedCents": 100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4100",
+            "name": "Acreedores por prestaciones de servicios (euros)",
+            "saldoCents": -2587100,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "presentedCents": 2587100,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4300",
+            "name": "Clientes (euros)",
+            "saldoCents": 7723900,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 7723900,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "436",
+            "name": "Clientes de dudoso cobro",
+            "saldoCents": 121000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 121000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "473",
+            "name": "Hacienda Pública, retenciones y pagos a cuenta",
+            "saldoCents": 120000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "presentedCents": 120000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4750",
+            "name": "Hacienda Pública, acreedora por IVA",
+            "saldoCents": -245490,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 245490,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4751",
+            "name": "Hacienda Pública, acreedora por retenciones practicadas",
+            "saldoCents": -75000,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 75000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4752",
+            "name": "Hacienda Pública, acreedora por impuesto sobre sociedades",
+            "saldoCents": -499108,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "presentedCents": 499108,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "570",
+            "name": "Caja, euros",
+            "saldoCents": 30000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 30000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "572",
+            "name": "Bancos e instituciones de crédito c/c vista, euros",
+            "saldoCents": 2913920,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 2913920,
+            "isContra": false,
+            "isBidirectional": false
+          }
+        ]
+      },
+      "PYMES": {
+        "model": "PYMES",
+        "activo": [
+          {
+            "path": "A) Activo no corriente",
+            "depth": 1,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material",
+            "depth": 2,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "depth": 3,
+            "cents": 2665000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente",
+            "depth": 1,
+            "cents": 11008820,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / I. Existencias",
+            "depth": 2,
+            "cents": 100000,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / I. Existencias / 6. Anticipos a proveedores",
+            "depth": 3,
+            "cents": 100000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar",
+            "depth": 2,
+            "cents": 7964900,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "depth": 3,
+            "cents": 7844900,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 120000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes",
+            "depth": 2,
+            "cents": 2943920,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "depth": 3,
+            "cents": 2943920,
+            "isLeaf": true
+          }
+        ],
+        "patrimonioNeto": [
+          {
+            "path": "A) Patrimonio neto",
+            "depth": 1,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios",
+            "depth": 2,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital",
+            "depth": 3,
+            "cents": 3000000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "depth": 4,
+            "cents": 3000000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas",
+            "depth": 3,
+            "cents": 250000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "depth": 4,
+            "cents": 250000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores",
+            "depth": 3,
+            "cents": 3560000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "depth": 4,
+            "cents": 3560000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "depth": 3,
+            "cents": 1497322,
+            "isLeaf": true
+          }
+        ],
+        "pasivo": [
+          {
+            "path": "C) Pasivo corriente",
+            "depth": 1,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar",
+            "depth": 2,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "depth": 3,
+            "cents": 1959800,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "depth": 3,
+            "cents": 2587100,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "depth": 3,
+            "cents": 499108,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 320490,
+            "isLeaf": true
+          }
+        ],
+        "totalActivoCents": 13673820,
+        "totalPatrimonioNetoCents": 8307322,
+        "totalPasivoCents": 5366498,
+        "totalPasivoYPatrimonioNetoCents": 13673820,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": [
+          {
+            "code": "100",
+            "name": "Capital social",
+            "saldoCents": -3000000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "presentedCents": 3000000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "113",
+            "name": "Reservas voluntarias",
+            "saldoCents": -250000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "presentedCents": 250000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "120",
+            "name": "Remanente",
+            "saldoCents": -3560000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "presentedCents": 3560000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "129",
+            "name": "Resultado del ejercicio",
+            "saldoCents": -1497322,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "presentedCents": 1497322,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "216",
+            "name": "Mobiliario",
+            "saldoCents": 1200000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 1200000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "217",
+            "name": "Equipos para procesos de información",
+            "saldoCents": 2100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 2100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "2816",
+            "name": "Amortización acumulada de mobiliario",
+            "saldoCents": -300000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -300000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "2817",
+            "name": "Amortización acumulada de equipos para procesos de información",
+            "saldoCents": -335000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -335000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "4000",
+            "name": "Proveedores (euros)",
+            "saldoCents": -1959800,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "presentedCents": 1959800,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "407",
+            "name": "Anticipos a proveedores",
+            "saldoCents": 100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / I. Existencias / 6. Anticipos a proveedores",
+            "presentedCents": 100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4100",
+            "name": "Acreedores por prestaciones de servicios (euros)",
+            "saldoCents": -2587100,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "presentedCents": 2587100,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4300",
+            "name": "Clientes (euros)",
+            "saldoCents": 7723900,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 7723900,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "436",
+            "name": "Clientes de dudoso cobro",
+            "saldoCents": 121000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 121000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "473",
+            "name": "Hacienda Pública, retenciones y pagos a cuenta",
+            "saldoCents": 120000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "presentedCents": 120000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4750",
+            "name": "Hacienda Pública, acreedora por IVA",
+            "saldoCents": -245490,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 245490,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4751",
+            "name": "Hacienda Pública, acreedora por retenciones practicadas",
+            "saldoCents": -75000,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 75000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4752",
+            "name": "Hacienda Pública, acreedora por impuesto sobre sociedades",
+            "saldoCents": -499108,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "presentedCents": 499108,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "570",
+            "name": "Caja, euros",
+            "saldoCents": 30000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 30000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "572",
+            "name": "Bancos e instituciones de crédito c/c vista, euros",
+            "saldoCents": 2913920,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 2913920,
+            "isContra": false,
+            "isBidirectional": false
+          }
+        ]
+      },
+      "saldosPorCuentaCents": {
+        "100": -3000000,
+        "113": -250000,
+        "120": -3560000,
+        "129": -1497322,
+        "216": 1200000,
+        "217": 2100000,
+        "2816": -300000,
+        "2817": -335000,
+        "4000": -1959800,
+        "407": 100000,
+        "4100": -2587100,
+        "4300": 7723900,
+        "436": 121000,
+        "473": 120000,
+        "4750": -245490,
+        "4751": -75000,
+        "4752": -499108,
+        "570": 30000,
+        "572": 2913920
+      }
+    },
+    "POST_CIERRE": {
+      "descripcion": "31/12/2026 tras el asiento de cierre: todas las cuentas de balance a cero.",
+      "NORMAL": {
+        "model": "NORMAL",
+        "activo": [],
+        "patrimonioNeto": [],
+        "pasivo": [],
+        "totalActivoCents": 0,
+        "totalPatrimonioNetoCents": 0,
+        "totalPasivoCents": 0,
+        "totalPasivoYPatrimonioNetoCents": 0,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": []
+      },
+      "PYMES": {
+        "model": "PYMES",
+        "activo": [],
+        "patrimonioNeto": [],
+        "pasivo": [],
+        "totalActivoCents": 0,
+        "totalPatrimonioNetoCents": 0,
+        "totalPasivoCents": 0,
+        "totalPasivoYPatrimonioNetoCents": 0,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": []
+      },
+      "saldosPorCuentaCents": {}
+    },
+    "APERTURA_2027": {
+      "descripcion": "01/01/2027 tras el asiento de apertura: reproduce EXACTAMENTE POST_REGULARIZACION, 129 incluida. El resultado sigue pendiente de aplicacion hasta el acuerdo de distribucion (T-28), que lo reclasifica a 120/121 y no forma parte del asiento de apertura.",
+      "NORMAL": {
+        "model": "NORMAL",
+        "activo": [
+          {
+            "path": "A) Activo no corriente",
+            "depth": 1,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material",
+            "depth": 2,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "depth": 3,
+            "cents": 2665000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente",
+            "depth": 1,
+            "cents": 11008820,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Existencias",
+            "depth": 2,
+            "cents": 100000,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Existencias / 6. Anticipos a proveedores",
+            "depth": 3,
+            "cents": 100000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar",
+            "depth": 2,
+            "cents": 7964900,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "depth": 3,
+            "cents": 7844900,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 120000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes",
+            "depth": 2,
+            "cents": 2943920,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "depth": 3,
+            "cents": 2943920,
+            "isLeaf": true
+          }
+        ],
+        "patrimonioNeto": [
+          {
+            "path": "A) Patrimonio neto",
+            "depth": 1,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios",
+            "depth": 2,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital",
+            "depth": 3,
+            "cents": 3000000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "depth": 4,
+            "cents": 3000000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas",
+            "depth": 3,
+            "cents": 250000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "depth": 4,
+            "cents": 250000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores",
+            "depth": 3,
+            "cents": 3560000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "depth": 4,
+            "cents": 3560000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "depth": 3,
+            "cents": 1497322,
+            "isLeaf": true
+          }
+        ],
+        "pasivo": [
+          {
+            "path": "C) Pasivo corriente",
+            "depth": 1,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar",
+            "depth": 2,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "depth": 3,
+            "cents": 1959800,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "depth": 3,
+            "cents": 2587100,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "depth": 3,
+            "cents": 499108,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 320490,
+            "isLeaf": true
+          }
+        ],
+        "totalActivoCents": 13673820,
+        "totalPatrimonioNetoCents": 8307322,
+        "totalPasivoCents": 5366498,
+        "totalPasivoYPatrimonioNetoCents": 13673820,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": [
+          {
+            "code": "100",
+            "name": "Capital social",
+            "saldoCents": -3000000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "presentedCents": 3000000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "113",
+            "name": "Reservas voluntarias",
+            "saldoCents": -250000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "presentedCents": 250000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "120",
+            "name": "Remanente",
+            "saldoCents": -3560000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "presentedCents": 3560000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "129",
+            "name": "Resultado del ejercicio",
+            "saldoCents": -1497322,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "presentedCents": 1497322,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "216",
+            "name": "Mobiliario",
+            "saldoCents": 1200000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 1200000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "217",
+            "name": "Equipos para procesos de información",
+            "saldoCents": 2100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 2100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "2816",
+            "name": "Amortización acumulada de mobiliario",
+            "saldoCents": -300000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -300000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "2817",
+            "name": "Amortización acumulada de equipos para procesos de información",
+            "saldoCents": -335000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -335000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "4000",
+            "name": "Proveedores (euros)",
+            "saldoCents": -1959800,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "presentedCents": 1959800,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "407",
+            "name": "Anticipos a proveedores",
+            "saldoCents": 100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Existencias / 6. Anticipos a proveedores",
+            "presentedCents": 100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4100",
+            "name": "Acreedores por prestaciones de servicios (euros)",
+            "saldoCents": -2587100,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "presentedCents": 2587100,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4300",
+            "name": "Clientes (euros)",
+            "saldoCents": 7723900,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 7723900,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "436",
+            "name": "Clientes de dudoso cobro",
+            "saldoCents": 121000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 121000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "473",
+            "name": "Hacienda Pública, retenciones y pagos a cuenta",
+            "saldoCents": 120000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / III. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "presentedCents": 120000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4750",
+            "name": "Hacienda Pública, acreedora por IVA",
+            "saldoCents": -245490,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 245490,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4751",
+            "name": "Hacienda Pública, acreedora por retenciones practicadas",
+            "saldoCents": -75000,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 75000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4752",
+            "name": "Hacienda Pública, acreedora por impuesto sobre sociedades",
+            "saldoCents": -499108,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / V. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "presentedCents": 499108,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "570",
+            "name": "Caja, euros",
+            "saldoCents": 30000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 30000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "572",
+            "name": "Bancos e instituciones de crédito c/c vista, euros",
+            "saldoCents": 2913920,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 2913920,
+            "isContra": false,
+            "isBidirectional": false
+          }
+        ]
+      },
+      "PYMES": {
+        "model": "PYMES",
+        "activo": [
+          {
+            "path": "A) Activo no corriente",
+            "depth": 1,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material",
+            "depth": 2,
+            "cents": 2665000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "depth": 3,
+            "cents": 2665000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente",
+            "depth": 1,
+            "cents": 11008820,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / I. Existencias",
+            "depth": 2,
+            "cents": 100000,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / I. Existencias / 6. Anticipos a proveedores",
+            "depth": 3,
+            "cents": 100000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar",
+            "depth": 2,
+            "cents": 7964900,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "depth": 3,
+            "cents": 7844900,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 120000,
+            "isLeaf": true
+          },
+          {
+            "path": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes",
+            "depth": 2,
+            "cents": 2943920,
+            "isLeaf": false
+          },
+          {
+            "path": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "depth": 3,
+            "cents": 2943920,
+            "isLeaf": true
+          }
+        ],
+        "patrimonioNeto": [
+          {
+            "path": "A) Patrimonio neto",
+            "depth": 1,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios",
+            "depth": 2,
+            "cents": 8307322,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital",
+            "depth": 3,
+            "cents": 3000000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "depth": 4,
+            "cents": 3000000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas",
+            "depth": 3,
+            "cents": 250000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "depth": 4,
+            "cents": 250000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores",
+            "depth": 3,
+            "cents": 3560000,
+            "isLeaf": false
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "depth": 4,
+            "cents": 3560000,
+            "isLeaf": true
+          },
+          {
+            "path": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "depth": 3,
+            "cents": 1497322,
+            "isLeaf": true
+          }
+        ],
+        "pasivo": [
+          {
+            "path": "C) Pasivo corriente",
+            "depth": 1,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar",
+            "depth": 2,
+            "cents": 5366498,
+            "isLeaf": false
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "depth": 3,
+            "cents": 1959800,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "depth": 3,
+            "cents": 2587100,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "depth": 3,
+            "cents": 499108,
+            "isLeaf": true
+          },
+          {
+            "path": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "depth": 3,
+            "cents": 320490,
+            "isLeaf": true
+          }
+        ],
+        "totalActivoCents": 13673820,
+        "totalPatrimonioNetoCents": 8307322,
+        "totalPasivoCents": 5366498,
+        "totalPasivoYPatrimonioNetoCents": 13673820,
+        "i2DiffCents": 0,
+        "reclasificacionesBidireccionales": [],
+        "contraSignAnomalies": [],
+        "accountDetail": [
+          {
+            "code": "100",
+            "name": "Capital social",
+            "saldoCents": -3000000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / I. Capital / 1. Capital escriturado",
+            "presentedCents": 3000000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "113",
+            "name": "Reservas voluntarias",
+            "saldoCents": -250000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / III. Reservas / 2. Otras reservas",
+            "presentedCents": 250000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "120",
+            "name": "Remanente",
+            "saldoCents": -3560000,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / V. Resultados de ejercicios anteriores / 1. Remanente",
+            "presentedCents": 3560000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "129",
+            "name": "Resultado del ejercicio",
+            "saldoCents": -1497322,
+            "statement": "BALANCE_PN",
+            "side": "BALANCE_PN",
+            "epigraph": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+            "presentedCents": 1497322,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "216",
+            "name": "Mobiliario",
+            "saldoCents": 1200000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 1200000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "217",
+            "name": "Equipos para procesos de información",
+            "saldoCents": 2100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": 2100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "2816",
+            "name": "Amortización acumulada de mobiliario",
+            "saldoCents": -300000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -300000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "2817",
+            "name": "Amortización acumulada de equipos para procesos de información",
+            "saldoCents": -335000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "A) Activo no corriente / II. Inmovilizado material / 2. Instalaciones técnicas y otro inmovilizado material",
+            "presentedCents": -335000,
+            "isContra": true,
+            "isBidirectional": false
+          },
+          {
+            "code": "4000",
+            "name": "Proveedores (euros)",
+            "saldoCents": -1959800,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 1. Proveedores",
+            "presentedCents": 1959800,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "407",
+            "name": "Anticipos a proveedores",
+            "saldoCents": 100000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / I. Existencias / 6. Anticipos a proveedores",
+            "presentedCents": 100000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4100",
+            "name": "Acreedores por prestaciones de servicios (euros)",
+            "saldoCents": -2587100,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 3. Acreedores varios",
+            "presentedCents": 2587100,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4300",
+            "name": "Clientes (euros)",
+            "saldoCents": 7723900,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 7723900,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "436",
+            "name": "Clientes de dudoso cobro",
+            "saldoCents": 121000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 1. Clientes por ventas y prestaciones de servicios",
+            "presentedCents": 121000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "473",
+            "name": "Hacienda Pública, retenciones y pagos a cuenta",
+            "saldoCents": 120000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / II. Deudores comerciales y otras cuentas a cobrar / 6. Otros créditos con las Administraciones Públicas",
+            "presentedCents": 120000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4750",
+            "name": "Hacienda Pública, acreedora por IVA",
+            "saldoCents": -245490,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 245490,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4751",
+            "name": "Hacienda Pública, acreedora por retenciones practicadas",
+            "saldoCents": -75000,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 6. Otras deudas con las Administraciones Públicas",
+            "presentedCents": 75000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "4752",
+            "name": "Hacienda Pública, acreedora por impuesto sobre sociedades",
+            "saldoCents": -499108,
+            "statement": "BALANCE_PASIVO",
+            "side": "BALANCE_PASIVO",
+            "epigraph": "C) Pasivo corriente / IV. Acreedores comerciales y otras cuentas a pagar / 5. Pasivos por impuesto corriente",
+            "presentedCents": 499108,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "570",
+            "name": "Caja, euros",
+            "saldoCents": 30000,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 30000,
+            "isContra": false,
+            "isBidirectional": false
+          },
+          {
+            "code": "572",
+            "name": "Bancos e instituciones de crédito c/c vista, euros",
+            "saldoCents": 2913920,
+            "statement": "BALANCE_ACTIVO",
+            "side": "BALANCE_ACTIVO",
+            "epigraph": "B) Activo corriente / VI. Efectivo y otros activos líquidos equivalentes / 1. Tesorería",
+            "presentedCents": 2913920,
+            "isContra": false,
+            "isBidirectional": false
+          }
+        ]
+      },
+      "saldosPorCuentaCents": {
+        "100": -3000000,
+        "113": -250000,
+        "120": -3560000,
+        "129": -1497322,
+        "216": 1200000,
+        "217": 2100000,
+        "2816": -300000,
+        "2817": -335000,
+        "4000": -1959800,
+        "407": 100000,
+        "4100": -2587100,
+        "4300": 7723900,
+        "436": 121000,
+        "473": 120000,
+        "4750": -245490,
+        "4751": -75000,
+        "4752": -499108,
+        "570": 30000,
+        "572": 2913920
+      }
+    }
+  },
+  "pyg": {
+    "NORMAL": {
+      "model": "NORMAL",
+      "skeleton": [
+        {
+          "n": 1,
+          "name": "Importe neto de la cifra de negocios",
+          "cents": 6250000
+        },
+        {
+          "n": 2,
+          "name": "Variación de existencias de productos terminados y en curso de fabricación",
+          "cents": 0
+        },
+        {
+          "n": 3,
+          "name": "Trabajos realizados por la empresa para su activo",
+          "cents": 0
+        },
+        {
+          "n": 4,
+          "name": "Aprovisionamientos",
+          "cents": -580000
+        },
+        {
+          "n": 5,
+          "name": "Otros ingresos de explotación",
+          "cents": 0
+        },
+        {
+          "n": 6,
+          "name": "Gastos de personal",
+          "cents": -2640000
+        },
+        {
+          "n": 7,
+          "name": "Otros gastos de explotación",
+          "cents": -604570
+        },
+        {
+          "n": 8,
+          "name": "Amortización del inmovilizado",
+          "cents": -395000
+        },
+        {
+          "n": 9,
+          "name": "Imputación de subvenciones de inmovilizado no financiero y otras",
+          "cents": 0
+        },
+        {
+          "n": 10,
+          "name": "Excesos de provisiones",
+          "cents": 0
+        },
+        {
+          "n": 11,
+          "name": "Deterioro y resultado por enajenaciones del inmovilizado",
+          "cents": 0
+        },
+        {
+          "n": 12,
+          "name": "Diferencia negativa de combinaciones de negocio",
+          "cents": 0
+        },
+        {
+          "n": 13,
+          "name": "Otros resultados",
+          "cents": -35000
+        },
+        {
+          "n": 14,
+          "name": "Ingresos financieros",
+          "cents": 1
+        },
+        {
+          "n": 15,
+          "name": "Gastos financieros",
+          "cents": -1
+        },
+        {
+          "n": 16,
+          "name": "Variación de valor razonable en instrumentos financieros",
+          "cents": 0
+        },
+        {
+          "n": 17,
+          "name": "Diferencias de cambio",
+          "cents": 1000
+        },
+        {
+          "n": 18,
+          "name": "Deterioro y resultado por enajenaciones de instrumentos financieros",
+          "cents": 0
+        },
+        {
+          "n": 19,
+          "name": "Otros ingresos y gastos de carácter financiero",
+          "cents": 0
+        },
+        {
+          "n": 20,
+          "name": "Impuestos sobre beneficios",
+          "cents": -499108
+        }
+      ],
+      "lines": [
+        {
+          "path": "1. Importe neto de la cifra de negocios",
+          "depth": 1,
+          "cents": 6250000,
+          "isLeaf": false
+        },
+        {
+          "path": "1. Importe neto de la cifra de negocios / a) Ventas",
+          "depth": 2,
+          "cents": -100000,
+          "isLeaf": true
+        },
+        {
+          "path": "1. Importe neto de la cifra de negocios / b) Prestaciones de servicios",
+          "depth": 2,
+          "cents": 6350000,
+          "isLeaf": true
+        },
+        {
+          "path": "4. Aprovisionamientos",
+          "depth": 1,
+          "cents": -580000,
+          "isLeaf": false
+        },
+        {
+          "path": "4. Aprovisionamientos / a) Consumo de mercaderías",
+          "depth": 2,
+          "cents": 50000,
+          "isLeaf": true
+        },
+        {
+          "path": "4. Aprovisionamientos / c) Trabajos realizados por otras empresas",
+          "depth": 2,
+          "cents": -630000,
+          "isLeaf": true
+        },
+        {
+          "path": "6. Gastos de personal",
+          "depth": 1,
+          "cents": -2640000,
+          "isLeaf": false
+        },
+        {
+          "path": "6. Gastos de personal / a) Sueldos, salarios y asimilados",
+          "depth": 2,
+          "cents": -2000000,
+          "isLeaf": true
+        },
+        {
+          "path": "6. Gastos de personal / b) Cargas sociales",
+          "depth": 2,
+          "cents": -640000,
+          "isLeaf": true
+        },
+        {
+          "path": "7. Otros gastos de explotación",
+          "depth": 1,
+          "cents": -604570,
+          "isLeaf": false
+        },
+        {
+          "path": "7. Otros gastos de explotación / a) Servicios exteriores",
+          "depth": 2,
+          "cents": -604570,
+          "isLeaf": true
+        },
+        {
+          "path": "8. Amortización del inmovilizado",
+          "depth": 1,
+          "cents": -395000,
+          "isLeaf": true
+        },
+        {
+          "path": "13. Otros resultados",
+          "depth": 1,
+          "cents": -35000,
+          "isLeaf": true
+        },
+        {
+          "path": "14. Ingresos financieros",
+          "depth": 1,
+          "cents": 1,
+          "isLeaf": false
+        },
+        {
+          "path": "14. Ingresos financieros / b) De valores negociables y otros instrumentos financieros",
+          "depth": 2,
+          "cents": 1,
+          "isLeaf": true
+        },
+        {
+          "path": "15. Gastos financieros",
+          "depth": 1,
+          "cents": -1,
+          "isLeaf": false
+        },
+        {
+          "path": "15. Gastos financieros / b) Por deudas con terceros",
+          "depth": 2,
+          "cents": -1,
+          "isLeaf": true
+        },
+        {
+          "path": "17. Diferencias de cambio",
+          "depth": 1,
+          "cents": 1000,
+          "isLeaf": true
+        },
+        {
+          "path": "20. Impuestos sobre beneficios",
+          "depth": 1,
+          "cents": -499108,
+          "isLeaf": true
+        }
+      ],
+      "byEpigraphNumberCents": {
+        "1": 6250000,
+        "4": -580000,
+        "6": -2640000,
+        "7": -604570,
+        "8": -395000,
+        "13": -35000,
+        "14": 1,
+        "15": -1,
+        "17": 1000,
+        "20": -499108
+      },
+      "subtotalsCents": {
+        "A.1) RESULTADO DE EXPLOTACION": 1995430,
+        "A.2) RESULTADO FINANCIERO": 1000,
+        "A.3) RESULTADO ANTES DE IMPUESTOS": 1996430,
+        "A.4) RESULTADO DEL EJERCICIO": 1497322
+      },
+      "resultadoDelEjercicioCents": 1497322,
+      "lineCount": 85
+    },
+    "PYMES": {
+      "model": "PYMES",
+      "skeleton": [
+        {
+          "n": 1,
+          "name": "Importe neto de la cifra de negocios",
+          "cents": 6250000
+        },
+        {
+          "n": 2,
+          "name": "Variación de existencias de productos terminados y en curso de fabricación",
+          "cents": 0
+        },
+        {
+          "n": 3,
+          "name": "Trabajos realizados por la empresa para su activo",
+          "cents": 0
+        },
+        {
+          "n": 4,
+          "name": "Aprovisionamientos",
+          "cents": -580000
+        },
+        {
+          "n": 5,
+          "name": "Otros ingresos de explotación",
+          "cents": 0
+        },
+        {
+          "n": 6,
+          "name": "Gastos de personal",
+          "cents": -2640000
+        },
+        {
+          "n": 7,
+          "name": "Otros gastos de explotación",
+          "cents": -604570
+        },
+        {
+          "n": 8,
+          "name": "Amortización del inmovilizado",
+          "cents": -395000
+        },
+        {
+          "n": 9,
+          "name": "Imputación de subvenciones de inmovilizado no financiero y otras",
+          "cents": 0
+        },
+        {
+          "n": 10,
+          "name": "Excesos de provisiones",
+          "cents": 0
+        },
+        {
+          "n": 11,
+          "name": "Deterioro y resultado por enajenaciones del inmovilizado",
+          "cents": 0
+        },
+        {
+          "n": 12,
+          "name": "Otros resultados",
+          "cents": -35000
+        },
+        {
+          "n": 13,
+          "name": "Ingresos financieros",
+          "cents": 1
+        },
+        {
+          "n": 14,
+          "name": "Gastos financieros",
+          "cents": -1
+        },
+        {
+          "n": 15,
+          "name": "Variación de valor razonable en instrumentos financieros",
+          "cents": 0
+        },
+        {
+          "n": 16,
+          "name": "Diferencias de cambio",
+          "cents": 1000
+        },
+        {
+          "n": 17,
+          "name": "Deterioro y resultado por enajenaciones de instrumentos financieros",
+          "cents": 0
+        },
+        {
+          "n": 18,
+          "name": "Otros ingresos y gastos de carácter financiero",
+          "cents": 0
+        },
+        {
+          "n": 19,
+          "name": "Impuestos sobre beneficios",
+          "cents": -499108
+        }
+      ],
+      "lines": [
+        {
+          "path": "1. Importe neto de la cifra de negocios",
+          "depth": 1,
+          "cents": 6250000,
+          "isLeaf": false
+        },
+        {
+          "path": "1. Importe neto de la cifra de negocios / a) Ventas",
+          "depth": 2,
+          "cents": -100000,
+          "isLeaf": true
+        },
+        {
+          "path": "1. Importe neto de la cifra de negocios / b) Prestaciones de servicios",
+          "depth": 2,
+          "cents": 6350000,
+          "isLeaf": true
+        },
+        {
+          "path": "4. Aprovisionamientos",
+          "depth": 1,
+          "cents": -580000,
+          "isLeaf": false
+        },
+        {
+          "path": "4. Aprovisionamientos / a) Consumo de mercaderías",
+          "depth": 2,
+          "cents": 50000,
+          "isLeaf": true
+        },
+        {
+          "path": "4. Aprovisionamientos / c) Trabajos realizados por otras empresas",
+          "depth": 2,
+          "cents": -630000,
+          "isLeaf": true
+        },
+        {
+          "path": "6. Gastos de personal",
+          "depth": 1,
+          "cents": -2640000,
+          "isLeaf": false
+        },
+        {
+          "path": "6. Gastos de personal / a) Sueldos, salarios y asimilados",
+          "depth": 2,
+          "cents": -2000000,
+          "isLeaf": true
+        },
+        {
+          "path": "6. Gastos de personal / b) Cargas sociales",
+          "depth": 2,
+          "cents": -640000,
+          "isLeaf": true
+        },
+        {
+          "path": "7. Otros gastos de explotación",
+          "depth": 1,
+          "cents": -604570,
+          "isLeaf": false
+        },
+        {
+          "path": "7. Otros gastos de explotación / a) Servicios exteriores",
+          "depth": 2,
+          "cents": -604570,
+          "isLeaf": true
+        },
+        {
+          "path": "8. Amortización del inmovilizado",
+          "depth": 1,
+          "cents": -395000,
+          "isLeaf": true
+        },
+        {
+          "path": "12. Otros resultados",
+          "depth": 1,
+          "cents": -35000,
+          "isLeaf": true
+        },
+        {
+          "path": "13. Ingresos financieros",
+          "depth": 1,
+          "cents": 1,
+          "isLeaf": false
+        },
+        {
+          "path": "13. Ingresos financieros / b) De valores negociables y otros instrumentos financieros",
+          "depth": 2,
+          "cents": 1,
+          "isLeaf": true
+        },
+        {
+          "path": "14. Gastos financieros",
+          "depth": 1,
+          "cents": -1,
+          "isLeaf": false
+        },
+        {
+          "path": "14. Gastos financieros / b) Por deudas con terceros",
+          "depth": 2,
+          "cents": -1,
+          "isLeaf": true
+        },
+        {
+          "path": "16. Diferencias de cambio",
+          "depth": 1,
+          "cents": 1000,
+          "isLeaf": true
+        },
+        {
+          "path": "19. Impuestos sobre beneficios",
+          "depth": 1,
+          "cents": -499108,
+          "isLeaf": true
+        }
+      ],
+      "byEpigraphNumberCents": {
+        "1": 6250000,
+        "4": -580000,
+        "6": -2640000,
+        "7": -604570,
+        "8": -395000,
+        "12": -35000,
+        "13": 1,
+        "14": -1,
+        "16": 1000,
+        "19": -499108
+      },
+      "subtotalsCents": {
+        "A.1) RESULTADO DE EXPLOTACION": 1995430,
+        "A.2) RESULTADO FINANCIERO": 1000,
+        "A.3) RESULTADO ANTES DE IMPUESTOS": 1996430,
+        "A.4) RESULTADO DEL EJERCICIO": 1497322
+      },
+      "resultadoDelEjercicioCents": 1497322,
+      "lineCount": 85
+    }
+  },
+  "cashflow": {
+    "directo": {
+      "openingCashCents": 4000000,
+      "closingCashCents": 2943920,
+      "deltaCashCents": -1056080,
+      "buckets": [
+        "COBROS_CLIENTES",
+        "PAGOS_PROVEEDORES",
+        "PAGOS_PERSONAL",
+        "PAGOS_IMPUESTOS",
+        "OTROS_EXPLOTACION",
+        "INVERSION",
+        "FINANCIACION"
+      ],
+      "bucketCategory": {
+        "COBROS_CLIENTES": "OPERATING",
+        "PAGOS_PROVEEDORES": "OPERATING",
+        "PAGOS_PERSONAL": "OPERATING",
+        "PAGOS_IMPUESTOS": "OPERATING",
+        "OTROS_EXPLOTACION": "OPERATING",
+        "INVERSION": "INVESTING",
+        "FINANCIACION": "FINANCING"
+      },
+      "annualCents": {
+        "COBROS_CLIENTES": 2600000,
+        "PAGOS_PROVEEDORES": -523500,
+        "PAGOS_PERSONAL": -2340000,
+        "PAGOS_IMPUESTOS": -793080,
+        "OTROS_EXPLOTACION": 500,
+        "INVERSION": 0,
+        "FINANCIACION": 0
+      },
+      "byCategoryCents": {
+        "OPERATING": -1056080,
+        "INVESTING": 0,
+        "FINANCING": 0
+      },
+      "monthlyCents": {
+        "2026-02": {
+          "COBROS_CLIENTES": 979000,
+          "PAGOS_PROVEEDORES": -242000,
+          "PAGOS_PERSONAL": -585000
+        },
+        "2026-03": {
+          "COBROS_CLIENTES": 400000,
+          "PAGOS_PERSONAL": -50000
+        },
+        "2026-04": {
+          "COBROS_CLIENTES": 300000,
+          "PAGOS_PROVEEDORES": -121000,
+          "PAGOS_IMPUESTOS": -417480,
+          "OTROS_EXPLOTACION": -500
+        },
+        "2026-05": {
+          "COBROS_CLIENTES": 500000,
+          "PAGOS_PERSONAL": -535000,
+          "OTROS_EXPLOTACION": -5000
+        },
+        "2026-06": {
+          "COBROS_CLIENTES": 300000,
+          "PAGOS_PROVEEDORES": -100000,
+          "OTROS_EXPLOTACION": 6000
+        },
+        "2026-07": {
+          "COBROS_CLIENTES": 121000,
+          "PAGOS_IMPUESTOS": -300600,
+          "OTROS_EXPLOTACION": -1
+        },
+        "2026-08": {
+          "PAGOS_PROVEEDORES": -60500,
+          "PAGOS_PERSONAL": -585000,
+          "OTROS_EXPLOTACION": 1
+        },
+        "2026-10": {
+          "PAGOS_IMPUESTOS": -75000
+        },
+        "2026-11": {
+          "PAGOS_PERSONAL": -585000
+        }
+      },
+      "monthlyTotalCents": {
+        "2026-02": 152000,
+        "2026-03": 350000,
+        "2026-04": -238980,
+        "2026-05": -40000,
+        "2026-06": 206000,
+        "2026-07": -179601,
+        "2026-08": -645499,
+        "2026-10": -75000,
+        "2026-11": -585000
+      },
+      "monthlyRunningCashCents": {
+        "2026-02": 4152000,
+        "2026-03": 4502000,
+        "2026-04": 4263020,
+        "2026-05": 4223020,
+        "2026-06": 4429020,
+        "2026-07": 4249419,
+        "2026-08": 3603920,
+        "2026-10": 3528920,
+        "2026-11": 2943920
+      },
+      "efeImpuestoBeneficiosCents": 0,
+      "efeOtrosImpuestosCents": -793080,
+      "internalTransfers": [
+        "TR-001"
+      ],
+      "totalFlowsCents": -1056080,
+      "lineDetail": [
+        {
+          "ref": "ANT-C-01",
+          "month": "2026-02",
+          "lineNo": 2,
+          "code": "438",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 200000
+        },
+        {
+          "ref": "ANT-C-01",
+          "month": "2026-02",
+          "lineNo": 3,
+          "code": "477",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 42000
+        },
+        {
+          "ref": "CO-001",
+          "month": "2026-02",
+          "lineNo": 2,
+          "code": "4300",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 737000
+        },
+        {
+          "ref": "PA-001",
+          "month": "2026-02",
+          "lineNo": 1,
+          "code": "4000",
+          "bucket": "PAGOS_PROVEEDORES",
+          "category": "OPERATING",
+          "cents": -242000
+        },
+        {
+          "ref": "PNOM-01",
+          "month": "2026-02",
+          "lineNo": 1,
+          "code": "465",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -393250
+        },
+        {
+          "ref": "PSS-01",
+          "month": "2026-02",
+          "lineNo": 1,
+          "code": "476",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -191750
+        },
+        {
+          "ref": "ANT-N-01",
+          "month": "2026-03",
+          "lineNo": 1,
+          "code": "460",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -50000
+        },
+        {
+          "ref": "CO-002",
+          "month": "2026-03",
+          "lineNo": 2,
+          "code": "4300",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 400000
+        },
+        {
+          "ref": "ANT-P-01",
+          "month": "2026-04",
+          "lineNo": 1,
+          "code": "407",
+          "bucket": "PAGOS_PROVEEDORES",
+          "category": "OPERATING",
+          "cents": -100000
+        },
+        {
+          "ref": "ANT-P-01",
+          "month": "2026-04",
+          "lineNo": 2,
+          "code": "472",
+          "bucket": "PAGOS_PROVEEDORES",
+          "category": "OPERATING",
+          "cents": -21000
+        },
+        {
+          "ref": "CO-003",
+          "month": "2026-04",
+          "lineNo": 2,
+          "code": "626",
+          "bucket": "OTROS_EXPLOTACION",
+          "category": "OPERATING",
+          "cents": -500
+        },
+        {
+          "ref": "CO-003",
+          "month": "2026-04",
+          "lineNo": 3,
+          "code": "4300",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 300000
+        },
+        {
+          "ref": "P-IRPF-Q1",
+          "month": "2026-04",
+          "lineNo": 1,
+          "code": "4751",
+          "bucket": "PAGOS_IMPUESTOS",
+          "category": "OPERATING",
+          "cents": -120300
+        },
+        {
+          "ref": "P-IVA-Q1",
+          "month": "2026-04",
+          "lineNo": 1,
+          "code": "4750",
+          "bucket": "PAGOS_IMPUESTOS",
+          "category": "OPERATING",
+          "cents": -297180
+        },
+        {
+          "ref": "CO-004",
+          "month": "2026-05",
+          "lineNo": 2,
+          "code": "668",
+          "bucket": "OTROS_EXPLOTACION",
+          "category": "OPERATING",
+          "cents": -5000
+        },
+        {
+          "ref": "CO-004",
+          "month": "2026-05",
+          "lineNo": 3,
+          "code": "4300",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 500000
+        },
+        {
+          "ref": "PNOM-04",
+          "month": "2026-05",
+          "lineNo": 1,
+          "code": "465",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -343250
+        },
+        {
+          "ref": "PSS-04",
+          "month": "2026-05",
+          "lineNo": 1,
+          "code": "476",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -191750
+        },
+        {
+          "ref": "CO-005",
+          "month": "2026-06",
+          "lineNo": 2,
+          "code": "768",
+          "bucket": "OTROS_EXPLOTACION",
+          "category": "OPERATING",
+          "cents": 6000
+        },
+        {
+          "ref": "CO-005",
+          "month": "2026-06",
+          "lineNo": 3,
+          "code": "4300",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 300000
+        },
+        {
+          "ref": "PA-002",
+          "month": "2026-06",
+          "lineNo": 1,
+          "code": "4100",
+          "bucket": "PAGOS_PROVEEDORES",
+          "category": "OPERATING",
+          "cents": -100000
+        },
+        {
+          "ref": "CO-006",
+          "month": "2026-07",
+          "lineNo": 2,
+          "code": "669",
+          "bucket": "OTROS_EXPLOTACION",
+          "category": "OPERATING",
+          "cents": -1
+        },
+        {
+          "ref": "CO-006",
+          "month": "2026-07",
+          "lineNo": 3,
+          "code": "4300",
+          "bucket": "COBROS_CLIENTES",
+          "category": "OPERATING",
+          "cents": 121000
+        },
+        {
+          "ref": "P-IRPF-Q2",
+          "month": "2026-07",
+          "lineNo": 1,
+          "code": "4751",
+          "bucket": "PAGOS_IMPUESTOS",
+          "category": "OPERATING",
+          "cents": -75000
+        },
+        {
+          "ref": "P-IVA-Q2",
+          "month": "2026-07",
+          "lineNo": 1,
+          "code": "4750",
+          "bucket": "PAGOS_IMPUESTOS",
+          "category": "OPERATING",
+          "cents": -225600
+        },
+        {
+          "ref": "PA-003",
+          "month": "2026-08",
+          "lineNo": 1,
+          "code": "4100",
+          "bucket": "PAGOS_PROVEEDORES",
+          "category": "OPERATING",
+          "cents": -60500
+        },
+        {
+          "ref": "PA-003",
+          "month": "2026-08",
+          "lineNo": 3,
+          "code": "769",
+          "bucket": "OTROS_EXPLOTACION",
+          "category": "OPERATING",
+          "cents": 1
+        },
+        {
+          "ref": "PNOM-07",
+          "month": "2026-08",
+          "lineNo": 1,
+          "code": "465",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -393250
+        },
+        {
+          "ref": "PSS-07",
+          "month": "2026-08",
+          "lineNo": 1,
+          "code": "476",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -191750
+        },
+        {
+          "ref": "P-IRPF-Q3",
+          "month": "2026-10",
+          "lineNo": 1,
+          "code": "4751",
+          "bucket": "PAGOS_IMPUESTOS",
+          "category": "OPERATING",
+          "cents": -75000
+        },
+        {
+          "ref": "PNOM-10",
+          "month": "2026-11",
+          "lineNo": 1,
+          "code": "465",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -393250
+        },
+        {
+          "ref": "PSS-10",
+          "month": "2026-11",
+          "lineNo": 1,
+          "code": "476",
+          "bucket": "PAGOS_PERSONAL",
+          "category": "OPERATING",
+          "cents": -191750
+        }
+      ]
+    },
+    "indirecto": {
+      "blocks": [
+        "RESULTADO",
+        "AJUSTES_NO_MONETARIOS",
+        "VAR_CIRCULANTE_EXISTENCIAS",
+        "VAR_CIRCULANTE_DEUDORES",
+        "VAR_CIRCULANTE_ACREEDORES",
+        "VAR_CIRCULANTE_ADMIN_PUBLICAS",
+        "VAR_CIRCULANTE_PERIODIFICACIONES",
+        "VAR_CIRCULANTE_OTROS",
+        "INVERSION",
+        "FINANCIACION"
+      ],
+      "blockCents": {
+        "RESULTADO": 1497322,
+        "AJUSTES_NO_MONETARIOS": 395000,
+        "VAR_CIRCULANTE_EXISTENCIAS": 0,
+        "VAR_CIRCULANTE_DEUDORES": -4844900,
+        "VAR_CIRCULANTE_ACREEDORES": 2946900,
+        "VAR_CIRCULANTE_ADMIN_PUBLICAS": 699598,
+        "VAR_CIRCULANTE_PERIODIFICACIONES": 0,
+        "VAR_CIRCULANTE_OTROS": 0,
+        "INVERSION": -1500000,
+        "FINANCIACION": -250000
+      },
+      "blockAccountCents": {
+        "RESULTADO": {
+          "607": -630000,
+          "6080": 50000,
+          "621": -120000,
+          "623": -250000,
+          "626": -500,
+          "628": -173570,
+          "629": -60500,
+          "6300": -499108,
+          "640": -2000000,
+          "642": -640000,
+          "668": -5000,
+          "669": -1,
+          "678": -35000,
+          "681": -395000,
+          "705": 6350000,
+          "7080": -100000,
+          "768": 6000,
+          "769": 1
+        },
+        "AJUSTES_NO_MONETARIOS": {
+          "2816": 120000,
+          "2817": 275000
+        },
+        "VAR_CIRCULANTE_DEUDORES": {
+          "4300": -4723900,
+          "436": -121000
+        },
+        "VAR_CIRCULANTE_ACREEDORES": {
+          "4000": 459800,
+          "407": -100000,
+          "4100": 2587100,
+          "438": 0
+        },
+        "VAR_CIRCULANTE_ADMIN_PUBLICAS": {
+          "4700": 0,
+          "472": 0,
+          "473": -120000,
+          "4750": 245490,
+          "4751": 75000,
+          "4752": 499108,
+          "476": 0,
+          "477": 0
+        },
+        "VAR_CIRCULANTE_PERIODIFICACIONES": {
+          "480": 0,
+          "485": 0
+        },
+        "VAR_CIRCULANTE_OTROS": {
+          "460": 0,
+          "465": 0
+        },
+        "INVERSION": {
+          "217": -1500000
+        },
+        "FINANCIACION": {
+          "113": -250000
+        }
+      },
+      "totalCents": -1056080,
+      "openingCashCents": 4000000,
+      "closingCashCents": 2943920,
+      "deltaCashCents": -1056080,
+      "nonCashEntries": [
+        "AJ-002",
+        "R-009"
+      ]
+    }
+  },
+  "lossScenario": {
+    "nota": "Caso limite SINTETICO (no sale del fixture, que cierra en beneficio): 129 con perdidas. Se documenta porque es el caso que rompe la mayoria de renderizadores de balance.",
+    "regla": "Con I3 < 0 el saldo de 129 es DEUDOR. R-B2 lo presenta como -saldo, es decir NEGATIVO, dentro de PN A-1) VII. NO se reclasifica al activo, NO se cambia de signo y NO se lleva a 121: 129 no es bidireccional y 121 solo recibe el resultado por el asiento de distribucion del ejercicio SIGUIENTE (T-28). El patrimonio neto puede quedar negativo y el balance sigue cuadrando (I2 = 0).",
+    "ejemplo": {
+      "i3Cents": -1497322,
+      "saldo129Cents": 1497322,
+      "epigrafeNormal": "A) Patrimonio neto / A-1) Fondos propios / VII. Resultado del ejercicio",
+      "presentedCents": -1497322,
+      "impuestoBeneficios": "con BAI < 0 el epigrafe 20/19 puede ser POSITIVO (ingreso por credito fiscal, 4745/6301) o cero si no se activa el credito: parametrizable, nunca asumido por el motor"
+    }
+  },
+  "reviewThresholds": {
+    "_doc": "Organization.reviewThresholds. Variacion del KPI respecto al periodo comparativo (mismo periodo del ejercicio anterior por defecto). `pctBps` en puntos basicos sobre el valor comparativo; `minAbsCents` es el suelo de materialidad: por debajo NUNCA se dispara revision, por muy grande que sea el porcentaje. Se dispara si |var| supera AMBOS.",
+    "comparativeBasis": "SAME_PERIOD_PREVIOUS_YEAR",
+    "kpis": {
+      "ingresos": {
+        "pctBps": 1500,
+        "minAbsCents": 500000,
+        "why": "INCN (epigrafe 1). 15% mes a mes es ruido comercial normal en PYME de proyectos; por encima suele ser un hito facturado o una factura duplicada"
+      },
+      "ebitda": {
+        "pctBps": 2500,
+        "minAbsCents": 300000,
+        "why": "A.1 + amortizacion (epigrafe 8). Mas volatil que ingresos por el efecto de los costes fijos: 25%"
+      },
+      "resultado": {
+        "pctBps": 3000,
+        "minAbsCents": 300000,
+        "why": "A.4. Apalancado sobre EBITDA; ademas el IS solo aparece en el cierre"
+      },
+      "tesoreria": {
+        "pctBps": 2000,
+        "minAbsCents": 1000000,
+        "why": "Saldo final 57x. Un cobro grande a fin de mes desplaza el saldo sin significar nada; suelo alto"
+      },
+      "deuda": {
+        "pctBps": 1000,
+        "minAbsCents": 500000,
+        "why": "17x + 52x + 40x + 41x. La deuda se mueve por contrato, no por ruido: umbral estrecho"
+      },
+      "dso": {
+        "pctBps": 2000,
+        "minAbsCents": 0,
+        "unit": "DAYS",
+        "minAbsDays": 10,
+        "why": "430/INCN x 365. Sensible al mix; 10 dias de suelo"
+      },
+      "margenBruto": {
+        "pctBps": 500,
+        "minAbsCents": 0,
+        "unit": "BPS_OF_REVENUE",
+        "minAbsBps": 300,
+        "why": "MC1%. Se compara en PUNTOS de margen, no en % de variacion: 3 puntos"
+      }
+    },
+    "explainableVariations": [
+      {
+        "id": "EV-1",
+        "when": "El periodo comparado contiene un asiento kind=OPENING",
+        "rule": "Se excluyen del comparativo los kinds OPENING/CLOSING/REGULARIZATION en TODO KPI de flujo (PyG, cashflow). Nunca dispara revision"
+      },
+      {
+        "id": "EV-2",
+        "when": "Primer periodo del ejercicio frente al ultimo del anterior",
+        "rule": "La caida de resultado a cero en enero es estructural (el resultado se acumula por ejercicio). Los KPIs de PyG se comparan YoY del mismo mes, nunca contra el mes anterior de otro ejercicio"
+      },
+      {
+        "id": "EV-3",
+        "when": "El periodo contiene el asiento de impuesto sobre beneficios (T-25) o la regularizacion",
+        "rule": "La variacion de `resultado` atribuible al epigrafe 20/19 y a kind=REGULARIZATION se descuenta antes de aplicar el umbral"
+      },
+      {
+        "id": "EV-4",
+        "when": "Liquidacion trimestral de IVA/IRPF (meses 4, 7, 10 y 1)",
+        "rule": "El pico de `PAGOS_IMPUESTOS` en el cashflow de esos meses es esperado: umbral aplicado sobre la media de los cuatro trimestres, no mes a mes"
+      },
+      {
+        "id": "EV-5",
+        "when": "Un contra-asiento (kind=REVERSAL) y su original caen en el mismo periodo",
+        "rule": "Se netean antes de calcular la variacion; el par no genera revision"
+      },
+      {
+        "id": "EV-6",
+        "when": "Alta o baja de un proyecto o de un CECO en el periodo",
+        "rule": "Los KPIs por dimension se comparan solo sobre dimensiones vivas en ambos periodos; las nuevas se listan aparte como 'altas', no como variacion"
+      },
+      {
+        "id": "EV-7",
+        "when": "Cambio de `AllocationRun` o de `MarginLevelConfig` (analyticsHash distinto)",
+        "rule": "SI dispara REQUIERE_REVISION, siempre, con motivo 'cambio de configuracion analitica'. No es una variacion explicable: es una redefinicion de la metrica"
+      },
+      {
+        "id": "EV-8",
+        "when": "Cambio de git-sha del motor (`ReportRun.gitSha` distinto del run comparado)",
+        "rule": "SI dispara REQUIERE_REVISION en el primer run tras el cambio (SPEC-FIABILIDAD, sello)"
+      }
+    ]
+  },
+  "keyFiguresCents": {
+    "totalActivo": 13673820,
+    "patrimonioNeto": 8307322,
+    "pasivoCorriente": 5366498,
+    "resultadoDelEjercicio": 1497322,
+    "resultadoAntesImpuestos": 1996430,
+    "ebitda": 2390430,
+    "impuestoBeneficios": -499108,
+    "tesoreriaInicial": 4000000,
+    "tesoreriaFinal": 2943920,
+    "variacionTesoreria": -1056080
+  },
+  "checks": [
+    {
+      "id": "I2[PRE_REGULARIZACION/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I2[PRE_REGULARIZACION/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I2[POST_REGULARIZACION/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I2[POST_REGULARIZACION/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I2[POST_CIERRE/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I2[POST_CIERRE/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I2[APERTURA_2027/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I2[APERTURA_2027/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Total activo - (PN + pasivo) = 0"
+    },
+    {
+      "id": "I3",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "PyG = Sigma(haber-debe) de 6/7 con kind not in {REGULARIZATION,CLOSING,OPENING}"
+    },
+    {
+      "id": "I3[=129]",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "tras la regularizacion, saldo acreedor de 129 = PyG"
+    },
+    {
+      "id": "I3[PYMES=NORMAL]",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "el resultado no depende del modelo de presentacion"
+    },
+    {
+      "id": "I-E6-3[BAI]",
+      "status": "PASS",
+      "expected": 1996430,
+      "actual": 1996430,
+      "evidencia": "A.3 = BAI declarado por el fixture (coherente con E4)"
+    },
+    {
+      "id": "I-E6-4[A.4]",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "A.4 = resultado = I3"
+    },
+    {
+      "id": "I-E6-4[PYMES A.3]",
+      "status": "PASS",
+      "expected": 1996430,
+      "actual": 1996430,
+      "evidencia": "BAI identico en los dos modelos"
+    },
+    {
+      "id": "I6[directo]",
+      "status": "PASS",
+      "expected": 2943920,
+      "actual": 2943920,
+      "evidencia": "saldo inicial 57x + Sigma flujos = saldo final 57x"
+    },
+    {
+      "id": "I6[indirecto]",
+      "status": "PASS",
+      "expected": -1056080,
+      "actual": -1056080,
+      "evidencia": "Sigma bloques del indirecto = Delta 57x"
+    },
+    {
+      "id": "I6[directo=indirecto]",
+      "status": "PASS",
+      "expected": -1056080,
+      "actual": -1056080,
+      "evidencia": "los dos metodos dan la misma variacion"
+    },
+    {
+      "id": "I-E6-6[cashflow mensual]",
+      "status": "PASS",
+      "expected": 2943920,
+      "actual": 2943920,
+      "evidencia": "saldo inicial + Sigma de los 12 meses = saldo final"
+    },
+    {
+      "id": "I-E6-7[indirecto/RESULTADO]",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "el bloque RESULTADO del indirecto es exactamente la PyG (I3)"
+    },
+    {
+      "id": "I-E6-1[PRE_REGULARIZACION]",
+      "status": "PASS",
+      "expected": 13673820,
+      "actual": 13673820,
+      "evidencia": "total activo identico en modelo NORMAL y PYMES"
+    },
+    {
+      "id": "I-E6-1[POST_REGULARIZACION]",
+      "status": "PASS",
+      "expected": 13673820,
+      "actual": 13673820,
+      "evidencia": "total activo identico en modelo NORMAL y PYMES"
+    },
+    {
+      "id": "I-E6-1[POST_CIERRE]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "total activo identico en modelo NORMAL y PYMES"
+    },
+    {
+      "id": "I-E6-1[APERTURA_2027]",
+      "status": "PASS",
+      "expected": 13673820,
+      "actual": 13673820,
+      "evidencia": "total activo identico en modelo NORMAL y PYMES"
+    },
+    {
+      "id": "I-E6-2[PRE_REGULARIZACION/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-2[PRE_REGULARIZACION/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-2[POST_REGULARIZACION/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-2[POST_REGULARIZACION/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-2[POST_CIERRE/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-2[POST_CIERRE/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-2[APERTURA_2027/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-2[APERTURA_2027/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ninguna cuenta con saldo queda fuera de un epigrafe"
+    },
+    {
+      "id": "I-E6-5[PRE_REGULARIZACION/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-5[PRE_REGULARIZACION/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-5[POST_REGULARIZACION/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-5[POST_REGULARIZACION/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-5[POST_CIERRE/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-5[POST_CIERRE/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-5[APERTURA_2027/NORMAL]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-5[APERTURA_2027/PYMES]",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "una cuenta bidireccional aparece en un solo lado del balance"
+    },
+    {
+      "id": "I-E6-8[cierre]",
+      "status": "PASS",
+      "expected": {},
+      "actual": {},
+      "evidencia": "tras el asiento de cierre no queda saldo en ninguna cuenta de balance"
+    },
+    {
+      "id": "I-E6-9[apertura]",
+      "status": "PASS",
+      "expected": {},
+      "actual": {},
+      "evidencia": "la apertura del ejercicio siguiente reproduce el balance formulado, 129 INCLUIDA: el resultado sigue pendiente de aplicacion hasta el acuerdo de distribucion (T-28), que es el que lo lleva a 120/121"
+    },
+    {
+      "id": "I-E6-13[regularizacion]",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "saldo(129) != 0 => I3 = -saldo(129). Un FAIL significa lineas 6/7 posteriores a la regularizacion: sello REQUIERE_REVISION con motivo REGULARIZACION_DESFASADA y las dos cifras a la vista"
+    },
+    {
+      "id": "I-E6-11[NORMAL]",
+      "status": "PASS",
+      "expected": [
+        13673820,
+        8307322,
+        5366498
+      ],
+      "actual": [
+        13673820,
+        8307322,
+        5366498
+      ],
+      "evidencia": "la regularizacion no altera el balance: R-B5 solo cambia de donde se lee el resultado"
+    },
+    {
+      "id": "I-E6-11[PYMES]",
+      "status": "PASS",
+      "expected": [
+        13673820,
+        8307322,
+        5366498
+      ],
+      "actual": [
+        13673820,
+        8307322,
+        5366498
+      ],
+      "evidencia": "la regularizacion no altera el balance: R-B5 solo cambia de donde se lee el resultado"
+    },
+    {
+      "id": "I-E6-12[iva]",
+      "status": "PASS",
+      "expected": {},
+      "actual": {},
+      "evidencia": "472 nunca acreedora ni 477 deudora a fecha de balance (R-B6); si lo fueran seria WARN de calidad de datos, no una reclasificacion"
+    },
+    {
+      "id": "I-E6-10[contra]",
+      "status": "PASS",
+      "expected": {},
+      "actual": {},
+      "evidencia": "toda cuenta is_contra presenta importe negativo en su epigrafe"
+    },
+    {
+      "id": "FIXTURE[balancesBeforeClosing]",
+      "status": "PASS",
+      "expected": true,
+      "actual": true,
+      "evidencia": "todos los saldos sellados del fixture reproducidos"
+    }
+  ]
+}

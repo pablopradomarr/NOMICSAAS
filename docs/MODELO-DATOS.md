@@ -16,16 +16,17 @@ enum Role { ADMIN EDITOR VIEWER }   enum PgcVariant { GENERAL PYMES }
 > Actualizado por **E2** (`docs/design/E2-plan-cuentas.md` ronda 2) tras la validación contable (`docs/design/E2-validacion-contable.md`). El modelo TypeScript se llama **`LedgerAccount`**, no `Account`: ese nombre lo ocupa better-auth y renombrarlo rompería el login (`prismaAdapter` resuelve los modelos por nombre). El nombre físico es `accounts`, que es lo que ven RLS, triggers e informes.
 
 ```prisma
-model LedgerAccount { id; organizationId; code String @db.VarChar(12); name String; level Int; parentCode String?; nature Nature; statement Statement?; epigraph String?; epigraphPymes String?; bidirectional Boolean false; isContra Boolean false; analyticType AnalyticType?; cashflowCategory CashflowCategory?; isPostable Boolean true; isActive Boolean true; isSystem Boolean false; origin AccountOrigin MANUAL; createdAt; updatedAt
+model LedgerAccount { id; organizationId; code String @db.VarChar(12); name String; level Int; parentCode String?; nature Nature; statement Statement?; epigraph String?; epigraphPymes String?; bidirectional Boolean false; isContra Boolean false; analyticType AnalyticType?; cashflowBucket CashflowBucket?; isPostable Boolean true; isActive Boolean true; isSystem Boolean false; origin AccountOrigin MANUAL; createdAt; updatedAt
   @@unique([organizationId, code]) @@index([organizationId, parentCode]) @@index([organizationId, isActive, isPostable]) @@map("accounts") }
 enum Nature { DEUDORA ACREEDORA }
 enum Statement { BALANCE_ACTIVO BALANCE_PASIVO BALANCE_PN PYG ECPN }
 enum AnalyticType { INGRESO_DIRECTO COSTE_DIRECTO_MC1 COSTE_DIRECTO_MC2 INDIRECTO_CECO AMORTIZACION_DETERIORO FINANCIERO EXTRAORDINARIO NO_ANALITICO }   // EXTRAORDINARIO sin uso en el seed: el PGC 2007 suprimió el resultado extraordinario
-enum CashflowCategory { OPERATING INVESTING FINANCING }
+enum CashflowBucket { COBROS_CLIENTES PAGOS_PROVEEDORES PAGOS_PERSONAL PAGOS_IMPUESTOS OTROS_EXPLOTACION INVERSION FINANCIACION }   // E6, O-10
 enum AccountOrigin { SEED MANUAL CSV_IMPORT }   // idempotencia del seed sin pisar ediciones del usuario
-// `epigraph` = modelo normal · `epigraphPymes` = modelo abreviado/PYMES (numeración propia). Se guardan LAS DOS: cambiar de variante no obliga a reimportar. Selector único: epigraphFor(account, variant).
-// `bidirectional` (7 cuentas: 551, 552, 5523–5525, 554, 555): saldo indistinto, el balance las reclasifica POR SIGNO (E6); statement/epigraph guardan la ruta deudora.
-// `isContra` (165 cuentas: 28x, 29x, 39x, 49x, 59x, 406, 437, 606/608/609, 706/708/709): el renderizador RESTA, no suma.
+// `epigraph` = modelo normal · `epigraphPymes` = modelo abreviado/PYMES (numeración propia). Se guardan LAS DOS: cambiar de variante no obliga a reimportar. Selector único: epigraphFor(account, variant). La correspondencia NORMAL↔PYMES es una TABLA, no una regla: no se deriva por regex (E6 §1.3).
+// `bidirectional` (7 cuentas: 551, 552, 5523–5525, 554, 555): saldo indistinto; statement/epigraph guardan la ruta DEUDORA y el balance reclasifica POR SIGNO al epígrafe espejo (R-B4, E6 §3.3), por cuenta postable y por su saldo neto a la fecha, nunca por línea y nunca compensando subcuentas (art. 37 CdC).
+// `isContra` (165 cuentas: 28x, 29x, 39x, 49x, 59x, 406, 437, 606/608/609, 706/708/709): **NO interviene en el cálculo** (R-B3, E6). Con la regla de signo (activo +saldo / pasivo y PN −saldo) la contra-cuenta ya resta sola; restarla además la restaría dos veces. Es (a) presentación —marca `(−)`— y (b) check de signo (I-E6-10).
+// `cashflowBucket`: bucket de la CONTRAPARTIDA de un movimiento de tesorería (columna `cashflow_bucket` del seed, 834 de 906 filas; `null` sólo en 57x, en los contenedores mixtos `4`/`5` y en los grupos 8/9). La categoría OPERATING/INVESTING/FINANCING **se deriva** con `cashflowCategoryOf(bucket)` y NO se almacena. Sustituye a la columna `cashflowCategory` de E2 (E6, O-9/O-10/O-12). Regla de validación **R-18′**: bucket obligatorio en toda cuenta postable salvo 57x.
 model OrganizationAccountMap { id; organizationId; key AccountKey; accountCode String; @@unique([organizationId,key]) @@map("organization_account_maps") }
 enum AccountKey {  // 57 claves. Las 43 primeras son de mapeo OBLIGATORIO (E3/E8); las 14 últimas se declaran ahora y las mapea su épica.
   CLIENTES PROVEEDORES ACREEDORES BANCO_DEFAULT CAJA IVA_SOPORTADO IVA_REPERCUTIDO IRPF_RETENIDO_CLIENTES IRPF_A_PAGAR
@@ -147,16 +148,31 @@ model Counterparty { id; organizationId; kind CounterpartyKind; name; taxId?; ac
 **Semilla por organización.** Ocho CECOs (`CC-OPS` MC3 · `CC-DEV` MC3 · `CC-MKT` EBITDA · `CC-GA` EBITDA · `CC-FIN` no imputable · `CC-EXT` no imputable · `CC-OTR` · `CC-NA` `SIN_ASIGNAR`, de sistema y no imputable) y las ocho filas de `MarginLevelConfig`. Con `analyticsRequired = false`, una línea 6/7 sin destino se rutea a `CC-NA` y la Auditoría la marca WARN (R-A8); nunca queda a NULL.
 
 ## Extracción, FX, informes, auditoría
+> `ReportRun` y `ManualReviewFlag` actualizados por **E6** (`docs/design/E6-informes.md` ronda 2) tras la validación contable (`docs/design/E6-validacion-estados.md`, **CONFORME CON OBSERVACIONES**; cifras selladas en `docs/design/fixtures/estados-esperados.json`, 47 checks). Se incorporan O-5 (`paramsHash` en la clave de reutilización), O-6 (`comparativeRunId`/`comparativeBasis`), O-7 (`sealReasons` con código), O-8 (`params.currency`), O-9/O-10/O-12 (`cashflowBucket` en `LedgerAccount`, categoría derivada, R-18′) y O-11 (el bloque del cashflow indirecto es función pura, **no** columna). O-13 (`AccountKey.PROVEEDORES_INMOVILIZADO → 523`) y O-4 quedan para **E8**; O-14 (`epigraphSortKey`) anotada y descartada por ahora.
+
 ```prisma
 model ExtractionRun { id; organizationId; fileId; provider String; model String; promptSha String; schemaVersion String; pagesSent Int; pagesTotal Int; partial Boolean; rawOutput Json; proposal Json?; reconcile Json?; tokensIn?; tokensOut?; durationMs; createdBy; createdAt }   // inmutable
 model PromptVersion { id; organizationId?; code String; version Int; content String; sha256 String; createdBy; createdAt; @@unique([organizationId,code,version]) }
 model ExchangeRate { id; date Date; from String; to String; rateMicro BigInt; source String; fetchedAt; @@unique([date,from,to,source]) }
-model ReportRun { id; organizationId; type ReportType; periodStart; periodEnd; params Json; ledgerHash String; allocationRunId?; gitSha String; result Json; provenance Json; validation Json; seal Seal; sealReason?; durationMs; createdAt; @@index([organizationId,type,ledgerHash]) }
+model ReportRun { id; organizationId; type ReportType; periodStart Date; periodEnd Date; fiscalYearId?
+  params Json; paramsHash String @db.Char(64)                    // O-5: la FOTO y la VARIANTE son parámetros, no tipos
+  ledgerHash String; analyticsHash?; marginConfigHash?; allocationRunId?; analyticsKey String "∅"   // trigger; NULL<>NULL (O-A6)
+  gitSha String; result Json; resultKind ResultKind FULL; provenance Json; validation Json
+  seal Seal; sealReasons Json []                                  // O-7: [{code, kind, message, invariantId?, kpi?, deltaBps?}]
+  comparativeRunId?; comparativeBasis ComparativeBasis?           // O-6: contra qué se midió la variación
+  durationMs Int; createdById?; createdAt
+  @@unique([organizationId,type,periodStart,periodEnd,paramsHash,ledgerHash,analyticsKey,gitSha])
+  @@index([organizationId,type,periodStart,periodEnd,createdAt(desc)]) @@index([organizationId,type,ledgerHash]) @@map("report_runs") }
 enum ReportType { DIARIO MAYOR SUMAS_SALDOS BALANCE PYG PYG_ANALITICA CASHFLOW_DIRECTO CASHFLOW_INDIRECTO PRESUPUESTO_REAL DASHBOARD }
-enum Seal { VALIDADO_AUTOMATICAMENTE REQUIERE_REVISION }
+enum Seal { VALIDADO_AUTOMATICAMENTE REQUIERE_REVISION }   enum ResultKind { FULL SUMMARY }   enum ComparativeBasis { SAME_PERIOD_PREVIOUS_YEAR PREVIOUS_FISCAL_YEAR_CLOSE PREVIOUS_PERIOD NONE }
+// **Append-only en RLS** como `audit_logs` (RESTRICTIVE … USING(false) en UPDATE y DELETE + REVOKE): un informe emitido no se corrige, se emite otro.
+// `params` OBLIGATORIOS por tipo: BALANCE {snapshot: PRE_REGULARIZACION|POST_REGULARIZACION|POST_CIERRE, variant, currency, comparative} · PYG {variant, currency, comparative} · CASHFLOW {method, granularity, view, currency} · DASHBOARD {refDate, agingBuckets, currency}. `gitSha` va DENTRO de la clave: si no, tras un cambio de motor se serviría la caché vieja y el motivo «primer run tras cambio» no se emitiría nunca.
+// `resultKind = SUMMARY` en DIARIO/MAYOR/SUMAS_SALDOS (D-E6-4): el resultado guarda el resumen y la consulta, no cientos de miles de filas.
 model BankStatementLine { id; organizationId; accountCode; date Date; amountCents Int; description; reference?; sha256; matchedLineId?; importedAt }
 model AuditLog { id; organizationId; userId?; entity String; entityId String; action String; before Json?; after Json?; reason String?; ts; @@index([organizationId,ts]) @@index([organizationId,entity,entityId,ts]) @@map("audit_logs") }   // E2: append-only también en RLS (FOR UPDATE/DELETE USING(false)); se escribe en la MISMA transacción que la mutación
-model ManualReviewFlag { id; organizationId; periodStart; periodEnd; reason; createdBy; clearedAt?; clearedBy? }
+model ManualReviewFlag { id; organizationId; periodStart Date; periodEnd Date; scope ReportType?; reason; createdById; createdAt; clearedAt?; clearedById?; clearReason?; @@index([organizationId,periodStart,periodEnd]) @@map("manual_review_flags") }
+// E6: ADMIN fuerza `REQUIERE REVISIÓN` sobre todos los informes que solapen el periodo (`scope` null = todos). Semi-append-only: sin DELETE, y `UPDATE` sólo de las tres columnas de limpieza (GRANT de columna + trigger, patrón ADR-0010). Único flag activo por (org, periodo, scope) con dos índices únicos PARCIALES (`WHERE cleared_at IS NULL`), porque NULL<>NULL.
+// `Organization.reviewThresholds` (E1, sin uso hasta E6): {version:1, comparativeBasis, kpis:{ingresos, ebitda, resultado, tesoreria, deuda, dso, margenBruto → {pctBps, minAbsCents, minPointsBps}}}. Dispara revisión si |Δ%| > pctBps **Y** |Δ| > minAbsCents. Base por defecto SAME_PERIOD_PREVIOUS_YEAR. Variaciones explicables EV-1…EV-6 (no disparan) y EV-7…EV-10 (disparan siempre): E6 §2.4.
 model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int?; lastHash String?; @@unique([organizationId,code,year]) }
 ```
 
@@ -178,5 +194,8 @@ model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int
 | Σ matriz analítica = PyG contable (I4) por nivel y en `RESULTADO`, tolerancia 0 | `lib/analytics/margins.ts` + test byte a byte contra `docs/design/fixtures/pyg-analitica-esperada.json` |
 | Línea posteada: solo mutan las cuatro columnas analíticas, con motivo y `AuditLog` | `GRANT` de columna + triggers `journal_lines_only_analytics_update` y `..._reclassify_window` (ADR-0010) |
 | Nada se borra: asientos, líneas, cuentas con movimientos, runs | RLS `FOR DELETE USING(false)` + código |
+| `Activo = Pasivo + PN` con el resultado leído de 129 **o** inyectado (I3), nunca las dos cosas (I2, R-B5) | `lib/ledger/reports/balance.ts` + I-E6-11 y I-E6-13 |
+| `cashflowBucket` en toda cuenta postable salvo 57x (R-18′); todo asiento con línea 57x reparte por línea y cuadra con Δ57x (I6) | `validate_cashflow()` en el generador del seed + `lib/ledger/reports/cashflow.ts` + test de exhaustividad sobre las 906 cuentas |
+| `report_runs` inmutable; un informe no se corrige, se emite otro | RLS append-only (`USING(false)` en UPDATE/DELETE) + `REVOKE` + I-E6-16 |
 | Anulación solo por contra-asiento; sin flag que excluya líneas de informes | código + ausencia de columna `voided` en líneas |
 | Tenant | `tenantDb` + RLS |

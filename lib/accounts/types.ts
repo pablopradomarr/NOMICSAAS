@@ -49,7 +49,26 @@ export type Plan = {
   codes: readonly string[]
 }
 
-/** Fila del seed `seeds/npgc.csv` ya parseada (13 columnas). */
+/**
+ * Bucket de cashflow de la contrapartida (E6, columna `cashflow_bucket` del seed).
+ * La `CashflowCategory` de tres valores se DERIVA con `cashflowCategoryOf`, no se
+ * almacena aparte. `null` solo en 57x (la propia tesorería), en los contenedores
+ * mixtos de nivel 1 (`4`, `5`) y en los grupos 8/9 (ECPN).
+ */
+export type CashflowBucket =
+  | "COBROS_CLIENTES"
+  | "PAGOS_PROVEEDORES"
+  | "PAGOS_PERSONAL"
+  | "PAGOS_IMPUESTOS"
+  | "OTROS_EXPLOTACION"
+  | "INVERSION"
+  | "FINANCIACION"
+
+/** Categoría del EFE derivada del bucket (nunca se persiste por separado). */
+export const cashflowCategoryOf = (b: CashflowBucket): "OPERATING" | "INVESTING" | "FINANCING" =>
+  b === "INVERSION" ? "INVESTING" : b === "FINANCIACION" ? "FINANCING" : "OPERATING"
+
+/** Fila del seed `seeds/npgc.csv` ya parseada (14 columnas tras E6). */
 export type SeedAccount = {
   code: string
   name: string
@@ -64,6 +83,7 @@ export type SeedAccount = {
   isContra: boolean
   pymes: boolean
   epigraphPymes: string | null
+  cashflowBucket: CashflowBucket | null
 }
 
 /**

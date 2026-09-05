@@ -18,7 +18,7 @@ const row = (
   code: string,
   name = `Cuenta ${code}`,
   parent = code.length > 1 ? code.slice(0, code.length - 1) : "",
-  extra = ",DEUDORA,,,,0,0,1,"
+  extra = ",DEUDORA,,,,0,0,1,,OTROS_EXPLOTACION"
 ) => `${code},${name},${code.length},${parent},${code[0]}${extra}`
 
 describe("parseCsvRows", () => {
@@ -75,9 +75,9 @@ describe("parseNpgcCsv", () => {
   it("un registro se parsea con todos los campos", () => {
     const result = parseNpgcCsv(
       `${HEADER}\n` +
-        `7,Ventas e ingresos,1,,7,ACREEDORA,,,,0,0,1,\n` +
-        `70,Ventas,2,7,7,ACREEDORA,,,,0,0,1,\n` +
-        `705,Prestaciones de servicios,3,70,7,ACREEDORA,PYG,1. INCN,INGRESO_DIRECTO,0,0,1,1. INCN\n`
+        `7,Ventas e ingresos,1,,7,ACREEDORA,,,,0,0,1,,OTROS_EXPLOTACION\n` +
+        `70,Ventas,2,7,7,ACREEDORA,,,,0,0,1,,OTROS_EXPLOTACION\n` +
+        `705,Prestaciones de servicios,3,70,7,ACREEDORA,PYG,1. INCN,INGRESO_DIRECTO,0,0,1,1. INCN,OTROS_EXPLOTACION\n`
     )
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -95,6 +95,7 @@ describe("parseNpgcCsv", () => {
       isContra: false,
       pymes: true,
       epigraphPymes: "1. INCN",
+      cashflowBucket: "OTROS_EXPLOTACION",
     })
   })
 
@@ -102,17 +103,17 @@ describe("parseNpgcCsv", () => {
     const huerfana = parseNpgcCsv(`${HEADER}\n${row("705")}\n`)
     expect(huerfana.ok).toBe(false)
 
-    const ceroIzquierda = parseNpgcCsv(`${HEADER}\n0705,Mala,4,,0,DEUDORA,,,,0,0,1,\n`)
+    const ceroIzquierda = parseNpgcCsv(`${HEADER}\n0705,Mala,4,,0,DEUDORA,,,,0,0,1,,OTROS_EXPLOTACION\n`)
     expect(ceroIzquierda.ok).toBe(false)
     if (!ceroIzquierda.ok) expect(ceroIzquierda.errors[0].row).toBe(1)
 
-    const nivelMalo = parseNpgcCsv(`${HEADER}\n7,Grupo,2,,7,DEUDORA,,,,0,0,1,\n`)
+    const nivelMalo = parseNpgcCsv(`${HEADER}\n7,Grupo,2,,7,DEUDORA,,,,0,0,1,,OTROS_EXPLOTACION\n`)
     expect(nivelMalo.ok).toBe(false)
     if (!nivelMalo.ok) expect(nivelMalo.errors[0].field).toBe("nivel")
   })
 
   it("rechaza enums desconocidos y duplicados", () => {
-    const enumMalo = parseNpgcCsv(`${HEADER}\n7,Grupo,1,,7,MIXTA,,,,0,0,1,\n`)
+    const enumMalo = parseNpgcCsv(`${HEADER}\n7,Grupo,1,,7,MIXTA,,,,0,0,1,,OTROS_EXPLOTACION\n`)
     expect(enumMalo.ok).toBe(false)
     const duplicado = parseNpgcCsv(`${HEADER}\n${row("7", "A", "")}\n${row("7", "B", "")}\n`)
     expect(duplicado.ok).toBe(false)
