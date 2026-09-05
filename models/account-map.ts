@@ -81,7 +81,7 @@ export async function createSoftwareAccounts(
           bidirectional: parent.bidirectional,
           isContra: parent.isContra,
           analyticType: parent.analyticType,
-          cashflowCategory: parent.cashflowCategory,
+          cashflowBucket: parent.cashflowBucket,
           isPostable: true,
           isActive: true,
           isSystem: false,

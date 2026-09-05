@@ -8,7 +8,7 @@ import {
   AccountError,
   AccountOrigin,
   AnalyticType,
-  CashflowCategory,
+  CashflowBucket,
   err,
   fail,
   Nature,
@@ -17,7 +17,6 @@ import {
   Plan,
   PlanAccount,
   Result,
-  CashflowBucket,
   SeedAccount,
   Statement,
 } from "@/lib/accounts/types"
@@ -281,7 +280,7 @@ export function seedRowsToPlanAccounts(
     bidirectional: row.bidirectional,
     isContra: row.isContra,
     analyticType: row.analyticType,
-    cashflowCategory: null as CashflowCategory | null,
+    cashflowBucket: row.cashflowBucket,
     isPostable: computeIsPostable(row.code, codes),
     isActive: true,
     isSystem: false,
@@ -552,6 +551,9 @@ export function parseCustomPlanCsv(
       isContra: false,
       pymes: true,
       epigraphPymes: epigraph,
+      // Un plan importado por el usuario no trae bucket de cashflow: se declara
+      // ausente y R-18′ avisa al editar la cuenta, en vez de inventarlo.
+      cashflowBucket: null,
     })
   }
 

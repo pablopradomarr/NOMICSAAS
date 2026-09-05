@@ -62,6 +62,9 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "BusinessLine",
   "CostCenter",
   "MarginLevelConfig",
+  // E6 — informes financieros (docs/design/E6-informes.md §2.2)
+  "ReportRun",
+  "ManualReviewFlag",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */

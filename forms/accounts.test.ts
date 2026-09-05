@@ -16,14 +16,14 @@ describe("E2 · T9 — schemas del editor de plan", () => {
       statement: "",
       epigraph: "",
       analyticType: "",
-      cashflowCategory: "",
+      cashflowBucket: "",
     })
     expect(parsed.success).toBe(true)
     if (!parsed.success) return
     expect(parsed.data.name).toBe("Consultoría – Cliente X")
     expect(parsed.data.statement).toBeNull()
     expect(parsed.data.analyticType).toBeNull()
-    expect(parsed.data.cashflowCategory).toBeNull()
+    expect(parsed.data.cashflowBucket).toBeNull()
   })
 
   it("rechaza códigos con cero a la izquierda, vacíos o no numéricos (R-01)", () => {
@@ -70,14 +70,14 @@ describe("E2 · T9 — schemas del editor de plan", () => {
       code: "430",
       epigraph: "B.III.1 Clientes por ventas y prestaciones de servicios",
       analyticType: "NO_ANALITICO",
-      cashflowCategory: "",
+      cashflowBucket: "",
       reason: "reclasificación acordada con el auditor",
       statement: "PYG",
     })
     expect(parsed.success).toBe(true)
     if (!parsed.success) return
     expect("statement" in parsed.data).toBe(false)
-    expect(parsed.data.cashflowCategory).toBeNull()
+    expect(parsed.data.cashflowBucket).toBeNull()
   })
 
   it("el import exige columnas de código y nombre y un separador conocido", () => {

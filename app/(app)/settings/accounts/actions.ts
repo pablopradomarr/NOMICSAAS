@@ -70,7 +70,7 @@ export async function createAccountAction(
         statement: validated.data.statement ?? undefined,
         epigraph: validated.data.epigraph ?? undefined,
         analyticType: validated.data.analyticType ?? undefined,
-        cashflowCategory: validated.data.cashflowCategory ?? undefined,
+        cashflowBucket: validated.data.cashflowBucket ?? undefined,
       },
       { userId: user.id },
       null,
@@ -136,7 +136,7 @@ export async function updateAccountClassificationAction(
       {
         epigraph: validated.data.epigraph,
         analyticType: validated.data.analyticType,
-        cashflowCategory: validated.data.cashflowCategory,
+        cashflowBucket: validated.data.cashflowBucket,
         reason: validated.data.reason,
       },
       {

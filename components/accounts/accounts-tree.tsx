@@ -414,8 +414,8 @@ export function AccountsTree({
                     {account.analyticType ? (ANALYTIC_TYPE_LABELS[account.analyticType] ?? account.analyticType) : "—"}
                   </td>
                   <td className="px-2">
-                    {account.cashflowCategory
-                      ? (CASHFLOW_LABELS[account.cashflowCategory] ?? account.cashflowCategory)
+                    {account.cashflowBucket
+                      ? (CASHFLOW_LABELS[account.cashflowBucket] ?? account.cashflowBucket)
                       : "—"}
                   </td>
                   <td className="px-2">

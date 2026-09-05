@@ -8,7 +8,7 @@ import { requireOrg } from "@/lib/authz"
 import { getPlan } from "@/models/accounts"
 import { getAccountMap } from "@/models/account-map"
 import { loadNpgcSeed } from "@/models/npgc-seed"
-import { AnalyticType, CashflowCategory, Role, Statement } from "@/prisma/client"
+import { AnalyticType, CashflowBucket, Role, Statement } from "@/prisma/client"
 import { Metadata } from "next"
 import Link from "next/link"
 
@@ -40,7 +40,7 @@ export default async function AccountsSettingsPage() {
     variant: org.pgcVariant,
     epigraphs: [...epigraphCatalog(loadNpgcSeed().rows, org.pgcVariant)].sort((a, b) => a.localeCompare(b, "es")),
     analyticTypes: Object.values(AnalyticType),
-    cashflowCategories: Object.values(CashflowCategory),
+    cashflowBuckets: Object.values(CashflowBucket),
     statements: Object.values(Statement),
   }
 

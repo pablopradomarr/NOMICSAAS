@@ -6,7 +6,7 @@
  */
 
 import { ACCOUNT_CODE_RE } from "@/lib/accounts/codes"
-import { AnalyticType, CashflowCategory, PgcVariant, Statement } from "@/prisma/client"
+import { AnalyticType, CashflowBucket, PgcVariant, Statement } from "@/prisma/client"
 import { z } from "zod"
 
 export const accountCodeSchema = z
@@ -44,7 +44,7 @@ const nullableEnum = <T extends Record<string, string>>(enumObject: T, message: 
 
 export const statementSchema = nullableEnum(Statement, "Estado financiero desconocido")
 export const analyticTypeSchema = nullableEnum(AnalyticType, "Tipo analítico desconocido")
-export const cashflowCategorySchema = nullableEnum(CashflowCategory, "Categoría de cashflow desconocida")
+export const cashflowBucketSchema = nullableEnum(CashflowBucket, "Bucket de cashflow desconocido")
 
 /** Epígrafe opcional; `""` significa «heredar el del padre», no cadena vacía. */
 const epigraphSchema = z
@@ -72,7 +72,7 @@ export const createAccountFormSchema = (epigraphCatalog?: ReadonlySet<string>) =
       "Ese epígrafe no existe en el modelo de cuentas anuales de la organización"
     ),
     analyticType: analyticTypeSchema,
-    cashflowCategory: cashflowCategorySchema,
+    cashflowBucket: cashflowBucketSchema,
   })
 
 /** R-19: renombrar siempre se permite, incluso en cuentas de sistema. */
@@ -95,7 +95,7 @@ export const updateAccountClassificationFormSchema = z.object({
     .optional()
     .transform((value) => (value && value !== "" ? value : null)),
   analyticType: analyticTypeSchema,
-  cashflowCategory: cashflowCategorySchema,
+  cashflowBucket: cashflowBucketSchema,
   reason: optionalReasonSchema,
 })
 

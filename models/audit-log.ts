@@ -28,6 +28,9 @@ export type AuditEntity =
   | "CostCenter"
   | "MarginLevelConfig"
   | "JournalLine"
+  // E6 · T14 — informes financieros (docs/design/E6-informes.md §4).
+  | "ReportRun"
+  | "ManualReviewFlag"
 
 export type AuditAction =
   | "create"
@@ -52,6 +55,10 @@ export type AuditAction =
   // E4 · T12 — archivado de dimensiones y reclasificación analítica (ADR-0010).
   | "archive"
   | "RECLASSIFY_ANALYTICS"
+  // E6 · T14 — revisión manual y umbrales (ADR-0012 D3).
+  | "FORCE_REVIEW"
+  | "CLEAR_REVIEW"
+  | "SET_THRESHOLDS"
 
 export type AuditLogInput = {
   entity: AuditEntity

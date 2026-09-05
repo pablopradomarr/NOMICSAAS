@@ -5,7 +5,7 @@
  * plan ya resuelto y sólo filtra, ordena y pinta.
  */
 
-import type { AnalyticType, CashflowCategory, PgcVariant, PlanAccount, Statement } from "@/lib/accounts/types"
+import type { AnalyticType, CashflowBucket, PgcVariant, PlanAccount, Statement } from "@/lib/accounts/types"
 
 export type { PlanAccount }
 
@@ -14,7 +14,7 @@ export type ClassificationCatalog = {
   variant: PgcVariant
   epigraphs: readonly string[]
   analyticTypes: readonly AnalyticType[]
-  cashflowCategories: readonly CashflowCategory[]
+  cashflowBuckets: readonly CashflowBucket[]
   statements: readonly Statement[]
 }
 
@@ -38,10 +38,15 @@ export const ANALYTIC_TYPE_LABELS: Record<string, string> = {
   NO_ANALITICO: "No analítico",
 }
 
+/** E6 (ADR-0012 D2): los siete buckets de la CONTRAPARTIDA, no las tres categorías. */
 export const CASHFLOW_LABELS: Record<string, string> = {
-  OPERATING: "Explotación",
-  INVESTING: "Inversión",
-  FINANCING: "Financiación",
+  COBROS_CLIENTES: "Cobros de clientes",
+  PAGOS_PROVEEDORES: "Pagos a proveedores",
+  PAGOS_PERSONAL: "Pagos de personal",
+  PAGOS_IMPUESTOS: "Pagos de impuestos",
+  OTROS_EXPLOTACION: "Otros de explotación",
+  INVERSION: "Inversión",
+  FINANCIACION: "Financiación",
 }
 
 export const LEVEL_LABELS: Record<number, string> = {

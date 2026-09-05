@@ -74,7 +74,7 @@ const PLAN_SELECT = {
   bidirectional: true,
   isContra: true,
   analyticType: true,
-  cashflowCategory: true,
+  cashflowBucket: true,
   isPostable: true,
   isActive: true,
   isSystem: true,
@@ -159,7 +159,7 @@ function accountCreateData(organizationId: string, account: PlanAccount): Prisma
     bidirectional: account.bidirectional,
     isContra: account.isContra,
     analyticType: account.analyticType,
-    cashflowCategory: account.cashflowCategory,
+    cashflowBucket: account.cashflowBucket,
     isPostable: account.isPostable,
     isActive: account.isActive,
     isSystem: account.isSystem,
@@ -220,7 +220,7 @@ function findParent(plan: Plan, code: string): string | null {
 export async function updateAccount(
   organizationId: string,
   code: string,
-  patch: Partial<Pick<LedgerAccount, "name" | "statement" | "epigraph" | "analyticType" | "cashflowCategory">>,
+  patch: Partial<Pick<LedgerAccount, "name" | "statement" | "epigraph" | "analyticType" | "cashflowBucket">>,
   actor: Actor,
   reason?: string | null
 ): Promise<LedgerAccount> {
@@ -465,7 +465,7 @@ export async function importNpgc(
         bidirectional: parent.bidirectional,
         isContra: parent.isContra,
         analyticType: parent.analyticType,
-        cashflowCategory: parent.cashflowCategory,
+        cashflowBucket: parent.cashflowBucket,
         isPostable: true,
         isActive: true,
         isSystem: false,

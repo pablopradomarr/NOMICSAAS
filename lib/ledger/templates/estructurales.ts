@@ -91,7 +91,9 @@ export function buildTraspasoTesoreria(input: TraspasoTesoreriaInput, ctx: Ledge
     ["toAccountCode", toCode],
   ] as const) {
     const account = ctx.plan.byCode.get(code)
-    if (account && account.cashflowCategory === null && accountGroup(code) !== 5) {
+    // E6: la tesorería es el prefijo `57` (R-CF-1), no «la que no tiene bucket»
+    // —`cashflowBucket` está a null también en los contenedores mixtos `4`/`5`—.
+    if (account && !code.startsWith("57")) {
       errors.push(err("TEMPLATE_INPUT", field, `La cuenta ${code} no es una cuenta de tesorería (57x)`))
     }
   }

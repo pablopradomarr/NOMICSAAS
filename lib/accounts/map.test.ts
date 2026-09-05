@@ -23,7 +23,7 @@ function account(code: string, extra: Partial<PlanAccount> = {}): PlanAccount {
     bidirectional: false,
     isContra: false,
     analyticType: null,
-    cashflowCategory: null,
+    cashflowBucket: null,
     isPostable: true,
     isActive: true,
     isSystem: false,

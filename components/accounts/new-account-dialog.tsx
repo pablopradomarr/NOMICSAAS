@@ -103,7 +103,7 @@ export function NewAccountDialog({
           <dd>{parent.analyticType ? (ANALYTIC_TYPE_LABELS[parent.analyticType] ?? parent.analyticType) : "—"}</dd>
           <dt className="text-muted-foreground">Cashflow</dt>
           <dd>
-            {parent.cashflowCategory ? (CASHFLOW_LABELS[parent.cashflowCategory] ?? parent.cashflowCategory) : "—"}
+            {parent.cashflowBucket ? (CASHFLOW_LABELS[parent.cashflowBucket] ?? parent.cashflowBucket) : "—"}
           </dd>
         </dl>
 

@@ -41,23 +41,23 @@ enum InvitationStatus {
 }
 
 model Organization {
-  id                String     @id @default(uuid()) @db.Uuid
-  slug              String     @unique
+  id                String      @id @default(uuid()) @db.Uuid
+  slug              String      @unique
   name              String
-  taxId             String?    @map("tax_id")
-  baseCurrency      String     @default("EUR") @map("base_currency")
-  timezone          String     @default("Europe/Madrid")
-  pgcVariant        PgcVariant @default(PYMES) @map("pgc_variant")
-  ledgerEnabled     Boolean    @default(true) @map("ledger_enabled")
+  taxId             String?     @map("tax_id")
+  baseCurrency      String      @default("EUR") @map("base_currency")
+  timezone          String      @default("Europe/Madrid")
+  pgcVariant        PgcVariant  @default(PYMES) @map("pgc_variant")
+  ledgerEnabled     Boolean     @default(true) @map("ledger_enabled")
   /// R-A8: con `false` las líneas 6/7 sin destino se rutean a `CC-NA` en vez de
   /// bloquear el asiento. E3 la ignoraba (D-E3-1); E4 la lee.
-  analyticsRequired Boolean    @default(true) @map("analytics_required")
+  analyticsRequired Boolean     @default(true) @map("analytics_required")
   /// MLC-5 / R-A11: nivel del `NO_ANALITICO` que NO es impuesto sobre
   /// beneficios. Admisibles EBITDA (default) | EBIT | BAI (CHECK en BD).
   nonAnalyticLevel  MarginLevel @default(EBITDA) @map("non_analytic_level")
-  reviewThresholds  Json?      @map("review_thresholds")
-  isPersonal        Boolean    @default(false) @map("is_personal")
-  isActive          Boolean    @default(true) @map("is_active")
+  reviewThresholds  Json?       @map("review_thresholds")
+  isPersonal        Boolean     @default(false) @map("is_personal")
+  isActive          Boolean     @default(true) @map("is_active")
 
   // Datos de emisor de facturas (D-1: viven en la organización)
   businessName        String? @map("business_name")
@@ -116,6 +116,10 @@ model Organization {
   costCenters        CostCenter[]
   marginLevelConfigs MarginLevelConfig[]
 
+  // E6 — informes financieros
+  reportRuns        ReportRun[]
+  manualReviewFlags ManualReviewFlag[]
+
   @@map("organizations")
 }
 
@@ -169,11 +173,11 @@ model User {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  accounts    Account[]
-  sessions    Session[]
-  memberships Membership[]
-  appData     AppData[]
-  progress    Progress[]
+  accounts      Account[]
+  sessions      Session[]
+  memberships   Membership[]
+  appData       AppData[]
+  progress      Progress[]
   /// E3 (#2): asientos que este usuario ha contabilizado.
   postedEntries JournalEntry[] @relation("EntryPostedBy")
 
@@ -461,12 +465,21 @@ enum AnalyticType {
   @@map("analytic_type")
 }
 
-enum CashflowCategory {
-  OPERATING
-  INVESTING
-  FINANCING
+/// E6 (ADR-0012 D2) — bucket del flujo cuando esta cuenta es la CONTRAPARTIDA de
+/// un movimiento de tesorería. Sustituye a `CashflowCategory`, que tenía tres
+/// valores (demasiado grueso para el EFE) y estaba `NULL` en las 906 filas.
+/// La categoría OPERATING/INVESTING/FINANCING **se deriva** con
+/// `cashflowCategoryOf(bucket)` (`lib/accounts/types.ts`) y NO se almacena.
+enum CashflowBucket {
+  COBROS_CLIENTES
+  PAGOS_PROVEEDORES
+  PAGOS_PERSONAL
+  PAGOS_IMPUESTOS
+  OTROS_EXPLOTACION
+  INVERSION
+  FINANCIACION
 
-  @@map("cashflow_category")
+  @@map("cashflow_bucket")
 }
 
 /// 57 claves (§2.2). Las 43 del bloque obligatorio las resuelve `defaultAccountMap`;
@@ -598,8 +611,12 @@ model LedgerAccount {
   /// renderizador RESTA, no suma (R-13).
   isContra      Boolean    @default(false) @map("is_contra")
 
-  analyticType     AnalyticType?     @map("analytic_type")
-  cashflowCategory CashflowCategory? @map("cashflow_category")
+  analyticType   AnalyticType?   @map("analytic_type")
+  /// E6 (ADR-0012 D2): bucket del cashflow de la CONTRAPARTIDA (columna
+  /// `cashflow_bucket` del seed, 834 de 906 filas). `null` sólo en 57x —la
+  /// propia tesorería—, en los contenedores mixtos de nivel 1 (`4`, `5`) y en
+  /// los grupos 8/9. R-18′: obligatorio en toda cuenta postable salvo 57x.
+  cashflowBucket CashflowBucket? @map("cashflow_bucket")
 
   /// Solo las hojas reciben líneas de asiento (I-E2-2).
   isPostable Boolean       @default(true) @map("is_postable")
@@ -927,6 +944,10 @@ model JournalLine {
   @@index([organizationId, projectId, entryDate])
   @@index([organizationId, costCenterId, entryDate])
   @@index([organizationId, businessLineId, entryDate])
+  /// E6 · T20: agregado de la matriz analítica (`getAnalyticAggregates`).
+  @@index([organizationId, entryDate, accountCode, analyticType])
+  /// E6 · T20: las cuatro fotos del balance agregan por cuenta excluyendo `kind`.
+  @@index([organizationId, accountCode, entryKind, entryDate])
   @@map("journal_lines")
 }
 
@@ -1049,4 +1070,125 @@ model MarginLevelConfig {
   @@unique([organizationId, level, validFrom])
   @@index([organizationId, validFrom, validTo])
   @@map("margin_level_configs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E6 — Informes financieros (docs/design/E6-informes.md §2.2, ADR-0003/0012)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ReportType {
+  DIARIO
+  MAYOR
+  SUMAS_SALDOS
+  BALANCE
+  PYG
+  PYG_ANALITICA
+  CASHFLOW_DIRECTO
+  CASHFLOW_INDIRECTO
+  PRESUPUESTO_REAL
+  DASHBOARD
+
+  @@map("report_type")
+}
+
+enum Seal {
+  VALIDADO_AUTOMATICAMENTE
+  REQUIERE_REVISION
+
+  @@map("seal")
+}
+
+/// D-E6-4: DIARIO/MAYOR/SUMAS_SALDOS guardan el RESUMEN, no las líneas.
+enum ResultKind {
+  FULL
+  SUMMARY
+
+  @@map("result_kind")
+}
+
+enum ComparativeBasis {
+  SAME_PERIOD_PREVIOUS_YEAR
+  PREVIOUS_FISCAL_YEAR_CLOSE
+  PREVIOUS_PERIOD
+  NONE
+
+  @@map("comparative_basis")
+}
+
+/// Informe emitido y sellado. **Inmutable**: `report_runs` es append-only por
+/// política RESTRICTIVE y por privilegio (I-E6-16).
+model ReportRun {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  type         ReportType
+  periodStart  DateTime   @map("period_start") @db.Date
+  periodEnd    DateTime   @map("period_end") @db.Date
+  fiscalYearId String?    @map("fiscal_year_id") @db.Uuid
+
+  /// Parámetros del informe. OBLIGATORIOS por tipo (O-5, O-8):
+  ///   BALANCE  → { snapshot, variant, currency, comparative }
+  ///   PYG      → { variant, currency, comparative }
+  ///   CASHFLOW → { method, granularity, view, currency }
+  ///   DASHBOARD→ { refDate, agingBuckets, currency }
+  params     Json
+  /// sha256 de la forma canónica de `params` (§3.6). NOT NULL: es clave de caché.
+  paramsHash String @map("params_hash") @db.Char(64)
+
+  ledgerHash       String  @map("ledger_hash") @db.Char(64)
+  analyticsHash    String? @map("analytics_hash") @db.Char(64)
+  marginConfigHash String? @map("margin_config_hash") @db.Char(64)
+  allocationRunId  String? @map("allocation_run_id") @db.Uuid
+  /// Los tres anteriores en forma canónica, o "∅". Existe SÓLO para indexar la
+  /// clave: en PostgreSQL NULL <> NULL y un `@@unique` con columnas nullables no
+  /// impide duplicados (lección O-A6 de E4). Lo escribe un trigger.
+  analyticsKey     String  @default("∅") @map("analytics_key") @db.VarChar(210)
+
+  gitSha String @map("git_sha") @db.VarChar(64)
+
+  result     Json
+  resultKind ResultKind @default(FULL) @map("result_kind")
+  provenance Json
+  validation Json
+
+  seal        Seal
+  /// O-7: array de `{code, kind, message, invariantId?, kpi?, deltaBps?, limitBps?}`.
+  sealReasons Json @default("[]") @map("seal_reasons")
+  durationMs  Int  @map("duration_ms")
+
+  /// O-6: contra qué se midió la variación.
+  comparativeRunId String?           @map("comparative_run_id") @db.Uuid
+  comparativeBasis ComparativeBasis? @map("comparative_basis")
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, type, periodStart, periodEnd, paramsHash, ledgerHash, analyticsKey, gitSha], map: "report_runs_cache_key")
+  @@index([organizationId, type, periodStart, periodEnd, createdAt(sort: Desc)])
+  @@index([organizationId, type, ledgerHash])
+  @@map("report_runs")
+}
+
+/// Revisión manual forzada por un ADMIN sobre un periodo. Semi-append-only: no
+/// se borra, sólo se marca `clearedAt`.
+model ManualReviewFlag {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  periodStart DateTime    @map("period_start") @db.Date
+  periodEnd   DateTime    @map("period_end") @db.Date
+  /// `null` = afecta a TODOS los informes del periodo.
+  scope       ReportType?
+  reason      String      @db.VarChar(1000)
+
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  clearedAt   DateTime? @map("cleared_at")
+  clearedById String?   @map("cleared_by_id") @db.Uuid
+  clearReason String?   @map("clear_reason") @db.VarChar(1000)
+
+  @@index([organizationId, periodStart, periodEnd])
+  @@map("manual_review_flags")
 }

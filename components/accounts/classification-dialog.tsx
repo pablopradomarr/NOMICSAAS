@@ -47,7 +47,7 @@ export function ClassificationDialog({
 
   const [epigraph, setEpigraph] = useState(current ?? NONE)
   const [analyticType, setAnalyticType] = useState(account.analyticType ?? NONE)
-  const [cashflow, setCashflow] = useState(account.cashflowCategory ?? NONE)
+  const [cashflow, setCashflow] = useState(account.cashflowBucket ?? NONE)
   const [reason, setReason] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
@@ -63,7 +63,7 @@ export function ClassificationDialog({
       formData.set("code", account.code)
       formData.set("epigraph", epigraph === NONE ? "" : epigraph)
       formData.set("analyticType", analyticType === NONE ? "" : analyticType)
-      formData.set("cashflowCategory", cashflow === NONE ? "" : cashflow)
+      formData.set("cashflowBucket", cashflow === NONE ? "" : cashflow)
       formData.set("reason", reason)
       const state = await updateAccountClassificationAction(null, formData)
       if (!state.success) {
@@ -140,7 +140,7 @@ export function ClassificationDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NONE}>Sin categoría</SelectItem>
-                  {catalog.cashflowCategories.map((value) => (
+                  {catalog.cashflowBuckets.map((value) => (
                     <SelectItem key={value} value={value}>
                       {CASHFLOW_LABELS[value] ?? value}
                     </SelectItem>

@@ -9,7 +9,7 @@ import type {
   AccountKey,
   AccountOrigin,
   AnalyticType,
-  CashflowCategory,
+  CashflowBucket,
   Nature,
   PgcVariant,
   Statement,
@@ -17,7 +17,7 @@ import type {
   TaxKind,
 } from "@/prisma/client"
 
-export type { AccountKey, AccountOrigin, AnalyticType, CashflowCategory, Nature, PgcVariant, Statement, TaxAppliesTo, TaxKind }
+export type { AccountKey, AccountOrigin, AnalyticType, CashflowBucket, Nature, PgcVariant, Statement, TaxAppliesTo, TaxKind }
 
 /** Código de cuenta ya validado contra `^[1-9][0-9]{0,11}$` (R-01). */
 export type AccountCode = string & { readonly __brand: "AccountCode" }
@@ -35,7 +35,7 @@ export type PlanAccount = {
   bidirectional: boolean
   isContra: boolean
   analyticType: AnalyticType | null
-  cashflowCategory: CashflowCategory | null
+  cashflowBucket: CashflowBucket | null
   isPostable: boolean
   isActive: boolean
   isSystem: boolean
@@ -50,22 +50,17 @@ export type Plan = {
 }
 
 /**
- * Bucket de cashflow de la contrapartida (E6, columna `cashflow_bucket` del seed).
- * La `CashflowCategory` de tres valores se DERIVA con `cashflowCategoryOf`, no se
- * almacena aparte. `null` solo en 57x (la propia tesorería), en los contenedores
+ * Categoría del EFE (OPERATING/INVESTING/FINANCING) **derivada** del bucket de
+ * cashflow de la contrapartida (E6, columna `cashflow_bucket` del seed; enum
+ * `CashflowBucket` de Prisma). Nunca se persiste por separado: dos columnas para
+ * el mismo hecho es una invitación a que diverjan (ADR-0012 D2).
+ *
+ * El bucket es `null` sólo en 57x —la propia tesorería—, en los contenedores
  * mixtos de nivel 1 (`4`, `5`) y en los grupos 8/9 (ECPN).
  */
-export type CashflowBucket =
-  | "COBROS_CLIENTES"
-  | "PAGOS_PROVEEDORES"
-  | "PAGOS_PERSONAL"
-  | "PAGOS_IMPUESTOS"
-  | "OTROS_EXPLOTACION"
-  | "INVERSION"
-  | "FINANCIACION"
+export type CashflowCategory = "OPERATING" | "INVESTING" | "FINANCING"
 
-/** Categoría del EFE derivada del bucket (nunca se persiste por separado). */
-export const cashflowCategoryOf = (b: CashflowBucket): "OPERATING" | "INVESTING" | "FINANCING" =>
+export const cashflowCategoryOf = (b: CashflowBucket): CashflowCategory =>
   b === "INVERSION" ? "INVESTING" : b === "FINANCIACION" ? "FINANCING" : "OPERATING"
 
 /** Fila del seed `seeds/npgc.csv` ya parseada (14 columnas tras E6). */

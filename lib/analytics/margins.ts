@@ -146,6 +146,36 @@ const where = (line: AnalyticLine): string => `La línea ${line.lineNo} de ${lin
  *      línea 6/7 con CECO o proyecto y `analytic_type` sin poblar;
  *   3. si tampoco hay default, columna `NO_ANALITICO` + `fallback` (I-E4-1).
  */
+/**
+ * E6 · T20 (deuda de E4) — índices O(1) por configuración.
+ *
+ * `resolveDestination` hacía `config.projects.find(...)` y
+ * `config.costCenters.find(...)` **por línea**: con 60 proyectos y 40 000 líneas
+ * son 2,4 millones de comparaciones de cadena por informe, y la matriz analítica
+ * se nota. Los índices se memoizan por la IDENTIDAD del objeto de configuración
+ * en un `WeakMap`, así que se construyen una vez por petición y se recogen con
+ * la propia configuración; una configuración nueva —una reimputación, un
+ * proyecto de alta— produce un objeto nuevo y por tanto un índice nuevo, sin
+ * invalidación manual que pueda quedarse obsoleta.
+ */
+type ConfigIndex = {
+  projectsById: ReadonlyMap<string, AnalyticsConfig["projects"][number]>
+  costCentersById: ReadonlyMap<string, AnalyticsConfig["costCenters"][number]>
+}
+
+const configIndexCache = new WeakMap<AnalyticsConfig, ConfigIndex>()
+
+function configIndex(config: AnalyticsConfig): ConfigIndex {
+  const cached = configIndexCache.get(config)
+  if (cached) return cached
+  const index: ConfigIndex = {
+    projectsById: new Map(config.projects.map((p) => [p.id, p])),
+    costCentersById: new Map(config.costCenters.map((c) => [c.id, c])),
+  }
+  configIndexCache.set(config, index)
+  return index
+}
+
 export function resolveDestination(line: AnalyticLine, config: AnalyticsConfig): LineDestination {
   const declared = line.analyticType
   const known = declared !== null && ANALYTIC_TYPES.has(declared) ? declared : null
@@ -191,7 +221,7 @@ export function resolveDestination(line: AnalyticLine, config: AnalyticsConfig):
   }
 
   if (type === "INDIRECTO_CECO") {
-    const ceco = config.costCenters.find((c) => c.id === line.costCenterId)
+    const ceco = line.costCenterId ? configIndex(config).costCentersById.get(line.costCenterId) : undefined
     if (!ceco) {
       return {
         analyticType: type,
@@ -226,7 +256,7 @@ export function resolveDestination(line: AnalyticLine, config: AnalyticsConfig):
     : { code: "TYPE_UNKNOWN", message: `El tipo ${type} no está en ningún nivel de MarginLevelConfig (MLC-1)` }
 
   const projectOf = (): { column: ColumnKey; fallback: ResolutionFallback | null } => {
-    const project = config.projects.find((p) => p.id === line.projectId)
+    const project = line.projectId ? configIndex(config).projectsById.get(line.projectId) : undefined
     if (project) return { column: projectColumn(project.code), fallback: levelFallback }
     return {
       column: "NO_ANALITICO",

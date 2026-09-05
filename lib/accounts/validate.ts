@@ -18,7 +18,7 @@ import {
   AccountUsage,
   AccountWarning,
   AnalyticType,
-  CashflowCategory,
+  CashflowBucket,
   err,
   fail,
   ok,
@@ -37,7 +37,7 @@ export type NewAccountInput = {
   epigraph?: string | null
   epigraphPymes?: string | null
   analyticType?: AnalyticType | null
-  cashflowCategory?: CashflowCategory | null
+  cashflowBucket?: CashflowBucket | null
   bidirectional?: boolean
   isContra?: boolean
   origin?: PlanAccount["origin"]
@@ -49,7 +49,7 @@ export type AccountPatch = {
   statement?: Statement | null
   epigraph?: string | null
   analyticType?: AnalyticType | null
-  cashflowCategory?: CashflowCategory | null
+  cashflowBucket?: CashflowBucket | null
   isActive?: boolean
   reason?: string | null
 }
@@ -186,8 +186,10 @@ export function validateNewAccount(
     bidirectional: input.bidirectional ?? parent?.bidirectional ?? false,
     isContra: input.isContra ?? parent?.isContra ?? false,
     analyticType: input.analyticType !== undefined ? input.analyticType : (parent?.analyticType ?? null),
-    cashflowCategory:
-      input.cashflowCategory !== undefined ? input.cashflowCategory : (parent?.cashflowCategory ?? null),
+    // R-18′: el hijo HEREDA el bucket del padre salvo declaración explícita,
+    // igual que en `validate_cashflow()` del generador del seed.
+    cashflowBucket:
+      input.cashflowBucket !== undefined ? input.cashflowBucket : (parent?.cashflowBucket ?? null),
     isPostable: true,
     isActive: true,
     isSystem: false,
@@ -322,14 +324,31 @@ export function validateAccountUpdate(
     }
   }
 
-  // R-18: `cashflowCategory` fuera de 57x es dato muerto (aviso).
-  if (patch.cashflowCategory !== undefined && patch.cashflowCategory !== before.cashflowCategory) {
-    next.cashflowCategory = patch.cashflowCategory
-    if (patch.cashflowCategory !== null && !before.code.startsWith("57")) {
+  // R-18′ (ADR-0012 D2, sustituye a R-18, que estaba INVERTIDA — O-12).
+  //
+  // El bucket clasifica la CONTRAPARTIDA de un movimiento de tesorería, así que
+  // es obligatorio en toda cuenta postable **salvo** 57x, que es la propia
+  // tesorería y el sujeto del informe. La regla vieja avisaba justo cuando el
+  // dato estaba bien puesto; una cuenta postable sin bucket es un hueco que
+  // rompería el cashflow directo en silencio.
+  if (patch.cashflowBucket !== undefined && patch.cashflowBucket !== before.cashflowBucket) {
+    next.cashflowBucket = patch.cashflowBucket
+    if (patch.cashflowBucket !== null && before.code.startsWith("57")) {
       warnings.push({
         code: "CASHFLOW_UNEXPECTED",
         accountCode: before.code,
-        message: `La categoría de cashflow sólo la usan los informes en cuentas 57x: en ${before.code} no la lee nadie (R-18)`,
+        message:
+          `${before.code} es tesorería (57x): es el sujeto del cashflow, no una contrapartida, ` +
+          "y su bucket no lo lee nadie (R-18′)",
+      })
+    }
+    if (patch.cashflowBucket === null && before.isPostable && !before.code.startsWith("57")) {
+      warnings.push({
+        code: "CASHFLOW_UNEXPECTED",
+        accountCode: before.code,
+        message:
+          `La cuenta postable ${before.code} se queda sin bucket de cashflow: sus movimientos contra ` +
+          "tesorería no aparecerán en ningún bloque del informe directo (R-18′)",
       })
     }
   }

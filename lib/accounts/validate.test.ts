@@ -26,7 +26,7 @@ function account(code: string, extra: Partial<PlanAccount> = {}): PlanAccount {
     bidirectional: false,
     isContra: false,
     analyticType: null,
-    cashflowCategory: null,
+    cashflowBucket: null,
     isPostable: true,
     isActive: true,
     isSystem: false,
@@ -198,16 +198,37 @@ describe("validateAccountUpdate (R-06, R-10a, R-10b, R-15, R-16, R-19, R-21)", (
     if (!result.ok) expect(result.errors.map((e) => e.code)).toContain("CLOSED_PERIOD")
   })
 
-  it("R-16 / R-17 / R-18 son AVISOS: la mutación se guarda", () => {
+  it("R-16 y R-17 son AVISOS: la mutación se guarda", () => {
     const result = validateAccountUpdate(cuenta, { analyticType: "FINANCIERO" }, ctx({ activeAllocationRuns: 2 }))
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.value.patch.analyticType).toBe("FINANCIERO")
     expect(result.value.warnings.map((w) => w.code).sort()).toEqual(["ALLOCATION_STALE", "ANALYTIC_INCOHERENT"])
 
-    const cashflow = validateAccountUpdate(cuenta, { cashflowCategory: "OPERATING" }, ctx())
-    expect(cashflow.ok).toBe(true)
-    if (cashflow.ok) expect(cashflow.value.warnings[0].code).toBe("CASHFLOW_UNEXPECTED")
+  })
+
+  it("R-18′ (ADR-0012 D2, sustituye a R-18): el aviso está INVERTIDO respecto de E2", () => {
+    // Antes se avisaba de un bucket fuera de 57x, que es justo cuando el dato
+    // está bien puesto: el bucket clasifica la CONTRAPARTIDA de un movimiento de
+    // tesorería. Ahora avisa (a) al ponérselo a la propia tesorería y (b) al
+    // dejar una cuenta postable sin él, que es el hueco que rompería el
+    // cashflow directo en silencio.
+    const enCuentaNormal = validateAccountUpdate(cuenta, { cashflowBucket: "OTROS_EXPLOTACION" }, ctx())
+    expect(enCuentaNormal.ok).toBe(true)
+    if (enCuentaNormal.ok) expect(enCuentaNormal.value.warnings).toEqual([])
+
+    const tesoreria = plan.byCode.get("572") as PlanAccount
+    const enTesoreria = validateAccountUpdate(tesoreria, { cashflowBucket: "OTROS_EXPLOTACION" }, ctx())
+    expect(enTesoreria.ok).toBe(true)
+    if (enTesoreria.ok) {
+      expect(enTesoreria.value.warnings.map((w) => w.code)).toEqual(["CASHFLOW_UNEXPECTED"])
+      expect(enTesoreria.value.warnings[0].message).toContain("R-18′")
+    }
+
+    const conBucket = { ...cuenta, cashflowBucket: "OTROS_EXPLOTACION" } as PlanAccount
+    const sinBucket = validateAccountUpdate(conBucket, { cashflowBucket: null }, ctx())
+    expect(sinBucket.ok).toBe(true)
+    if (sinBucket.ok) expect(sinBucket.value.warnings.map((w) => w.code)).toEqual(["CASHFLOW_UNEXPECTED"])
   })
 
   it("R-21 / T-5: el código es inmutable en E2", () => {

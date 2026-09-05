@@ -9,6 +9,7 @@
  */
 
 import { type AnalyticsInvariantInput, runAnalyticInvariants } from "@/lib/analytics/invariants"
+import { type ReportsInvariantInput, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HashableLine } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
@@ -52,6 +53,12 @@ export type InvariantInput = {
    * opcional a propósito: E5/E6 tampoco lo aportan siempre).
    */
   analytics?: Omit<AnalyticsInvariantInput, "entries">
+  /**
+   * E6: bloque de informes (I2, I3, I6 y los `I-E6-*`). Opcional por el mismo
+   * motivo que el analítico: quien pide el diario no necesita construir el
+   * balance, y devolver un PASS sin haberlo comprobado sería mentir.
+   */
+  reports?: ReportsInvariantInput
 }
 
 const pass = (id: string, evidencia: string, query?: string): CheckResult =>
@@ -461,11 +468,19 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
       checkIE37(input.entries),
       // E4: I4 + I-E4-1…12, solo si el llamante aporta el bloque analítico.
       ...(input.analytics ? runAnalyticInvariants({ ...input.analytics, entries: input.entries }) : []),
+      // E6: I2, I3, I6 y los I-E6-*, sólo si el llamante aporta el bloque.
+      ...(input.reports ? runReportInvariants(input.reports) : []),
     ],
   }
 }
 
-export type SealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION"
+/**
+ * E6 (ADR-0012 D3, Nivel 2): se añade `VARIACION`. Una cifra que se dispara
+ * respecto al comparativo no es un descuadre —el diario puede estar perfecto— ni
+ * una carencia de entorno: es un cambio que un humano debería mirar. Meterlo en
+ * `AVISO` lo habría enterrado entre los WARN de calidad de datos.
+ */
+export type SealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION" | "VARIACION"
 
 /** Motivo del sello, ETIQUETADO por su naturaleza (hallazgo 5 del auditor). */
 export type SealReason = { kind: SealReasonKind; message: string }
@@ -576,3 +591,7 @@ export {
   runAnalyticInvariants,
 } from "@/lib/analytics/invariants"
 export type { AnalyticsInvariantInput } from "@/lib/analytics/invariants"
+
+/** E6 — invariantes de los estados financieros, desde el mismo módulo. */
+export { checkI2, checkI3, checkIE613, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
+export type { ReportsInvariantInput } from "@/lib/ledger/reports/invariants-e6"

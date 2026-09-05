@@ -958,3 +958,73 @@ export async function reclassifyLines(
 
 export type { ReclassifyRequest, ResolvedReclassification }
 export type { TenantClient }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E6 · T20 (deuda de E4) — agregado SQL de la matriz analítica
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Tupla que `resolveDestination` consume, ya agregada por la base.
+ *
+ * La matriz analítica sólo depende de `(accountCode, analyticType, projectId,
+ * costCenterId, businessLineId)` y del aporte `Σ(haber − debe)`. Agrupar por esa
+ * tupla en SQL reduce un ejercicio de 40 000 líneas a unas pocas centenas de
+ * filas **sin mover un gramo de lógica contable a la base**: la clasificación la
+ * sigue haciendo el motor puro, que es la única fuente de verdad (R6 del
+ * diseño). Un `GROUP BY` no puede divergir de un `for`; una tabla de saldos, sí.
+ */
+export type AnalyticAggregateRow = {
+  accountCode: string
+  analyticType: AnalyticType | null
+  projectId: string | null
+  costCenterId: string | null
+  businessLineId: string | null
+  debitCents: number
+  creditCents: number
+  /** Nº de líneas del diario que suman esta celda. Entrada del drill-down. */
+  lineCount: number
+}
+
+export async function getAnalyticAggregates(
+  tx: TenantTransactionClient,
+  filter: AnalyticLineFilter
+): Promise<AnalyticAggregateRow[]> {
+  const organizationId = tx.$organizationId
+  // Agregados en `BIGINT`: `Int` en céntimos aguanta 21 M € por línea, pero la
+  // SUMA de un ejercicio puede desbordar el `int4` de Postgres.
+  const rows = await tx.$queryRaw<
+    {
+      account_code: string
+      analytic_type: AnalyticType | null
+      project_id: string | null
+      cost_center_id: string | null
+      business_line_id: string | null
+      d: bigint
+      c: bigint
+      n: bigint
+    }[]
+  >`
+    SELECT l.account_code, l.analytic_type, l.project_id, l.cost_center_id, l.business_line_id,
+           COALESCE(SUM(l.debit_cents)::bigint, 0)  AS d,
+           COALESCE(SUM(l.credit_cents)::bigint, 0) AS c,
+           COUNT(*)::bigint                          AS n
+      FROM journal_lines l
+     WHERE l.organization_id = ${organizationId}::uuid
+       AND l.entry_date BETWEEN ${toUtcDate(filter.from)}::date AND ${toUtcDate(filter.to)}::date
+       AND (${filter.fiscalYearId ?? null}::uuid IS NULL OR l.fiscal_year_id = ${filter.fiscalYearId ?? null}::uuid)
+       AND (${filter.projectId ?? null}::uuid IS NULL OR l.project_id = ${filter.projectId ?? null}::uuid)
+       AND (${filter.costCenterId ?? null}::uuid IS NULL OR l.cost_center_id = ${filter.costCenterId ?? null}::uuid)
+     GROUP BY l.account_code, l.analytic_type, l.project_id, l.cost_center_id, l.business_line_id
+     ORDER BY l.account_code, l.analytic_type, l.project_id, l.cost_center_id, l.business_line_id`
+
+  return rows.map((r) => ({
+    accountCode: r.account_code,
+    analyticType: r.analytic_type,
+    projectId: r.project_id,
+    costCenterId: r.cost_center_id,
+    businessLineId: r.business_line_id,
+    debitCents: Number(r.d),
+    creditCents: Number(r.c),
+    lineCount: Number(r.n),
+  }))
+}

@@ -1,4 +1,25 @@
+/**
+ * TaxHacker heredado, **acotado en E6** (§4 del diseño, cierre de G-05/G-06).
+ *
+ * Estas dos sumas por moneda son la única cifra del producto que NO sale del
+ * libro diario: agregan `Transaction.total`, que es lo que el OCR extrajo de un
+ * documento **todavía sin contabilizar**. Su ámbito queda reducido al pie de la
+ * pantalla de documentos, y allí se pinta con el badge `no verificado` y la
+ * leyenda de que no entran en ninguna cifra contable.
+ *
+ * **Prohibido usarlas en el panel, en un informe o en cualquier sitio donde
+ * puedan confundirse con una cifra contable.** El panel se reescribió sobre el
+ * diario justamente porque este agregado producía totales que no cuadraban con
+ * el balance y nadie sabía por qué (G-05). Los agregados de `models/stats.ts`,
+ * que hacían lo mismo a escala de panel, se retiraron.
+ */
+
 import { Field, Transaction } from "@/prisma/client"
+
+/** Aviso que la UI DEBE mostrar junto a cualquiera de estos dos totales. */
+export const UNPOSTED_TOTALS_NOTE =
+  "Totales de documentos, no contables: agregan lo que el OCR extrajo y no distinguen los que todavía no " +
+  "tienen asiento. Las cifras contables están en Informes."
 
 export function calcTotalPerCurrency(transactions: Transaction[]): Record<string, number> {
   return transactions.reduce(

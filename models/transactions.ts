@@ -258,3 +258,17 @@ const splitTransactionDataExtraFields = async (
 
   return { standard, extra: extra as Prisma.InputJsonValue }
 }
+
+/**
+ * E6 · T18 (cierre de G-06) — documentos SIN asiento.
+ *
+ * El panel heredado los contaba como 0 y los sumaba en silencio: un gasto que
+ * el OCR había leído pero que nadie había contabilizado desaparecía del total
+ * sin dejar rastro. Aquí se **cuentan** y se declaran; no se suman a nada. La
+ * leyenda que la UI pinta al lado es `UNPOSTED_DOCUMENTS_NOTE`.
+ */
+export const countUnpostedTransactions = async (db: TenantClient): Promise<number> =>
+  await db.transaction.count({ where: { journalEntryId: null } })
+
+export const UNPOSTED_DOCUMENTS_NOTE = (n: number): string =>
+  `${n} documento(s) sin asiento: no entran en ninguna cifra de este panel.`
