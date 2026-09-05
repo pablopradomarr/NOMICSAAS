@@ -96,6 +96,9 @@ npm run test:all              # los tres
 ~~11. `/epica E4` (analítica base: BusinessLine, Project, CostCenter, AnalyticType en líneas, MarginLevelConfig, PyG analítica sin imputaciones, I4; retirar CHECK NULL de dimensiones + FKs; fixtures con projectCode/costCenterCode activados) → `/sprint E4` → E6 (informes: balance, PyG, cashflow, ReportRun) → E5 (liquidación CECOs).
 ~~10. `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.
 
+## Preview desplegado (Pablo, 2026-09-05 20:45)
+Vercel `nomicsaas-preview` (team pablo-7579s-projects) desde `main` como preview protegido por login Vercel; Supabase `nomicsaas-preview` (ref ilzqlmjbbmunwhoeyhoy, eu-west-1, free) con las 31 migraciones registradas (dos adaptadas a mano por exigir SUPERUSER: 20260904150000 y 20260906090000 — ver runbook DESPLIEGUE-PREVIEW.md en el Project). `DATABASE_URL` con `sslmode=no-verify` (deuda: CA del pooler), session pooler 5432. Cada push a `main` redespliega. URL: https://nomicsaas-preview-git-main-pablo-7579s-projects.vercel.app
+
 ## Cómo reanudar (sesión nueva)
 1. `git clone https://github.com/pablopradomarr/NOMICSAAS && cd NOMICSAAS && npm install --ignore-scripts --engine-strict=false`
 2. Postgres local: `initdb` + `pg_ctl start` (ver `docs/design/E1-organizaciones-roles.md` §8 y `vitest.integration.setup.ts`); crear BDs `erp` y `erp_test`; `export DATABASE_URL=postgresql://postgres@localhost:5432/erp`; `npx prisma migrate deploy` en ambas.
