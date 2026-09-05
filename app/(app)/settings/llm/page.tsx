@@ -1,13 +1,13 @@
 import LLMSettingsForm from "@/components/settings/llm-settings-form"
 import { SettingsPageHeader } from "@/components/settings/page-header"
-import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
+import { tenantPage } from "@/lib/page-tenant"
+import { Role } from "@/prisma/client"
 import { getFields } from "@/models/fields"
 import { getSettings } from "@/models/settings"
 
-export default async function LlmSettingsPage() {
+export default tenantPage(async ({ db }) => {
   // La configuración LLM sólo la edita ADMIN (claves de proveedor).
-  const { db } = await requireOrg("ADMIN")
   const settings = await getSettings(db)
   const fields = await getFields(db)
 
@@ -22,4 +22,4 @@ export default async function LlmSettingsPage() {
       </div>
     </div>
   )
-}
+}, { minRole: Role.ADMIN })

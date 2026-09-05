@@ -4,13 +4,13 @@ import { TaxRatesTable, type TaxRateView } from "@/components/accounts/tax-rates
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { Separator } from "@/components/ui/separator"
 import { planAccounts } from "@/lib/accounts/tree"
-import { requireOrg } from "@/lib/authz"
 import { formatBps } from "@/lib/taxes/bps"
 import { isInForce } from "@/lib/taxes/rates"
 import { getPlan } from "@/models/accounts"
 import { listTaxRates } from "@/models/tax-rates"
 import { Role } from "@/prisma/client"
 import { Metadata } from "next"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = {
   title: "Impuestos",
@@ -27,8 +27,7 @@ function isoDate(date: Date): string {
  * La vigencia se evalúa EN EL SERVIDOR con la fecha de hoy: el cliente no
  * decide qué tipo está en vigor, sólo lo pinta.
  */
-export default async function TaxesSettingsPage() {
-  const { db, org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ db, org, role }) => {
   const canEdit = role === Role.ADMIN
   const today = new Date()
 
@@ -81,4 +80,4 @@ export default async function TaxesSettingsPage() {
       </section>
     </div>
   )
-}
+})

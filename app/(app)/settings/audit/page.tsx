@@ -2,12 +2,12 @@ import { SettingsPageHeader } from "@/components/settings/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { requireOrg } from "@/lib/authz"
 import { listAuditLog, type AuditAction, type AuditEntity } from "@/models/audit-log"
 import { listOrganizationMembersWithUsers } from "@/models/memberships"
 import { Role } from "@/prisma/client"
 import { Metadata } from "next"
 import { notFound } from "next/navigation"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = {
   title: "Auditoría de cambios",
@@ -66,12 +66,7 @@ function summarize(value: unknown): string {
  * de consulta (revisión, hallazgo 5). Se responde `notFound()` en vez de 403
  * para no confirmar siquiera que la página existe.
  */
-export default async function AuditSettingsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ entity?: string; action?: string; userId?: string }>
-}) {
-  const { db, org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage<{ searchParams: Promise<{ entity?: string; action?: string; userId?: string }> }>(async ({ db, org, role, searchParams }) => {
   if (role !== Role.ADMIN) notFound()
   const filters = await searchParams
 
@@ -194,4 +189,4 @@ export default async function AuditSettingsPage({
       <p className="text-sm text-muted-foreground">Se muestran los 200 cambios más recientes.</p>
     </div>
   )
-}
+})

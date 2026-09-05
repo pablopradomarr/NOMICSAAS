@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button"
 import { ConfidenceBadge } from "@/components/ui/confidence-badge"
 import { marginBps } from "@/lib/analytics/margins"
 import { MARGIN_LEVELS } from "@/lib/analytics/types"
-import { requireOrg } from "@/lib/authz"
 import { tenantTransaction } from "@/lib/db"
+import { tenantPage } from "@/lib/page-tenant"
 import { getAnalyticLines } from "@/models/analytics"
 import { listFiscalYears } from "@/models/fiscal-years"
 import { todayLocalDate } from "@/models/ledger"
@@ -28,9 +28,8 @@ export const metadata: Metadata = { title: "Proyecto" }
  * La mini PyG es **la columna del proyecto de la matriz**, leída tal cual: no
  * se recalcula aquí ni se suma nada en el navegador.
  */
-export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ db, org, role, params }) => {
   const { id } = await params
-  const { db, org, role } = await requireOrg(Role.VIEWER)
   const canEdit = role === Role.EDITOR || role === Role.ADMIN
   const isAdmin = role === Role.ADMIN
 
@@ -248,4 +247,4 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
       </section>
     </div>
   )
-}
+})

@@ -17,9 +17,57 @@ function prismaLogLevels(): Prisma.LogLevel[] {
   return ["query", "info", "warn", "error"]
 }
 
+/**
+ * E6-perf — pool de conexiones EXPLÍCITO.
+ *
+ * `pg` trae `max: 10` por defecto. Con una transacción por operación (la deuda
+ * que cierra esta épica) un solo render podía pedir diez conexiones a la vez y
+ * la siguiente petición se quedaba esperando hasta que Prisma cortaba con
+ * «Unable to start a transaction in the given time». Ahora el techo se declara
+ * (`DB_POOL_MAX`, 20 por defecto) y, sobre todo, cada petición usa UNA sola
+ * conexión (`runWithRequestTenant`), así que el pool deja de ser el cuello.
+ *
+ * - `idleTimeoutMillis`: una conexión ociosa se devuelve al servidor a los 10 s
+ *   (en Supabase el pooler cobra por conexión abierta).
+ * - `connectionTimeoutMillis`: si en 10 s no hay conexión libre se falla con un
+ *   error de pool claro en vez de colgar la petición.
+ */
+const DEFAULT_POOL_MAX = 20
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw.trim() === "") return fallback
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.floor(value)
+}
+
+export function poolConfig(): { max: number; idleTimeoutMillis: number; connectionTimeoutMillis: number } {
+  return {
+    max: positiveIntEnv("DB_POOL_MAX", DEFAULT_POOL_MAX),
+    idleTimeoutMillis: positiveIntEnv("DB_POOL_IDLE_TIMEOUT_MS", 10_000),
+    connectionTimeoutMillis: positiveIntEnv("DB_POOL_CONNECTION_TIMEOUT_MS", 10_000),
+  }
+}
+
+/**
+ * Presupuesto por defecto de TODA transacción interactiva.
+ *
+ * Prisma corta a los 5 s (`timeout`) y espera 2 s por una conexión libre
+ * (`maxWait`). Una petición completa —render de una página con sus diez o
+ * quince lecturas— cabe holgadamente en 15 s, y 5 s de espera por conexión
+ * absorben un pico sin devolver un 500. Las siembras siguen declarando el suyo
+ * (`SEED_TRANSACTION_OPTIONS`).
+ */
+export const DEFAULT_TRANSACTION_OPTIONS = { maxWait: 5_000, timeout: 15_000 } as const
+
 function createPrismaClient() {
-  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL })
-  return new PrismaClient({ adapter, log: prismaLogLevels() })
+  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL, ...poolConfig() })
+  return new PrismaClient({
+    adapter,
+    log: prismaLogLevels(),
+    transactionOptions: { ...DEFAULT_TRANSACTION_OPTIONS },
+  })
 }
 
 /**
@@ -248,7 +296,15 @@ type RawExecutor = { $executeRaw: (query: TemplateStringsArray, ...values: unkno
  * Sin usuario se fija cadena vacía, que `app.current_user()` convierte en NULL:
  * una transacción nunca hereda el usuario de otra.
  */
-async function applyTenantGucs(tx: RawExecutor, organizationId: string | null, userId?: string): Promise<void> {
+async function applyTenantGucs(
+  tx: RawExecutor,
+  organizationId: string | null,
+  userId?: string,
+  readOnly = false
+): Promise<void> {
+  // `SET TRANSACTION READ ONLY` tiene que ir ANTES de cualquier otra sentencia
+  // de la transacción (Postgres lo rechaza después de la primera consulta).
+  if (readOnly) await tx.$executeRaw`SET TRANSACTION READ ONLY`
   await tx.$executeRaw`SELECT set_config('app.current_org', ${organizationId ? assertUuid(organizationId) : ""}, true)`
   await tx.$executeRaw`SELECT set_config('app.current_user', ${userId ? assertUuid(userId, "userId") : ""}, true)`
 }
@@ -484,14 +540,15 @@ export function tenantDb(organizationId: string): TenantClient {
  * de miembros). Para operaciones sueltas no hace falta: `tenantDb(orgId)` ya
  * envuelve cada operación en su propia transacción con los GUC puestos.
  *
- * ## Coste (deuda anotada en docs/ESTADO.md, se retira en E3)
+ * ## Coste (deuda CERRADA en E6-perf)
  * Una operación suelta por `tenantDb` = un `BEGIN` + dos `set_config` + la
  * consulta + `COMMIT`: tres viajes extra a la base y una conexión del pool
- * ocupada mientras dura. Es el precio de tener RLS efectiva sin refactorizar de
- * golpe los 32 ficheros heredados (ADR-0007). Cuando el código de negocio esté
- * agrupado dentro de `tenantTransaction` (E3), la envoltura por operación
- * dejará de hacer falta: dentro de esta función TODAS las operaciones comparten
- * la misma transacción y no abren ninguna más.
+ * ocupada mientras dura. Desde E6-perf esa envoltura sólo se usa en los
+ * caminos que no pasan por una petición web (scripts, cron): toda página de
+ * `app/(app)` abre UNA transacción con `runWithRequestTenant` /
+ * `tenantPage()`, y dentro de ella TODAS las operaciones —incluidas las de
+ * `tenantDb(orgId)`, que la encuentran por el AsyncLocalStorage— comparten la
+ * misma conexión y no abren ninguna más.
  */
 /**
  * Cliente que ve `fn` dentro de `tenantTransaction`: los delegados de modelo van
@@ -527,10 +584,26 @@ function tenantTransactionFacade(organizationId: string, tx: object): TenantTran
  * que aborta a mitad con «Transaction already closed» y deja al usuario sin
  * plan. Quien haga un lote largo debe declarar su presupuesto explícitamente.
  */
-export type TenantTransactionOptions = { timeout?: number; maxWait?: number }
+export type TenantTransactionOptions = {
+  timeout?: number
+  maxWait?: number
+  /**
+   * `SET TRANSACTION READ ONLY`: la BASE rechaza cualquier escritura (25006).
+   * Es la garantía dura de que un Server Component no muta nada — la regla
+   * «un RSC no escribe» deja de depender de que nadie se despiste.
+   */
+  readOnly?: boolean
+}
 
 /** Presupuesto de las operaciones de siembra/importación masiva (E2, T7). */
 export const SEED_TRANSACTION_OPTIONS: TenantTransactionOptions = { timeout: 60_000, maxWait: 10_000 }
+
+/** Lo que entiende `prisma.$transaction`: `readOnly` es nuestro, no suyo. */
+function prismaTransactionOptions(options?: TenantTransactionOptions): { timeout?: number; maxWait?: number } | undefined {
+  if (!options) return undefined
+  const { readOnly: _readOnly, ...rest } = options
+  return Object.keys(rest).length > 0 ? rest : undefined
+}
 
 export async function tenantTransaction<T>(
   organizationId: string,
@@ -560,12 +633,50 @@ export async function tenantTransaction<T>(
   // AsyncLocalStorage; `fn` recibe el cliente acotado de siempre y la extensión
   // despacha cada operación sobre esta transacción (ver TenantGucContext).
   return await prisma.$transaction(async (tx) => {
-    await applyTenantGucs(tx, organizationId, userId)
+    await applyTenantGucs(tx, organizationId, userId, options?.readOnly === true)
     return await tenantGucStorage.run(
       { organizationId, userId, client: tx as unknown as ClientByModel },
       async () => fn(tenantTransactionFacade(organizationId, tx))
     )
-  }, options)
+  }, prismaTransactionOptions(options))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// runWithRequestTenant — UNA transacción por petición (E6-perf)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Abre UNA sola transacción de tenant para toda la petición y la publica en el
+ * AsyncLocalStorage, de modo que `tenantDb(orgId)` —y por tanto el `db` que
+ * devuelve `requireOrg`— despache **dentro de ella** en vez de abrir una
+ * transacción (y tomar una conexión del pool) por operación.
+ *
+ * Es el cierre de la deuda «una transacción por operación» de `docs/ESTADO.md`:
+ * un render de página pasa de N `BEGIN`/`COMMIT` y hasta N conexiones
+ * simultáneas a **uno** y **una**. En `app/(app)` se aplica con
+ * `tenantPage()` (`lib/page-tenant.ts`) y en el layout a mano.
+ *
+ * Consecuencias que hay que tener presentes:
+ *
+ * 1. **Nada de `Promise.all` de lecturas dentro.** Todas comparten una única
+ *    conexión: `pg` las encola igualmente (no hay paralelismo real) y además
+ *    emite el DeprecationWarning «client is already executing a query». Las
+ *    lecturas van EN SERIE.
+ * 2. **Reentrante.** Un `tenantTransaction` de dentro (una server action, el
+ *    motor del diario) reutiliza esta transacción; no se anida nada. La
+ *    prohibición de anidar mutaciones del diario (`LedgerNestingError`) sigue
+ *    intacta: la vigila `models/ledger.ts`, no esta función.
+ * 3. **`readOnly`** convierte la transacción en `READ ONLY` en la base: una
+ *    escritura desde un Server Component falla con 25006 en vez de colarse.
+ *    Las páginas que emiten un `ReportRun` (informes, panel) NO pueden usarlo.
+ */
+export async function runWithRequestTenant<T>(
+  organizationId: string,
+  userId: string | undefined,
+  fn: (db: TenantTransactionClient) => Promise<T>,
+  options?: TenantTransactionOptions
+): Promise<T> {
+  return await tenantTransaction(organizationId, userId, fn, options)
 }
 
 /**
@@ -597,10 +708,10 @@ export async function withTenantGucs<T>(
     return await fn(outer.client as unknown as Parameters<typeof fn>[0])
   }
   return await prisma.$transaction(async (tx) => {
-    await applyTenantGucs(tx, organizationId, userId)
+    await applyTenantGucs(tx, organizationId, userId, options?.readOnly === true)
     return await tenantGucStorage.run(
       { organizationId, userId, client: tx as unknown as ClientByModel },
       async () => fn(tx)
     )
-  }, options)
+  }, prismaTransactionOptions(options))
 }

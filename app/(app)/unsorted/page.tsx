@@ -6,8 +6,8 @@ import { Card } from "@/components/ui/card"
 import { AnalyzeAllButton } from "@/components/unsorted/analyze-all-button"
 import { AnalyzeConcurrencyBadge } from "@/components/unsorted/analyze-concurrency-badge"
 import AnalyzeForm from "@/components/unsorted/analyze-form"
-import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
+import { tenantPage } from "@/lib/page-tenant"
 import { getCategories } from "@/models/categories"
 import { getCurrencies } from "@/models/currencies"
 import { getFields } from "@/models/fields"
@@ -23,8 +23,7 @@ export const metadata: Metadata = {
   description: "Analyze unsorted files",
 }
 
-export default async function UnsortedPage() {
-  const { db } = await requireOrg("VIEWER")
+export default tenantPage(async ({ db }) => {
   const files = await getUnsortedFiles(db)
   const categories = await getCategories(db)
   const projects = await getProjects(db)
@@ -115,4 +114,4 @@ export default async function UnsortedPage() {
       </main>
     </>
   )
-}
+})

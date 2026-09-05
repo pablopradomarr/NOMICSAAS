@@ -2,13 +2,12 @@ import CurrencyDefaultsForm from "@/components/settings/currency-defaults-form"
 import { CrudTable } from "@/components/settings/crud"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { Separator } from "@/components/ui/separator"
-import { requireOrg } from "@/lib/authz"
 import { getCurrencies } from "@/models/currencies"
 import { getSettings } from "@/models/settings"
 import { addCurrencyAction, deleteCurrencyAction, editCurrencyAction } from "@/app/(app)/settings/actions"
+import { tenantPage } from "@/lib/page-tenant"
 
-export default async function CurrenciesSettingsPage() {
-  const { db } = await requireOrg("VIEWER")
+export default tenantPage(async ({ db }) => {
   const [currencies, settings] = await Promise.all([getCurrencies(db), getSettings(db)])
   const currenciesWithActions = currencies.map((currency) => ({
     ...currency,
@@ -45,4 +44,4 @@ export default async function CurrenciesSettingsPage() {
       />
     </div>
   )
-}
+})

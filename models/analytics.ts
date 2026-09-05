@@ -96,16 +96,15 @@ export async function getAnalyticsConfig(
   const orgRows = await tx.$queryRaw<OrgAnalyticsRow[]>`
     SELECT analytics_required, non_analytic_level FROM organizations WHERE id = ${organizationId}::uuid`
 
-  const [businessLines, projects, costCenters, levels, plan] = await Promise.all([
-    tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-    tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-    tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-    tx.marginLevelConfig.findMany({
-      where: { validFrom: { lte: at }, OR: [{ validTo: null }, { validTo: { gte: at } }] },
-      orderBy: { sortOrder: "asc" },
-    }),
-    getPlan(tx),
-  ])
+  // En SERIE por lo mismo: una sola conexión, `pg` las encola de todas formas.
+  const businessLines = await tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
+  const projects = await tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
+  const costCenters = await tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
+  const levels = await tx.marginLevelConfig.findMany({
+    where: { validFrom: { lte: at }, OR: [{ validTo: null }, { validTo: { gte: at } }] },
+    orderBy: { sortOrder: "asc" },
+  })
+  const plan = await getPlan(tx)
 
   const org = orgRows[0]
   if (!org) throw new Error(`getAnalyticsConfig: la organización ${organizationId} no es visible en esta transacción`)
@@ -829,7 +828,8 @@ export async function reclassifyLines(
 ): Promise<LedgerResult<ReclassifyResult>> {
   return await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
     const config = await getAnalyticsConfig(tx, { periodEnd: opts.refDate })
-    const [fiscalYears, periodLocks] = await Promise.all([listFiscalYearRefs(tx), listPeriodLockRefs(tx)])
+    const fiscalYears = await listFiscalYearRefs(tx)
+    const periodLocks = await listPeriodLockRefs(tx)
 
     const rows = await tx.journalLine.findMany({
       where: { id: { in: request.targets.map((t) => t.lineId) } },

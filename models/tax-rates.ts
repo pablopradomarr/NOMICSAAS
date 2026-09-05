@@ -63,7 +63,8 @@ export async function createTaxRate(
   reason?: string | null
 ): Promise<Result<TaxRate>> {
   return await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
-    const [plan, existing] = await Promise.all([getPlan(tx), tx.taxRate.findMany()])
+    const plan = await getPlan(tx)
+    const existing = await tx.taxRate.findMany()
     const validated = validateTaxRate(input, existing.map(toTaxRateRow), plan, input.validFrom)
     if (!validated.ok) return validated as Result<TaxRate>
 
@@ -117,7 +118,8 @@ export async function updateTaxRate(
         errors: [{ code: "CSV_ROW" as const, field: "id", message: `El tipo impositivo ${id} no existe` }],
       }
     }
-    const [plan, existing] = await Promise.all([getPlan(tx), tx.taxRate.findMany()])
+    const plan = await getPlan(tx)
+    const existing = await tx.taxRate.findMany()
     const candidate: TaxRateInput = { ...toTaxRateRow(before), ...patch }
     const validated = validateTaxRate(candidate, existing.map(toTaxRateRow), plan, candidate.validFrom)
     if (!validated.ok) return validated as Result<TaxRate>
@@ -135,11 +137,9 @@ export async function updateTaxRate(
       .filter((c): c is string => c !== null)
       .filter((c) => !nuevas.includes(c))
     for (const code of liberadas) {
-      const [mapeada, comoCuenta, comoContrapartida] = await Promise.all([
-        tx.organizationAccountMap.count({ where: { accountCode: code } }),
-        tx.taxRate.count({ where: { accountCode: code } }),
-        tx.taxRate.count({ where: { counterAccountCode: code } }),
-      ])
+      const mapeada = await tx.organizationAccountMap.count({ where: { accountCode: code } })
+      const comoCuenta = await tx.taxRate.count({ where: { accountCode: code } })
+      const comoContrapartida = await tx.taxRate.count({ where: { counterAccountCode: code } })
       if (mapeada === 0 && comoCuenta === 0 && comoContrapartida === 0) {
         await tx.ledgerAccount.updateMany({ where: { code }, data: { isSystem: false } })
       }

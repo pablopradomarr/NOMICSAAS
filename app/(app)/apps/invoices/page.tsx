@@ -1,17 +1,16 @@
-import { requireOrg } from "@/lib/authz"
 import { getAppData } from "@/models/apps"
 import { getCurrencies } from "@/models/currencies"
 import { getSettings } from "@/models/settings"
 import { InvoiceGenerator } from "./components/invoice-generator"
 import { InvoiceTemplate } from "./default-templates"
 import { manifest } from "./manifest"
+import { tenantPage } from "@/lib/page-tenant"
 
 export type InvoiceAppData = {
   templates: InvoiceTemplate[]
 }
 
-export default async function InvoicesApp() {
-  const { db, org, user } = await requireOrg("VIEWER")
+export default tenantPage(async ({ db, org, user }) => {
   const settings = await getSettings(db)
   const currencies = await getCurrencies(db)
   const appData = (await getAppData(db, user.id, "invoices")) as InvoiceAppData | null
@@ -28,4 +27,4 @@ export default async function InvoicesApp() {
       <InvoiceGenerator organization={org} settings={settings} currencies={currencies} appData={appData} />
     </div>
   )
-}
+})

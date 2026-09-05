@@ -233,12 +233,10 @@ export async function closeFiscalYear(
       // ── 5. Invariantes (B-4) ──────────────────────────────────────────────
       const ledgerHashValue = await computeLedgerHash(tx, { fiscalYearId })
       if (!opts.skipInvariants) {
-        const [page, fiscalYearRows, periodLocks, accounts] = await Promise.all([
-          getEntries(tx, { fiscalYearId }, { take: 100_000 }),
-          tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } }),
-          listPeriodLockRefs(tx),
-          tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } }),
-        ])
+        const page = await getEntries(tx, { fiscalYearId }, { take: 100_000 })
+        const fiscalYearRows = await tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } })
+        const periodLocks = await listPeriodLockRefs(tx)
+        const accounts = await tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } })
         const validacion = runInvariantsPure(
           {
             runId: randomUUID(),

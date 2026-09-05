@@ -13,13 +13,13 @@ import { ExportLinks } from "@/components/reports/export-links"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportToolbar, type ToolbarField } from "@/components/reports/report-toolbar"
 import { StatementTable, type StatementColumn } from "@/components/reports/statement-table"
-import { requireOrg } from "@/lib/authz"
 import type { BalanceReport } from "@/lib/ledger/reports/balance"
 import type { BalanceSnapshot } from "@/lib/ledger/reports/types"
 import { todayLocalDate } from "@/models/ledger"
 import type { ReportRunView } from "@/models/reports"
-import { PgcVariant, Role } from "@/prisma/client"
+import { PgcVariant } from "@/prisma/client"
 import type { Metadata } from "next"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Balance de situación" }
 
@@ -46,12 +46,7 @@ const SNAPSHOTS: { value: BalanceSnapshot; label: string }[] = [
   { value: "POST_CIERRE", label: "Después del cierre" },
 ]
 
-export default async function BalancePage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) => {
   const params = await searchParams
   const first = (key: string) => firstOf(params, key)
 
@@ -263,7 +258,7 @@ export default async function BalancePage({
       </section>
     </div>
   )
-}
+}, { readOnly: false })
 
 function Title() {
   return (

@@ -4,13 +4,13 @@ import { ExportLinks } from "@/components/reports/export-links"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportToolbar, type ToolbarField } from "@/components/reports/report-toolbar"
 import { StatementTable, type StatementColumn, type StatementNode } from "@/components/reports/statement-table"
-import { requireOrg } from "@/lib/authz"
 import { PYG_SKELETON, type PygReport, type PygSubtotal } from "@/lib/ledger/reports/pyg"
 import type { StatementRow } from "@/lib/ledger/reports/types"
 import { todayLocalDate } from "@/models/ledger"
 import type { ReportRunView } from "@/models/reports"
-import { PgcVariant, Role } from "@/prisma/client"
+import { PgcVariant } from "@/prisma/client"
 import type { Metadata } from "next"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Pérdidas y ganancias" }
 
@@ -34,12 +34,7 @@ const SUBTOTALS: readonly { key: PygSubtotal; label: string }[] = [
   { key: "A.4) RESULTADO DEL EJERCICIO", label: "A.4) RESULTADO DEL EJERCICIO" },
 ]
 
-export default async function PygPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) => {
   const params = await searchParams
   const first = (key: string) => firstOf(params, key)
 
@@ -246,4 +241,4 @@ export default async function PygPage({
       )}
     </div>
   )
-}
+}, { readOnly: false })

@@ -40,8 +40,31 @@ Resuelve la organización destino por `files.uploaded_by_id` y, en su defecto, p
 
 **Patrón obligatorio para backfills futuros (ADR-0009 §7).** Con `FORCE`, una migración que actualice datos de negocio no ve nada. Hay que envolverla en `ALTER TABLE x NO FORCE ROW LEVEL SECURITY; … ; ALTER TABLE x FORCE ROW LEVEL SECURITY;` dentro de la misma migración, o ejecutarla como `app_maintenance`. Documentado también en `CLAUDE.md`.
 
-### Deuda anotada: una transacción por operación
-`tenantDb(orgId)` envuelve CADA operación en su propia transacción para poder fijar `app.current_org`/`app.current_user` (`SET LOCAL`) y que RLS filtre: son tres viajes extra a la base (BEGIN + dos `set_config` + COMMIT) y una conexión del pool ocupada mientras dura. Es el precio de tener la barrera 2 activa sin refactorizar de golpe los 32 ficheros heredados (ADR-0007). **En E3**, cuando el código de negocio esté agrupado dentro de `tenantTransaction`, la envoltura por operación deja de hacer falta: dentro de esa función todas las operaciones comparten una sola transacción. `tenantDb(org).$transaction()` lanza un error explícito que remite a `tenantTransaction`.
+### Deuda anotada: una transacción por operación — **CERRADA (E6-perf, 2026-09-05)**
+
+**Cómo se ha cerrado.** Toda petición web abre **una sola** transacción de tenant y la publica en el AsyncLocalStorage; `tenantDb(orgId)` —y el `db` que devuelve `requireOrg`— la encuentran ahí y despachan **dentro** de ella en lugar de abrir una por operación. Nada cambia en `models/`.
+
+| Pieza | Qué hace |
+|---|---|
+| `lib/db.ts` · `runWithRequestTenant(orgId, userId, fn, { readOnly })` | Abre la transacción única de la petición. Reentrante: un `tenantTransaction` interno (server action, motor del diario) la reutiliza. |
+| `lib/page-tenant.ts` · `tenantPage(...)` / `withPageTenant(...)` | Envuelve el cuerpo de cada página RSC de `app/(app)/**`: `requireOrg(minRole)` + transacción única. Opciones `minRole`, `notFoundOnForbidden` (404 en vez de 403) y `readOnly`. Aplicado a **38 páginas**; las siete restantes son redirecciones, `notFound()` o componentes de cliente y no consultan la base. |
+| `app/(app)/layout.tsx` | Su propia transacción única (Next renderiza layout y página en paralelo). `getUserMemberships` va **encadenado y fuera**: enumera todas las organizaciones del usuario, así que no puede compartirla. |
+| `readOnly` | `SET TRANSACTION READ ONLY`: la BASE rechaza con 25006 una escritura desde un Server Component. Se deja en `false` sólo donde el render emite un `ReportRun` (informes, panel, sumas y saldos, mayor, PyG analítica). |
+| Pool explícito | `PrismaPg` con `DB_POOL_MAX` (20 por defecto, era el `max: 10` de `pg`), `DB_POOL_IDLE_TIMEOUT_MS` y `DB_POOL_CONNECTION_TIMEOUT_MS`; `transactionOptions` por defecto `maxWait 5 s / timeout 15 s`. Documentado en `.env.example`. |
+
+Las escrituras siguen usando `tenantTransaction` explícito y **sigue prohibido anidar transacciones del diario** (`LedgerNestingError` en `models/ledger.ts`, intacto).
+
+**Medido** (`tests/integration/perf-pages.test.ts`, fixture `ejercicio-completo`, local):
+
+| Cargador | Transacciones antes → después | ms antes → después |
+|---|---|---|
+| `/settings/fiscal-years` | 3 → **1** | 27 → **8** |
+| `/ledger` | 9 → **1** | 76 → **37** |
+| `/settings/accounts` | 2 → **1** | 24 → **12** |
+
+Con cuatro peticiones simultáneas de `/ledger` (layout + página en paralelo) el pico de conexiones baja de 9 a 8 y la latencia de 331 ms a 159 ms. El test fija dos techos por cargador: **≤ 2 conexiones simultáneas por petición** (medidas en `pg_stat_activity`) y **< 1500 ms**, más «un render abre exactamente 1 transacción» y el rechazo de escrituras en `READ ONLY`.
+
+**Síntoma que cerraba.** `Transaction API error: Unable to start a transaction in the given time` en `/settings/fiscal-years` durante los e2e. Ya no aparece: 15/15 e2e en verde.
 
 ### Roles de base de datos
 `DATABASE_URL` debe apuntar ahora al rol **`app_runtime`** (LOGIN, NOBYPASSRLS, no propietario) y `DIRECT_URL` al propietario, que es el que usan las migraciones (`prisma.config.ts`). Las migraciones **ya no fijan contraseñas** (quedarían en el repositorio): crean el rol sin LOGIN y garantizan `NOBYPASSRLS`. La credencial la pone el operador:
@@ -54,8 +77,15 @@ Desde E3 hay un tercer rol: **`app_maintenance`** (`BYPASSRLS`, `NOLOGIN` por de
 
 **Acción pendiente del operador:** en cualquier entorno donde ya se aplicó `20260904140000_e1_rls_effective`, esa migración dejó la contraseña literal `app_runtime`; hay que ROTARLA. La migración no se edita porque ya está aplicada (`CLAUDE.md`).
 
-### Deuda técnica: pg DeprecationWarning en tenantDb
-`@prisma/adapter-pg@7.8 + pg@8.22` emiten «client is already executing a query» (DeprecationWarning) al resolver `include` multi-relación dentro de la transacción por operación de `tenantDb`. Sin efecto funcional; el e2e `libro-diario.spec.ts` lo excluye explícitamente. Cierre: actualizar adapter cuando corrija el issue upstream o agrupar en `tenantTransaction` (deuda E1 ya anotada).
+### Deuda técnica: pg DeprecationWarning en tenantDb — **CERRADA (E6-perf, 2026-09-05)**
+El aviso «client is already executing a query» no venía del adaptador sino de **consultas hermanas lanzadas en paralelo sobre la única conexión de una transacción**. Dos causas, las dos corregidas:
+
+1. `app/(app)/ledger/shared.ts` · `entryExtras` pedía `fiscalYear`, `reverses` y `reversedBy` en un `select` multi-relación: Prisma resolvía las tres a la vez. Ahora son cuatro consultas planas **en serie** (mismos viajes a la base, cero solapamiento).
+2. Los `Promise.all` de lecturas dentro de transacciones (`models/{ledger,analytics,accounts,account-map,tax-rates,fiscal-years}.ts`, layout y páginas). Dentro de una transacción hay UNA conexión: `pg` los encola igual, así que el paralelismo era ficticio y sólo producía el aviso. Todos pasados a serie.
+
+Verificado: `npm run test:integration` (1047 tests) y los e2e no emiten ya el `DeprecationWarning`, y **se ha retirado la exclusión** de `tests/e2e/libro-diario.spec.ts` — ese test vuelve a fallar ante cualquier error de consola.
+
+**Regla nueva:** dentro de `runWithRequestTenant` / `tenantTransaction`, las lecturas van en serie. Está escrita en el docblock de ambas.
 
 ### Comandos de test
 ```bash
@@ -63,6 +93,16 @@ npm run test                  # unitarios
 npm run test:integration      # integración como PROPIETARIO (no ejerce RLS)
 npm run test:integration:rls  # models/ como app_runtime: RLS efectiva
 npm run test:all              # los tres
+npm run test:e2e              # Playwright sobre `npm run dev` en :7331
+```
+
+**Higiene del entorno e2e (importante).** Los e2e escriben en la base de desarrollo `erp` y **acumulan estado** entre ejecuciones: asientos `Venta e2e …` en la organización del diario, reclasificaciones en la analítica y `report_runs` cacheados. Pasadas 15–20 ejecuciones el diario supera las 50 filas de la primera página, la línea que el test de reclasificación elige acaba siendo la de un asiento ya anulado y los informes se sirven de una caché de otro estado: fallan tests correctos. Antes de una pasada de verificación:
+
+```bash
+# 1. Recargar el fixture en la organización analítica (vacía y vuelve a postear)
+DATABASE_URL_MAINTENANCE=… npx tsx scripts/load-fixture.ts --org <org> --user <user> \
+  --fixture tests/fixtures/ejercicio-completo.json --reset-org
+# 2. Vaciar la caché de informes y los avisos de revisión (owner, con el baile NO FORCE/FORCE)
 ```
 
 ## Siguiente trabajo (en este orden) — épica E1 "fix" (COMPLETADA salvo lo indicado)

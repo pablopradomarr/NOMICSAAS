@@ -4,7 +4,6 @@ import { TransactionSearchAndFilters } from "@/components/transactions/filters"
 import { TransactionList } from "@/components/transactions/list"
 import { NewTransactionDialog } from "@/components/transactions/new"
 import { Pagination } from "@/components/transactions/pagination"
-import { requireOrg } from "@/lib/authz"
 import { getCategories } from "@/models/categories"
 import { getFields } from "@/models/fields"
 import { getProjects } from "@/models/projects"
@@ -12,6 +11,7 @@ import { getTransactions, TransactionFilters } from "@/models/transactions"
 import { Download, Plus, Upload } from "lucide-react"
 import { Metadata } from "next"
 import { redirect } from "next/navigation"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = {
   title: "Transactions",
@@ -20,9 +20,8 @@ export const metadata: Metadata = {
 
 const TRANSACTIONS_PER_PAGE = 500
 
-export default async function TransactionsPage({ searchParams }: { searchParams: Promise<TransactionFilters> }) {
+export default tenantPage<{ searchParams: Promise<TransactionFilters> }>(async ({ db, searchParams }) => {
   const { page, ...filters } = await searchParams
-  const { db } = await requireOrg("VIEWER")
   const { transactions, total } = await getTransactions(db, filters, {
     limit: TRANSACTIONS_PER_PAGE,
     offset: ((page ?? 1) - 1) * TRANSACTIONS_PER_PAGE,
@@ -80,4 +79,4 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
       </main>
     </>
   )
-}
+})

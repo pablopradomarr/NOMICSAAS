@@ -9,11 +9,11 @@ import {
   SOFTWARE_ACCOUNTS,
 } from "@/lib/accounts/map"
 import { planAccounts } from "@/lib/accounts/tree"
-import { requireOrg } from "@/lib/authz"
 import { getAccountMap, validateOrganizationAccountMap } from "@/models/account-map"
 import { getPlan } from "@/models/accounts"
 import { AccountKey, Role } from "@/prisma/client"
 import { Metadata } from "next"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = {
   title: "Mapa de cuentas",
@@ -25,8 +25,7 @@ export const metadata: Metadata = {
  * Dos bloques: las claves obligatorias que el motor necesita para poder
  * contabilizar (I-plan-1) y las que se mapearán cuando llegue su épica.
  */
-export default async function AccountMapSettingsPage() {
-  const { db, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ db, role }) => {
   const canEdit = role === Role.ADMIN
 
   // Secuencial: cada consulta de `tenantDb` abre su propia transacción con los
@@ -122,4 +121,4 @@ export default async function AccountMapSettingsPage() {
       )}
     </div>
   )
-}
+})

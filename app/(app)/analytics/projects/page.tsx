@@ -5,12 +5,12 @@ import { ArchiveDimensionDialog, ProjectDialog, ProjectStateButtons } from "@/co
 import { PROJECT_STATUS_LABELS, type ProjectRow } from "@/components/analytics/types"
 import { AmountPlain, formatLocalDate } from "@/components/ledger/amount"
 import { ConfidenceBadge } from "@/components/ui/confidence-badge"
-import { requireOrg } from "@/lib/authz"
 import { listFiscalYears } from "@/models/fiscal-years"
 import { todayLocalDate } from "@/models/ledger"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Proyectos" }
 
@@ -23,8 +23,7 @@ export const metadata: Metadata = { title: "Proyectos" }
  * analítica no pueden discrepar. La desviación contra presupuesto va marcada
  * `calculado`: el presupuesto es un dato del usuario, no del diario.
  */
-export default async function ProjectsPage() {
-  const { db, org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ db, org, role }) => {
   const canEdit = role === Role.EDITOR || role === Role.ADMIN
   const isAdmin = role === Role.ADMIN
 
@@ -195,4 +194,4 @@ export default async function ProjectsPage() {
       </p>
     </div>
   )
-}
+})

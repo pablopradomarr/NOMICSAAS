@@ -5,12 +5,11 @@ import { MarginMatrix } from "@/components/analytics/margin-matrix"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportPeriodPicker } from "@/components/reports/report-period-picker"
 import { Button } from "@/components/ui/button"
-import { requireOrg } from "@/lib/authz"
 import { listFiscalYears } from "@/models/fiscal-years"
 import { todayLocalDate } from "@/models/ledger"
-import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "PyG analítica" }
 
@@ -29,12 +28,7 @@ export const metadata: Metadata = { title: "PyG analítica" }
  * sellos de E4-D2: `ledgerHash` (financiero, que la reclasificación NO mueve),
  * `analyticsHash` y `marginConfigHash`.
  */
-export default async function AnalyticPnlPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) => {
   const params = await searchParams
   const first = (key: string): string | undefined => {
     const value = params[key]
@@ -184,4 +178,4 @@ export default async function AnalyticPnlPage({
       </p>
     </div>
   )
-}
+}, { readOnly: false })

@@ -1,12 +1,11 @@
 import { addFieldAction, deleteFieldAction, editFieldAction } from "@/app/(app)/settings/actions"
 import { CrudTable } from "@/components/settings/crud"
 import { SettingsPageHeader } from "@/components/settings/page-header"
-import { requireOrg } from "@/lib/authz"
 import { getFields } from "@/models/fields"
 import { Prisma } from "@/prisma/client"
+import { tenantPage } from "@/lib/page-tenant"
 
-export default async function FieldsSettingsPage() {
-  const { db } = await requireOrg("VIEWER")
+export default tenantPage(async ({ db }) => {
   const fields = await getFields(db)
   const fieldsWithActions = fields.map((field) => ({
     ...field,
@@ -70,4 +69,4 @@ export default async function FieldsSettingsPage() {
       />
     </div>
   )
-}
+})

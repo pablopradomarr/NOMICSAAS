@@ -1,10 +1,10 @@
 import { ReviewThresholdsForm, type KpiThresholdRow } from "@/components/reports/review-thresholds-form"
-import { requireOrg } from "@/lib/authz"
 import { DEFAULT_KPI_THRESHOLDS } from "@/lib/ledger/report-run"
 import { thresholdsOf } from "@/models/reports"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Umbrales de revisión" }
 
@@ -26,8 +26,7 @@ const DEFINITIONS: Record<string, { label: string; definition: string }> = {
   margenBruto: { label: "Margen bruto", definition: "MC1 en porcentaje · se mide en puntos de margen" },
 }
 
-export default async function ReviewThresholdsPage() {
-  const { org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ org, role }) => {
   const isAdmin = role === Role.ADMIN
   const thresholds = thresholdsOf(org.reviewThresholds)
 
@@ -77,4 +76,4 @@ export default async function ReviewThresholdsPage() {
       </p>
     </div>
   )
-}
+})

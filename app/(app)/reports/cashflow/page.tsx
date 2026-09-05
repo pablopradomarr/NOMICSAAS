@@ -4,7 +4,6 @@ import { AmountPlain } from "@/components/ledger/amount"
 import { ExportLinks } from "@/components/reports/export-links"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportToolbar, type ToolbarField } from "@/components/reports/report-toolbar"
-import { requireOrg } from "@/lib/authz"
 import type {
   CashflowDirectReport,
   CashflowIndirectReport,
@@ -15,9 +14,9 @@ import type { CashflowBucket } from "@/lib/ledger/reports/types"
 import { cn } from "@/lib/utils"
 import { todayLocalDate } from "@/models/ledger"
 import type { ReportRunView } from "@/models/reports"
-import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Cashflow" }
 
@@ -73,12 +72,7 @@ const VIEWS = [
 
 const MONTH_LABEL = (month: string): string => month.slice(5)
 
-export default async function CashflowPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) => {
   const params = await searchParams
   const first = (key: string) => firstOf(params, key)
 
@@ -186,7 +180,7 @@ export default async function CashflowPage({
       </p>
     </div>
   )
-}
+}, { readOnly: false })
 
 function DirectView({ report, months }: { report: CashflowDirectReport; months: readonly string[] }) {
   return (

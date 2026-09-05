@@ -5,11 +5,11 @@ import { shortHash } from "@/components/ledger/types"
 import { ExportLinks } from "@/components/reports/export-links"
 import { ClearReviewDialog, ForceReviewDialog } from "@/components/reports/manual-review"
 import { SealBadge } from "@/components/ui/seal-badge"
-import { requireOrg } from "@/lib/authz"
 import { todayLocalDate } from "@/models/ledger"
 import { ReportType, Role, Seal } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Histórico de informes" }
 
@@ -38,12 +38,7 @@ const TYPE_LABELS: Partial<Record<ReportType, string>> = {
   PRESUPUESTO_REAL: "Presupuesto vs real",
 }
 
-export default async function ReportRunsPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { role } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ role, searchParams }) => {
   const isAdmin = role === Role.ADMIN
   const params = await searchParams
   const typeFilter = firstOf(params, "tipo")
@@ -196,4 +191,4 @@ export default async function ReportRunsPage({
       </section>
     </div>
   )
-}
+}, { readOnly: false })

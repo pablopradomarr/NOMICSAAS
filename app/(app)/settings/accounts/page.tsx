@@ -4,13 +4,13 @@ import { SettingsPageHeader } from "@/components/settings/page-header"
 import { Button } from "@/components/ui/button"
 import { checkAnalyticCoherence, epigraphCatalog } from "@/lib/accounts/epigraphs"
 import { planAccounts } from "@/lib/accounts/tree"
-import { requireOrg } from "@/lib/authz"
 import { getPlan } from "@/models/accounts"
 import { getAccountMap } from "@/models/account-map"
 import { loadNpgcSeed } from "@/models/npgc-seed"
 import { AnalyticType, CashflowBucket, Role, Statement } from "@/prisma/client"
 import { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = {
   title: "Plan de cuentas",
@@ -23,8 +23,7 @@ export const metadata: Metadata = {
  * `tenantDb` y viaja ya resuelto al árbol. El cliente no consulta la base ni
  * calcula nada; `VIEWER` y `EDITOR` reciben la misma pantalla sin controles.
  */
-export default async function AccountsSettingsPage() {
-  const { db, org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ db, org, role }) => {
   const canEdit = role === Role.ADMIN
 
   // Secuencial y una sola lectura del plan: cada consulta de `tenantDb` abre su
@@ -105,4 +104,4 @@ export default async function AccountsSettingsPage() {
       )}
     </div>
   )
-}
+})

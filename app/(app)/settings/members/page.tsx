@@ -3,12 +3,12 @@ import { MemberRow, MembersTable } from "@/components/settings/members-table"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { InvitationRow, PendingInvitationsTable } from "@/components/settings/pending-invitations-table"
 import { Separator } from "@/components/ui/separator"
-import { AuthzError, requireOrg } from "@/lib/authz"
+import { tenantPage } from "@/lib/page-tenant"
 import { listLiveInvitations } from "@/models/invitations"
 import { listOrganizationMembersWithUsers } from "@/models/memberships"
 import { Role } from "@/prisma/client"
 import { Metadata } from "next"
-import { notFound, redirect } from "next/navigation"
+
 
 export const metadata: Metadata = {
   title: "Miembros",
@@ -20,25 +20,16 @@ function formatDate(date: Date | null): string {
   return date ? dateFormatter.format(date) : "—"
 }
 
-export default async function MembersSettingsPage() {
-  // E1-fix (#7): la lista de miembros expone nombres, correos y las direcciones
-  // invitadas. Es información de administración: un VIEWER no debe verla, y se
-  // responde 404 (no 403) para no confirmar siquiera que la pantalla existe.
-  let context
-  try {
-    context = await requireOrg(Role.ADMIN)
-  } catch (error) {
-    if (error instanceof AuthzError) {
-      // Ronda 2 (#12): no es lo mismo «no tienes organización» que «no eres
-      // ADMIN». Al primero hay que llevarlo a crear una; al segundo se le
-      // responde 404 para no confirmar que la pantalla existe.
-      if (error.code === "NO_ORGANIZATION") redirect("/organizations/new")
-      notFound()
-    }
-    throw error
-  }
-  const { db, org, user } = context
-
+/**
+ * E1-fix (#7): la lista de miembros expone nombres, correos y las direcciones
+ * invitadas. Es información de administración: un VIEWER no debe verla, y se
+ * responde 404 (no 403) para no confirmar siquiera que la pantalla existe.
+ *
+ * Ronda 2 (#12): no es lo mismo «no tienes organización» que «no eres ADMIN».
+ * Al primero lo lleva `tenantPage` a crear una; al segundo, `notFoundOnForbidden`
+ * le responde 404.
+ */
+export default tenantPage(async ({ db, org, user }) => {
   const members = await listOrganizationMembersWithUsers(org.id)
   const adminCount = members.filter((membership) => membership.role === Role.ADMIN).length
 
@@ -93,4 +84,4 @@ export default async function MembersSettingsPage() {
       </section>
     </div>
   )
-}
+}, { minRole: Role.ADMIN, notFoundOnForbidden: true })

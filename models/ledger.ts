@@ -330,25 +330,22 @@ export async function getLedgerContext(
 ): Promise<LedgerContext> {
   const organizationId = tx.$organizationId
 
-  // El `$queryRaw` va SOLO y primero: dentro de una transacción comparte la
-  // ÚNICA conexión con el resto, y lanzarlo en paralelo con las consultas de
-  // Prisma hace que el adaptador `pg` avise de «client is already executing a
-  // query». Las de Prisma sí van juntas: su cola las serializa.
+  // Todo va EN SERIE: dentro de una transacción hay una ÚNICA conexión, así que
+  // no hay paralelismo que ganar, y solaparlas hace que el adaptador `pg` avise
+  // de «client is already executing a query» (E6-perf).
   const orgRows = await tx.$queryRaw<OrganizationPolicyRow[]>`
     SELECT base_currency, tax_rounding_mode, prorrata_bps, redondeo_tolerancia_cents, analytics_required
       FROM organizations WHERE id = ${organizationId}::uuid`
 
-  const [plan, mapByKey, rates, fiscalYears, periodLocks, projects, costCenters, businessLines] = await Promise.all([
-    getPlan(tx),
-    getAccountMapByKey(tx),
-    listTaxRates(tx),
-    listFiscalYearRefs(tx),
-    listPeriodLockRefs(tx),
-    // E4 · T6: las tres dimensiones. C-9 valida contra ESTOS catálogos.
-    tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-    tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-    tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-  ])
+  const plan = await getPlan(tx)
+  const mapByKey = await getAccountMapByKey(tx)
+  const rates = await listTaxRates(tx)
+  const fiscalYears = await listFiscalYearRefs(tx)
+  const periodLocks = await listPeriodLockRefs(tx)
+  // E4 · T6: las tres dimensiones. C-9 valida contra ESTOS catálogos.
+  const projects = await tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
+  const costCenters = await tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
+  const businessLines = await tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
 
   const org = orgRows[0]
   if (!org) {
@@ -516,16 +513,17 @@ export async function getEntries(
   page: Page = {}
 ): Promise<{ entries: PostedEntry[]; total: number }> {
   const where = entryWhere(filter)
-  const [rows, total] = await Promise.all([
-    db.journalEntry.findMany({
-      where,
-      include: { lines: true },
-      orderBy: [{ entryDate: "asc" }, { entryNumber: "asc" }],
-      skip: page.skip ?? 0,
-      take: page.take ?? 50,
-    }),
-    db.journalEntry.count({ where }),
-  ])
+  // En SERIE (E6-perf): el `include` ya dispara por su cuenta la consulta
+  // hermana de `lines`; lanzar además el `count` en paralelo sobre la misma
+  // conexión de la transacción provocaba el DeprecationWarning de `pg`.
+  const rows = await db.journalEntry.findMany({
+    where,
+    include: { lines: true },
+    orderBy: [{ entryDate: "asc" }, { entryNumber: "asc" }],
+    skip: page.skip ?? 0,
+    take: page.take ?? 50,
+  })
+  const total = await db.journalEntry.count({ where })
   return { entries: rows.map(toPostedEntry), total }
 }
 
@@ -1136,10 +1134,11 @@ export async function voidEntry(
       abort(modelErr("ENTRY_NOT_FOUND", "entryId", "El asiento no existe en esta organización"))
     }
 
-    const [existingReversals, row] = await Promise.all([
-      tx.journalEntry.findMany({ where: { reversesEntryId: entryId }, select: { id: true } }),
-      tx.journalEntry.findFirst({ where: { id: entryId }, select: { transactionId: true } }),
-    ])
+    const existingReversals = await tx.journalEntry.findMany({
+      where: { reversesEntryId: entryId },
+      select: { id: true },
+    })
+    const row = await tx.journalEntry.findFirst({ where: { id: entryId }, select: { transactionId: true } })
 
     /**
      * #11 · la `refDate` por defecto es **la fecha resuelta del contra-asiento**,
@@ -1496,12 +1495,10 @@ export async function runLedgerInvariants(
       }
     } else {
       origen = "full"
-      const [entries, fiscalYearRows, periodLocks, accounts] = await Promise.all([
-        readEntriesPaged(tx, opts.fiscalYearId, total),
-        tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } }),
-        listPeriodLockRefs(tx),
-        tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } }),
-      ])
+      const entries = await readEntriesPaged(tx, opts.fiscalYearId, total)
+      const fiscalYearRows = await tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } })
+      const periodLocks = await listPeriodLockRefs(tx)
+      const accounts = await tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } })
 
       // E4 · T8: bloque analítico (I4 + los doce `I-E4-*`). El periodo es el
       // del ejercicio pedido o el rango completo, y la configuración se elige

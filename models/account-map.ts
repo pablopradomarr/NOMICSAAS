@@ -29,10 +29,11 @@ export async function getAccountMapByKey(db: AnyClient): Promise<Map<AccountKey,
 
 /** I-plan-1 sobre el estado real de la organización (lo consume la Auditoría). */
 export async function validateOrganizationAccountMap(db: AnyClient): Promise<Result<void>> {
-  const [plan, entries] = await Promise.all([
-    getPlan(db),
-    db.organizationAccountMap.findMany({ select: { key: true, accountCode: true } }),
-  ])
+  // En SERIE (E6-perf): dentro de la transacción de la petición todas las
+  // lecturas comparten conexión; `pg` las encola igual y en paralelo emite el
+  // DeprecationWarning «client is already executing a query».
+  const plan = await getPlan(db)
+  const entries = await db.organizationAccountMap.findMany({ select: { key: true, accountCode: true } })
   return validateAccountMap(entries, plan, REQUIRED_ACCOUNT_KEYS)
 }
 
@@ -165,11 +166,9 @@ export async function setAccountMapEntry(
 
     await tx.ledgerAccount.updateMany({ where: { code: accountCode }, data: { isSystem: true } })
     if (before && before.accountCode !== accountCode) {
-      const [stillMapped, usedByTax, usedByCounter] = await Promise.all([
-        tx.organizationAccountMap.count({ where: { accountCode: before.accountCode } }),
-        tx.taxRate.count({ where: { accountCode: before.accountCode } }),
-        tx.taxRate.count({ where: { counterAccountCode: before.accountCode } }),
-      ])
+      const stillMapped = await tx.organizationAccountMap.count({ where: { accountCode: before.accountCode } })
+      const usedByTax = await tx.taxRate.count({ where: { accountCode: before.accountCode } })
+      const usedByCounter = await tx.taxRate.count({ where: { counterAccountCode: before.accountCode } })
       if (stillMapped === 0 && usedByTax === 0 && usedByCounter === 0) {
         await tx.ledgerAccount.updateMany({ where: { code: before.accountCode }, data: { isSystem: false } })
       }

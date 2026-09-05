@@ -1,9 +1,8 @@
 import { AccountImportWizard } from "@/components/accounts/account-import-wizard"
 import { SettingsPageHeader } from "@/components/settings/page-header"
-import { AuthzError, requireOrg } from "@/lib/authz"
+import { tenantPage } from "@/lib/page-tenant"
 import { Role } from "@/prisma/client"
 import { Metadata } from "next"
-import { notFound, redirect } from "next/navigation"
 
 export const metadata: Metadata = {
   title: "Importar plan de cuentas",
@@ -14,17 +13,7 @@ export const metadata: Metadata = {
  * 404, para no confirmar siquiera que la pantalla existe (mismo criterio que
  * `/settings/members` en E1).
  */
-export default async function ImportPlanPage() {
-  try {
-    await requireOrg(Role.ADMIN)
-  } catch (error) {
-    if (error instanceof AuthzError) {
-      if (error.code === "NO_ORGANIZATION") redirect("/organizations/new")
-      notFound()
-    }
-    throw error
-  }
-
+export default tenantPage(async () => {
   return (
     <div className="space-y-6">
       <SettingsPageHeader
@@ -34,4 +23,4 @@ export default async function ImportPlanPage() {
       <AccountImportWizard />
     </div>
   )
-}
+}, { minRole: Role.ADMIN, notFoundOnForbidden: true })

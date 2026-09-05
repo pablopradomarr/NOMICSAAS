@@ -3,7 +3,6 @@ import { JournalTable } from "@/components/ledger/journal-table"
 import { LedgerFilters, type LedgerFilterValues } from "@/components/ledger/ledger-filters"
 import type { FiscalYearView } from "@/components/ledger/types"
 import { Button } from "@/components/ui/button"
-import { requireOrg } from "@/lib/authz"
 import { OPERATIONAL_TEMPLATE_CODES, TEMPLATES } from "@/lib/ledger/templates"
 import { isTemplateCode } from "@/lib/ledger/templates/index"
 import type { EntryKind } from "@/prisma/client"
@@ -13,6 +12,7 @@ import { listFiscalYears } from "@/models/fiscal-years"
 import { listPeriodLocks } from "@/models/period-locks"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Libro diario" }
 
@@ -30,12 +30,7 @@ const ENTRY_KINDS = new Set<string>(["NORMAL", "OPENING", "CLOSING", "REGULARIZA
  * NINGÚN filtro excluye los anulados por defecto (I-E3-3): el asiento anulado y
  * su contra-asiento aparecen los dos y se compensan por importe.
  */
-export default async function LedgerPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, role, searchParams }) => {
   const params = await searchParams
   const first = (key: string): string | undefined => {
     const value = params[key]
@@ -176,7 +171,7 @@ export default async function LedgerPage({
       )}
     </div>
   )
-}
+})
 
 function hrefWithPage(params: Record<string, string | string[] | undefined>, page: number): string {
   const search = new URLSearchParams()

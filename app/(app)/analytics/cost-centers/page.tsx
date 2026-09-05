@@ -2,9 +2,9 @@ import { listAnalyticsAction } from "@/app/(app)/analytics/actions"
 import { ArchiveDimensionDialog, CostCenterDialog } from "@/components/analytics/dimension-forms"
 import { COST_CENTER_KIND_LABELS, type CostCenterRow } from "@/components/analytics/types"
 import { AmountPlain } from "@/components/ledger/amount"
-import { requireOrg } from "@/lib/authz"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Centros de coste" }
 
@@ -17,8 +17,7 @@ export const metadata: Metadata = { title: "Centros de coste" }
  * no en EBITDA. Los tres campos estructurales mueven importe entre niveles, así
  * que sólo los cambia un ADMIN y la acción lo vuelve a exigir.
  */
-export default async function CostCentersPage() {
-  const { org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ org, role }) => {
   const canEdit = role === Role.EDITOR || role === Role.ADMIN
   const isAdmin = role === Role.ADMIN
 
@@ -104,4 +103,4 @@ export default async function CostCentersPage() {
       </p>
     </div>
   )
-}
+})

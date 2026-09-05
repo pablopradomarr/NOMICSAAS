@@ -1,11 +1,11 @@
 import { getAnalyticsConfigAction } from "@/app/(app)/analytics/actions"
 import { AnalyticsPolicyForm, MarginConfigTable } from "@/components/analytics/margin-config-table"
 import type { MarginLevelRowView } from "@/components/analytics/types"
-import { requireOrg } from "@/lib/authz"
 import { todayLocalDate } from "@/models/ledger"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Analítica" }
 
@@ -17,8 +17,7 @@ export const metadata: Metadata = { title: "Analítica" }
  * —saber cómo se compone un margen no es un privilegio—, pero los controles de
  * escritura sólo aparecen para ADMIN y la acción lo vuelve a exigir.
  */
-export default async function AnalyticsSettingsPage() {
-  const { db, org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ db, org, role }) => {
   const isAdmin = role === Role.ADMIN
   const refDate = todayLocalDate()
 
@@ -94,4 +93,4 @@ export default async function AnalyticsSettingsPage() {
       </p>
     </div>
   )
-}
+})

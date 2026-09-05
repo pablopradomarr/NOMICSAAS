@@ -5,12 +5,12 @@ import { ReclassifyDialog, type ReclassifyLine } from "@/components/analytics/re
 import { EntryDetail } from "@/components/ledger/entry-detail"
 import { VoidDialog } from "@/components/ledger/void-dialog"
 import { Button } from "@/components/ui/button"
-import { requireOrg } from "@/lib/authz"
 import { getEntry } from "@/models/ledger"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Asiento" }
 
@@ -23,9 +23,8 @@ export const metadata: Metadata = { title: "Asiento" }
  * recalculado y `ledgerHash` intacto. El botón sólo aparece con rol EDITOR o
  * superior; la ventana la decide el servidor.
  */
-export default async function EntryPage({ params }: { params: Promise<{ entryId: string }> }) {
+export default tenantPage<{ params: Promise<{ entryId: string }> }>(async ({ db, org, role, params }) => {
   const { entryId } = await params
-  const { db, org, role } = await requireOrg(Role.VIEWER)
 
   const entry = await getEntry(db, entryId)
   if (!entry) notFound()
@@ -69,4 +68,4 @@ export default async function EntryPage({ params }: { params: Promise<{ entryId:
       <EntryDetail entry={view} baseCurrency={org.baseCurrency} />
     </div>
   )
-}
+})

@@ -2,15 +2,14 @@ import CategoryDefaultForm from "@/components/settings/category-default-form"
 import { CrudTable } from "@/components/settings/crud"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { Separator } from "@/components/ui/separator"
-import { requireOrg } from "@/lib/authz"
 import { randomHexColor } from "@/lib/utils"
 import { getCategories } from "@/models/categories"
 import { getSettings } from "@/models/settings"
 import { Prisma } from "@/prisma/client"
 import { addCategoryAction, deleteCategoryAction, editCategoryAction } from "@/app/(app)/settings/actions"
+import { tenantPage } from "@/lib/page-tenant"
 
-export default async function CategoriesSettingsPage() {
-  const { db } = await requireOrg("VIEWER")
+export default tenantPage(async ({ db }) => {
   const [categories, settings] = await Promise.all([getCategories(db), getSettings(db)])
   const categoriesWithActions = categories.map((category) => ({
     ...category,
@@ -48,4 +47,4 @@ export default async function CategoriesSettingsPage() {
       />
     </div>
   )
-}
+})

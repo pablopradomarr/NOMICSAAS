@@ -9,12 +9,11 @@ import { ExportLinks } from "@/components/reports/export-links"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportToolbar, type ToolbarField } from "@/components/reports/report-toolbar"
 import { ConfidenceBadge } from "@/components/ui/confidence-badge"
-import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 import type { DashboardReport } from "@/lib/ledger/reports/dashboard"
 import { getUnsortedFiles } from "@/models/files"
 import { todayLocalDate } from "@/models/ledger"
-import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
 
@@ -40,12 +39,7 @@ export const metadata: Metadata = {
  * corresponde a este panel es el del propio informe (`unposted.note`), que
  * cuenta documentos sin decir que valgan cero.
  */
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) => {
   const params = await searchParams
   const first = (key: string) => firstOf(params, key)
 
@@ -206,7 +200,7 @@ export default async function DashboardPage({
       ))}
     </div>
   )
-}
+}, { readOnly: false })
 
 function AgingSummary({ title, report }: { title: string; report: DashboardReport["aging"]["clientes"] }) {
   return (

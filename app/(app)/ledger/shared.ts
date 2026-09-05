@@ -59,6 +59,13 @@ export type EntryExtras = {
 export async function entryExtras(db: TenantClient, entryIds: readonly string[]): Promise<Map<string, EntryExtras>> {
   if (entryIds.length === 0) return new Map()
 
+  // E6-perf: SIN `select` multi-relación. Pedir a la vez `fiscalYear`,
+  // `reverses` y `reversedBy` hace que Prisma lance las tres consultas hermanas
+  // EN PARALELO sobre la única conexión de la transacción de la petición, y el
+  // adaptador `pg` avisa con «client is already executing a query»
+  // (DeprecationWarning que este repositorio tenía anotado como deuda y por el
+  // que `libro-diario.spec.ts` se excluía). Se resuelve en cuatro consultas
+  // planas, en serie: mismo número de viajes a la base, ningún solapamiento.
   const rows = await db.journalEntry.findMany({
     where: { id: { in: [...entryIds] } },
     select: {
@@ -68,12 +75,35 @@ export async function entryExtras(db: TenantClient, entryIds: readonly string[])
       postedById: true,
       transactionId: true,
       fileId: true,
+      fiscalYearId: true,
       reversesEntryId: true,
-      fiscalYear: { select: { code: true } },
-      reverses: { select: { entryNumber: true } },
-      reversedBy: { select: { id: true, entryNumber: true } },
     },
   })
+
+  const fiscalYearIds = [...new Set(rows.map((row) => row.fiscalYearId))]
+  const fiscalYears = fiscalYearIds.length
+    ? await db.fiscalYear.findMany({ where: { id: { in: fiscalYearIds } }, select: { id: true, code: true } })
+    : []
+  const fiscalYearCode = new Map(fiscalYears.map((fy) => [fy.id, fy.code]))
+
+  // El asiento que ESTE anula (`reverses`).
+  const reversedIds = [...new Set(rows.map((row) => row.reversesEntryId).filter((id): id is string => Boolean(id)))]
+  const reversed = reversedIds.length
+    ? await db.journalEntry.findMany({ where: { id: { in: reversedIds } }, select: { id: true, entryNumber: true } })
+    : []
+  const reversedNumber = new Map(reversed.map((entry) => [entry.id, entry.entryNumber]))
+
+  // El contra-asiento que anula a ESTE (`reversedBy`), por la FK inversa.
+  const reversals = await db.journalEntry.findMany({
+    where: { reversesEntryId: { in: [...entryIds] } },
+    select: { id: true, entryNumber: true, reversesEntryId: true },
+  })
+  const reversalOf = new Map<string, { id: string; entryNumber: number }>()
+  for (const reversal of reversals) {
+    if (reversal.reversesEntryId && !reversalOf.has(reversal.reversesEntryId)) {
+      reversalOf.set(reversal.reversesEntryId, { id: reversal.id, entryNumber: reversal.entryNumber })
+    }
+  }
 
   const userIds = [...new Set(rows.map((r) => r.postedById).filter((id): id is string => Boolean(id)))]
   const users = userIds.length
@@ -83,7 +113,7 @@ export async function entryExtras(db: TenantClient, entryIds: readonly string[])
 
   return new Map(
     rows.map((row) => {
-      const reversal = row.reversedBy[0]
+      const reversal = reversalOf.get(row.id)
       return [
         row.id,
         {
@@ -92,10 +122,12 @@ export async function entryExtras(db: TenantClient, entryIds: readonly string[])
           postedByName: row.postedById ? (userName.get(row.postedById) ?? null) : null,
           transactionId: row.transactionId,
           fileId: row.fileId,
-          fiscalYearCode: row.fiscalYear?.code ?? null,
+          fiscalYearCode: fiscalYearCode.get(row.fiscalYearId) ?? null,
           reversedByEntryId: reversal?.id ?? null,
           reversedByEntryNumber: reversal?.entryNumber ?? null,
-          reversesEntryNumber: row.reverses?.entryNumber ?? null,
+          reversesEntryNumber: row.reversesEntryId
+            ? (reversedNumber.get(row.reversesEntryId) ?? null)
+            : null,
         },
       ]
     })

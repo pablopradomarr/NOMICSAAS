@@ -3,7 +3,6 @@ import { dimensionOptions } from "@/app/(app)/analytics/shared"
 import { postableAccounts, taxRateOptions } from "@/app/(app)/ledger/shared"
 import { TemplateForm } from "@/components/ledger/template-form"
 import { Button } from "@/components/ui/button"
-import { requireOrg } from "@/lib/authz"
 import { templateFormSpec } from "@/lib/ledger-ui/template-fields"
 import { isTemplateCode, TEMPLATES } from "@/lib/ledger/templates"
 import { todayLocalDate } from "@/models/ledger"
@@ -11,6 +10,7 @@ import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
+import { tenantPage } from "@/lib/page-tenant"
 
 export async function generateMetadata({
   params,
@@ -33,7 +33,7 @@ export async function generateMetadata({
  * calcula `resolveEntryDate` en el servidor y aparece en la vista previa con su
  * motivo (mes bloqueado → primer mes abierto).
  */
-export default async function TemplateEntryPage({ params }: { params: Promise<{ templateCode: string }> }) {
+export default tenantPage<{ params: Promise<{ templateCode: string }> }>(async ({ db, role, params }) => {
   const { templateCode } = await params
   if (!isTemplateCode(templateCode)) notFound()
 
@@ -41,7 +41,6 @@ export default async function TemplateEntryPage({ params }: { params: Promise<{ 
   // Las cuatro de cierre no tienen acción de usuario en E3 (§1): llegan en E9.
   if (template.systemOnly) notFound()
 
-  const { db, role } = await requireOrg(Role.VIEWER)
   const canPost = role === Role.EDITOR || role === Role.ADMIN
   const accounts = await postableAccounts(db)
   const taxRates = await taxRateOptions(db)
@@ -76,4 +75,4 @@ export default async function TemplateEntryPage({ params }: { params: Promise<{ 
       />
     </div>
   )
-}
+})

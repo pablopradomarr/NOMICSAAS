@@ -2,7 +2,6 @@ import { FormTextarea } from "@/components/forms/simple"
 import TransactionEditForm from "@/components/transactions/edit"
 import TransactionFiles from "@/components/transactions/transaction-files"
 import { Card } from "@/components/ui/card"
-import { requireOrg } from "@/lib/authz"
 import { incompleteTransactionFields } from "@/lib/stats"
 import { getCategories } from "@/models/categories"
 import { getCurrencies } from "@/models/currencies"
@@ -13,10 +12,10 @@ import { getSettings } from "@/models/settings"
 import { getTransactionById } from "@/models/transactions"
 import Link from "next/link"
 import { notFound } from "next/navigation"
+import { tenantPage } from "@/lib/page-tenant"
 
-export default async function TransactionPage({ params }: { params: Promise<{ transactionId: string }> }) {
+export default tenantPage<{ params: Promise<{ transactionId: string }> }>(async ({ db, params }) => {
   const { transactionId } = await params
-  const { db } = await requireOrg("VIEWER")
   const transaction = await getTransactionById(db, transactionId)
   if (!transaction) {
     notFound()
@@ -80,4 +79,4 @@ export default async function TransactionPage({ params }: { params: Promise<{ tr
       </div>
     </div>
   )
-}
+})

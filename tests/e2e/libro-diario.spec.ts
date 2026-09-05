@@ -80,12 +80,13 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
   page,
 }) => {
   const consoleErrors: string[] = []
+  // E6-perf: la exclusión del DeprecationWarning de pg («client is already
+  // executing a query») se ha RETIRADO. Su causa era el `select` multi-relación
+  // de `entryExtras`, que lanzaba tres consultas hermanas en paralelo sobre la
+  // única conexión de la transacción; ahora son cuatro consultas planas en
+  // serie y el aviso ya no se emite. Si vuelve, este test lo saca a la luz.
   page.on("console", (message) => {
-    // DEUDA (docs/ESTADO.md): pg@8 emite un DeprecationWarning ("client is already executing a query")
-    // cuando @prisma/adapter-pg resuelve un include multi-relación dentro de la transacción de tenantDb.
-    // No es un error de la app; se excluye hasta actualizar el adapter (issue upstream).
-    if (message.type() === "error" && !/DeprecationWarning|already executing a query/.test(message.text()))
-      consoleErrors.push(message.text())
+    if (message.type() === "error") consoleErrors.push(message.text())
   })
 
   // ── 1. Ejercicio abierto ───────────────────────────────────────────────────

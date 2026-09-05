@@ -1,10 +1,10 @@
 import { listAnalyticsAction } from "@/app/(app)/analytics/actions"
 import { ArchiveDimensionDialog, BusinessLineDialog } from "@/components/analytics/dimension-forms"
 import type { BusinessLineRow } from "@/components/analytics/types"
-import { requireOrg } from "@/lib/authz"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Líneas de negocio" }
 
@@ -15,8 +15,7 @@ export const metadata: Metadata = { title: "Líneas de negocio" }
  * muestran para leer la cuenta de resultados por negocio, pero no entran en el
  * total, porque sus proyectos ya están contados (I4).
  */
-export default async function BusinessLinesPage() {
-  const { role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ role }) => {
   const canEdit = role === Role.EDITOR || role === Role.ADMIN
   const isAdmin = role === Role.ADMIN
 
@@ -119,4 +118,4 @@ export default async function BusinessLinesPage() {
       </div>
     </div>
   )
-}
+})

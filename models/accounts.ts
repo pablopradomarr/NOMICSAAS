@@ -105,13 +105,12 @@ export async function getAccount(db: AnyClient, code: string): Promise<LedgerAcc
  * `ON DELETE RESTRICT` de la línea lo repite en la base de datos.
  */
 export async function getAccountUsage(db: AnyClient, code: string): Promise<AccountUsage> {
-  const [movementCount, childCount, maps, taxRates, taxRatesCounter] = await Promise.all([
-    db.journalLine.count({ where: { accountCode: code } }),
-    db.ledgerAccount.count({ where: { parentCode: code } }),
-    db.organizationAccountMap.findMany({ where: { accountCode: code }, select: { key: true } }),
-    db.taxRate.findMany({ where: { accountCode: code }, select: { code: true } }),
-    db.taxRate.findMany({ where: { counterAccountCode: code }, select: { code: true } }),
-  ])
+  // En SERIE (E6-perf): comparten la conexión de la transacción de la petición.
+  const movementCount = await db.journalLine.count({ where: { accountCode: code } })
+  const childCount = await db.ledgerAccount.count({ where: { parentCode: code } })
+  const maps = await db.organizationAccountMap.findMany({ where: { accountCode: code }, select: { key: true } })
+  const taxRates = await db.taxRate.findMany({ where: { accountCode: code }, select: { code: true } })
+  const taxRatesCounter = await db.taxRate.findMany({ where: { counterAccountCode: code }, select: { code: true } })
   return {
     movementCount,
     childCount,

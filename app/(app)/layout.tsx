@@ -6,6 +6,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { isSubscriptionExpired } from "@/lib/auth"
 import { AuthzError, requireOrg, roleSatisfies } from "@/lib/authz"
+import { runWithRequestTenant } from "@/lib/db"
 import config from "@/lib/config"
 import { getApps } from "@/app/(app)/apps/common"
 import { getUnsortedFilesCount } from "@/models/files"
@@ -48,11 +49,22 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     throw error
   }
   const { db, org, user, role } = context
-  const [unsortedFilesCount, apps, memberships] = await Promise.all([
-    getUnsortedFilesCount(db),
-    getApps(),
-    getUserMemberships(user.id),
-  ])
+
+  // E6-perf: UNA transacción para todo el layout. Antes cada lectura abría la
+  // suya (`tenantDb` fija los GUC con `SET LOCAL`), y como Next renderiza el
+  // layout EN PARALELO con la página, entre los dos podían pedir una decena de
+  // conexiones a la vez y agotar el pool. Las lecturas van en serie: comparten
+  // una sola conexión, así que no hay paralelismo que ganar y solaparlas
+  // dispararía el aviso de `pg`. `getApps()` lee el disco, no la base.
+  const unsortedFilesCount = await runWithRequestTenant(org.id, user.id, async () => getUnsortedFilesCount(db), {
+    readOnly: true,
+  })
+  // FUERA de la transacción anterior a propósito: `getUserMemberships` enumera
+  // TODAS las organizaciones del usuario, así que va con `app.current_org` sin
+  // fijar (`withTenantGucs(null, …)`) y no puede compartirla. Encadenado, no en
+  // paralelo: así el layout nunca tiene dos conexiones abiertas a la vez.
+  const memberships = await getUserMemberships(user.id)
+  const apps = await getApps()
 
   // El switcher es un Client Component: recibe las organizaciones ya resueltas.
   const organizations = memberships.map((membership) => ({

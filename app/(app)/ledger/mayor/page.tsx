@@ -2,13 +2,12 @@ import { accountNames, defaultPeriod, postableAccounts, reportHeader } from "@/a
 import { MayorTable, type MayorAccountView } from "@/components/ledger/mayor-table"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportPeriodPicker } from "@/components/reports/report-period-picker"
-import { requireOrg } from "@/lib/authz"
 import { tenantTransaction } from "@/lib/db"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 import { buildMayor } from "@/lib/ledger/reports/mayor"
 import type { ReportAccount } from "@/lib/ledger/reports/types"
 import { getLinesForPeriod, todayLocalDate } from "@/models/ledger"
 import { listFiscalYears } from "@/models/fiscal-years"
-import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 
 export const metadata: Metadata = { title: "Mayor" }
@@ -21,12 +20,7 @@ export const metadata: Metadata = { title: "Mayor" }
  * El saldo inicial exige leer también lo anterior al periodo, así que la
  * consulta arranca en el origen de los tiempos y el informe corta por `from`.
  */
-export default async function MayorPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org, user } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, user, searchParams }) => {
   const params = await searchParams
   const first = (key: string): string | undefined => {
     const value = params[key]
@@ -158,4 +152,4 @@ export default async function MayorPage({
       </p>
     </div>
   )
-}
+}, { readOnly: false })

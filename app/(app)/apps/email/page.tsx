@@ -1,8 +1,8 @@
-import { requireOrg } from "@/lib/authz"
 import { getAppData } from "@/models/apps"
 import { getSettings } from "@/models/settings"
 import { EmailServerManager } from "./components/email-server-manager"
 import { manifest } from "./manifest"
+import { tenantPage } from "@/lib/page-tenant"
 
 export type EmailProvider = "gmail" | "outlook" | "hotmail" | "fastmail" | "yahoo" | "apple" | "custom"
 
@@ -35,8 +35,7 @@ export type EmailAppData = {
   }
 }
 
-export default async function EmailApp() {
-  const { db, user } = await requireOrg("VIEWER")
+export default tenantPage(async ({ db, user }) => {
   const settings = await getSettings(db)
   const appData = (await getAppData(db, user.id, "email")) as EmailAppData | null
 
@@ -56,4 +55,4 @@ export default async function EmailApp() {
       <EmailServerManager user={user} settings={settings} appData={sanitizedAppData} />
     </div>
   )
-}
+})

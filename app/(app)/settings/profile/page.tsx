@@ -1,11 +1,10 @@
 import ProfileSettingsForm from "@/components/settings/profile-settings-form"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { getCurrentUser } from "@/lib/auth"
-import { requireOrg } from "@/lib/authz"
+import { tenantPage } from "@/lib/page-tenant"
 
-export default async function ProfileSettingsPage() {
+export default tenantPage(async ({ org, role }) => {
   const user = await getCurrentUser()
-  const { org, role } = await requireOrg("VIEWER")
 
   return (
     <div className="space-y-6">
@@ -18,4 +17,4 @@ export default async function ProfileSettingsPage() {
       </div>
     </div>
   )
-}
+})

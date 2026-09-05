@@ -2,11 +2,11 @@ import { FiscalYearForm } from "@/components/ledger/fiscal-year-form"
 import { PeriodLockGrid } from "@/components/ledger/period-lock-grid"
 import type { FiscalYearView } from "@/components/ledger/types"
 import { SettingsPageHeader } from "@/components/settings/page-header"
-import { requireOrg } from "@/lib/authz"
 import { listFiscalYears } from "@/models/fiscal-years"
 import { listPeriodLocks } from "@/models/period-locks"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Ejercicios" }
 
@@ -17,8 +17,7 @@ export const metadata: Metadata = { title: "Ejercicios" }
  * cierra. La pantalla oculta los controles, pero quien de verdad decide son las
  * acciones (`requireOrg(ADMIN)`) y los triggers de la base.
  */
-export default async function FiscalYearsPage() {
-  const { db, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ db, role }) => {
   const canManage = role === Role.ADMIN
 
   const rows = await listFiscalYears(db)
@@ -63,4 +62,4 @@ export default async function FiscalYearsPage() {
       )}
     </div>
   )
-}
+})

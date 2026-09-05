@@ -1,14 +1,13 @@
 import { OrganizationSettingsForm } from "@/components/settings/organization-settings-form"
 import { SettingsPageHeader } from "@/components/settings/page-header"
-import { requireOrg } from "@/lib/authz"
 import { Metadata } from "next"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = {
   title: "Organización",
 }
 
-export default async function OrganizationSettingsPage() {
-  const { org, role } = await requireOrg("VIEWER")
+export default tenantPage(async ({ org, role }) => {
 
   return (
     <div className="space-y-8">
@@ -19,4 +18,4 @@ export default async function OrganizationSettingsPage() {
       <OrganizationSettingsForm organization={org} canEdit={role === "ADMIN"} />
     </div>
   )
-}
+})

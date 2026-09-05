@@ -3,12 +3,12 @@ import { dimensionOptions } from "@/app/(app)/analytics/shared"
 import { postableAccounts } from "@/app/(app)/ledger/shared"
 import { ManualEntryForm } from "@/components/ledger/manual-entry-form"
 import { Button } from "@/components/ui/button"
-import { requireOrg } from "@/lib/authz"
 import { OPERATIONAL_TEMPLATE_CODES, TEMPLATES } from "@/lib/ledger/templates"
 import { todayLocalDate } from "@/models/ledger"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Nuevo asiento" }
 
@@ -26,8 +26,7 @@ const BLOCK_LABELS: Record<string, string> = {
  * las **24 de operativa** (T-01…T-24): las cuatro de cierre no tienen acción de
  * usuario hasta E9. El contra-asiento tampoco está: se anula desde el asiento.
  */
-export default async function NewEntryPage() {
-  const { db, org, role } = await requireOrg(Role.VIEWER)
+export default tenantPage(async ({ db, org, role }) => {
   const canPost = role === Role.EDITOR || role === Role.ADMIN
   const accounts = await postableAccounts(db)
   const listing = await listAnalyticsAction({})
@@ -94,4 +93,4 @@ export default async function NewEntryPage() {
       </section>
     </div>
   )
-}
+})

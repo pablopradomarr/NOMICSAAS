@@ -4,13 +4,12 @@ import { AmountPlain } from "@/components/ledger/amount"
 import { ExportLinks } from "@/components/reports/export-links"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportToolbar, type ToolbarField } from "@/components/reports/report-toolbar"
-import { requireOrg } from "@/lib/authz"
 import type { AgingReport } from "@/lib/ledger/reports/aging"
 import type { DashboardReport } from "@/lib/ledger/reports/dashboard"
 import { todayLocalDate } from "@/models/ledger"
-import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
+import { tenantPage, type SearchParamsProps } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Antigüedad de saldos" }
 
@@ -27,12 +26,7 @@ export const metadata: Metadata = { title: "Antigüedad de saldos" }
  * aplicar y los abonos van a `A APLICAR` y **no se compensan** con lo vencido.
  * El cuadre `Σ tramos = saldo de la cuenta a la fecha` (I-E6-14) va al pie.
  */
-export default async function AgingPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const { db, org } = await requireOrg(Role.VIEWER)
+export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) => {
   const params = await searchParams
   const first = (key: string) => firstOf(params, key)
 
@@ -123,7 +117,7 @@ export default async function AgingPage({
       </p>
     </div>
   )
-}
+}, { readOnly: false })
 
 function AgingTable({
   title,

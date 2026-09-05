@@ -3,11 +3,10 @@ import { runHeader } from "@/app/(app)/reports/shared"
 import { AmountPlain, formatLocalDate } from "@/components/ledger/amount"
 import { ExportLinks } from "@/components/reports/export-links"
 import { ReportHeader } from "@/components/reports/report-header"
-import { requireOrg } from "@/lib/authz"
-import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
+import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Informe emitido" }
 
@@ -19,8 +18,7 @@ export const metadata: Metadata = { title: "Informe emitido" }
  * poder reconstruir contra qué se midió la variación, el motivo del sello sería
  * una afirmación sin respaldo.
  */
-export default async function ReportRunDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { org } = await requireOrg(Role.VIEWER)
+export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ org, params }) => {
   const { id } = await params
 
   const state = await runDetailAction(id)
@@ -157,4 +155,4 @@ export default async function ReportRunDetailPage({ params }: { params: Promise<
       </p>
     </div>
   )
-}
+}, { readOnly: false })
