@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-05 (E4 implementada, pendiente verificación) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-05 (cierre E4) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
 ## Hecho
 | Épica | Estado | Commits |
@@ -77,13 +77,14 @@ npm run test:all              # los tres
 9. ✅ E2 CERRADA (plan de cuentas, mapa, impuestos, AuditLog; revisión APROBADA).
 10. ✅ E3 CERRADA 2026-09-05 (libro diario; auditor CONFORME; revisión APROBADA).
 11. ✅ E4 DISEÑADA y aprobada (docs/design/E4-analitica.md, E4-validacion-analitica.md, ADR-0010). Backend implementado (commit 3b769f1: 615 unit / 798 integración / 85 RLS; matriz PyG analítica byte a byte con docs/design/fixtures/pyg-analitica-esperada.json). UI implementada (commit 0bf28a3: /analytics/pyg, projects, cost-centers, business-lines, /settings/analytics, reclasificación, dimensiones en asientos; 8 e2e verdes).
-12. **SIGUIENTE (E4 pendiente de cierre)** — en este orden:
+12. ✅ E4 CERRADA 2026-09-05 (bugs corregidos; QA PASS; auditor CONFORME; revisión APROBADA tras 1 ronda; ADR-0011). Deuda aceptada: matriz por agregado SQL, índices O(1) en resolveDestination, MLC por entryDate, seedAnalyticsDefaults con tx del llamante, $queryRawUnsafe documentado, closedProjectOverride sin superficie UI (derivar rol de withOrg al exponerla).
+12-old. (cerrado) E4 pendiente de cierre — en este orden:
     a. Bugs reportados por dev-frontend, a corregir por dev-backend: (b) `lib/analytics` `resolveLevel` lanza `AnalyticsError TYPE_UNKNOWN` en vez de devolver FAIL → una línea 6/7 con costCenterId y analyticType NULL tumba /ledger/sumas-saldos (debe ser check FAIL/WARN, nunca excepción); (c) AuditLog de `reclassifyLines` con ~21 líneas falla «value too long» (before/after como JSON compacto o por lotes; comprobar tipo de columna); caché de `models/margins.ts::getAnalyticPnl` es de módulo (debe ser per-request y acotada; clave incluye dimensiones — ya parcheado por frontend).
     b. QA (qa-tester) sobre E4: criterios docs/design/E4-analitica.md §8; adversarial: xor project/ceco, FK cruzadas, reclasificación en ejercicio cerrado, hash v2 estable ante reclasificación, I4 con líneas CC-NA (WARN → REQUIERE REVISIÓN), VIEWER.
     c. auditor-fiabilidad en contexto limpio: reconstruir por SQL/Python la matriz (INGRESOS 6.250.000 · MC1 5.670.000 · MC2 3.276.000 · MC3 3.084.110 · EBITDA 2.390.430 · EBIT 1.995.430 · BAI 1.996.430 · RESULTADO 1.497.322) y P-02/CC-GA; error inyectado en dimensión.
     d. revisor-codigo en contexto limpio sobre `git diff a6e4a14...HEAD`; rondas de fix hasta APROBADO.
     e. documentador: ROADMAP E4 = CERRADA, runs/registro.jsonl, ESTADO; push.
-13. Después: `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
+13. **SIGUIENTE**: `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
 ~~11. `/epica E4` (analítica base: BusinessLine, Project, CostCenter, AnalyticType en líneas, MarginLevelConfig, PyG analítica sin imputaciones, I4; retirar CHECK NULL de dimensiones + FKs; fixtures con projectCode/costCenterCode activados) → `/sprint E4` → E6 (informes: balance, PyG, cashflow, ReportRun) → E5 (liquidación CECOs).
 ~~10. `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.
 
