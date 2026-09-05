@@ -18,6 +18,10 @@ export type AuditEntity =
   | "Organization"
   | "Membership"
   | "Invitation"
+  // E3 · T8 — libro diario (docs/design/E3-libro-diario.md §4.1).
+  | "JournalEntry"
+  | "FiscalYear"
+  | "PeriodLock"
 
 export type AuditAction =
   | "create"
@@ -33,6 +37,12 @@ export type AuditAction =
   | "invite"
   | "revoke"
   | "leave"
+  // E3 · T8 — posteo, anulación, bloqueo de meses y ciclo del ejercicio.
+  | "post"
+  | "void"
+  | "lock"
+  | "unlock"
+  | "open"
 
 export type AuditLogInput = {
   entity: AuditEntity

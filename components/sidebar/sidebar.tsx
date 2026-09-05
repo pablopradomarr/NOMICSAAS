@@ -20,7 +20,9 @@ import {
 import { UserProfile } from "@/lib/auth"
 import config from "@/lib/config"
 import {
+  BookOpenCheck,
   Building2,
+  CalendarRange,
   ClockArrowUp,
   Coins,
   DatabaseBackup,
@@ -31,7 +33,9 @@ import {
   House,
   Import,
   ListTree,
+  NotebookPen,
   Percent,
+  Scale,
   ScrollText,
   Sparkles,
   Tags,
@@ -66,6 +70,9 @@ const settingsItems = [
   // único con `adminOnly` — el resto respondería 404 y el menú no debe llevar
   // a un 404 (ronda 2, #12).
   { title: "Plan de cuentas", href: "/settings/accounts", icon: ListTree, adminOnly: false },
+  // E3 · T12 — los ejercicios y su rejilla de meses los LEE cualquier rol; abrir,
+  // bloquear y cerrar es de ADMIN, y eso lo deciden las acciones, no el menú.
+  { title: "Ejercicios", href: "/settings/fiscal-years", icon: CalendarRange, adminOnly: false },
   { title: "Mapa de cuentas", href: "/settings/account-map", icon: Waypoints, adminOnly: false },
   { title: "Impuestos", href: "/settings/taxes", icon: Percent, adminOnly: false },
   { title: "Auditoría de cambios", href: "/settings/audit", icon: ScrollText, adminOnly: true },
@@ -177,6 +184,34 @@ export function AppSidebar({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItemWithHighlight>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          {/* E3 · T11/T12 — Contabilidad (`ui-erp` §Navegación). El diario, el
+              mayor y sumas y saldos los lee cualquier rol; "Nuevo asiento" sólo
+              aparece con permiso de edición, y la acción lo vuelve a exigir. */}
+          <SidebarGroup>
+            <SidebarGroupLabel>Contabilidad</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {[
+                  { title: "Libro diario", href: "/ledger", icon: BookOpenCheck, editorOnly: false },
+                  { title: "Nuevo asiento", href: "/ledger/new", icon: NotebookPen, editorOnly: true },
+                  { title: "Mayor", href: "/ledger/mayor", icon: ListTree, editorOnly: false },
+                  { title: "Sumas y saldos", href: "/ledger/sumas-saldos", icon: Scale, editorOnly: false },
+                ]
+                  .filter((item) => !item.editorOnly || canEdit)
+                  .map((item) => (
+                    <SidebarMenuItemWithHighlight key={item.href} href={item.href}>
+                      <SidebarMenuButton asChild>
+                        <Link href={item.href}>
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItemWithHighlight>
+                  ))}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

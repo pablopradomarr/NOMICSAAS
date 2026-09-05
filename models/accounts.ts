@@ -98,20 +98,21 @@ export async function getAccount(db: AnyClient, code: string): Promise<LedgerAcc
 /**
  * Uso de una cuenta.
  *
- * TODO(E3): `movementCount` está fijado a 0 porque `journal_lines` no existe
- * todavía. Al crear la tabla en E3 hay que cablearlo aquí — es lo único que
- * separa a `canDeleteAccount` de permitir borrar una cuenta con asientos
- * (riesgo R6 del diseño). Hay un test que fija este contrato hoy.
+ * E3 · T8: `movementCount` cuenta ya las líneas reales de `journal_lines`, que
+ * es lo que separa a `canDeleteAccount` de permitir borrar una cuenta con
+ * asientos (riesgo R6). El `TODO(E3)` que dejó E2 queda cerrado; la FK
+ * `ON DELETE RESTRICT` de la línea lo repite en la base de datos.
  */
 export async function getAccountUsage(db: AnyClient, code: string): Promise<AccountUsage> {
-  const [childCount, maps, taxRates, taxRatesCounter] = await Promise.all([
+  const [movementCount, childCount, maps, taxRates, taxRatesCounter] = await Promise.all([
+    db.journalLine.count({ where: { accountCode: code } }),
     db.ledgerAccount.count({ where: { parentCode: code } }),
     db.organizationAccountMap.findMany({ where: { accountCode: code }, select: { key: true } }),
     db.taxRate.findMany({ where: { accountCode: code }, select: { code: true } }),
     db.taxRate.findMany({ where: { counterAccountCode: code }, select: { code: true } }),
   ])
   return {
-    movementCount: 0,
+    movementCount,
     childCount,
     mappedKeys: maps.map((m) => m.key),
     taxRateCodes: [...new Set([...taxRates, ...taxRatesCounter].map((t) => t.code))].sort(),
