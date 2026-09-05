@@ -23,6 +23,7 @@
 import {
   accountAnalyticTypeSchema,
   analyticPnlSchema,
+  cellDetailSchema,
   analyticsPolicySchema,
   archiveDimensionSchema,
   businessLineCreateSchema,
@@ -41,7 +42,7 @@ import { ActionState } from "@/lib/actions"
 import { withOrg } from "@/lib/authz"
 import { tenantTransaction } from "@/lib/db"
 import type { AnalyticPnl } from "@/lib/analytics/margins"
-import type { AnalyticsConfig, LocalDate } from "@/lib/analytics/types"
+import type { AnalyticsConfig, ColumnKey, LocalDate } from "@/lib/analytics/types"
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 import {
   archiveDimension,
@@ -67,7 +68,7 @@ import {
   type ReclassifyResult,
 } from "@/models/analytics"
 import { formatLedgerErrors, runLedgerTransaction, todayLocalDate, type LedgerResult } from "@/models/ledger"
-import { getAnalyticPnl } from "@/models/margins"
+import { getAnalyticPnl, getCellDetail, type CellDetail } from "@/models/margins"
 import { Role } from "@/prisma/client"
 import { randomUUID } from "node:crypto"
 import { revalidatePath } from "next/cache"
@@ -105,11 +106,12 @@ export const listAnalyticsAction = withOrg(
   async ({ db }, input: unknown = {}): Promise<ActionState<AnalyticsListing>> => {
     const parsed = dimensionListSchema.safeParse(input ?? {})
     if (!parsed.success) return invalid(parsed.error)
-    const [businessLines, projects, costCenters] = await Promise.all([
-      listBusinessLines(db, parsed.data),
-      listProjects(db, parsed.data),
-      listCostCenters(db, parsed.data),
-    ])
+    // En SERIE por la misma razón que dentro de cada listado: `tenantDb` abre
+    // una transacción por operación y lanzarlas a la vez dispara el aviso del
+    // adaptador `pg` cuando el llamante ya tiene una abierta.
+    const businessLines = await listBusinessLines(db, parsed.data)
+    const projects = await listProjects(db, parsed.data)
+    const costCenters = await listCostCenters(db, parsed.data)
     return { success: true, data: { businessLines, projects, costCenters } }
   }
 )
@@ -150,7 +152,44 @@ export const analyticPnlAction = withOrg(
       const motivo = error instanceof Error ? error.message : String(error)
       return { success: false, error: `REQUIERE REVISIÓN — el motor analítico ha fallado: ${motivo}` }
     }
-    return { success: true, data: { ...report, runId, gitSha: sha } }
+    // Hallazgo #5: `lineDetail` NO viaja al cliente. Son 85 objetos en el
+    // fixture y decenas de miles en un ejercicio real, para pintar una tabla de
+    // 8 × N celdas que no los usa; el drill-down los pide celda a celda con
+    // `analyticCellDetailAction`. Los agregados y la provenance sí viajan: son
+    // 8 × N entradas y son lo que la pantalla enseña.
+    const payload: AnalyticPnlPayload = {
+      ...report,
+      pnl: { ...report.pnl, lineDetail: [], coveredLineIds: new Set<string>() },
+      runId,
+      gitSha: sha,
+    }
+    return { success: true, data: payload }
+  }
+)
+
+/**
+ * Detalle de UNA celda de la matriz, **bajo demanda** (hallazgo #5).
+ *
+ * La pantalla no recibe ninguna línea del diario al cargar: pinta la matriz con
+ * los agregados y, cuando el usuario pincha una celda, pide sólo esa. La
+ * consulta que se ejecuta es exactamente la de la provenance de esa celda, así
+ * que la suma que devuelve es por construcción la que se muestra.
+ */
+export const analyticCellDetailAction = withOrg(
+  Role.VIEWER,
+  async ({ org }, input: unknown): Promise<ActionState<CellDetail>> => {
+    const parsed = cellDetailSchema.safeParse(input)
+    if (!parsed.success) return invalid(parsed.error)
+    const detail = await tenantTransaction(org.id, async (tx) =>
+      getCellDetail(tx, {
+        level: parsed.data.level,
+        column: parsed.data.column as ColumnKey,
+        from: parsed.data.from,
+        to: parsed.data.to,
+        ...(parsed.data.fiscalYearId ? { fiscalYearId: parsed.data.fiscalYearId } : {}),
+      })
+    )
+    return { success: true, data: detail }
   }
 )
 

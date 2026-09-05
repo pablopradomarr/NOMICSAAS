@@ -360,7 +360,17 @@ describe("sello (§5)", () => {
     expect(seal(clean, { gitSha: "abc1234", lastGitSha: "abc1234" })).toEqual({
       sello: "VALIDADO AUTOMÁTICAMENTE",
       motivos: [],
+      razones: [],
     })
+  })
+
+  it("el git-sha desconocido se etiqueta ENTORNO, no como descuadre (auditor 5)", () => {
+    const result = seal(clean, { gitSha: "desconocido" })
+    expect(result.sello).toBe("REQUIERE REVISIÓN")
+    expect(result.razones).toHaveLength(1)
+    expect(result.razones[0].kind).toBe("ENTORNO")
+    expect(result.razones[0].message).toMatch(/^ENTORNO · /)
+    expect(result.razones.some((r) => r.kind === "INVARIANTE")).toBe(false)
   })
 
   it("cualquier FAIL: REQUIERE REVISIÓN nombrando el invariante", () => {

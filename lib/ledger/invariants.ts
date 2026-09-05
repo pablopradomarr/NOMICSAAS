@@ -465,9 +465,24 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
   }
 }
 
+export type SealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION"
+
+/** Motivo del sello, ETIQUETADO por su naturaleza (hallazgo 5 del auditor). */
+export type SealReason = { kind: SealReasonKind; message: string }
+
 export type Seal = {
   sello: "VALIDADO AUTOMÁTICAMENTE" | "REQUIERE REVISIÓN"
+  /** Compatibilidad: los mensajes en texto plano, en el mismo orden. */
   motivos: string[]
+  /**
+   * Los mismos motivos con su etiqueta. `ENTORNO` es el que separa el auditor:
+   * «no sé con qué versión del motor se calculó esto» NO es un descuadre de
+   * cifras — el diario puede estar perfecto —, es una carencia de trazabilidad
+   * del despliegue. Confundirlos hacía que un entorno sin `GIT_SHA` pareciera
+   * un problema contable, y que un problema contable pasara desapercibido entre
+   * el ruido de un entorno mal configurado.
+   */
+  razones: SealReason[]
 }
 
 export type SealOptions = {
@@ -492,31 +507,42 @@ export const isKnownGitSha = (sha: string | null | undefined): boolean =>
   typeof sha === "string" && !UNKNOWN_SHAS.has(sha.trim())
 
 export function seal(validacion: Validacion, opts: SealOptions): Seal {
-  const motivos: string[] = []
+  const razones: SealReason[] = []
   const failed = validacion.checks.filter((c) => c.status === "FAIL")
   const warned = validacion.checks.filter((c) => c.status === "WARN")
 
   // Revisión ronda 1 (#4): sin git-sha no se puede afirmar CON QUÉ motor se
   // calculó la cifra, así que el sello no puede decir «validado
   // automáticamente». La trazabilidad (P6/P7) es parte del sello, no un extra.
+  // Es un motivo de ENTORNO: no dice nada de las cifras.
   if (!isKnownGitSha(opts.gitSha)) {
-    motivos.push("git-sha del motor desconocido: no se puede acreditar con qué versión se calculó")
-  }
-  if (failed.length > 0) {
-    motivos.push(`invariantes en FAIL: ${failed.map((c) => c.id).join(", ")}`)
+    razones.push({
+      kind: "ENTORNO",
+      message:
+        "ENTORNO · git-sha del motor desconocido: no se puede acreditar con qué versión se calculó (no es un descuadre de cifras)",
+    })
   }
   if (opts.lastGitSha !== undefined && opts.lastGitSha !== null && opts.lastGitSha !== opts.gitSha) {
-    motivos.push(`primer run tras cambiar el motor (${opts.lastGitSha} → ${opts.gitSha})`)
+    razones.push({ kind: "ENTORNO", message: `ENTORNO · primer run tras cambiar el motor (${opts.lastGitSha} → ${opts.gitSha})` })
+  }
+  if (failed.length > 0) {
+    razones.push({ kind: "INVARIANTE", message: `invariantes en FAIL: ${failed.map((c) => c.id).join(", ")}` })
   }
   const threshold = opts.warnThreshold ?? 0
   if (warned.length > threshold) {
-    motivos.push(`${warned.length} aviso(s) por encima del umbral (${threshold})`)
+    razones.push({
+      kind: "AVISO",
+      message: `${warned.length} aviso(s) por encima del umbral (${threshold}): ${warned.map((c) => c.id).join(", ")}`,
+    })
   }
-  if (opts.forceReview) motivos.push("revisión forzada por configuración de la organización")
+  if (opts.forceReview) {
+    razones.push({ kind: "CONFIGURACION", message: "revisión forzada por configuración de la organización" })
+  }
 
-  return motivos.length === 0
-    ? { sello: "VALIDADO AUTOMÁTICAMENTE", motivos: [] }
-    : { sello: "REQUIERE REVISIÓN", motivos }
+  const motivos = razones.map((r) => r.message)
+  return razones.length === 0
+    ? { sello: "VALIDADO AUTOMÁTICAMENTE", motivos: [], razones: [] }
+    : { sello: "REQUIERE REVISIÓN", motivos, razones }
 }
 
 /** Alias del diseño (§5). */

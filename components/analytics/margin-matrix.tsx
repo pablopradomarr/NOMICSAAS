@@ -1,6 +1,7 @@
 "use client"
 
-import { formatBps, type CellDetail, type MatrixView } from "@/components/analytics/types"
+import { analyticCellDetailAction } from "@/app/(app)/analytics/actions"
+import { formatBps, type CellDetail, type CellLine, type MatrixView } from "@/components/analytics/types"
 import { AmountPlain } from "@/components/ledger/amount"
 import { shortHash } from "@/components/ledger/types"
 import { Button } from "@/components/ui/button"
@@ -14,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 /**
  * E4 · T14 — Matriz de la PyG analítica (`E4-analitica.md` §6).
@@ -30,7 +31,18 @@ import { useState } from "react"
  * rojo/verde semáforo. Las columnas de línea de negocio son **agregados de
  * presentación** y se marcan como tales: no entran en el total (I4).
  */
-export function MarginMatrix({ view, currency }: { view: MatrixView; currency: string }) {
+export type MatrixPeriod = { from: string; to: string; fiscalYearId?: string }
+
+export function MarginMatrix({
+  view,
+  currency,
+  period,
+}: {
+  view: MatrixView
+  currency: string
+  /** Periodo del informe: lo que el diálogo envía para pedir las líneas de una celda. */
+  period: MatrixPeriod
+}) {
   const [detail, setDetail] = useState<CellDetail | null>(null)
 
   return (
@@ -151,7 +163,9 @@ export function MarginMatrix({ view, currency }: { view: MatrixView; currency: s
         </table>
       </div>
 
-      {detail && <CellDialog detail={detail} currency={currency} onClose={() => setDetail(null)} />}
+      {detail && (
+        <CellDialog detail={detail} currency={currency} period={period} onClose={() => setDetail(null)} />
+      )}
     </>
   )
 }
@@ -159,13 +173,57 @@ export function MarginMatrix({ view, currency }: { view: MatrixView; currency: s
 function CellDialog({
   detail,
   currency,
+  period,
   onClose,
 }: {
   detail: CellDetail
   currency: string
+  period: MatrixPeriod
   onClose: () => void
 }) {
   const prov = detail.provenance
+  /**
+   * Hallazgo #5: las líneas del diario NO viajan con la matriz. Al abrir la
+   * celda se piden al servidor, que ejecuta **la consulta de la provenance de
+   * esta misma celda** — la que se muestra justo encima en «Registros origen»—,
+   * de modo que lo que se lista es exactamente lo que suma la cifra.
+   */
+  const [lines, setLines] = useState<CellLine[] | null>(detail.lines.length > 0 ? detail.lines : null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (detail.lines.length > 0) return
+    let cancelled = false
+    void analyticCellDetailAction({
+      level: detail.level,
+      column: detail.columnKey,
+      from: period.from,
+      to: period.to,
+      ...(period.fiscalYearId ? { fiscalYearId: period.fiscalYearId } : {}),
+    }).then((result) => {
+      if (cancelled) return
+      if (!result.success || !result.data) {
+        setError(result.error ?? "No se han podido leer las líneas de esta celda")
+        setLines([])
+        return
+      }
+      setLines(
+        result.data.lines.map((l) => ({
+          entryRef: l.entryRef,
+          lineNo: l.lineNo,
+          accountCode: l.accountCode,
+          accountName: l.accountName,
+          analyticType: l.analyticType,
+          projectCode: l.projectCode,
+          costCenterCode: l.costCenterCode,
+          amountCents: l.amountCents,
+        }))
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [detail.level, detail.columnKey, detail.lines, period.from, period.to, period.fiscalYearId])
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-3xl">
@@ -224,14 +282,21 @@ function CellDialog({
               </tr>
             </thead>
             <tbody className="divide-y">
-              {detail.lines.length === 0 && (
+              {lines === null && (
                 <tr>
                   <td className="px-3 py-3 text-muted-foreground" colSpan={5}>
-                    Ninguna línea del diario aporta a este nivel en esta columna.
+                    Leyendo las líneas de esta celda…
                   </td>
                 </tr>
               )}
-              {detail.lines.map((line) => (
+              {lines !== null && lines.length === 0 && (
+                <tr>
+                  <td className="px-3 py-3 text-muted-foreground" colSpan={5}>
+                    {error ?? "Ninguna línea del diario aporta a este nivel en esta columna."}
+                  </td>
+                </tr>
+              )}
+              {(lines ?? []).map((line) => (
                 <tr key={`${line.entryRef}-${line.lineNo}`} className="h-8">
                   <td className="px-3 py-1 font-code text-xs">
                     {line.entryRef}/{line.lineNo}

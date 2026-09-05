@@ -113,10 +113,12 @@ export async function dimensionNames(db: TenantClient): Promise<{
   projects: DimensionNames
   costCenters: DimensionNames
 }> {
-  const [projects, costCenters] = await Promise.all([
-    db.project.findMany({ select: { id: true, code: true, name: true } }),
-    db.costCenter.findMany({ select: { id: true, code: true, name: true } }),
-  ])
+  // En SERIE: con `tenantDb` cada operación abre su propia transacción, pero si
+  // hay una transacción de tenant abierta arriba las dos se despachan sobre la
+  // MISMA conexión y el adaptador `pg` avisa de «client is already executing a
+  // query» — aviso que Next reenvía a la consola del navegador.
+  const projects = await db.project.findMany({ select: { id: true, code: true, name: true } })
+  const costCenters = await db.costCenter.findMany({ select: { id: true, code: true, name: true } })
   return {
     projects: new Map(projects.map((p) => [p.id, { code: p.code, name: p.name }])),
     costCenters: new Map(costCenters.map((c) => [c.id, { code: c.code, name: c.name }])),
@@ -219,7 +221,10 @@ export async function reportHeader(
       runId: "",
       ledgerHash: "",
       gitSha: process.env.GIT_SHA ?? "desconocido",
-      seal: { sello: "REQUIERE REVISIÓN", motivos: [`los invariantes no se han podido evaluar: ${motivo}`] },
+      seal: {
+        sello: "REQUIERE REVISIÓN",
+        motivos: [`los invariantes no se han podido evaluar: ${motivo}`],
+      },
       checks: [
         {
           id: "VALIDACION",

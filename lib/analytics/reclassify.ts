@@ -10,8 +10,8 @@ import { isPnlAccount, resolveEffectiveAnalyticType } from "@/lib/analytics/marg
 import type { AnalyticsConfig, AnalyticType, LocalDate } from "@/lib/analytics/types"
 import { err, fail, LedgerError, ok, type Result } from "@/lib/ledger/types"
 
-/** Motivo obligatorio (C-R3): ≥ 10 caracteres. */
-export const MIN_RECLASSIFY_REASON = 10
+/** Motivo obligatorio (C-R3): ≥ 8 caracteres (ADR-0010, salvaguarda 3). */
+export const MIN_RECLASSIFY_REASON = 8
 
 export type ReclassifyTarget = {
   lineId: string
@@ -35,6 +35,8 @@ export type CurrentLine = {
   entryDate: LocalDate
   fiscalYearId: string
   entryKind: string
+  /** El asiento está anulado (tiene contra-asiento). Bloquea la reclasificación. */
+  isVoided?: boolean
   projectId: string | null
   costCenterId: string | null
   businessLineId: string | null
@@ -91,6 +93,36 @@ export function checkReclassify(
     const line = byId.get(target.lineId)
     if (!line) {
       errors.push(err("ANALYTIC_DEST_UNKNOWN", "lineId", `La línea ${target.lineId} no existe en esta organización`))
+      continue
+    }
+
+    // §8.7 / I-E4-11 — un `REVERSAL` NO se reclasifica: su destino es el espejo
+    // literal del original y moverlo dejaría el par descuadrado por columna
+    // (Σ aporte ≠ 0 por destino) mientras I4 seguiría en PASS, porque los
+    // totales de fila son ciegos a la distribución. Es el peor descuadre: el
+    // invisible al invariante. Corregir la imputación de un asiento anulado se
+    // hace en el asiento NUEVO, nunca en el par que ya netea cero.
+    if (line.entryKind === "REVERSAL") {
+      errors.push(
+        err(
+          "ANALYTIC_DEST_UNKNOWN",
+          "lineId",
+          `El asiento nº ${line.entryNumber} es un contra-asiento: hereda el destino del original y no se reclasifica (I-E4-11)`,
+          { lineNo: line.lineNo, check: "CA-5" }
+        )
+      )
+      continue
+    }
+    if (line.isVoided) {
+      errors.push(
+        err(
+          "ALREADY_REVERSED",
+          "lineId",
+          `El asiento nº ${line.entryNumber} está anulado: reclasificarlo rompería el espejo con su contra-asiento ` +
+            "(I-E4-11). Corrige la imputación en el asiento que lo sustituye",
+          { lineNo: line.lineNo, check: "CA-5" }
+        )
+      )
       continue
     }
 

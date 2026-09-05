@@ -21,13 +21,20 @@ export type Provenance = {
   ledgerHash: string
   calculado_por: string
   registros_origen: string
-  /** Parámetros de la consulta, en orden ($1, $2, …). Nunca se interpolan. */
-  parametros: readonly (string | number)[]
+  /**
+   * Parámetros de la consulta, en orden ($1, $2, …). Nunca se interpolan.
+   * Un elemento que es ARRAY viaja como array de verdad (`= ANY($n)`), no
+   * como una cadena con comas: eso último sería interpolación disfrazada.
+   */
+  parametros: readonly ProvenanceParam[]
   confianza: Confidence
   /** E4-D2: sello analítico de la celda. Ausente en los informes financieros. */
   analyticsHash?: string
   marginConfigHash?: string
 }
+
+/** Un parámetro de consulta: escalar o array (para `= ANY($n)`). */
+export type ProvenanceParam = string | number | readonly string[]
 
 export type ProvenanceParams = {
   organizationId: string
@@ -47,7 +54,7 @@ export type ProvenanceParams = {
   entryKind?: string
   /** Consulta que devuelve las líneas que componen la cifra. */
   query?: string
-  extraParams?: readonly (string | number)[]
+  extraParams?: readonly ProvenanceParam[]
   // ── E4 (§3.3): dimensiones analíticas de la celda. Todo parametrizado. ──
   projectId?: string
   costCenterId?: string
@@ -83,7 +90,7 @@ export function cellProvenance(
   confidence: Confidence = "calculado"
 ): Provenance {
   let query = params.query ?? (params.accountCode ? ACCOUNT_QUERY : DEFAULT_QUERY)
-  const parametros: (string | number)[] = [params.organizationId, params.from, params.to]
+  const parametros: ProvenanceParam[] = [params.organizationId, params.from, params.to]
   if (params.accountCode) parametros.push(params.accountCode)
 
   // #10: el filtro que acota REALMENTE la celda se añade a la consulta, no se

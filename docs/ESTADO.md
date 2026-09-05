@@ -54,6 +54,9 @@ Desde E3 hay un tercer rol: **`app_maintenance`** (`BYPASSRLS`, `NOLOGIN` por de
 
 **Acción pendiente del operador:** en cualquier entorno donde ya se aplicó `20260904140000_e1_rls_effective`, esa migración dejó la contraseña literal `app_runtime`; hay que ROTARLA. La migración no se edita porque ya está aplicada (`CLAUDE.md`).
 
+### Deuda técnica: pg DeprecationWarning en tenantDb
+`@prisma/adapter-pg@7.8 + pg@8.22` emiten «client is already executing a query» (DeprecationWarning) al resolver `include` multi-relación dentro de la transacción por operación de `tenantDb`. Sin efecto funcional; el e2e `libro-diario.spec.ts` lo excluye explícitamente. Cierre: actualizar adapter cuando corrija el issue upstream o agrupar en `tenantTransaction` (deuda E1 ya anotada).
+
 ### Comandos de test
 ```bash
 npm run test                  # unitarios

@@ -205,9 +205,15 @@ export function resolveDestination(line: AnalyticLine, config: AnalyticsConfig):
     }
     if (ceco.marginLevel !== "MC3" && ceco.marginLevel !== "EBITDA") {
       // Incoherencia de CONFIGURACIÓN, no de datos: la impide un CHECK en la BD.
+      // Error de CONFIGURACIÓN, no de cuadre: bloquea el informe entero en vez
+      // de inventar un nivel (§5.1, casos límite). Un fallback silencioso
+      // movería importe de nivel sin que nadie lo supiera, que es peor que no
+      // pintar la matriz. En la práctica es inalcanzable: el CHECK
+      // `cost_centers_margin_level` lo impide en la base desde E4.
       throw new AnalyticsError(
         "CECO_MARGIN_LEVEL",
-        `El centro de coste ${ceco.code} tiene marginLevel ${ceco.marginLevel}: solo MC3 o EBITDA`
+        `El centro de coste ${ceco.code} tiene marginLevel ${ceco.marginLevel}: solo admite MC3 o EBITDA. ` +
+          "Corrígelo en /analytics/cost-centers antes de emitir la PyG analítica"
       )
     }
     return { analyticType: type, level: ceco.marginLevel, column: cecoColumn(ceco.kind), fallback: null }
@@ -294,10 +300,16 @@ export function classifyLine(
  */
 export function marginBps(marginCents: Cents, revenueCents: Cents): number | null {
   if (revenueCents === 0) return null
-  // Décimas de punto porcentual, redondeadas al entero más próximo y sin float:
-  // 1 pp = 100 bps, 1 décima = 10 bps.
+  // Décimas de punto porcentual: 1 pp = 100 bps, 1 décima = 10 bps.
+  //
+  // Hallazgo #9: el redondeo es **simétrico** (half away from zero). Con
+  // `Math.round` —que redondea hacia +∞— un −0,05 % se convertía en −0,0 % y un
+  // +0,05 % en +0,1 %: el mismo margen en valor absoluto se presentaba distinto
+  // según el signo, y una pérdida pequeña se veía como cero.
   const scaled = (marginCents * 10000) / revenueCents
-  return Math.round(scaled / 10) * 10
+  const tenths = scaled / 10
+  const rounded = tenths < 0 ? -Math.round(-tenths) : Math.round(tenths)
+  return rounded * 10
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -502,6 +514,7 @@ export function buildAnalyticPnl(
   const confidence: Confidence = opts.confidence ?? (checks.every((c) => c.status === "PASS") ? "comprobado" : "calculado")
   for (const level of MARGIN_LEVELS) {
     for (const column of columns) {
+      const cell = cellQuery(level, column, config, period)
       provenance.set(
         `${level}|${column}`,
         cellProvenance(
@@ -512,8 +525,8 @@ export function buildAnalyticPnl(
             from: period.from,
             to: period.to,
             ...(period.fiscalYearId ? { fiscalYearId: period.fiscalYearId } : {}),
-            query: queryFor(column),
-            extraParams: paramsFor(column, config),
+            query: cell.query,
+            extraParams: cell.params.slice(3),
             ...(opts.analyticsHash ? { analyticsHash: opts.analyticsHash } : {}),
             ...(opts.marginConfigHash ? { marginConfigHash: opts.marginConfigHash } : {}),
           },
@@ -551,25 +564,130 @@ function metricOf(level: MarginLevel, column: ColumnKey): string {
   return `${lower}.${column.toLowerCase()}`
 }
 
+/**
+ * Consulta de provenance de una celda (§7, hallazgo #3 de la revisión).
+ *
+ * **La celda de la matriz es CUMULATIVA**: `M[nivel][col]` es la suma de los
+ * aportes de todos los niveles ≤ nivel en esa columna. La consulta reproduce
+ * EXACTAMENTE ese valor —no el aporte incremental del nivel—, porque es el
+ * número que la pantalla muestra y el que el usuario pincha. El aporte
+ * incremental vive en `contributionByLevelCents` y su provenance se obtiene con
+ * `cellQuery(..., { incremental: true })`.
+ *
+ * Para lograrlo, el filtro no puede ser «esta columna» a secas: hay que acotar
+ * también QUÉ líneas de esa columna caen en un nivel ≤ el de la celda. Como el
+ * nivel de una línea se deriva del tipo efectivo (y, para `INDIRECTO_CECO`, del
+ * `marginLevel` de su CECO; y para `NO_ANALITICO`, del prefijo de cuenta), el
+ * filtro se materializa en conjuntos concretos de `analytic_type` y de
+ * `cost_center_id`, que viajan como **arrays parametrizados** (`= ANY($n)`),
+ * nunca interpolados ni concatenados en una cadena.
+ */
 const BASE_QUERY =
   "SELECT id FROM journal_lines WHERE organization_id = $1 AND entry_date BETWEEN $2 AND $3 " +
   "AND left(account_code, 1) IN ('6','7') AND entry_kind NOT IN ('REGULARIZATION','CLOSING','OPENING')"
 
-function queryFor(column: ColumnKey): string {
-  if (column.startsWith("PROJ:")) return `${BASE_QUERY} AND project_id = $4`
-  if (column.startsWith("CECO:")) return `${BASE_QUERY} AND cost_center_id = ANY($4)`
-  return `${BASE_QUERY} AND analytic_type = $4`
+/** Índice de nivel en el orden de acumulación (`INGRESOS` = 0 … `RESULTADO` = 7). */
+const levelIndex = (level: MarginLevel): number => MARGIN_LEVELS.indexOf(level)
+
+/** Tipos con columna y nivel FIJOS por configuración (todos salvo INDIRECTO_CECO y NO_ANALITICO). */
+function typesAtOrBelow(level: MarginLevel, config: AnalyticsConfig, only: readonly AnalyticType[]): string[] {
+  const byType = levelByType(config)
+  const max = levelIndex(level)
+  return only.filter((t) => {
+    const l = byType.get(t)
+    return l !== undefined && levelIndex(l) <= max
+  })
 }
 
-function paramsFor(column: ColumnKey, config: AnalyticsConfig): readonly string[] {
+export type CellQuery = { query: string; params: readonly (string | readonly string[])[] }
+
+export type CellQueryOptions = {
+  /** `true` para el aporte del nivel; por defecto, el valor CUMULATIVO. */
+  incremental?: boolean
+}
+
+/**
+ * Consulta parametrizada que devuelve **exactamente** las líneas que suman la
+ * celda `(level, column)`. Los tres primeros parámetros son siempre
+ * `(organizationId, from, to)`.
+ */
+export function cellQuery(
+  level: MarginLevel,
+  column: ColumnKey,
+  config: AnalyticsConfig,
+  period: AnalyticPeriod,
+  opts: CellQueryOptions = {}
+): CellQuery {
+  const base: (string | readonly string[])[] = [config.organizationId, period.from, period.to]
+  const at = levelIndex(level)
+  /** Niveles admitidos: sólo el de la celda si es incremental, todos los ≤ si no. */
+  const accepts = (candidate: MarginLevel): boolean =>
+    opts.incremental ? candidate === level : levelIndex(candidate) <= at
+
   if (column.startsWith("PROJ:")) {
-    return [config.projects.find((p) => p.code === column.slice(5))?.id ?? ""]
+    // A una columna de proyecto sólo llegan los tres tipos directos y
+    // `AMORTIZACION_DETERIORO` con proyecto (R-A5, excepción única).
+    const types = typesAtOrBelow(
+      level,
+      config,
+      ["INGRESO_DIRECTO", "COSTE_DIRECTO_MC1", "COSTE_DIRECTO_MC2", "AMORTIZACION_DETERIORO"] as const
+    ).filter((t) => accepts(levelByType(config).get(t as AnalyticType) as MarginLevel))
+    const projectId = config.projects.find((p) => p.code === column.slice(5))?.id ?? ""
+    return {
+      query: `${BASE_QUERY} AND project_id = $4 AND analytic_type = ANY($5::analytic_type[])`,
+      params: [...base, projectId, types],
+    }
   }
+
   if (column.startsWith("CECO:")) {
+    // A una columna de CECO sólo llega `INDIRECTO_CECO`, y su nivel es el
+    // `marginLevel` del propio CECO (R-A6/R-A7): se filtra por los ids cuyo
+    // nivel entra en la celda.
     const kind = column.slice(5)
-    return [config.costCenters.filter((c) => c.kind === kind).map((c) => c.id).join(",")]
+    const ids = config.costCenters.filter((c) => c.kind === kind && accepts(c.marginLevel)).map((c) => c.id)
+    return {
+      query: `${BASE_QUERY} AND cost_center_id = ANY($4::uuid[]) AND analytic_type = 'INDIRECTO_CECO'`,
+      params: [...base, ids],
+    }
   }
-  return [column]
+
+  if (column === "AMORTIZACION_DETERIORO") {
+    const included = accepts(levelByType(config).get("AMORTIZACION_DETERIORO") ?? "EBIT")
+    return {
+      query: `${BASE_QUERY} AND project_id IS NULL AND analytic_type = ANY($4::analytic_type[])`,
+      params: [...base, included ? ["AMORTIZACION_DETERIORO"] : []],
+    }
+  }
+
+  if (column === "FINANCIERO" || column === "EXTRAORDINARIO") {
+    const included = accepts(levelByType(config).get(column) ?? "BAI")
+    return {
+      query: `${BASE_QUERY} AND analytic_type = ANY($4::analytic_type[])`,
+      params: [...base, included ? [column] : []],
+    }
+  }
+
+  // `NO_ANALITICO` se parte en dos por R-A11: el impuesto sobre beneficios está
+  // clavado en RESULTADO y el resto cae en `nonAnalyticLevel`.
+  const taxIncluded = accepts("RESULTADO")
+  const restIncluded = accepts(config.nonAnalyticLevel)
+  const prefixes = [...config.incomeTaxPrefixes]
+  if (taxIncluded && restIncluded) {
+    return { query: `${BASE_QUERY} AND analytic_type = 'NO_ANALITICO'`, params: base }
+  }
+  if (taxIncluded) {
+    return {
+      query: `${BASE_QUERY} AND analytic_type = 'NO_ANALITICO' AND left(account_code, 3) = ANY($4::text[])`,
+      params: [...base, prefixes],
+    }
+  }
+  if (restIncluded) {
+    return {
+      query: `${BASE_QUERY} AND analytic_type = 'NO_ANALITICO' AND left(account_code, 3) <> ALL($4::text[])`,
+      params: [...base, prefixes],
+    }
+  }
+  return { query: `${BASE_QUERY} AND false`, params: base }
 }
 
 function buildChecks(input: {
@@ -704,4 +822,105 @@ export function canonicalAnalyticPnlJson(pnl: AnalyticPnl, config: AnalyticsConf
     lineDetail: pnl.lineDetail,
   }
   return `${JSON.stringify(out, null, 2)}\n`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vista de la matriz para la UI (hallazgo #5 de la revisión)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type MatrixCell = {
+  level: MarginLevel
+  column: ColumnKey
+  /** Valor CUMULATIVO: el que se pinta. */
+  amountCents: Cents
+  /** Aporte del nivel (no cumulativo), para el desglose de la fila. */
+  contributionCents: Cents
+  /** % sobre los ingresos de la columna, en bps enteros. `null` = se pinta «—». */
+  marginBps: number | null
+}
+
+export type MatrixColumn = {
+  key: ColumnKey
+  kind: "PROJECT" | "COST_CENTER" | "TYPE"
+  /** Etiqueta corta ya resuelta: código de proyecto, `kind` de CECO o el tipo. */
+  label: string
+  /** Sólo en columnas de proyecto: bajo qué línea de negocio se agrupa. */
+  businessLineCode: string | null
+}
+
+/**
+ * Matriz lista para pintar, **sin una sola línea de diario dentro**.
+ *
+ * Motivo (hallazgo #5): serializar `lineDetail` al cliente son 85 objetos en el
+ * fixture y decenas de miles en un ejercicio real, para pintar una tabla de
+ * 8 × N celdas que no los usa. El detalle de una celda se pide **bajo demanda**
+ * con `analyticCellDetailAction`, que ejecuta la consulta parametrizada de la
+ * provenance de esa celda.
+ *
+ * El acceso a celda es **O(1)**: `cellAt(level, column)` indexa un `Map` por
+ * `${level}|${column}` en vez de recorrer filas.
+ */
+export type MatrixView = {
+  levels: readonly { level: MarginLevel; label: string; isVisible: boolean }[]
+  columns: readonly MatrixColumn[]
+  businessLineCodes: readonly string[]
+  cells: ReadonlyMap<string, MatrixCell>
+  businessLineMatrixCents: Record<string, Record<string, Cents>>
+  levelTotalsCents: Record<string, Cents>
+  cellAt: (level: MarginLevel, column: ColumnKey) => MatrixCell | undefined
+  totalAt: (level: MarginLevel) => Cents
+}
+
+export const cellKey = (level: MarginLevel, column: ColumnKey): string => `${level}|${column}`
+
+export function buildMatrixView(pnl: AnalyticPnl, config: AnalyticsConfig): MatrixView {
+  const projectByCode = new Map(config.projects.map((p) => [p.code, p]))
+  const blCodeById = new Map(config.businessLines.map((b) => [b.id, b.code]))
+
+  const columns: MatrixColumn[] = pnl.columns.map((key) => {
+    if (key.startsWith("PROJ:")) {
+      const code = key.slice(5)
+      const project = projectByCode.get(code)
+      return {
+        key,
+        kind: "PROJECT" as const,
+        label: code,
+        businessLineCode: project ? (blCodeById.get(project.businessLineId) ?? null) : null,
+      }
+    }
+    if (key.startsWith("CECO:")) {
+      return { key, kind: "COST_CENTER" as const, label: key.slice(5), businessLineCode: null }
+    }
+    return { key, kind: "TYPE" as const, label: key, businessLineCode: null }
+  })
+
+  const cells = new Map<string, MatrixCell>()
+  for (const level of pnl.levels) {
+    for (const column of pnl.columns) {
+      const amountCents = pnl.matrixCents[level][column] ?? 0
+      cells.set(cellKey(level, column), {
+        level,
+        column,
+        amountCents,
+        contributionCents: pnl.contributionByLevelCents[level]?.[column] ?? 0,
+        // El denominador del margen es SIEMPRE la fila de ingresos de la misma
+        // columna: un margen sobre otra base no es comparable entre columnas.
+        marginBps: marginBps(amountCents, pnl.matrixCents.INGRESOS[column] ?? 0),
+      })
+    }
+  }
+
+  return {
+    levels: pnl.levels.map((level) => {
+      const row = config.levels.find((l) => l.level === level)
+      return { level, label: row?.label ?? level, isVisible: row?.isVisible ?? true }
+    }),
+    columns,
+    businessLineCodes: pnl.businessLineCodes,
+    cells,
+    businessLineMatrixCents: pnl.businessLineMatrixCents,
+    levelTotalsCents: pnl.levelTotalsCents,
+    cellAt: (level, column) => cells.get(cellKey(level, column)),
+    totalAt: (level) => pnl.levelTotalsCents[level] ?? 0,
+  }
 }

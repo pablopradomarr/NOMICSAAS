@@ -170,7 +170,11 @@ export default async function AnalyticPnlPage({
         </p>
       )}
 
-      <MarginMatrix view={view} currency={org.baseCurrency} />
+      <MarginMatrix
+        view={view}
+        currency={org.baseCurrency}
+        period={{ from, to, ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}) }}
+      />
 
       <p className="text-xs text-muted-foreground">
         Las columnas de <strong>línea de negocio</strong> son agregados de presentación y no entran en el total. En una

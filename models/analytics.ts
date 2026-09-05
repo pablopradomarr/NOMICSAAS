@@ -71,6 +71,18 @@ type OrgAnalyticsRow = { analytics_required: boolean; non_analytic_level: NonAna
  * La versión de `MarginLevelConfig` se elige por **la fecha del periodo**, no
  * por la de ejecución (§8.4): un ejercicio cerrado reimprime su PyG analítica
  * con la configuración que tenía.
+ *
+ * **Hallazgo #14 — una versión por informe, no por línea.** La configuración se
+ * resuelve con `periodEnd`, así que un informe cuyo periodo cruzase el corte de
+ * dos versiones usaría la segunda para todo el periodo. Es deliberado y no una
+ * omisión: (a) la matriz es una sola tabla y mezclar dos repartos de niveles
+ * dentro de ella daría una columna cuyo total no se puede explicar con ninguna
+ * configuración concreta; (b) `MLC-4` abre las versiones en el borde de un
+ * periodo, que es cuando tiene sentido cambiar de criterio; y (c) el
+ * `marginConfigHash` que sella el informe identifica UNA versión, de modo que
+ * la reproducibilidad (P7) exige que sea una sola. Si algún día hiciera falta
+ * el corte intra-periodo, la vía es emitir dos informes y sumarlos, no partir
+ * la matriz por dentro.
  */
 export async function getAnalyticsConfig(
   tx: TenantTransactionClient,
@@ -79,9 +91,12 @@ export async function getAnalyticsConfig(
   const organizationId = tx.$organizationId
   const at = toUtcDate(opts.periodEnd)
 
-  const [orgRows, businessLines, projects, costCenters, levels, plan] = await Promise.all([
-    tx.$queryRaw<OrgAnalyticsRow[]>`
-      SELECT analytics_required, non_analytic_level FROM organizations WHERE id = ${organizationId}::uuid`,
+  // El `$queryRaw` va solo: comparte conexión con las consultas de Prisma
+  // dentro de la transacción y en paralelo dispara el aviso del adaptador `pg`.
+  const orgRows = await tx.$queryRaw<OrgAnalyticsRow[]>`
+    SELECT analytics_required, non_analytic_level FROM organizations WHERE id = ${organizationId}::uuid`
+
+  const [businessLines, projects, costCenters, levels, plan] = await Promise.all([
     tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
     tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
     tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
@@ -155,7 +170,33 @@ export const configHashOf = (config: AnalyticsConfig): string => marginConfigHas
 // Listados con recuento de líneas
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type DimensionFilter = { includeArchived?: boolean }
+export type DimensionFilter = {
+  includeArchived?: boolean
+  /**
+   * Hallazgo #15: `imputedCents` se acotaba a nada — sumaba TODO el histórico,
+   * asientos de regularización y cierre incluidos, así que el importe imputado
+   * de un proyecto salía duplicado (el gasto y su regularización) y mezclaba
+   * ejercicios. Ahora el periodo es explícito y los `kind` de sistema quedan
+   * fuera, exactamente igual que en I3/I4.
+   */
+  from?: LocalDate
+  to?: LocalDate
+}
+
+/** Los `kind` que I3/I4 excluyen: también quedan fuera del importe imputado. */
+const NON_PNL_KINDS = ["REGULARIZATION", "CLOSING", "OPENING"] as const
+
+const imputedWhere = (filter: DimensionFilter) => ({
+  entryKind: { notIn: [...NON_PNL_KINDS] },
+  ...(filter.from || filter.to
+    ? {
+        entryDate: {
+          ...(filter.from ? { gte: toUtcDate(filter.from) } : {}),
+          ...(filter.to ? { lte: toUtcDate(filter.to) } : {}),
+        },
+      }
+    : {}),
+})
 
 export type BusinessLineListItem = BusinessLineRef & { name: string; color: string; isSystem: boolean; projectCount: number; lineCount: number }
 export type ProjectListItem = ProjectRef & { businessLineCode: string | null; lineCount: number; imputedCents: number }
@@ -181,18 +222,21 @@ export async function listBusinessLines(db: AnyClient, filter: DimensionFilter =
 }
 
 export async function listProjects(db: AnyClient, filter: DimensionFilter = {}): Promise<ProjectListItem[]> {
-  const [rows, lines] = await Promise.all([
-    db.project.findMany({
-      where: filter.includeArchived ? {} : { isActive: true },
-      orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
-      include: { businessLine: { select: { code: true } }, _count: { select: { lines: true } } },
-    }),
-    db.journalLine.groupBy({
-      by: ["projectId"],
-      where: { projectId: { not: null } },
-      _sum: { debitCents: true, creditCents: true },
-    }),
-  ])
+  // En SERIE, no en paralelo: con `tenantDb` cada operación abre su propia
+  // transacción, y si el llamante ya tiene una abierta las dos se despachan
+  // sobre la MISMA conexión — el adaptador `pg` avisa entonces de «client is
+  // already executing a query», y Next reenvía ese aviso a la consola del
+  // navegador, donde los e2e lo tratan (con razón) como un error de servidor.
+  const rows = await db.project.findMany({
+    where: filter.includeArchived ? {} : { isActive: true },
+    orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
+    include: { businessLine: { select: { code: true } }, _count: { select: { lines: true } } },
+  })
+  const lines = await db.journalLine.groupBy({
+    by: ["projectId"],
+    where: { projectId: { not: null }, ...imputedWhere(filter) },
+    _sum: { debitCents: true, creditCents: true },
+  })
   const imputed = new Map(
     lines.map((l) => [l.projectId, (l._sum.creditCents ?? 0) - (l._sum.debitCents ?? 0)] as const)
   )
@@ -212,18 +256,16 @@ export async function listProjects(db: AnyClient, filter: DimensionFilter = {}):
 }
 
 export async function listCostCenters(db: AnyClient, filter: DimensionFilter = {}): Promise<CostCenterListItem[]> {
-  const [rows, lines] = await Promise.all([
-    db.costCenter.findMany({
-      where: filter.includeArchived ? {} : { isActive: true },
-      orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
-      include: { _count: { select: { lines: true } } },
-    }),
-    db.journalLine.groupBy({
-      by: ["costCenterId"],
-      where: { costCenterId: { not: null } },
-      _sum: { debitCents: true, creditCents: true },
-    }),
-  ])
+  const rows = await db.costCenter.findMany({
+    where: filter.includeArchived ? {} : { isActive: true },
+    orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
+    include: { _count: { select: { lines: true } } },
+  })
+  const lines = await db.journalLine.groupBy({
+    by: ["costCenterId"],
+    where: { costCenterId: { not: null }, ...imputedWhere(filter) },
+    _sum: { debitCents: true, creditCents: true },
+  })
   const imputed = new Map(
     lines.map((l) => [l.costCenterId, (l._sum.creditCents ?? 0) - (l._sum.debitCents ?? 0)] as const)
   )
@@ -791,7 +833,13 @@ export async function reclassifyLines(
 
     const rows = await tx.journalLine.findMany({
       where: { id: { in: request.targets.map((t) => t.lineId) } },
-      include: { entry: { select: { entryNumber: true } } },
+      include: {
+        entry: {
+          // `voidedAt` y `reversedBy` deciden si el asiento está anulado:
+          // reclasificar una línea con contra-asiento vivo rompería I-E4-11.
+          select: { entryNumber: true, voidedAt: true, _count: { select: { reversedBy: true } } },
+        },
+      },
     })
     const current: CurrentLine[] = rows.map((l) => ({
       id: l.id,
@@ -802,6 +850,7 @@ export async function reclassifyLines(
       entryDate: fromUtcDate(l.entryDate),
       fiscalYearId: l.fiscalYearId,
       entryKind: l.entryKind,
+      isVoided: l.entry.voidedAt !== null || l.entry._count.reversedBy > 0,
       projectId: l.projectId,
       costCenterId: l.costCenterId,
       businessLineId: l.businessLineId,

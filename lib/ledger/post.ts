@@ -71,6 +71,17 @@ export type DocumentCheck = {
 export type CheckDraftOptions = {
   document?: DocumentCheck
   /**
+   * I-E4-10 (gap de QA) — excepción para postear a un proyecto ya `CLOSED`.
+   *
+   * Un proyecto se cierra cuando se entrega, pero las facturas de los últimos
+   * subcontratistas y la nómina del mes llegan DESPUÉS: sin excepción, ese
+   * coste acabaría en un CECO y el margen del proyecto quedaría falseado al
+   * alza justo en el momento en que se mide si fue rentable. Con excepción, la
+   * autoriza un `ADMIN`, exige motivo y queda en `AuditLog`; el invariante
+   * I-E4-10 la sigue listando como WARN, que es su oficio.
+   */
+  closedProjectOverride?: { role: "ADMIN" | "EDITOR" | "VIEWER"; reason: string }
+  /**
    * C-12: líneas homólogas del documento rectificado. Cada entrada es la
    * cuenta y el lado que tenía en el original; la rectificativa debe llevar el
    * contrario.
@@ -206,7 +217,9 @@ export function buildEntry(input: EntryInput, ctx: LedgerContext, opts: CheckDra
     lines,
   }
 
-  return checkDraft(draft, ctx, opts)
+  // #12: el destino analítico se resuelve AQUÍ, una sola vez, produciendo un
+  // borrador nuevo. `checkDraft` valida sobre él sin volver a escribir nada.
+  return checkDraft(resolveAnalytics(draft, ctx), ctx, opts)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -325,7 +338,7 @@ export function checkDraft(draft: EntryDraft, ctx: LedgerContext, opts: CheckDra
   }
 
   // ── C-9 destino analítico (E4 · T6: ACTIVO) ──
-  errors.push(...validateAnalytics(draft, ctx))
+  errors.push(...validateAnalytics(draft, ctx, opts.closedProjectOverride))
 
   // ── C-10 tipos vigentes (se seleccionan con `documentDate`, no `entryDate`) ──
   const taxRefDate = draft.documentDate ?? draft.entryDate
@@ -399,55 +412,75 @@ export const validateEntry = checkDraft
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Resuelve el destino analítico de cada línea **y lo escribe en el borrador**:
- * el tipo efectivo (R-A2/R-A3/R-A4), el ruteo a `CC-NA` con
- * `analyticsRequired = false` (R-A8) y la denormalización de `businessLineId`
- * desde el proyecto (R-A9). Es deliberadamente mutadora: lo que se persiste es
- * lo que la matriz usa, y la matriz nunca vuelve a decidir.
+ * Resuelve el destino analítico de una línea 6/7: el tipo efectivo
+ * (R-A2/R-A3/R-A4), el ruteo a `CC-NA` con `analyticsRequired = false` (R-A8) y
+ * la denormalización de `businessLineId` desde el proyecto (R-A9).
  *
- * `REVERSAL` **no pasa por aquí** (§8.7): el contra-asiento copia literalmente
- * las cuatro columnas del original y debe poder postearse aunque el proyecto se
- * haya cerrado o el CECO archivado entretanto — bloquearlo dejaría vivo un
- * asiento erróneo para siempre.
+ * **Función pura** (hallazgo #12): devuelve las tres columnas resueltas y no
+ * toca la línea. Quien decide escribirlas es `resolveAnalytics`, y sólo dentro
+ * de `buildEntry`, que es el único sitio donde el borrador todavía se está
+ * construyendo. Así `checkDraft` puede validar sin efectos secundarios y dos
+ * llamadas seguidas dan el mismo resultado.
  */
-export function resolveAnalytics(draft: EntryDraft, ctx: LedgerContext): void {
-  if (!ctx.dimensions.available || EXEMPT_KINDS.has(draft.kind)) return
-  const projects = ctx.dimensions.projects ?? []
-  const analyticTypeByAccount = new Map<string, AnalyticType | null>(
-    [...ctx.plan.byCode.entries()].map(([code, a]) => [code, a.analyticType])
+export function resolveLineAnalytics(
+  line: Pick<ResolvedLine, "accountCode" | "analyticType" | "projectId" | "costCenterId">,
+  ctx: LedgerContext,
+  analyticTypeByAccount: ReadonlyMap<string, AnalyticType | null>
+): { analyticType: AnalyticType | null; projectId: string | null; costCenterId: string | null; businessLineId: string | null } {
+  const projectId = line.projectId ?? null
+  let costCenterId = line.costCenterId ?? null
+
+  let effective = resolveEffectiveAnalyticType(
+    { accountCode: line.accountCode, analyticType: line.analyticType ?? null, projectId, costCenterId },
+    { analyticTypeByAccount }
   )
 
-  for (const line of draft.lines) {
-    if (!isPnlAccount(line.accountCode)) continue
-
-    let effective = resolveEffectiveAnalyticType(
-      {
-        accountCode: line.accountCode,
-        analyticType: line.analyticType ?? null,
-        projectId: line.projectId ?? null,
-        costCenterId: line.costCenterId ?? null,
-      },
-      { analyticTypeByAccount }
-    )
-
-    // R-A8: con la regla relajada, la línea sin destino va a `CC-NA` en vez de
-    // quedarse invisible en todas las columnas.
-    const hasDest = Boolean(line.projectId) || Boolean(line.costCenterId)
-    if (!hasDest && effective !== "NO_ANALITICO" && effective !== null && !ctx.policy.analyticsRequired) {
-      const unassigned = ctx.dimensions.unassignedCostCenterId ?? null
-      if (unassigned) {
-        line.costCenterId = unassigned
-        effective = resolveEffectiveAnalyticType(
-          { accountCode: line.accountCode, projectId: null, costCenterId: unassigned },
-          { analyticTypeByAccount }
-        )
-      }
+  // R-A8: con la regla relajada, la línea sin destino va a `CC-NA` en vez de
+  // quedarse invisible en todas las columnas.
+  if (!projectId && !costCenterId && effective !== "NO_ANALITICO" && effective !== null && !ctx.policy.analyticsRequired) {
+    const unassigned = ctx.dimensions.unassignedCostCenterId ?? null
+    if (unassigned) {
+      costCenterId = unassigned
+      effective = resolveEffectiveAnalyticType(
+        { accountCode: line.accountCode, projectId: null, costCenterId: unassigned },
+        { analyticTypeByAccount }
+      )
     }
+  }
 
-    line.analyticType = effective
+  return {
+    analyticType: effective,
+    projectId,
+    costCenterId,
     // R-A9: la línea de negocio se COPIA del proyecto en el alta y no se
     // recalcula nunca. Con CECO, va a NULL.
-    line.businessLineId = line.projectId ? (projects.find((p) => p.id === line.projectId)?.businessLineId ?? null) : null
+    businessLineId: projectId
+      ? ((ctx.dimensions.projects ?? []).find((p) => p.id === projectId)?.businessLineId ?? null)
+      : null,
+  }
+}
+
+/** Índice `código de cuenta → analyticType` del plan. */
+const analyticTypeIndex = (ctx: LedgerContext): ReadonlyMap<string, AnalyticType | null> =>
+  new Map<string, AnalyticType | null>([...ctx.plan.byCode.entries()].map(([code, a]) => [code, a.analyticType]))
+
+/**
+ * Devuelve un borrador NUEVO con el destino analítico ya resuelto en cada línea
+ * 6/7. No muta el que recibe (hallazgo #12).
+ *
+ * `REVERSAL`, `REGULARIZATION`, `CLOSING` y `OPENING` se devuelven intactos
+ * (§8.7 y §2.5 del experto): el contra-asiento copia literalmente las cuatro
+ * columnas del original —debe poder postearse aunque el proyecto se haya
+ * cerrado entretanto— y los tres de sistema quedan fuera de I3/I4 por su `kind`.
+ */
+export function resolveAnalytics(draft: EntryDraft, ctx: LedgerContext): EntryDraft {
+  if (!ctx.dimensions.available || EXEMPT_KINDS.has(draft.kind)) return draft
+  const analyticTypeByAccount = analyticTypeIndex(ctx)
+  return {
+    ...draft,
+    lines: draft.lines.map((line) =>
+      isPnlAccount(line.accountCode) ? { ...line, ...resolveLineAnalytics(line, ctx, analyticTypeByAccount) } : line
+    ),
   }
 }
 
@@ -460,8 +493,19 @@ export function resolveAnalytics(draft: EntryDraft, ctx: LedgerContext): void {
  * - proyecto `CLOSED` no admite líneas nuevas.
  * - con `analyticsRequired`, faltar el destino BLOQUEA el asiento.
  */
-export function validateAnalytics(draft: EntryDraft, ctx: LedgerContext): LedgerError[] {
+/** Motivo mínimo de la excepción de proyecto cerrado, igual que en la anulación. */
+export const MIN_OVERRIDE_REASON = 10
+
+export function validateAnalytics(
+  draft: EntryDraft,
+  ctx: LedgerContext,
+  closedProjectOverride?: { role: "ADMIN" | "EDITOR" | "VIEWER"; reason: string }
+): LedgerError[] {
   const errors: LedgerError[] = []
+  const overrideOk =
+    closedProjectOverride !== undefined &&
+    closedProjectOverride.role === "ADMIN" &&
+    (closedProjectOverride.reason ?? "").trim().length >= MIN_OVERRIDE_REASON
 
   if (!ctx.dimensions.available) {
     // Guarda de §2.3 (E3): sin tablas destino ninguna línea puede llevar una
@@ -488,13 +532,15 @@ export function validateAnalytics(draft: EntryDraft, ctx: LedgerContext): Ledger
   // el propio invariante que C-9 sirve.
   if (EXEMPT_KINDS.has(draft.kind)) return errors
 
-  resolveAnalytics(draft, ctx)
-
+  // #12: se valida sobre el destino RESUELTO, pero sin escribirlo. Quien lo
+  // escribe es `buildEntry` llamando a `resolveAnalytics`, y lo hace antes.
+  const analyticTypeByAccount = analyticTypeIndex(ctx)
   const projects = ctx.dimensions.projects ?? []
   const costCenters = ctx.dimensions.costCenters ?? []
 
-  for (const line of draft.lines) {
-    const pnl = isPnlAccount(line.accountCode)
+  for (const raw of draft.lines) {
+    const pnl = isPnlAccount(raw.accountCode)
+    const line = pnl ? { ...raw, ...resolveLineAnalytics(raw, ctx, analyticTypeByAccount) } : raw
 
     // R-A1 / I-E4-5 — los grupos 1–5 son balance, no PyG.
     if (!pnl) {
@@ -555,12 +601,13 @@ export function validateAnalytics(draft: EntryDraft, ctx: LedgerContext): Ledger
             })
           )
         }
-        if (project.status === "CLOSED") {
+        if (project.status === "CLOSED" && !overrideOk) {
           errors.push(
             err(
               "ANALYTIC_PROJECT_CLOSED",
               "projectId",
-              `El proyecto ${project.code} está cerrado y no admite líneas nuevas (I-E4-10)`,
+              `El proyecto ${project.code} está cerrado y no admite líneas nuevas (I-E4-10). ` +
+                `Un ADMIN puede posterlas con motivo (≥ ${MIN_OVERRIDE_REASON} caracteres), que queda en el AuditLog`,
               { lineNo: line.lineNo, check: "C-9" }
             )
           )

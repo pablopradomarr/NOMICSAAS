@@ -18,18 +18,23 @@
  * | `entryHash` (de fila) | **todas** las columnas de la línea, dimensiones incluidas | cualquier cosa del asiento, reclasificación incluida (se recalcula) |
  * | `analyticsHash` | `lib/analytics/hash.ts` | reclasificación, `MarginLevelConfig`, `analyticType` de cuenta, liquidación |
  *
- * **Por qué `ledgerHash` no lleva ids.** El diseño enumera la tupla como
- * `(entryId, lineNo, …, fiscalYearId, …, taxRateId)`, pero esos tres son uuid
- * generados por fila: metiéndolos, dos cargas del MISMO fixture en dos
- * organizaciones producirían sellos distintos y se caería tanto el criterio 15
- * de E3 («dos cargas dan el mismo `ledgerHash`», test en verde desde E3) como
- * el criterio 18 de E4 y el efecto colateral que el propio E4-D2 persigue: que
- * dos organizaciones con el mismo diario produzcan el mismo sello financiero y
- * las verificaciones de I1–I3 sean comparables. La identidad del asiento dentro
- * de su organización ya la fijan `(entryDate, entryNumber, lineNo)`, que es el
- * orden canónico. `entryHash` sí lleva los ids: es un sello **de fila**, no de
- * informe, y su trabajo es detectar cualquier cambio, no ser comparable entre
- * organizaciones.
+ * **La tupla exacta la fija `docs/adr/0011-forma-canonica-hashes.md`**
+ * (APROBADO), que SUSTITUYE la tabla de tuplas de ADR-0010 §E4-D2. Resumen del
+ * criterio de comparabilidad que ese ADR razona:
+ *
+ *   · `ledgerHash` es un sello **de informe** y debe ser comparable entre
+ *     organizaciones y entre cargas (criterio 15 de E3 y 18 de E4, con test en
+ *     verde). Por eso NO lleva uuid: `entryId`, `fiscalYearId` y `taxRateId`
+ *     son claves técnicas, no cifras del hecho económico, y cambiar un uuid no
+ *     cambia un céntimo. La identidad de la línea dentro de su organización ya
+ *     la fijan `(entryDate, entryNumber, lineNo)`, único por I7.
+ *   · `entryHash` es un sello **de fila** (I-E3-7): su trabajo es detectar
+ *     CUALQUIER mutación, incluidas las que no mueven un céntimo, así que lleva
+ *     todas las columnas, uuids incluidos. No necesita ser comparable.
+ *
+ * Regla para el futuro: una columna que represente una cifra o una fecha
+ * contable entra en `ledgerHash`; una clave técnica o un dato de gestión, no
+ * —pero sí en `entryHash`.
  *
  * **`hashVersion` = 2 y no se toca nunca más.** El cambio de forma canónica solo
  * era posible ahora, sin datos en producción: la migración

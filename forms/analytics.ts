@@ -196,3 +196,14 @@ export const analyticPnlSchema = z
   .refine((p) => p.to >= p.from, { message: "El periodo termina antes de empezar", path: ["to"] })
 
 export const dimensionListSchema = z.object({ includeArchived: z.boolean().optional() })
+
+/** Drill-down de UNA celda de la matriz (hallazgo #5: bajo demanda). */
+export const cellDetailSchema = z
+  .object({
+    level: marginLevelSchema,
+    column: z.string().trim().min(1).max(64),
+    from: localDateSchema,
+    to: localDateSchema,
+    fiscalYearId: uuidSchema.optional(),
+  })
+  .refine((p) => p.to >= p.from, { message: "El periodo termina antes de empezar", path: ["to"] })

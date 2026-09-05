@@ -62,6 +62,9 @@ export type MatrixRow = {
 /** Detalle de una celda: provenance + las líneas que la aportan. */
 export type CellDetail = {
   title: string
+  /** Nivel y columna de la celda: lo que el diálogo envía para pedir sus líneas. */
+  level: string
+  columnKey: string
   /** Aporte NO cumulativo de este nivel en esta columna. */
   contributionCents: number
   cumulativeCents: number

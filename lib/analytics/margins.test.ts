@@ -15,7 +15,9 @@ import { describe, expect, it } from "vitest"
 import { defaultMarginLevels } from "@/lib/analytics/seed"
 import {
   buildAnalyticPnl,
+  buildMatrixView,
   canonicalAnalyticPnlJson,
+  cellQuery,
   classifyLine,
   contribution,
   marginBps,
@@ -238,6 +240,53 @@ describe("aporte, PyG contable y márgenes", () => {
     expect(marginBps(0, 0)).toBeNull()
   })
 
+  it("marginBps redondea SIMÉTRICAMENTE: el signo no cambia la décima (#9)", () => {
+    // ±0,05 pp: antes, `Math.round` daba +0,1 % y −0,0 %; el mismo margen en
+    // valor absoluto se presentaba distinto según el signo.
+    expect(marginBps(5, 10000)).toBe(10)
+    expect(marginBps(-5, 10000)).toBe(-10)
+    expect(marginBps(1666, 10000)).toBe(1670)
+    expect(marginBps(-1666, 10000)).toBe(-1670)
+    for (const [margin, revenue] of [
+      [12345, 100000],
+      [7, 3000],
+      [999999, 1000000],
+    ] as const) {
+      expect(marginBps(-margin, revenue)).toBe(-(marginBps(margin, revenue) as number))
+    }
+  })
+
+  it("cellQuery: la celda es CUMULATIVA y su filtro acota los niveles ≤ (#3)", () => {
+    const config = configOf()
+    const period = { from: "2026-01-01", to: "2026-12-31" }
+
+    // Columna de proyecto: en INGRESOS sólo entra el tipo de ingreso; en MC2 ya
+    // entran los tres directos, porque la celda acumula.
+    const ingresos = cellQuery("INGRESOS", "PROJ:P-01", config, period)
+    expect(ingresos.params[4]).toEqual(["INGRESO_DIRECTO"])
+    const mc2 = cellQuery("MC2", "PROJ:P-01", config, period)
+    expect(mc2.params[4]).toEqual(["INGRESO_DIRECTO", "COSTE_DIRECTO_MC1", "COSTE_DIRECTO_MC2"])
+    // Incremental: sólo el tipo de ESE nivel.
+    expect(cellQuery("MC2", "PROJ:P-01", config, period, { incremental: true }).params[4]).toEqual([
+      "COSTE_DIRECTO_MC2",
+    ])
+
+    // Columna de CECO: entran los CECOs cuyo `marginLevel` alcanza la celda.
+    expect(cellQuery("MC2", "CECO:OPERACIONES_INDIRECTAS", config, period).params[3]).toEqual([])
+    expect(cellQuery("MC3", "CECO:OPERACIONES_INDIRECTAS", config, period).params[3]).toEqual(["cc-ops"])
+    expect(cellQuery("MC3", "CECO:G_A", config, period).params[3]).toEqual([])
+    expect(cellQuery("EBITDA", "CECO:G_A", config, period).params[3]).toEqual(["cc-ga"])
+
+    // `NO_ANALITICO` se parte por R-A11: el impuesto sólo en RESULTADO.
+    expect(cellQuery("EBIT", "NO_ANALITICO", config, period).query).toContain("<> ALL($4::text[])")
+    expect(cellQuery("RESULTADO", "NO_ANALITICO", config, period).query).not.toContain("$4")
+    expect(cellQuery("MC1", "NO_ANALITICO", config, period).query).toContain("AND false")
+
+    // Nunca se interpola: los tres primeros parámetros son org y periodo.
+    expect(mc2.params.slice(0, 3)).toEqual(["org-test", "2026-01-01", "2026-12-31"])
+    expect(mc2.query).not.toContain("P-01")
+  })
+
   it("classifyLine devuelve celda e importe sin sumar nada", () => {
     expect(classifyLine(lineOf(), configOf())).toEqual({ level: "INGRESOS", column: "PROJ:P-01", amountCents: 100000 })
   })
@@ -428,6 +477,20 @@ describe("PyG analítica del fixture completo", () => {
       entryRefOf: (l) => refByEntryId.get(l.entryId) ?? l.entryId,
     })
     expect(JSON.stringify(again.matrixCents)).toBe(JSON.stringify(pnl.matrixCents))
+  })
+
+  it("#5 · `buildMatrixView` indexa por celda en O(1) y no lleva líneas dentro", () => {
+    const view = buildMatrixView(pnl, config)
+    expect(view.cellAt("MC2", "PROJ:P-01")?.amountCents).toBe(316_000)
+    expect(view.cellAt("MC2", "PROJ:P-01")?.contributionCents).toBe(-1_584_000)
+    expect(view.cellAt("EBITDA", "CECO:G_A")?.amountCents).toBe(-633_180)
+    expect(view.cellAt("RESULTADO", "NO_ANALITICO")?.amountCents).toBe(-499_108)
+    expect(view.totalAt("RESULTADO")).toBe(1_497_322)
+    // Ni una línea del diario dentro de la vista: el drill-down las pide aparte.
+    expect(JSON.stringify([...view.cells.values()])).not.toContain("entryRef")
+    // Las columnas de proyecto saben bajo qué línea de negocio se agrupan.
+    expect(view.columns.find((c) => c.key === "PROJ:P-01")?.businessLineCode).toBe("BL-CONS")
+    expect(view.columns.find((c) => c.key === "CECO:G_A")?.kind).toBe("COST_CENTER")
   })
 
   it("cada celda lleva provenance con métrica y consulta parametrizada", () => {

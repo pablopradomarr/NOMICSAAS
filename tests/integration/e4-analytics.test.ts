@@ -34,8 +34,8 @@ const {
   seedAnalyticsDefaults,
   updateAccountAnalyticType,
 } = await import("@/models/analytics")
-const { getAnalyticPnl } = await import("@/models/margins")
-const { runAnalyticInvariants } = await import("@/lib/analytics/invariants")
+const { getAnalyticPnl, getCellDetail } = await import("@/models/margins")
+const { runAnalyticInvariants, checkIE411 } = await import("@/lib/analytics/invariants")
 const { marginConfigHash, analyticsHash } = await import("@/lib/analytics/hash")
 const { entryHash } = await import("@/lib/ledger/hash")
 
@@ -598,6 +598,283 @@ describe.skipIf(!TEST_DATABASE_URL)("E4 · analítica en base de datos", () => {
       client.query<{ n: number }>(`SELECT count(*)::int AS n FROM journal_entries WHERE hash_version <> 2`)
     )
     expect(rows.rows[0].n).toBe(0)
+  })
+
+  // ── Revisión ronda 1 ──────────────────────────────────────────────────────
+
+  it("BLOQUEA #2 · un contra-asiento no se reclasifica, y su original anulado tampoco", async () => {
+    // Se postea un gasto con destino, se anula, y se intenta mover cualquiera
+    // de las dos patas. I-E4-11 tiene que seguir en PASS después.
+    const draft = await invoiceDraft(ORG, { projectId: otherProjectId }, { accountCode: "629", entryDate: "2026-07-10" })
+    expect(draft.ok, JSON.stringify(draft)).toBe(true)
+    if (!draft.ok) return
+    const posted = await postEntry(ORG, draft.value, actor, { refDate: REF })
+    expect(posted.ok, JSON.stringify(posted)).toBe(true)
+    if (!posted.ok) return
+    const voided = await voidEntry(ORG, posted.value.id, "Anulación por duplicado del proveedor", actor, {
+      refDate: REF,
+    })
+    expect(voided.ok, JSON.stringify(voided)).toBe(true)
+    if (!voided.ok) return
+
+    const originalLine = await prisma.journalLine.findFirstOrThrow({
+      where: { entryId: posted.value.id, accountCode: "629" },
+    })
+    const reversalLine = await prisma.journalLine.findFirstOrThrow({
+      where: { entryId: voided.value.reversal.id, accountCode: "629" },
+    })
+
+    // (a) El contra-asiento: rechazado por la acción…
+    const onReversal = await reclassifyLines(
+      ORG,
+      { reason: "Mover el contra-asiento a otro proyecto", targets: [{ lineId: reversalLine.id, projectId }] },
+      { userId: USER, role: "ADMIN" },
+      { refDate: REF }
+    )
+    expect(onReversal.ok).toBe(false)
+    if (!onReversal.ok) expect(onReversal.errors[0].message).toMatch(/contra-asiento/)
+
+    // … y, saltándose la acción, por el trigger. Se mueve también
+    // `business_line_id` para que el UPDATE sea coherente y llegue de verdad al
+    // trigger de ventana, en vez de pararse antes en el de denormalización.
+    const targetBl = (await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).businessLineId
+    await expect(
+      owner(async (client) =>
+        client.query(
+          `UPDATE journal_lines SET project_id = $1::uuid, business_line_id = $2::uuid WHERE id = $3::uuid`,
+          [projectId, targetBl, reversalLine.id]
+        )
+      )
+    ).rejects.toThrow(/contra-asiento hereda el destino/)
+
+    // (b) El original anulado: mismo rechazo por los dos caminos.
+    const onVoided = await reclassifyLines(
+      ORG,
+      { reason: "Mover el asiento anulado a otro proyecto", targets: [{ lineId: originalLine.id, projectId }] },
+      { userId: USER, role: "ADMIN" },
+      { refDate: REF }
+    )
+    expect(onVoided.ok).toBe(false)
+    if (!onVoided.ok) expect(onVoided.errors[0].message).toMatch(/anulado/)
+
+    await expect(
+      owner(async (client) =>
+        client.query(
+          `UPDATE journal_lines SET project_id = $1::uuid, business_line_id = $2::uuid WHERE id = $3::uuid`,
+          [projectId, targetBl, originalLine.id]
+        )
+      )
+    ).rejects.toThrow(/está anulado/)
+
+    // I-E4-11 sigue en PASS: el par no se ha movido.
+    const entries = await tenantTransaction(ORG, USER, async (tx) =>
+      tx.journalEntry.findMany({ where: { id: { in: [posted.value.id, voided.value.reversal.id] } }, include: { lines: true } })
+    )
+    const asPosted = entries.map((e) => ({
+      id: e.id,
+      organizationId: e.organizationId,
+      fiscalYearId: e.fiscalYearId,
+      entryNumber: e.entryNumber,
+      entryDate: e.entryDate.toISOString().slice(0, 10),
+      description: e.description,
+      kind: e.kind,
+      taxRoundingMode: e.taxRoundingMode,
+      sourceType: e.sourceType,
+      reversesEntryId: e.reversesEntryId,
+      lines: e.lines.map((l) => ({
+        lineNo: l.lineNo,
+        accountCode: l.accountCode,
+        debitCents: l.debitCents,
+        creditCents: l.creditCents,
+        analyticType: l.analyticType,
+        projectId: l.projectId,
+        costCenterId: l.costCenterId,
+        businessLineId: l.businessLineId,
+        entryDate: l.entryDate.toISOString().slice(0, 10),
+        fiscalYearId: l.fiscalYearId,
+        entryKind: l.entryKind,
+      })),
+    }))
+    expect(checkIE411(asPosted).status).toBe("PASS")
+  })
+
+  it("#4 · el recálculo SQL de `entry_hash` coincide con `lib/ledger/hash.ts` en TODO el diario", async () => {
+    const entries = await prisma.journalEntry.findMany({
+      where: { organizationId: { in: [ORG, ORG_FULL, ORG_RELAXED] } },
+      include: { lines: true },
+    })
+    expect(entries.length).toBeGreaterThan(80)
+
+    const bySql = await owner(async (client) =>
+      client.query<{ id: string; hash: string; stored: string; version: number }>(
+        `SELECT id, app.journal_entry_hash(id) AS hash, entry_hash AS stored, hash_version AS version
+           FROM journal_entries WHERE organization_id = ANY($1::uuid[])`,
+        [[ORG, ORG_FULL, ORG_RELAXED]]
+      )
+    )
+    const sqlById = new Map(bySql.rows.map((r) => [r.id, r]))
+
+    for (const e of entries) {
+      const ts = entryHash(
+        e.lines.map((l) => ({
+          entryId: e.id,
+          entryNumber: e.entryNumber,
+          lineNo: l.lineNo,
+          accountCode: l.accountCode,
+          debitCents: l.debitCents,
+          creditCents: l.creditCents,
+          entryDate: l.entryDate.toISOString().slice(0, 10),
+          fiscalYearId: l.fiscalYearId,
+          entryKind: l.entryKind,
+          taxRateId: l.taxRateId,
+          taxBaseCents: l.taxBaseCents,
+          counterpartyId: l.counterpartyId,
+          dueDate: l.dueDate ? l.dueDate.toISOString().slice(0, 10) : null,
+          description: l.description,
+          analyticType: l.analyticType,
+          projectId: l.projectId,
+          costCenterId: l.costCenterId,
+          businessLineId: l.businessLineId,
+        }))
+      )
+      const row = sqlById.get(e.id)
+      expect(row, `asiento ${e.entryNumber}`).toBeDefined()
+      // Los tres caminos coinciden: TypeScript, SQL y lo almacenado (I-E3-7).
+      expect(row?.hash, `SQL vs TS en el asiento ${e.entryNumber}`).toBe(ts)
+      expect(row?.stored, `almacenado vs TS en el asiento ${e.entryNumber}`).toBe(ts)
+      expect(row?.version).toBe(2)
+    }
+  })
+
+  it("#8 · escribir un `entry_hash` que no es el de sus líneas lo corta el trigger", async () => {
+    const entry = await prisma.journalEntry.findFirstOrThrow({ where: { organizationId: ORG } })
+    await expect(
+      owner(async (client) =>
+        client.query(`UPDATE journal_entries SET entry_hash = $1 WHERE id = $2::uuid`, ["0".repeat(64), entry.id])
+      )
+    ).rejects.toThrow(/entry_hash sólo admite el sello recalculado|23514/)
+    // El valor correcto sí pasa: es lo que hace la reclasificación.
+    await owner(async (client) =>
+      client.query(`UPDATE journal_entries SET entry_hash = app.journal_entry_hash(id) WHERE id = $1::uuid`, [entry.id])
+    )
+  })
+
+  it("#7 · una línea NO_ANALITICO con dimensión la corta el CHECK de la BD", async () => {
+    const line = await prisma.journalLine.findFirstOrThrow({
+      where: { organizationId: ORG, accountCode: "4300" },
+    })
+    await expect(
+      owner(async (client) =>
+        client.query(
+          `UPDATE journal_lines SET analytic_type = 'NO_ANALITICO', cost_center_id = $1::uuid WHERE id = $2::uuid`,
+          [ceco["CC-GA"], line.id]
+        )
+      )
+    ).rejects.toThrow(/journal_lines_non_analytic_has_no_dimension|journal_lines_analytics_only_pnl/)
+  })
+
+  it("#3 · la consulta de provenance de tres celdas reproduce el valor mostrado", async () => {
+    const result = await tenantTransaction(ORG_FULL, USER, async (tx) => {
+      const report = await getAnalyticPnl(tx, {
+        from: "2026-01-01",
+        to: "2026-12-31",
+        provenance: { runId: "run-prov", gitSha: "c0e828f", baseCurrency: "EUR" },
+      })
+      const cells: { key: string; shown: number; fromQuery: number; query: string }[] = []
+      for (const [level, column] of [
+        ["MC2", "PROJ:P-01"],
+        ["EBITDA", "CECO:G_A"],
+        ["RESULTADO", "NO_ANALITICO"],
+      ] as const) {
+        const detail = await getCellDetail(tx, { level, column, from: "2026-01-01", to: "2026-12-31" })
+        cells.push({
+          key: `${level}|${column}`,
+          shown: report.pnl.matrixCents[level][column],
+          fromQuery: detail.amountCents,
+          query: detail.query,
+        })
+      }
+      return { cells, provenance: report.pnl.provenance }
+    })
+
+    for (const cell of result.cells) {
+      // La celda es CUMULATIVA y la consulta la reproduce EXACTAMENTE.
+      expect(cell.fromQuery, cell.key).toBe(cell.shown)
+      // Y va parametrizada: ni un solo literal de negocio interpolado.
+      expect(cell.query).not.toMatch(/P-01|CC-GA/)
+    }
+    expect(result.cells.find((c) => c.key === "MC2|PROJ:P-01")?.shown).toBe(316_000)
+    expect(result.cells.find((c) => c.key === "EBITDA|CECO:G_A")?.shown).toBe(-633_180)
+    expect(result.cells.find((c) => c.key === "RESULTADO|NO_ANALITICO")?.shown).toBe(-499_108)
+
+    const prov = result.provenance.get("EBITDA|CECO:G_A")
+    expect(prov?.registros_origen).toContain("cost_center_id = ANY($4::uuid[])")
+    expect(Array.isArray(prov?.parametros[3])).toBe(true)
+  })
+
+  it("QA · postear a un proyecto CLOSED: sólo ADMIN con motivo, y queda en AuditLog", async () => {
+    await tenantTransaction(ORG, USER, async (tx) => {
+      await tx.project.update({
+        where: { id: otherProjectId },
+        data: { status: "CLOSED", closedAt: new Date("2026-08-01") },
+      })
+    })
+    try {
+      const build = async (override?: { role: "ADMIN" | "EDITOR"; reason: string }) =>
+        await tenantTransaction(ORG, USER, async (tx) => {
+          const ctx = await getLedgerContext(tx, REF)
+          return buildEntry(
+            {
+              organizationId: ORG,
+              entryDate: "2026-09-10",
+              description: "Última factura del subcontratista",
+              kind: "NORMAL",
+              sourceType: "MANUAL",
+              lines: [
+                { lineNo: 1, accountCode: "607", debitCents: 50_000, creditCents: 0, projectId: otherProjectId },
+                { lineNo: 2, accountCode: "4000", debitCents: 0, creditCents: 50_000 },
+              ],
+            },
+            ctx,
+            override ? { closedProjectOverride: override } : {}
+          )
+        })
+
+      // Sin excepción: bloqueado.
+      const plain = await build()
+      expect(plain.ok).toBe(false)
+      if (!plain.ok) expect(plain.errors[0].code).toBe("ANALYTIC_PROJECT_CLOSED")
+
+      // EDITOR con motivo: sigue bloqueado (la excepción es de ADMIN).
+      const asEditor = await build({ role: "EDITOR", reason: "Llega tarde la factura del subcontratista" })
+      expect(asEditor.ok).toBe(false)
+
+      // ADMIN con motivo corto: bloqueado.
+      const shortReason = await build({ role: "ADMIN", reason: "tarde" })
+      expect(shortReason.ok).toBe(false)
+
+      // ADMIN con motivo: pasa, y el motivo queda en el AuditLog del asiento.
+      const reason = "Última certificación del subcontratista, posterior al cierre del proyecto"
+      const ok = await build({ role: "ADMIN", reason })
+      expect(ok.ok, JSON.stringify(ok)).toBe(true)
+      if (!ok.ok) return
+      const posted = await postEntry(ORG, ok.value, actor, {
+        refDate: REF,
+        check: { closedProjectOverride: { role: "ADMIN", reason } },
+      })
+      expect(posted.ok, JSON.stringify(posted)).toBe(true)
+      if (!posted.ok) return
+
+      const log = await prisma.auditLog.findFirst({
+        where: { organizationId: ORG, entity: "JournalEntry", entityId: posted.value.id, action: "post" },
+      })
+      expect(log?.reason).toBe(reason)
+      expect(JSON.stringify(log?.after)).toContain("closedProjectOverride")
+    } finally {
+      await tenantTransaction(ORG, USER, async (tx) => {
+        await tx.project.update({ where: { id: otherProjectId }, data: { status: "ACTIVE", closedAt: null } })
+      })
+    }
   })
 
   /** `analyticsHash` del ejercicio de ORG, tal y como lo compone el informe. */

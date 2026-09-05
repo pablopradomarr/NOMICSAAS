@@ -193,30 +193,46 @@ export function buildMatrixView(input: MatrixBuildInput): MatrixView {
     return row ? row.isVisible : true
   })
 
+  // Índice O(1) por celda. `lineDetail` llega vacío desde la acción (hallazgo
+  // #5); se sigue soportando lleno para los tests y los scripts, que sí lo
+  // materializan.
+  const linesByCell = new Map<string, CellLine[]>()
+  for (const d of pnl.lineDetail) {
+    const k = `${d.level}|${d.column}`
+    const bucket = linesByCell.get(k)
+    const line: CellLine = {
+      entryRef: d.entryRef,
+      lineNo: d.lineNo,
+      accountCode: d.accountCode,
+      accountName: input.accountNames.get(d.accountCode) ?? "",
+      analyticType: d.analyticType,
+      projectCode: d.projectCode,
+      costCenterCode: d.costCenterCode,
+      amountCents: d.amountCents,
+    }
+    if (bucket) bucket.push(line)
+    else linesByCell.set(k, [line])
+  }
+
   const details: Record<string, CellDetail> = {}
   for (const column of columns) {
     if (column.source === null) continue
     for (const level of visibleLevels) {
       const key = `${level}|${column.source}`
-      const lines: CellLine[] = pnl.lineDetail
-        .filter((d) => d.level === level && d.column === column.source)
-        .map((d) => ({
-          entryRef: d.entryRef,
-          lineNo: d.lineNo,
-          accountCode: d.accountCode,
-          accountName: input.accountNames.get(d.accountCode) ?? "",
-          analyticType: d.analyticType,
-          projectCode: d.projectCode,
-          costCenterCode: d.costCenterCode,
-          amountCents: d.amountCents,
-        }))
+      // Hallazgo #5: el índice se construye UNA vez (arriba) y la celda se
+      // resuelve en O(1). Antes era un `filter` sobre `lineDetail` POR CELDA:
+      // 8 niveles × N columnas × M líneas. Y las líneas ya no viajan en el
+      // payload: `lines` nace vacío y el diálogo las pide con
+      // `analyticCellDetailAction` al abrirse.
       const prov = pnl.provenance.get(key)
       details[key] = {
         title: `${MARGIN_LEVEL_LABELS[level] ?? level} · ${column.label}`,
+        level,
+        columnKey: column.source,
         cumulativeCents: cellAmount(pnl, column, level),
         contributionCents: contributionAmount(pnl, column, level),
         ...(prov ? { provenance: prov } : {}),
-        lines,
+        lines: linesByCell.get(key) ?? [],
       }
     }
   }

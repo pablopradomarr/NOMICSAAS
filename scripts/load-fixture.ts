@@ -45,6 +45,7 @@ import { fixtureRefDate, loadFixture, readFixture, type FixtureName } from "@/te
 import { existsSync, statSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { Client } from "pg"
 import type { CostCenterKind, MarginLevel } from "@/prisma/client"
 
 export type LoadFixtureOptions = {
@@ -55,6 +56,16 @@ export type LoadFixtureOptions = {
   seedPlan?: boolean
   /** «Hoy» al validar. Por defecto, `fixtureRefDate(file)`: determinista (#4). */
   refDate?: LocalDate
+  /**
+   * Auditor 4 — **idempotencia explícita**. Cargar un fixture dos veces sobre la
+   * misma organización NO es idempotente por naturaleza: el diario es
+   * append-only y la numeración por ejercicio es contigua (I7), así que la
+   * segunda carga chocaría — y así debe ser: un script no sobrescribe un diario
+   * en silencio. Con `resetOrg` el vaciado es **explícito**, va en UNA
+   * transacción (o se borra todo o no se borra nada) y sólo alcanza a esta
+   * organización.
+   */
+  resetOrg?: boolean
 }
 
 export type LoadFixtureReport = {
@@ -89,6 +100,8 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
   const loaded = loadFixture(opts.fixture)
   const organizationId = opts.organizationId
   const actor = { userId: opts.userId ?? null }
+
+  if (opts.resetOrg) await resetOrganizationLedger(organizationId, actor.userId ?? undefined)
 
   // ── 1. Política de la organización + plan de cuentas ───────────────────────
   await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
@@ -289,6 +302,49 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
   }
 }
 
+/**
+ * Vacía diario, ejercicios y dimensiones de UNA organización, en una sola
+ * transacción y en orden de dependencias. No toca el plan de cuentas ni los
+ * tipos impositivos: `importNpgc` ya es idempotente y volver a sembrarlos sería
+ * trabajo para nada.
+ *
+ * `journal_lines`/`journal_entries` tienen política `RESTRICTIVE FOR DELETE`,
+ * así que el borrado va con el rol de MANTENIMIENTO (`BYPASSRLS`, ADR-0009 §6):
+ * es exactamente el caso para el que ese rol existe —un script de operador—, y
+ * la aplicación web sigue sin poder borrar un asiento por ningún camino.
+ */
+export async function resetOrganizationLedger(organizationId: string, _userId?: string): Promise<void> {
+  const url = process.env.DATABASE_URL_MAINTENANCE
+  if (!url) {
+    throw new Error(
+      "--reset-org necesita DATABASE_URL_MAINTENANCE: borrar asientos es una operación de operador " +
+        "(ADR-0009 §6), no algo que la aplicación pueda hacer"
+    )
+  }
+  const client = new Client({ connectionString: url })
+  await client.connect()
+  try {
+    await client.query("BEGIN")
+    // Las líneas y los asientos, en la MISMA transacción: el constraint trigger
+    // diferido de cuadre sólo se calla si el asiento tampoco existe al COMMIT.
+    await client.query(`DELETE FROM journal_lines WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM journal_entries WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM period_locks WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM fiscal_years WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM margin_level_configs WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM cost_centers WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM projects WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM business_lines WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query("COMMIT")
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw error
+  } finally {
+    await client.end()
+  }
+  say(`· organización ${organizationId} vaciada (--reset-org)`)
+}
+
 function check(out: string[], label: string, actual: number, expected: number): void {
   if (actual !== expected) out.push(`${label}: ${actual} ≠ ${expected} (esperado)`)
 }
@@ -300,21 +356,60 @@ const describe = (errors: readonly LedgerModelError[]): string =>
 // CLI
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const USAGE = `Carga un fixture inmutable en una organización.
+
+  npx tsx scripts/load-fixture.ts --org <uuid> --user <uuid> [opciones]
+
+Obligatorios (auditor 4: el script escribe en el diario; no se adivina en cuál
+ni de parte de quién):
+  --org <uuid>        Organización destino.
+  --user <uuid>       Usuario que contabiliza. Todo asiento lleva autor (P6);
+                      sin él, postEntry aborta con POSTED_BY_REQUIRED.
+
+Opcionales:
+  --fixture <ruta>    tests/fixtures/ejercicio-minimo.json (por defecto) o
+                      tests/fixtures/ejercicio-completo.json
+  --reset-org         Vacía el diario, los ejercicios y las dimensiones de esa
+                      organización ANTES de cargar. Sin esto, cargar dos veces
+                      sobre la misma organización falla al chocar la numeración,
+                      que es lo correcto: el script NO sobrescribe un diario.
+  --ref-date <fecha>  «Hoy» para I8. Por defecto sale del propio fichero.
+  --out <ruta|dir>    Escribe validacion.json. Con un directorio, un fichero por
+                      fixture.
+  --help              Esto.
+`
+
 function parseArgs(argv: string[]): {
   org: string
   fixture: string
-  user: string | null
+  user: string
   out: string | null
   refDate: string | null
+  resetOrg: boolean
 } {
   const value = (flag: string): string | null => {
     const index = argv.indexOf(flag)
     return index >= 0 ? (argv[index + 1] ?? null) : null
   }
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(USAGE)
+    process.exit(0)
+  }
   const org = value("--org")
+  const user = value("--user")
   const fixture = value("--fixture") ?? "tests/fixtures/ejercicio-minimo.json"
-  if (!org) throw new Error("Uso: npx tsx scripts/load-fixture.ts --org <uuid> --fixture <ruta> [--out validacion.json]")
-  return { org, fixture, user: value("--user"), out: value("--out"), refDate: value("--ref-date") }
+  const missing = [!org && "--org", !user && "--user"].filter(Boolean)
+  if (missing.length > 0) {
+    throw new Error(`Faltan argumentos obligatorios: ${missing.join(", ")}\n\n${USAGE}`)
+  }
+  return {
+    org: org as string,
+    fixture,
+    user: user as string,
+    out: value("--out"),
+    refDate: value("--ref-date"),
+    resetOrg: argv.includes("--reset-org"),
+  }
 }
 
 /**
@@ -337,6 +432,7 @@ async function main() {
     organizationId: args.org,
     fixture,
     userId: args.user,
+    resetOrg: args.resetOrg,
     ...(args.refDate ? { refDate: args.refDate } : {}),
   })
 

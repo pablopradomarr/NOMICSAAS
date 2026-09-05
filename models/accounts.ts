@@ -129,7 +129,16 @@ export async function checkAnalyticCoherence(db: AnyClient, variant: PgcVariant)
 // Mutaciones (todas por tenantTransaction + AuditLog)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Actor = { userId: string | null }
+export type Actor = {
+  userId: string | null
+  /**
+   * E4 (gap de QA): rol del actor en la organización. Lo necesitan las
+   * operaciones cuya ventana depende del rol —reclasificación analítica y
+   * excepción de proyecto cerrado (I-E4-10)—. Opcional: quien no lo aporta se
+   * trata como el rol mínimo que la operación admita.
+   */
+  role?: "ADMIN" | "EDITOR" | "VIEWER"
+}
 
 /**
  * Datos de creación. El `organizationId` va explícito porque el tipo de Prisma

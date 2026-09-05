@@ -10,8 +10,8 @@
 
 import { analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { runAnalyticInvariants } from "@/lib/analytics/invariants"
-import { buildAnalyticPnl, type AnalyticPnl } from "@/lib/analytics/margins"
-import type { AnalyticLine, AnalyticPeriod, AnalyticsConfig, LocalDate } from "@/lib/analytics/types"
+import { buildAnalyticPnl, buildMatrixView, cellQuery, type AnalyticPnl, type MatrixView } from "@/lib/analytics/margins"
+import type { AnalyticLine, AnalyticPeriod, AnalyticsConfig, ColumnKey, LocalDate, MarginLevel } from "@/lib/analytics/types"
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 import type { ProvenanceContext } from "@/lib/ledger/provenance"
 import type { TenantTransactionClient } from "@/lib/db"
@@ -104,19 +104,23 @@ export async function getAnalyticPnl(
     fiscalYearId: request.fiscalYearId ?? null,
   }
 
-  const [config, lines, ledgerHash] = await Promise.all([
-    getAnalyticsConfig(tx, { periodEnd: request.to }),
-    getAnalyticLines(tx, {
-      from: request.from,
-      to: request.to,
-      ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
-    }),
-    computeLedgerHash(tx, {
-      from: request.from,
-      to: request.to,
-      ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
-    }),
-  ])
+  // Hallazgo #6: **una sola lectura** de las líneas alimenta al motor y al
+  // `analyticsHash`. El `ledgerHash` sí sale de un agregado en la base (no
+  // materializa el diario) y la configuración es una lectura de catálogo.
+  // En SERIE: `getAnalyticLines` y `computeLedgerHash` son `$queryRaw` y dentro
+  // de la transacción comparten la ÚNICA conexión; en paralelo, el adaptador
+  // `pg` avisa de «client is already executing a query».
+  const config = await getAnalyticsConfig(tx, { periodEnd: request.to })
+  const lines = await getAnalyticLines(tx, {
+    from: request.from,
+    to: request.to,
+    ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+  })
+  const ledgerHash = await computeLedgerHash(tx, {
+    from: request.from,
+    to: request.to,
+    ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+  })
 
   const configHash = marginConfigHash(config)
   const analyticsHash = computeAnalyticsHash(
@@ -166,5 +170,125 @@ export async function getAnalyticPnl(
   return report
 }
 
-/** Envoltura memoizada por petición de React (RSC). */
-export const getAnalyticPnlCached = cache(getAnalyticPnl)
+// ─────────────────────────────────────────────────────────────────────────────
+// Detalle de una celda, BAJO DEMANDA (hallazgo #5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type CellDetailLine = {
+  lineId: string
+  entryId: string
+  /** Etiqueta del asiento en la UI: su número dentro del ejercicio. */
+  entryRef: string
+  entryNumber: number
+  lineNo: number
+  entryDate: LocalDate
+  accountCode: string
+  accountName: string
+  analyticType: string
+  projectCode: string | null
+  costCenterCode: string | null
+  description: string | null
+  debitCents: number
+  creditCents: number
+  amountCents: number
+}
+
+export type CellDetail = {
+  level: MarginLevel
+  column: ColumnKey
+  /** La consulta parametrizada que ha producido estas filas (provenance). */
+  query: string
+  /** Suma de los aportes devueltos: debe coincidir con la celda pintada. */
+  amountCents: number
+  lines: CellDetailLine[]
+  truncated: boolean
+}
+
+const DETAIL_LIMIT = 500
+
+/**
+ * Ejecuta la consulta de provenance de UNA celda y devuelve sus líneas.
+ *
+ * Es lo que hace innecesario serializar `lineDetail` entero al cliente: la
+ * tabla se pinta con `MatrixView` (sin líneas) y el drill-down pide sólo la
+ * celda que el usuario ha pinchado. La consulta es la MISMA que va en la
+ * provenance, con los mismos parámetros, así que el número que devuelve es por
+ * construcción el que se muestra.
+ */
+export async function getCellDetail(
+  tx: TenantTransactionClient,
+  request: { level: MarginLevel; column: ColumnKey; from: LocalDate; to: LocalDate; fiscalYearId?: string }
+): Promise<CellDetail> {
+  const config = await getAnalyticsConfig(tx, { periodEnd: request.to })
+  const period: AnalyticPeriod = {
+    from: request.from,
+    to: request.to,
+    fiscalYearId: request.fiscalYearId ?? null,
+  }
+  const { query, params } = cellQuery(request.level, request.column, config, period)
+
+  // La consulta de provenance devuelve ids; aquí se envuelve para traer también
+  // las columnas que el drill-down enseña, sin tocar el filtro.
+  const rows = await tx.$queryRawUnsafe<
+    {
+      id: string
+      entry_id: string
+      entry_number: number
+      line_no: number
+      entry_date: Date
+      account_code: string
+      account_name: string | null
+      analytic_type: string | null
+      project_code: string | null
+      cost_center_code: string | null
+      description: string | null
+      debit_cents: number
+      credit_cents: number
+    }[]
+  >(
+    `SELECT l.id, l.entry_id, e.entry_number, l.line_no, l.entry_date, l.account_code,
+            a.name AS account_name, l.analytic_type::text AS analytic_type,
+            p.code AS project_code, c.code AS cost_center_code,
+            l.description, l.debit_cents, l.credit_cents
+       FROM journal_lines l
+       JOIN journal_entries e ON e.id = l.entry_id AND e.organization_id = l.organization_id
+       LEFT JOIN accounts a ON a.organization_id = l.organization_id AND a.code = l.account_code
+       LEFT JOIN projects p ON p.id = l.project_id
+       LEFT JOIN cost_centers c ON c.id = l.cost_center_id
+      WHERE l.id IN (${query})
+      ORDER BY l.entry_date, e.entry_number, l.line_no
+      LIMIT ${DETAIL_LIMIT + 1}`,
+    ...params
+  )
+
+  const truncated = rows.length > DETAIL_LIMIT
+  const lines: CellDetailLine[] = rows.slice(0, DETAIL_LIMIT).map((r) => ({
+    lineId: r.id,
+    entryId: r.entry_id,
+    entryRef: String(r.entry_number),
+    entryNumber: r.entry_number,
+    lineNo: r.line_no,
+    entryDate: r.entry_date.toISOString().slice(0, 10),
+    accountCode: r.account_code,
+    accountName: r.account_name ?? "",
+    analyticType: r.analytic_type ?? "",
+    projectCode: r.project_code,
+    costCenterCode: r.cost_center_code,
+    description: r.description,
+    debitCents: r.debit_cents,
+    creditCents: r.credit_cents,
+    amountCents: r.credit_cents - r.debit_cents,
+  }))
+
+  return {
+    level: request.level,
+    column: request.column,
+    query,
+    amountCents: rows.slice(0, DETAIL_LIMIT).reduce((a, r) => a + r.credit_cents - r.debit_cents, 0),
+    lines,
+    truncated,
+  }
+}
+
+/** La matriz lista para pintar, sin líneas dentro (hallazgo #5). */
+export const matrixViewOf = (report: AnalyticPnlReport): MatrixView => buildMatrixView(report.pnl, report.config)

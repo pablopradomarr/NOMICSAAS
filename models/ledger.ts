@@ -330,21 +330,25 @@ export async function getLedgerContext(
 ): Promise<LedgerContext> {
   const organizationId = tx.$organizationId
 
-  const [orgRows, plan, mapByKey, rates, fiscalYears, periodLocks, projects, costCenters, businessLines] =
-    await Promise.all([
-      tx.$queryRaw<OrganizationPolicyRow[]>`
-      SELECT base_currency, tax_rounding_mode, prorrata_bps, redondeo_tolerancia_cents, analytics_required
-        FROM organizations WHERE id = ${organizationId}::uuid`,
-      getPlan(tx),
-      getAccountMapByKey(tx),
-      listTaxRates(tx),
-      listFiscalYearRefs(tx),
-      listPeriodLockRefs(tx),
-      // E4 · T6: las tres dimensiones. C-9 valida contra ESTOS catálogos.
-      tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-      tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-      tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
-    ])
+  // El `$queryRaw` va SOLO y primero: dentro de una transacción comparte la
+  // ÚNICA conexión con el resto, y lanzarlo en paralelo con las consultas de
+  // Prisma hace que el adaptador `pg` avise de «client is already executing a
+  // query». Las de Prisma sí van juntas: su cola las serializa.
+  const orgRows = await tx.$queryRaw<OrganizationPolicyRow[]>`
+    SELECT base_currency, tax_rounding_mode, prorrata_bps, redondeo_tolerancia_cents, analytics_required
+      FROM organizations WHERE id = ${organizationId}::uuid`
+
+  const [plan, mapByKey, rates, fiscalYears, periodLocks, projects, costCenters, businessLines] = await Promise.all([
+    getPlan(tx),
+    getAccountMapByKey(tx),
+    listTaxRates(tx),
+    listFiscalYearRefs(tx),
+    listPeriodLockRefs(tx),
+    // E4 · T6: las tres dimensiones. C-9 valida contra ESTOS catálogos.
+    tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
+    tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
+    tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
+  ])
 
   const org = orgRows[0]
   if (!org) {
@@ -902,7 +906,11 @@ export async function postEntryTx(
   tx: TenantTransactionClient,
   draft: EntryDraft,
   actor: Actor,
-  opts: { idempotencyKey?: string | null } = {}
+  opts: {
+    idempotencyKey?: string | null
+    /** I-E4-10: excepción ADMIN para postear a un proyecto cerrado. Va al log. */
+    closedProjectOverride?: { role: string; reason: string } | undefined
+  } = {}
 ): Promise<PostedEntry> {
   const organizationId = tx.$organizationId
   if (draft.organizationId !== organizationId) {
@@ -1010,13 +1018,22 @@ export async function postEntryTx(
         kind: draft.kind,
         templateCode: draft.templateCode ?? null,
         entryHash: hash,
+        // I-E4-10: si el asiento entra en un proyecto cerrado por excepción de
+        // ADMIN, el motivo queda aquí. Sin esto la excepción sería invisible.
+        ...(opts.closedProjectOverride
+          ? { closedProjectOverride: { role: opts.closedProjectOverride.role, reason: opts.closedProjectOverride.reason } }
+          : {}),
         lines: draft.lines.map((l) => ({
           lineNo: l.lineNo,
           accountCode: l.accountCode,
           debitCents: l.debitCents,
           creditCents: l.creditCents,
+          analyticType: l.analyticType ?? null,
+          projectId: l.projectId ?? null,
+          costCenterId: l.costCenterId ?? null,
         })),
       },
+      reason: opts.closedProjectOverride?.reason ?? null,
       userId: actor.userId ?? null,
     })
 
@@ -1053,7 +1070,10 @@ export async function postEntry(
       const checked = checkDraft(draft, ctx, opts.check ?? {})
       if (!checked.ok) abortWith(checked.errors)
     }
-    return await postEntryTx(tx, draft, actor, { idempotencyKey: opts.idempotencyKey ?? null })
+    return await postEntryTx(tx, draft, actor, {
+      idempotencyKey: opts.idempotencyKey ?? null,
+      ...(opts.check?.closedProjectOverride ? { closedProjectOverride: opts.check.closedProjectOverride } : {}),
+    })
   })
 }
 
@@ -1436,11 +1456,14 @@ export async function runLedgerInvariants(
       if (cached) return { ...cached, origen: "cache" as const }
     }
 
-    const [i1, i7, total] = await Promise.all([
-      checkI1Sql(tx, opts.fiscalYearId),
-      checkI7Sql(tx, opts.fiscalYearId),
-      countEntries(tx, opts.fiscalYearId),
-    ])
+    // En SERIE, no en paralelo: los tres son `$queryRaw` y dentro de una
+    // transacción comparten la ÚNICA conexión. Lanzarlos a la vez hace que el
+    // adaptador `pg` avise de «client is already executing a query», aviso que
+    // Next reenvía a la consola del navegador y que los e2e tratan —con razón—
+    // como un error de servidor.
+    const i1 = await checkI1Sql(tx, opts.fiscalYearId)
+    const i7 = await checkI7Sql(tx, opts.fiscalYearId)
+    const total = await countEntries(tx, opts.fiscalYearId)
 
     let validacion: Validacion
     let origen: "full" | "sql"
@@ -1489,10 +1512,8 @@ export async function runLedgerInvariants(
         to: analyticFy ? fromUtcDate(analyticFy.endDate) : opts.refDate,
         ...(opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {}),
       }
-      const [analyticsConfig, analyticLines] = await Promise.all([
-        getAnalyticsConfig(tx, { periodEnd: analyticPeriod.to }),
-        getAnalyticLines(tx, analyticPeriod),
-      ])
+      const analyticsConfig = await getAnalyticsConfig(tx, { periodEnd: analyticPeriod.to })
+      const analyticLines = await getAnalyticLines(tx, analyticPeriod)
 
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),
