@@ -23,11 +23,22 @@ export function ReportHeader({
   description,
   header,
   actions,
+  extraHashes,
+  checksTitle = "Validación del libro diario",
+  checksDescription,
 }: {
   title: string
   description?: string
   header: ReportHeaderView
   actions?: React.ReactNode
+  /**
+   * E4 · T14 — sellos añadidos por la épica (`analyticsHash`,
+   * `marginConfigHash`): se pintan junto al `ledgerHash`, abreviados y en
+   * `.font-code`, sin que cada informe tenga que duplicar la cabecera.
+   */
+  extraHashes?: readonly { label: string; value: string; length?: number }[]
+  checksTitle?: string
+  checksDescription?: React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const failed = header.checks.filter((c) => c.status === "FAIL").length
@@ -40,9 +51,15 @@ export function ReportHeader({
         <p className="text-sm text-muted-foreground">
           Periodo {formatLocalDate(header.from)} – {formatLocalDate(header.to)} · moneda base {header.baseCurrency}
         </p>
-        <p className="font-code text-xs text-muted-foreground">
-          run_id {shortHash(header.runId, 12)} · ledgerHash {shortHash(header.ledgerHash, 16)} · motor{" "}
-          {shortHash(header.gitSha, 8)}
+        <p className="font-code text-xs text-muted-foreground" data-testid="report-hashes">
+          run_id {shortHash(header.runId, 12)} · ledgerHash {shortHash(header.ledgerHash, 16)}
+          {extraHashes?.map((hash) => (
+            <span key={hash.label} title={hash.value}>
+              {" "}
+              · {hash.label} {shortHash(hash.value, hash.length ?? 16)}
+            </span>
+          ))}{" "}
+          · motor {shortHash(header.gitSha, 8)}
         </p>
       </div>
 
@@ -59,10 +76,15 @@ export function ReportHeader({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Validación del libro diario</DialogTitle>
+            <DialogTitle>{checksTitle}</DialogTitle>
             <DialogDescription>
-              Invariantes de Capa 1 sobre el diario de esta organización: I1 (partida doble), I7 (numeración sin
-              huecos), I8 (fechas y periodos), I9 (cuentas del plan), I10 (tenant) y los propios de la épica I-E3-1…7.
+              {checksDescription ?? (
+                <>
+                  Invariantes de Capa 1 sobre el diario de esta organización: I1 (partida doble), I7 (numeración sin
+                  huecos), I8 (fechas y periodos), I9 (cuentas del plan), I10 (tenant) y los propios de la épica
+                  I-E3-1…7.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[60vh] overflow-y-auto pr-1">

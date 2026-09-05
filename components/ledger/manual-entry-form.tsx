@@ -1,6 +1,8 @@
 "use client"
 
 import { postManualEntryAction } from "@/app/(app)/ledger/actions"
+import { DimensionCombobox, EMPTY_DIMENSION, type DimensionValue } from "@/components/analytics/dimension-combobox"
+import type { DimensionOption } from "@/components/analytics/types"
 import { AccountCombobox } from "@/components/ledger/account-combobox"
 import { Amount } from "@/components/ledger/amount"
 import type { AccountOption } from "@/components/ledger/types"
@@ -33,6 +35,8 @@ type DraftRow = {
   credit: string
   description: string
   dueDate: string
+  /** E4 · T15 — destino analítico de la línea: proyecto XOR centro de coste. */
+  dimension: DimensionValue
 }
 
 const emptyRow = (): DraftRow => ({
@@ -42,19 +46,33 @@ const emptyRow = (): DraftRow => ({
   credit: "",
   description: "",
   dueDate: "",
+  dimension: EMPTY_DIMENSION,
 })
 
 /** Cuentas con vencimiento: 40x, 41x, 43x, 44x, 47x (`ui-erp` §Formularios). */
 const wantsDueDate = (code: string) => /^(40|41|43|44|47)/.test(code)
 
+/**
+ * E4 · R-A1 — sólo las cuentas de grupo 6 y 7 llevan destino analítico. Fuera
+ * de ahí el selector va deshabilitado y en gris; la base lo repite con el CHECK
+ * `journal_lines_analytics_only_pnl`.
+ */
+const wantsDimension = (code: string) => /^[67]/.test(code)
+
 export function ManualEntryForm({
   accounts,
   canPost,
   defaultDate,
+  dimensions = [],
+  analyticsRequired = false,
 }: {
   accounts: readonly AccountOption[]
   canPost: boolean
   defaultDate: string
+  /** Proyectos y centros de coste activos del tenant. */
+  dimensions?: readonly DimensionOption[]
+  /** Con `true`, faltar el destino en una línea 6/7 bloquea el asiento (C-9). */
+  analyticsRequired?: boolean
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -85,6 +103,27 @@ export function ManualEntryForm({
   const filled = rows.filter((row) => row.accountCode !== "" && (row.debit !== "" || row.credit !== ""))
   const bothSides =
     filled.some((row) => (parseCents(row.debit) ?? 0) > 0) && filled.some((row) => (parseCents(row.credit) ?? 0) > 0)
+  /**
+   * Sólo aviso de pantalla (C-9 lo impone el servidor): una línea 6/7 sin
+   * destino con `analyticsRequired` no se va a poder contabilizar.
+   */
+  const missingDimension = analyticsRequired
+    ? filled.filter(
+        (row) =>
+          wantsDimension(row.accountCode) &&
+          row.dimension.projectId === null &&
+          row.dimension.costCenterId === null
+      )
+    : []
+
+  /**
+   * El destino analítico NO deshabilita "Contabilizar": C-9 la impone
+   * `validateAnalytics` en el servidor, que además sabe si la organización
+   * rutea a `CC-NA` en vez de bloquear. Aquí sólo se avisa —campo marcado en
+   * ámbar y nota bajo el botón— y el error de la línea se enseña tal y como lo
+   * devuelve el servidor. Deshabilitar por una regla que el cliente no puede
+   * evaluar del todo sería adivinar.
+   */
   const readyToPost =
     canPost && description.trim().length > 0 && filled.length >= 2 && bothSides && previewDifference === 0
 
@@ -98,7 +137,9 @@ export function ManualEntryForm({
           ? "Falta contrapartida: hace falta al menos una línea al Debe y otra al Haber (C-4)."
           : previewDifference !== 0
             ? "El asiento está descuadrado: Σdebe − Σhaber debe ser 0,00 € (C-1)."
-            : null
+            : missingDimension.length > 0
+              ? "Aviso: falta el destino analítico en una línea de grupo 6/7 y esta organización lo exige (C-9). El servidor lo comprobará al contabilizar."
+              : null
 
   const submit = () => {
     setError(null)
@@ -115,6 +156,8 @@ export function ManualEntryForm({
           credit: row.credit,
           description: row.description || undefined,
           dueDate: row.dueDate || undefined,
+          projectId: wantsDimension(row.accountCode) ? row.dimension.projectId : null,
+          costCenterId: wantsDimension(row.accountCode) ? row.dimension.costCenterId : null,
         })),
       })
       if (!state.success) {
@@ -174,6 +217,9 @@ export function ManualEntryForm({
               <th className="px-3 py-2 text-left font-medium">Concepto de la línea</th>
               <th className="w-32 px-3 py-2 text-right font-medium">Debe</th>
               <th className="w-32 px-3 py-2 text-right font-medium">Haber</th>
+              <th className="w-56 px-3 py-2 text-left font-medium">
+                Destino analítico{analyticsRequired ? " *" : ""}
+              </th>
               <th className="w-36 px-3 py-2 text-left font-medium">Vencimiento</th>
               <th className="w-10 px-2 py-2" />
             </tr>
@@ -221,6 +267,26 @@ export function ManualEntryForm({
                   />
                 </td>
                 <td className="px-3 py-1">
+                  {wantsDimension(row.accountCode) ? (
+                    <DimensionCombobox
+                      options={dimensions}
+                      value={row.dimension}
+                      onChange={(dimension) => update(row.key, { dimension })}
+                      label={`Destino analítico de la línea ${index + 1}`}
+                      required={analyticsRequired}
+                      invalid={
+                        analyticsRequired &&
+                        row.dimension.projectId === null &&
+                        row.dimension.costCenterId === null
+                      }
+                    />
+                  ) : (
+                    <span className="text-xs text-muted-foreground" title="Sólo las cuentas 6 y 7 llevan destino (R-A1)">
+                      —
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-1">
                   {wantsDueDate(row.accountCode) ? (
                     <Input
                       aria-label={`Vencimiento de la línea ${index + 1}`}
@@ -263,7 +329,7 @@ export function ManualEntryForm({
               <td className="px-3 py-1 text-right font-medium">
                 <Amount cents={previewCredit} zeroAsDash={false} />
               </td>
-              <td className="px-3 py-1" colSpan={2} />
+              <td className="px-3 py-1" colSpan={3} />
             </tr>
             <tr className="h-10 border-t" data-testid="preview-difference">
               <td className="px-2 py-1" colSpan={3}>
@@ -284,7 +350,7 @@ export function ManualEntryForm({
                   <Amount cents={previewDifference} zeroAsDash={false} />
                 </span>
               </td>
-              <td className="px-3 py-1" colSpan={2}>
+              <td className="px-3 py-1" colSpan={3}>
                 {previewDifference === 0 ? (
                   <span className="text-xs">✓ cuadrado</span>
                 ) : (

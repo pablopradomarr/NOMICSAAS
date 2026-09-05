@@ -52,6 +52,9 @@ export function EntryDetail({ entry, baseCurrency }: { entry: EntryView; baseCur
               <th className="w-10 px-3 py-2 text-left font-medium">#</th>
               <th className="px-3 py-2 text-left font-medium">Cuenta</th>
               <th className="px-3 py-2 text-left font-medium">Concepto</th>
+              {/* E4 · T15 — destino analítico: sólo lo llevan las líneas de
+                  grupo 6/7 (R-A1); en el resto se pinta `—`. */}
+              <th className="px-3 py-2 text-left font-medium">Destino analítico</th>
               <th className="px-3 py-2 text-left font-medium">Vencimiento</th>
               <th className="px-3 py-2 text-right font-medium">Debe</th>
               <th className="px-3 py-2 text-right font-medium">Haber</th>
@@ -68,6 +71,21 @@ export function EntryDetail({ entry, baseCurrency }: { entry: EntryView; baseCur
                   <span className="text-muted-foreground">{line.accountName}</span>
                 </td>
                 <td className="px-3 py-1 text-muted-foreground">{line.description ?? ""}</td>
+                <td className="px-3 py-1 text-xs" data-destination={line.destinationCode ?? ""}>
+                  {line.isPnlLine ? (
+                    <>
+                      <span className="font-code">{line.destinationCode ?? "—"}</span>
+                      {line.destinationName && <span className="ml-1 text-muted-foreground">{line.destinationName}</span>}
+                      {line.analyticType && (
+                        <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {line.analyticType}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
                 <td className="px-3 py-1 tabular-nums text-muted-foreground">{line.dueDate ? formatLocalDate(line.dueDate) : "—"}</td>
                 <td className="px-3 py-1 text-right">
                   <AmountPlain cents={line.debitCents} />
@@ -80,7 +98,7 @@ export function EntryDetail({ entry, baseCurrency }: { entry: EntryView; baseCur
           </tbody>
           <tfoot className="border-t-2 bg-muted/30 font-medium">
             <tr className="h-9">
-              <td className="px-3 py-1" colSpan={4}>
+              <td className="px-3 py-1" colSpan={5}>
                 Totales ({baseCurrency})
               </td>
               <td className="px-3 py-1 text-right">

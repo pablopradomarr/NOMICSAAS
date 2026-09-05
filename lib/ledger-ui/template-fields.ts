@@ -28,6 +28,8 @@ export type FieldKind =
   | "account"
   | "taxRate"
   | "boolean"
+  /** E4 · T15 — destino analítico de una línea 6/7: proyecto o centro de coste. */
+  | "dimension"
 
 export type SelectOption = { value: string; label: string }
 
@@ -239,6 +241,9 @@ function kindOf(name: string, schema: z.ZodTypeAny): FieldKind | null {
     return "integer"
   }
   if (schema instanceof z.ZodString) {
+    // E4 · T15: los dos destinos analíticos se piden con el combobox de
+    // dimensión, no como un uuid a mano.
+    if (name === "projectId" || name === "costCenterId") return "dimension"
     if (/Date$/.test(name)) return "date"
     if (/AccountCode$/.test(name) || name === "accountCode") return "account"
     if (/RateCode$/.test(name)) return "taxRate"

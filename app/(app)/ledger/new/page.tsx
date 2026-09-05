@@ -1,3 +1,5 @@
+import { listAnalyticsAction } from "@/app/(app)/analytics/actions"
+import { dimensionOptions } from "@/app/(app)/analytics/shared"
 import { postableAccounts } from "@/app/(app)/ledger/shared"
 import { ManualEntryForm } from "@/components/ledger/manual-entry-form"
 import { Button } from "@/components/ui/button"
@@ -25,9 +27,11 @@ const BLOCK_LABELS: Record<string, string> = {
  * usuario hasta E9. El contra-asiento tampoco está: se anula desde el asiento.
  */
 export default async function NewEntryPage() {
-  const { db, role } = await requireOrg(Role.VIEWER)
+  const { db, org, role } = await requireOrg(Role.VIEWER)
   const canPost = role === Role.EDITOR || role === Role.ADMIN
   const accounts = await postableAccounts(db)
+  const listing = await listAnalyticsAction({})
+  const dimensions = dimensionOptions(listing.data?.projects ?? [], listing.data?.costCenters ?? [])
 
   const templates = OPERATIONAL_TEMPLATE_CODES.map((code) => TEMPLATES[code]).filter(
     (template) => template.code !== "CONTRA_ASIENTO" && template.code !== "ASIENTO_MANUAL"
@@ -80,7 +84,13 @@ export default async function NewEntryPage() {
             <Link href="/ledger">Volver al diario</Link>
           </Button>
         </div>
-        <ManualEntryForm accounts={accounts} canPost={canPost} defaultDate={todayLocalDate()} />
+        <ManualEntryForm
+          accounts={accounts}
+          canPost={canPost}
+          defaultDate={todayLocalDate()}
+          dimensions={dimensions}
+          analyticsRequired={org.analyticsRequired}
+        />
       </section>
     </div>
   )

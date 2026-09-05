@@ -86,7 +86,20 @@ export async function getAnalyticPnl(
     null
   )
 
-  const key = `${tx.$organizationId}|${request.from}|${request.to}|${ledgerHash}|${analyticsHash}`
+  /**
+   * BUG E4-UI-1 (T14): la clave NO contenía las dimensiones, y `marginConfigHash`
+   * tampoco las cubre (sólo niveles, CECOs, prefijos de impuesto y
+   * `nonAnalyticLevel`). Con la caché viva entre peticiones, dar de alta un
+   * proyecto no invalidaba nada y la matriz seguía sirviéndose SIN su columna
+   * hasta que cambiara el diario. Se añade la huella de las dimensiones, que es
+   * justo lo que decide el juego de columnas de `buildAnalyticPnl`.
+   */
+  const dimensionsKey = [
+    ...config.businessLines.map((b) => `${b.id}:${b.code}:${b.sortOrder}:${b.isActive}`),
+    ...config.projects.map((p) => `${p.id}:${p.code}:${p.businessLineId}:${p.status}:${p.isActive}`),
+  ].join(",")
+
+  const key = `${tx.$organizationId}|${request.from}|${request.to}|${ledgerHash}|${analyticsHash}|${configHash}|${dimensionsKey}`
   const cached = memo.get(key)
   if (cached) return cached
 

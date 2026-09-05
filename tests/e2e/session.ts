@@ -40,6 +40,13 @@ function appEnv(): Record<string, string> {
 const ENV = appEnv()
 
 /**
+ * Entorno efectivo de la aplicación bajo prueba, para los tests que necesitan
+ * un valor concreto (p. ej. `BETTER_AUTH_SECRET`, con el que se firma la cookie
+ * de organización activa).
+ */
+export const APP_ENV: Readonly<Record<string, string>> = ENV
+
+/**
  * Conexión de INSPECCIÓN de los tests, no la de la aplicación.
  *
  * E3 (ADR-0009): desde la RLS estricta, `DATABASE_URL` apunta al rol

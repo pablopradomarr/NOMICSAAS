@@ -37,8 +37,10 @@ import {
   Percent,
   Scale,
   ScrollText,
+  SlidersHorizontal,
   Sparkles,
   Tags,
+  Target,
   Upload,
   User,
   Users,
@@ -79,7 +81,12 @@ const settingsItems = [
   { title: "LLM settings", href: "/settings/llm", icon: Sparkles, adminOnly: true },
   { title: "Fields", href: "/settings/fields", icon: FormInput, adminOnly: true },
   { title: "Categories", href: "/settings/categories", icon: Tags, adminOnly: true },
-  { title: "Projects", href: "/settings/projects", icon: FolderKanban, adminOnly: false },
+  // E4 · T13 — configuración analítica: niveles de margen versionados, destino
+  // obligatorio y nivel de lo no analítico. La LEE cualquier rol; escribir es
+  // de ADMIN y lo exige la acción, no el menú. `/settings/projects` ya no está:
+  // el CRUD heredado lo sustituye `/analytics/projects` (D-E4-1) y la ruta
+  // antigua redirige.
+  { title: "Analítica", href: "/settings/analytics", icon: SlidersHorizontal, adminOnly: false },
   { title: "Currencies", href: "/settings/currencies", icon: Coins, adminOnly: false },
   { title: "Backup & Restore", href: "/settings/backups", icon: DatabaseBackup, adminOnly: true },
 ]
@@ -212,6 +219,33 @@ export function AppSidebar({
                       </SidebarMenuButton>
                     </SidebarMenuItemWithHighlight>
                   ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          {/* E4 · T13 — Analítica (`ui-erp` §Navegación), entre Contabilidad e
+              Informes. Todo se LEE con cualquier rol: la PyG analítica y las
+              fichas de dimensión no tienen botones de mutación para un VIEWER,
+              y las acciones vuelven a exigir el rol. */}
+          <SidebarGroup>
+            <SidebarGroupLabel>Analítica</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {[
+                  { title: "PyG analítica", href: "/analytics/pyg", icon: Scale },
+                  { title: "Proyectos", href: "/analytics/projects", icon: FolderKanban },
+                  { title: "Centros de coste", href: "/analytics/cost-centers", icon: Target },
+                  { title: "Líneas de negocio", href: "/analytics/business-lines", icon: Waypoints },
+                ].map((item) => (
+                  <SidebarMenuItemWithHighlight key={item.href} href={item.href}>
+                    <SidebarMenuButton asChild>
+                      <Link href={item.href}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItemWithHighlight>
+                ))}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

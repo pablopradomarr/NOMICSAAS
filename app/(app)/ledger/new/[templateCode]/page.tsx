@@ -1,3 +1,5 @@
+import { listAnalyticsAction } from "@/app/(app)/analytics/actions"
+import { dimensionOptions } from "@/app/(app)/analytics/shared"
 import { postableAccounts, taxRateOptions } from "@/app/(app)/ledger/shared"
 import { TemplateForm } from "@/components/ledger/template-form"
 import { Button } from "@/components/ui/button"
@@ -43,6 +45,8 @@ export default async function TemplateEntryPage({ params }: { params: Promise<{ 
   const canPost = role === Role.EDITOR || role === Role.ADMIN
   const accounts = await postableAccounts(db)
   const taxRates = await taxRateOptions(db)
+  const listing = await listAnalyticsAction({})
+  const dimensions = dimensionOptions(listing.data?.projects ?? [], listing.data?.costCenters ?? [])
   const spec = templateFormSpec(template.code, template.label, template.block, template.schema)
 
   return (
@@ -68,6 +72,7 @@ export default async function TemplateEntryPage({ params }: { params: Promise<{ 
         taxRates={taxRates}
         canPost={canPost}
         defaultDate={todayLocalDate()}
+        dimensions={dimensions}
       />
     </div>
   )

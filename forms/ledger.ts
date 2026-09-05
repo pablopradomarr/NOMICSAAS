@@ -7,6 +7,7 @@
  * uno de los **24 de operativa** y que el sobre viene bien formado.
  */
 
+import { analyticTypeSchema } from "@/forms/analytics"
 import { OPERATIONAL_TEMPLATE_CODES, TEMPLATE_CODES } from "@/lib/ledger/templates/types"
 import { z } from "zod"
 
@@ -46,6 +47,18 @@ export const manualEntryLineSchema = z
     description: z.string().max(512).nullish(),
     dueDate: localDateSchema.nullish(),
     counterpartyId: uuidSchema.nullish(),
+    /**
+     * E4 · T15 — destino analítico de la línea. Sólo lo llevan las de grupo
+     * 6/7 (R-A1); el motor lo valida en `validateAnalytics` y lo rechaza fuera
+     * de ahí. El formulario los manda tal cual: aquí no se decide nada.
+     */
+    projectId: uuidSchema.nullish(),
+    costCenterId: uuidSchema.nullish(),
+    analyticType: analyticTypeSchema.nullish(),
+  })
+  .refine((l) => !(l.projectId && l.costCenterId), {
+    message: "Una línea lleva proyecto O centro de coste, nunca los dos",
+    path: ["costCenterId"],
   })
   .refine((l) => l.debitCents !== undefined || l.creditCents !== undefined || l.debit != null || l.credit != null, {
     message: "La línea necesita un importe al debe o al haber",

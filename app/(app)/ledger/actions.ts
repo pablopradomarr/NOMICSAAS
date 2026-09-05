@@ -138,6 +138,12 @@ export async function postManualEntryAction(input: unknown): Promise<ActionState
             description: l.description ?? null,
             dueDate: l.dueDate ?? null,
             counterpartyId: l.counterpartyId ?? null,
+            // E4 · T15: el destino analítico llega tal cual del formulario; el
+            // tipo EFECTIVO lo resuelve `post.ts` (R-A2/R-A3/R-A4) y lo valida
+            // `validateAnalytics`. Aquí no se decide ni se corrige nada.
+            projectId: l.projectId ?? null,
+            costCenterId: l.costCenterId ?? null,
+            analyticType: l.analyticType ?? null,
           })),
         },
         ctx

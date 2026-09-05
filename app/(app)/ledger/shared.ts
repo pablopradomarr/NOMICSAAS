@@ -102,18 +102,57 @@ export async function entryExtras(db: TenantClient, entryIds: readonly string[])
   )
 }
 
+/**
+ * Nombres de las dimensiones analíticas, para pintar el destino de cada línea
+ * 6/7 en el detalle del asiento (E4 §6). Es una lectura de pantalla: la
+ * dimensión que manda es la que viaja en la propia `journal_line`.
+ */
+export type DimensionNames = Map<string, { code: string; name: string }>
+
+export async function dimensionNames(db: TenantClient): Promise<{
+  projects: DimensionNames
+  costCenters: DimensionNames
+}> {
+  const [projects, costCenters] = await Promise.all([
+    db.project.findMany({ select: { id: true, code: true, name: true } }),
+    db.costCenter.findMany({ select: { id: true, code: true, name: true } }),
+  ])
+  return {
+    projects: new Map(projects.map((p) => [p.id, { code: p.code, name: p.name }])),
+    costCenters: new Map(costCenters.map((c) => [c.id, { code: c.code, name: c.name }])),
+  }
+}
+
 /** `PostedEntry` (motor) → `EntryView` (pantalla). Los totales se toman de las líneas ya persistidas. */
-export function toEntryView(entry: PostedEntry, names: Map<string, string>, extras?: EntryExtras): EntryView {
-  const lines: LineView[] = entry.lines.map((line) => ({
-    id: line.id ?? undefined,
-    lineNo: line.lineNo,
-    accountCode: line.accountCode,
-    accountName: names.get(line.accountCode) ?? line.accountCode,
-    debitCents: line.debitCents,
-    creditCents: line.creditCents,
-    description: line.description ?? null,
-    dueDate: line.dueDate ?? null,
-  }))
+export function toEntryView(
+  entry: PostedEntry,
+  names: Map<string, string>,
+  extras?: EntryExtras,
+  dimensions?: { projects: DimensionNames; costCenters: DimensionNames }
+): EntryView {
+  const lines: LineView[] = entry.lines.map((line) => {
+    const dimension = line.projectId
+      ? dimensions?.projects.get(line.projectId)
+      : line.costCenterId
+        ? dimensions?.costCenters.get(line.costCenterId)
+        : undefined
+    return {
+      id: line.id ?? undefined,
+      lineNo: line.lineNo,
+      accountCode: line.accountCode,
+      accountName: names.get(line.accountCode) ?? line.accountCode,
+      debitCents: line.debitCents,
+      creditCents: line.creditCents,
+      description: line.description ?? null,
+      dueDate: line.dueDate ?? null,
+      analyticType: line.analyticType ?? null,
+      projectId: line.projectId ?? null,
+      costCenterId: line.costCenterId ?? null,
+      destinationCode: dimension?.code ?? null,
+      destinationName: dimension?.name ?? null,
+      isPnlLine: line.accountCode.startsWith("6") || line.accountCode.startsWith("7"),
+    }
+  })
   const totalDebitCents = lines.reduce((acc, l) => acc + l.debitCents, 0)
   const totalCreditCents = lines.reduce((acc, l) => acc + l.creditCents, 0)
 

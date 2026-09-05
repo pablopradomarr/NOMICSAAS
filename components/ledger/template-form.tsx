@@ -1,6 +1,8 @@
 "use client"
 
 import { postTemplateFormAction, previewTemplateAction, type EntryPreview } from "@/app/(app)/ledger/ui-actions"
+import { DimensionCombobox } from "@/components/analytics/dimension-combobox"
+import type { DimensionOption } from "@/components/analytics/types"
 import { AccountCombobox } from "@/components/ledger/account-combobox"
 import { Amount, AmountPlain } from "@/components/ledger/amount"
 import type { AccountOption } from "@/components/ledger/types"
@@ -35,12 +37,15 @@ export function TemplateForm({
   taxRates,
   canPost,
   defaultDate,
+  dimensions = [],
 }: {
   spec: TemplateFormSpec
   accounts: readonly AccountOption[]
   taxRates: readonly TaxRateOption[]
   canPost: boolean
   defaultDate: string
+  /** E4 · T15 — proyectos y centros de coste activos, para las líneas 6/7. */
+  dimensions?: readonly DimensionOption[]
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -100,6 +105,7 @@ export function TemplateForm({
             setCounts={setCounts}
             accounts={accounts}
             taxRates={taxRates}
+            dimensions={dimensions}
           />
         ))}
       </div>
@@ -152,6 +158,7 @@ function NodeFields({
   setCounts,
   accounts,
   taxRates,
+  dimensions,
 }: {
   node: FieldNode
   prefix: string
@@ -161,10 +168,21 @@ function NodeFields({
   setCounts: React.Dispatch<React.SetStateAction<Record<string, number>>>
   accounts: readonly AccountOption[]
   taxRates: readonly TaxRateOption[]
+  dimensions: readonly DimensionOption[]
 }) {
   if (node.node === "field") {
     const key = prefix === "" ? node.field.path : `${prefix}.${node.field.name}`
-    return <Field field={node.field} fieldKey={key} value={raw[key] ?? ""} set={set} accounts={accounts} taxRates={taxRates} />
+    return (
+      <Field
+        field={node.field}
+        fieldKey={key}
+        value={raw[key] ?? ""}
+        set={set}
+        accounts={accounts}
+        taxRates={taxRates}
+        dimensions={dimensions}
+      />
+    )
   }
 
   const name = node.path.split(".").pop() ?? node.path
@@ -188,6 +206,7 @@ function NodeFields({
                 setCounts={setCounts}
                 accounts={accounts}
                 taxRates={taxRates}
+                dimensions={dimensions}
               />
             ))}
             {node.isList && count > node.minItems && (
@@ -226,6 +245,7 @@ function Field({
   set,
   accounts,
   taxRates,
+  dimensions,
 }: {
   field: FieldDescriptor
   fieldKey: string
@@ -233,8 +253,29 @@ function Field({
   set: (key: string, value: string) => void
   accounts: readonly AccountOption[]
   taxRates: readonly TaxRateOption[]
+  dimensions: readonly DimensionOption[]
 }) {
   const label = `${field.label}${field.optional ? "" : " *"}`
+
+  // E4 · T15 — destino analítico de la línea 6/7. Cada campo del schema
+  // (`projectId` / `costCenterId`) ofrece SÓLO su familia, de modo que el
+  // formulario no pueda mandar los dos a la vez (I-E4-2).
+  if (field.kind === "dimension") {
+    const family = field.name === "projectId" ? "project" : "costCenter"
+    const options = dimensions.filter((option) => option.family === family)
+    return (
+      <label className="flex flex-col gap-1 text-sm">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <DimensionCombobox
+          options={options}
+          value={family === "project" ? { projectId: value || null, costCenterId: null } : { projectId: null, costCenterId: value || null }}
+          onChange={(next) => set(fieldKey, (family === "project" ? next.projectId : next.costCenterId) ?? "")}
+          label={field.label}
+          placeholder={family === "project" ? "Proyecto" : "Centro de coste"}
+        />
+      </label>
+    )
+  }
 
   if (field.kind === "account") {
     return (

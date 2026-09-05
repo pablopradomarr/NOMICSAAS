@@ -23,6 +23,15 @@ export type LineView = {
   creditCents: number
   description?: string | null
   dueDate?: string | null
+  /** E4 — destino analítico persistido en la línea (§7). */
+  analyticType?: string | null
+  projectId?: string | null
+  costCenterId?: string | null
+  /** Código de la dimensión de destino, ya resuelto en el servidor. */
+  destinationCode?: string | null
+  destinationName?: string | null
+  /** `true` en las líneas de grupo 6/7, las únicas que llevan destino (R-A1). */
+  isPnlLine?: boolean
 }
 
 export type EntryView = {

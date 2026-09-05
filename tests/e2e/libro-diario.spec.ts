@@ -67,6 +67,15 @@ async function fillLine(page: Page, index: number, account: string, debit: strin
   if (credit) await page.getByLabel(`Haber de la línea ${index}`).fill(credit)
 }
 
+/** E4 · T15 — destino analítico de una línea 6/7 (proyecto o centro de coste). */
+async function fillDimension(page: Page, index: number, code: string): Promise<void> {
+  const combo = page.getByLabel(`Destino analítico de la línea ${index}`)
+  await expect(combo).toBeVisible()
+  await combo.fill(code)
+  await page.getByRole("option", { name: new RegExp(code) }).first().click()
+  await expect(combo).toHaveValue(new RegExp(`^${code}`))
+}
+
 test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y sumas y saldos cuadra", async ({
   page,
 }) => {
@@ -92,6 +101,10 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
 
   await fillLine(page, 1, "4300", "1.210,00", "")
   await fillLine(page, 2, "705", "", "1.000,00")
+
+  // E4 · C-9 — desde la analítica, una línea de grupo 6/7 necesita destino:
+  // `validateAnalytics` rechaza el asiento sin él (`ANALYTIC_DEST_MISSING`).
+  await fillDimension(page, 2, "CC-GA")
 
   const diferencia = page.getByTestId("preview-difference")
   await expect(diferencia).toContainText("210,00")
@@ -212,6 +225,13 @@ test("el formulario de una plantilla se genera de su schema y previsualiza el as
   await page.getByLabel("Base imponible").first().fill("1.000,00")
   await page.getByLabel("Tipo impositivo").first().selectOption({ value: "IVA_21" })
   await page.getByLabel("Total del documento").fill("1.210,00")
+
+  // E4 · C-9 — la línea de ingreso de la plantilla necesita destino analítico:
+  // el combobox de dimensión sale del mismo schema zod que el resto de campos.
+  const ceco = page.getByLabel("Centro de coste").first()
+  await ceco.fill("CC-GA")
+  await page.getByRole("option", { name: /CC-GA/ }).first().click()
+  await expect(ceco).toHaveValue(/^CC-GA/)
 
   await page.getByTestId("preview-entry").click()
 
