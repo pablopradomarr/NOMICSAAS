@@ -33,7 +33,6 @@ import {
   balanceParamsSchema,
   cashflowParamsSchema,
   clearReviewSchema,
-  dashboardParamsSchema,
   exportReportSchema,
   forceReviewSchema,
   listRunsSchema,
@@ -326,5 +325,3 @@ export const setReviewThresholdsAction = withOrg(
     }
   }
 )
-
-export { dashboardParamsSchema }

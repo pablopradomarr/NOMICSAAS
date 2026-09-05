@@ -191,10 +191,24 @@ export async function getOrCreateReportRun(
     // EXPLÍCITO. Sin él, `findFirst` devuelve cualquier organización visible por
     // la política —la del usuario, no necesariamente la del informe— y el
     // informe se emitiría con la moneda y los umbrales de otra empresa.
-    const organization = await tx.organization.findUniqueOrThrow({
-      where: { id: organizationId },
-      select: { baseCurrency: true, pgcVariant: true, reviewThresholds: true },
-    })
+    //
+    // BUG E6-UI-1: se leía con `tx.organization.findUniqueOrThrow(...)`, y el
+    // facade de `tenantTransaction` despacha los modelos NO tenant sobre el
+    // cliente de fuera de la transacción, que no lleva los GUC: con la RLS
+    // estricta la fila no es visible y TODO informe moría con «No record was
+    // found for a query». Se lee con SQL parametrizado sobre la MISMA
+    // transacción (`$queryRaw` sí va al cliente transaccional), que además deja
+    // el `where` explícito por organización.
+    const [organization] = await tx.$queryRaw<
+      { baseCurrency: string; pgcVariant: PgcVariant; reviewThresholds: Prisma.JsonValue }[]
+    >`
+      SELECT base_currency AS "baseCurrency",
+             pgc_variant::text AS "pgcVariant",
+             review_thresholds AS "reviewThresholds"
+        FROM organizations
+       WHERE id = ${organizationId}::uuid
+    `
+    if (!organization) throw new Error("La organización del informe no existe o no es visible")
 
     // 2. Sellos. `ledgerHash` se calcula EN LA BASE (ADR-0011) sobre las mismas
     //    líneas ordenadas, no materializando el diario en memoria.
@@ -823,11 +837,17 @@ export async function setReviewThresholds(
   actor: Actor & { userId: string }
 ) {
   return await tenantTransaction(organizationId, actor.userId, async (tx) => {
-    const before = await tx.organization.findFirstOrThrow({ select: { reviewThresholds: true } })
-    const after = await tx.organization.update({
-      where: { id: organizationId },
-      data: { reviewThresholds: thresholds as unknown as Prisma.InputJsonValue },
-    })
+    // Mismo motivo que en `getOrCreateReportRun`: `Organization` no es un modelo
+    // de tenant y el facade de la transacción lo despacharía fuera de ella, sin
+    // los GUC — la lectura vendría vacía y la escritura la cortaría la RLS.
+    const [before] = await tx.$queryRaw<{ reviewThresholds: Prisma.JsonValue }[]>`
+      SELECT review_thresholds AS "reviewThresholds" FROM organizations WHERE id = ${organizationId}::uuid
+    `
+    if (!before) throw new Error("La organización no existe o no es visible")
+    await tx.$executeRaw`
+      UPDATE organizations SET review_thresholds = ${JSON.stringify(thresholds)}::jsonb, updated_at = now()
+       WHERE id = ${organizationId}::uuid
+    `
     await writeAuditLog(tx, {
       entity: "Organization",
       entityId: organizationId,
@@ -836,7 +856,7 @@ export async function setReviewThresholds(
       after: thresholds,
       userId: actor.userId,
     })
-    return after.reviewThresholds
+    return thresholds
   })
 }
 

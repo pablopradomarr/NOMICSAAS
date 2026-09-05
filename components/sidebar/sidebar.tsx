@@ -20,6 +20,7 @@ import {
 import { UserProfile } from "@/lib/auth"
 import config from "@/lib/config"
 import {
+  Banknote,
   BookOpenCheck,
   Building2,
   CalendarRange,
@@ -29,7 +30,10 @@ import {
   FileText,
   FolderKanban,
   FormInput,
+  Gauge,
   Gift,
+  History,
+  Hourglass,
   House,
   Import,
   ListTree,
@@ -41,6 +45,7 @@ import {
   Sparkles,
   Tags,
   Target,
+  TrendingUp,
   Upload,
   User,
   Users,
@@ -87,6 +92,9 @@ const settingsItems = [
   // el CRUD heredado lo sustituye `/analytics/projects` (D-E4-1) y la ruta
   // antigua redirige.
   { title: "Analítica", href: "/settings/analytics", icon: SlidersHorizontal, adminOnly: false },
+  // E6 · T17 — umbrales de variación del sello (`Organization.reviewThresholds`).
+  // Los lee cualquier rol; cambiarlos es de ADMIN y lo exige la acción.
+  { title: "Umbrales de revisión", href: "/settings/review-thresholds", icon: Gauge, adminOnly: false },
   { title: "Currencies", href: "/settings/currencies", icon: Coins, adminOnly: false },
   { title: "Backup & Restore", href: "/settings/backups", icon: DatabaseBackup, adminOnly: true },
 ]
@@ -219,6 +227,36 @@ export function AppSidebar({
                       </SidebarMenuButton>
                     </SidebarMenuItemWithHighlight>
                   ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          {/* E6 · T16/T17 — Informes (`ui-erp` §Navegación). Los cinco los LEE
+              cualquier rol: emitir un informe escribe un `ReportRun`, que es un
+              hecho fechado y no una mutación de negocio, así que un VIEWER
+              consulta y exporta sin ver un solo botón de mutación. Forzar y
+              levantar la revisión sólo aparecen para ADMIN dentro del
+              histórico, y las acciones lo vuelven a exigir. */}
+          <SidebarGroup>
+            <SidebarGroupLabel>Informes</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {[
+                  { title: "Balance", href: "/reports/balance", icon: Scale },
+                  { title: "Pérdidas y ganancias", href: "/reports/pyg", icon: TrendingUp },
+                  { title: "Cashflow", href: "/reports/cashflow", icon: Banknote },
+                  { title: "Antigüedad de saldos", href: "/reports/aging", icon: Hourglass },
+                  { title: "Histórico de informes", href: "/reports/runs", icon: History },
+                ].map((item) => (
+                  <SidebarMenuItemWithHighlight key={item.href} href={item.href}>
+                    <SidebarMenuButton asChild>
+                      <Link href={item.href}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItemWithHighlight>
+                ))}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
