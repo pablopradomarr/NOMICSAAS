@@ -264,12 +264,33 @@ describe.skipIf(!OWNER_URL)("E6 · informes y avisos de revisión bajo RLS estri
     expect(org.slug).toBe("e6-rls-a")
   })
 
-  it("E6-UI-1: y sigue SIN ver la organización ajena (la RLS no se ha aflojado)", async () => {
+  it("#16: pedir la organización AJENA por id LANZA, no devuelve null", async () => {
+    // Un selector cruzado es un bug del llamante, no algo que silenciar: se
+    // trata igual que en `scopeUniqueWhere` para los modelos de negocio.
+    const { tenantTransaction, TenantError } = await import("@/lib/db")
+    await expect(
+      tenantTransaction(ORG_A, USER_A, async (tx) =>
+        tx.organization.findFirst({ where: { id: ORG_B }, select: { id: true } })
+      )
+    ).rejects.toBeInstanceOf(TenantError)
+  })
+
+  it("#16: un `findFirst` SIN `where` no puede devolver otra organización", async () => {
+    // Éste es el caso que se coló en E6: `Organization` no lleva
+    // `organization_id`, así que la extensión no le inyectaba nada y
+    // `findFirst()` devolvía cualquier fila visible por la política — la del
+    // usuario, no necesariamente la del informe.
     const { tenantTransaction } = await import("@/lib/db")
-    const ajena = await tenantTransaction(ORG_A, USER_A, async (tx) =>
-      tx.organization.findFirst({ where: { id: ORG_B }, select: { id: true } })
+    const org = await tenantTransaction(ORG_A, USER_A, async (tx) =>
+      tx.organization.findFirst({ select: { id: true } })
     )
-    expect(ajena).toBeNull()
+    expect(org?.id).toBe(ORG_A)
+  })
+
+  it("#16: `User` es pre-tenant y NO se acota por id (no está en el conjunto)", async () => {
+    const { NON_TENANT_SCOPED_BY_ID } = await import("@/lib/db")
+    expect(NON_TENANT_SCOPED_BY_ID.has("Organization")).toBe(true)
+    expect(NON_TENANT_SCOPED_BY_ID.has("User")).toBe(false)
   })
 
   it("las dos tablas están en `TENANT_MODELS`", async () => {

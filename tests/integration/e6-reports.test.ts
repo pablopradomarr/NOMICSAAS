@@ -42,9 +42,21 @@ const {
 const { analyticsKeyOf, canonicalResultJson, DEFAULT_REVIEW_THRESHOLDS } = await import("@/lib/ledger/report-run")
 const { exportRun } = await import("@/lib/export/report-export")
 const { getAnalyticAggregates, getAnalyticLines } = await import("@/models/analytics")
+const { computeAccountMapHash, computePlanHash, getCashflowBucketDetail } = await import("@/models/reports")
+const { updateAccount } = await import("@/models/accounts")
 const { appRuntimeDatabaseUrl } = await import("@/tests/support/env")
 
 const ORG = "e6000000-0000-4000-8000-00000000000a"
+/**
+ * BLOQUEA #1 — organización APARTE para los tests que **mutan** el diario, el
+ * plan o el mapa.
+ *
+ * Compartirla con los de sólo lectura los hacía depender del orden: al corromper
+ * un céntimo o mover un epígrafe cambia el `ledgerHash`/`planHash`, y desde
+ * I-E6-20 eso además sella `LEDGER_DRIFT` en todos los informes posteriores del
+ * mismo periodo. Cada bloque en su organización, y el orden deja de importar.
+ */
+const ORG_MUT = "e6000000-0000-4000-8000-00000000000b"
 const USER = "e6000000-0000-4000-8000-0000000000a1"
 const PERIOD = { periodStart: "2026-01-01" as const, periodEnd: "2026-12-31" as const }
 const actor = { userId: USER }
@@ -73,6 +85,7 @@ async function asRuntime<T>(fn: (client: Client) => Promise<T>): Promise<T> {
 
 describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos", () => {
   let fiscalYearId = ""
+  let fiscalYearIdMut = ""
 
   beforeAll(async () => {
     await cleanup()
@@ -83,8 +96,18 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
     await prisma.membership.create({
       data: { organizationId: ORG, userId: USER, role: "ADMIN", updatedAt: new Date() },
     })
+    await prisma.organization.create({
+      data: { id: ORG_MUT, slug: "e6-org-mut", name: "E6 Org (mutaciones)", pgcVariant: "PYMES", updatedAt: new Date() },
+    })
+    await prisma.membership.create({
+      data: { organizationId: ORG_MUT, userId: USER, role: "ADMIN", updatedAt: new Date() },
+    })
     await loadFixtureIntoOrg({ fixture: "ejercicio-completo", organizationId: ORG, userId: USER })
+    await loadFixtureIntoOrg({ fixture: "ejercicio-completo", organizationId: ORG_MUT, userId: USER })
     fiscalYearId = await tenantTransaction(ORG, USER, async (tx) =>
+      (await tx.fiscalYear.findFirstOrThrow({ where: { code: "2026" } })).id
+    )
+    fiscalYearIdMut = await tenantTransaction(ORG_MUT, USER, async (tx) =>
       (await tx.fiscalYear.findFirstOrThrow({ where: { code: "2026" } })).id
     )
   }, 600_000)
@@ -116,13 +139,25 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
         "transactions",
         "memberships",
       ]) {
-        await client.query(`DELETE FROM "${table}" WHERE organization_id = $1::uuid`, [ORG]).catch(() => undefined)
+        for (const org of [ORG, ORG_MUT]) {
+          await client.query(`DELETE FROM "${table}" WHERE organization_id = $1::uuid`, [org]).catch(() => undefined)
+        }
       }
-      await client.query(`DELETE FROM organizations WHERE id = $1::uuid`, [ORG])
+      await client.query(`DELETE FROM organizations WHERE id = ANY($1::uuid[])`, [[ORG, ORG_MUT]])
       await client.query(`DELETE FROM users WHERE id = $1::uuid`, [USER])
       await client.query("COMMIT")
     })
   }
+
+  /** Balance de la organización de MUTACIONES. */
+  const balanceMut = (snapshot: string) =>
+    getOrCreateReportRun(ORG_MUT, {
+      type: "BALANCE",
+      ...PERIOD,
+      fiscalYearId: fiscalYearIdMut,
+      params: { snapshot, variant: "PYMES" },
+      actor,
+    })
 
   const balance = (snapshot: string, extra: Record<string, unknown> = {}) =>
     getOrCreateReportRun(ORG, {
@@ -390,7 +425,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
             WHERE id = (SELECT id FROM journal_lines
                          WHERE organization_id = $1::uuid AND account_code = '4300' AND debit_cents > 0
                          ORDER BY id LIMIT 1)`,
-          [ORG, delta]
+          [ORG_MUT, delta]
         )
         await client.query("COMMIT")
       })
@@ -398,10 +433,10 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
 
     await corrupt(1)
     try {
-      const run = await getOrCreateReportRun(ORG, {
+      const run = await getOrCreateReportRun(ORG_MUT, {
         type: "BALANCE",
         ...PERIOD,
-        fiscalYearId,
+        fiscalYearId: fiscalYearIdMut,
         params: { snapshot: "PRE_REGULARIZACION", variant: "PYMES" },
         actor,
       })
@@ -577,12 +612,346 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
     expect(celdaPyg.cents).toBe(-2_640_000)
 
     // 3. Cashflow: el bucket de personal. Aporte `−(debe − haber)` (R-CF-3).
-    const directo = (cashRun.result as { directo: { annualCents: Record<string, number>; provenanceByBucket: Record<string, Prov> } }).directo
-    const provBucket = directo.provenanceByBucket.PAGOS_PERSONAL
+    //    Su provenance NO viaja en el `result` (#6: el detalle reventaría la cota
+    //    de 1 MB): se pide aparte, y tiene que reproducir la MISMA cifra.
+    const directo = (cashRun.result as { directo: { annualCents: Record<string, number> } }).directo
+    const detalle = await getCashflowBucketDetail(ORG, cashRun.id, "PAGOS_PERSONAL", actor)
+    const provBucket = detalle.provenance as Prov
     expect(provBucket.calculado_por).toContain("lib/ledger/reports/cashflow.ts@")
     const c = await reproduce(provBucket)
     expect(-(c.debit - c.credit)).toBe(directo.annualCents.PAGOS_PERSONAL)
     expect(directo.annualCents.PAGOS_PERSONAL).toBe(-2_340_000)
+    expect(detalle.cents).toBe(-2_340_000)
+  })
+
+  // ── Revisión ronda 1 ──────────────────────────────────────────────────────
+
+  it("#5: cambiar el EPÍGRAFE de una cuenta emite un run nuevo (planHash en la clave)", async () => {
+    const before = await balanceMut("PRE_REGULARIZACION")
+    const planBefore = await tenantTransaction(ORG_MUT, USER, async (tx) => computePlanHash(tx))
+
+    await owner(async (client) => {
+      await client.query(
+        `UPDATE accounts SET epigraph = 'B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 2. Otros activos líquidos equivalentes'
+          WHERE organization_id = $1::uuid AND code = '570'`,
+        [ORG_MUT]
+      )
+    })
+    try {
+      const planAfter = await tenantTransaction(ORG_MUT, USER, async (tx) => computePlanHash(tx))
+      expect(planAfter).not.toBe(planBefore)
+      const after = await balanceMut("PRE_REGULARIZACION")
+      // Mismo diario, mismo `ledgerHash`… y run NUEVO: el plan forma parte de la
+      // clave. Sin esto, el balance se serviría con el epígrafe de ayer.
+      expect(after.ledgerHash).toBe(before.ledgerHash)
+      expect(after.id).not.toBe(before.id)
+      expect(after.paramsHash).not.toBe(before.paramsHash)
+      expect((after.params as Record<string, string>).planHash).toBe(planAfter)
+    } finally {
+      await owner(async (client) => {
+        await client.query(
+          `UPDATE accounts SET epigraph = 'B) Activo corriente / VII. Efectivo y otros activos líquidos equivalentes / 1. Tesorería'
+            WHERE organization_id = $1::uuid AND code = '570'`,
+          [ORG_MUT]
+        )
+      })
+    }
+  })
+
+  it("#5: cambiar el MAPA de cuentas también emite un run nuevo", async () => {
+    const before = await balanceMut("POST_REGULARIZACION")
+    const mapBefore = await tenantTransaction(ORG_MUT, USER, async (tx) => computeAccountMapHash(tx))
+    await owner(async (client) => {
+      await client.query(
+        `UPDATE organization_account_maps SET account_code = '571'
+          WHERE organization_id = $1::uuid AND key = 'CAJA'`,
+        [ORG_MUT]
+      )
+    })
+    try {
+      const mapAfter = await tenantTransaction(ORG_MUT, USER, async (tx) => computeAccountMapHash(tx))
+      if (mapAfter === mapBefore) return // la organización no mapea CAJA: nada que probar
+      const after = await balanceMut("POST_REGULARIZACION")
+      expect(after.id).not.toBe(before.id)
+    } finally {
+      await owner(async (client) => {
+        await client.query(
+          `UPDATE organization_account_maps SET account_code = '570'
+            WHERE organization_id = $1::uuid AND key = 'CAJA'`,
+          [ORG_MUT]
+        )
+      })
+    }
+  })
+
+  it("A1 / I-E6-20: manipular `journal_lines` por SQL sella LEDGER_DRIFT", async () => {
+    // La manipulación «coherente» del auditor: se cambia una cuenta y se
+    // recalcula el `entry_hash`, así que I1 e I-E3-7 pasan y el balance sigue
+    // sumando cero. Lo único que la delata es que el diario se mueva sin que
+    // haya un asiento, una anulación o una reclasificación que lo explique.
+    const first = await getOrCreateReportRun(ORG_MUT, {
+      type: "SUMAS_SALDOS",
+      ...PERIOD,
+      fiscalYearId: fiscalYearIdMut,
+      params: {},
+      actor,
+    })
+    expect(first.sealReasons.map((r) => r.code)).not.toContain("LEDGER_DRIFT")
+
+    await owner(async (client) => {
+      await client.query("BEGIN")
+      await client.query("SET LOCAL session_replication_role = replica")
+      await client.query(
+        `UPDATE journal_lines SET account_code = '629'
+          WHERE id = (SELECT id FROM journal_lines
+                       WHERE organization_id = $1::uuid AND account_code = '628' ORDER BY id LIMIT 1)`,
+        [ORG_MUT]
+      )
+      await client.query("COMMIT")
+    })
+    try {
+      const after = await getOrCreateReportRun(ORG_MUT, {
+        type: "SUMAS_SALDOS",
+        ...PERIOD,
+        fiscalYearId: fiscalYearIdMut,
+        params: {},
+        actor,
+      })
+      expect(after.id).not.toBe(first.id) // otro ledgerHash → otro run
+      expect(after.seal).toBe("REQUIERE_REVISION")
+      expect(after.sealReasons.map((r) => r.code)).toContain("LEDGER_DRIFT")
+      const check = after.validation.checks.find((c) => c.id === "I-E6-20")
+      expect(check?.status).toBe("FAIL")
+      expect(check?.evidencia).toContain("0 cambio(s)")
+    } finally {
+      await owner(async (client) => {
+        await client.query("BEGIN")
+        await client.query("SET LOCAL session_replication_role = replica")
+        await client.query(
+          `UPDATE journal_lines SET account_code = '628'
+            WHERE id = (SELECT id FROM journal_lines
+                         WHERE organization_id = $1::uuid AND account_code = '629' ORDER BY id LIMIT 1)`,
+          [ORG_MUT]
+        )
+        await client.query("COMMIT")
+      })
+    }
+  })
+
+  it("#3 / EV-10: reclasificar el epígrafe de una cuenta con líneas sella EPIGRAFE_CAMBIADO", async () => {
+    const fy2027 = await tenantTransaction(ORG_MUT, USER, async (tx) =>
+      (await tx.fiscalYear.findFirstOrThrow({ where: { code: "2027" } })).id
+    )
+    const pyg2027 = () =>
+      getOrCreateReportRun(ORG_MUT, {
+        type: "PYG",
+        periodStart: "2027-01-01",
+        periodEnd: "2027-12-31",
+        fiscalYearId: fy2027,
+        params: { variant: "PYMES" },
+        actor,
+      })
+    await pyg2027()
+
+    // Un ADMIN mueve `628` de epígrafe: el `AuditLog` lo registra y la cuenta
+    // tiene líneas en el periodo COMPARADO (2026).
+    const previous = await tenantTransaction(ORG_MUT, USER, async (tx) =>
+      tx.ledgerAccount.findFirstOrThrow({ where: { code: "628" }, select: { epigraph: true } })
+    )
+    await updateAccount(
+      ORG_MUT,
+      "628",
+      { epigraph: "7. Otros gastos de explotación" },
+      { userId: USER, role: "ADMIN" },
+      "reclasificación de prueba de EV-10"
+    )
+    try {
+      const after = await pyg2027()
+      expect(after.sealReasons.map((r) => r.code)).toContain("EPIGRAFE_CAMBIADO")
+      expect(after.sealReasons.find((r) => r.code === "EPIGRAFE_CAMBIADO")?.message).toContain("628")
+    } finally {
+      await updateAccount(
+        ORG_MUT,
+        "628",
+        { epigraph: previous.epigraph },
+        { userId: USER, role: "ADMIN" },
+        "se restaura el epígrafe original tras el test"
+      )
+    }
+  })
+
+  it("#6: el cashflow guarda RESUMEN y el detalle se pide aparte", async () => {
+    const run = await getOrCreateReportRun(ORG, {
+      type: "CASHFLOW_DIRECTO",
+      ...PERIOD,
+      fiscalYearId,
+      params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },
+      actor,
+    })
+    expect(run.resultKind).toBe("SUMMARY")
+    const directo = (run.result as { directo: Record<string, unknown> }).directo
+    // Las CIFRAS están enteras; el detalle no.
+    expect((directo.annualCents as Record<string, number>).PAGOS_PERSONAL).toBe(-2_340_000)
+    expect(directo.lineDetail).toBeUndefined()
+    expect(directo.provenanceByBucket).toBeUndefined()
+    expect(directo.drillDown).toContain("getCashflowBucketDetail")
+
+    const detail = await getCashflowBucketDetail(ORG, run.id, "PAGOS_PERSONAL", actor)
+    expect(detail.cents).toBe(-2_340_000)
+    expect(detail.lines.length).toBeGreaterThan(0)
+    expect(detail.lines.reduce((a, l) => a + l.cents, 0)).toBe(-2_340_000)
+  })
+
+  it("#6: un cashflow con más de 6 000 líneas no revienta la cota de 1 MB", async () => {
+    // Antes, cada bucket guardaba sus pares `(asiento, cuenta)` dentro del
+    // `result`: con un ejercicio real el INSERT chocaba con el CHECK de 1 MB y
+    // el informe **no se emitía**. Se siembran 6 200 líneas de cobro en una
+    // organización aparte y se comprueba que el run entra y sigue cuadrando.
+    const cobros = 3_100
+    await owner(async (client) => {
+      await client.query("BEGIN")
+      await client.query("SET LOCAL session_replication_role = replica")
+      const fy = (
+        await client.query<{ id: string }>(
+          `SELECT id FROM fiscal_years WHERE organization_id = $1::uuid AND code = '2026'`,
+          [ORG_MUT]
+        )
+      ).rows[0].id
+      const user = (await client.query<{ id: string }>(`SELECT id FROM users WHERE id = $1::uuid`, [USER])).rows[0].id
+      for (let i = 0; i < cobros; i++) {
+        const entryId = (
+          await client.query<{ id: string }>(
+            `INSERT INTO journal_entries
+               (id, organization_id, fiscal_year_id, entry_number, entry_date, description, kind,
+                source_type, tax_rounding_mode, posted_by_id, entry_hash, hash_version)
+             VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, DATE '2026-06-15', 'cobro masivo', 'NORMAL',
+                     'MANUAL', 'PER_TIPO', $4::uuid, md5(random()::text), 2)
+             RETURNING id`,
+            [ORG_MUT, fy, 900_000 + i, user]
+          )
+        ).rows[0].id
+        await client.query(
+          `INSERT INTO journal_lines
+             (id, organization_id, entry_id, line_no, account_code, debit_cents, credit_cents,
+              entry_date, fiscal_year_id, entry_kind)
+           VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 1, '572', 100, 0, DATE '2026-06-15', $3::uuid, 'NORMAL'),
+                  (gen_random_uuid(), $1::uuid, $2::uuid, 2, '4300', 0, 100, DATE '2026-06-15', $3::uuid, 'NORMAL')`,
+          [ORG_MUT, entryId, fy]
+        )
+      }
+      await client.query("COMMIT")
+    })
+    try {
+      const run = await getOrCreateReportRun(ORG_MUT, {
+        type: "CASHFLOW_DIRECTO",
+        ...PERIOD,
+        fiscalYearId: fiscalYearIdMut,
+        params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },
+        actor,
+      })
+      const bytes = await owner(async (client) =>
+        Number(
+          (
+            await client.query<{ n: string }>(`SELECT pg_column_size(result)::text AS n FROM report_runs WHERE id = $1::uuid`, [
+              run.id,
+            ])
+          ).rows[0].n
+        )
+      )
+      expect(bytes).toBeLessThan(1_048_576)
+      // Y las cifras siguen cuadrando con 6 200 líneas más.
+      const directo = (run.result as { directo: { annualCents: Record<string, number>; checkI6DirectCents: number } }).directo
+      expect(directo.checkI6DirectCents).toBe(0)
+      expect(directo.annualCents.COBROS_CLIENTES).toBe(2_600_000 + cobros * 100)
+    } finally {
+      await owner(async (client) => {
+        await client.query("BEGIN")
+        await client.query("SET LOCAL session_replication_role = replica")
+        await client.query(
+          `DELETE FROM journal_lines WHERE organization_id = $1::uuid
+            AND entry_id IN (SELECT id FROM journal_entries WHERE organization_id = $1::uuid AND entry_number >= 900000)`,
+          [ORG_MUT]
+        )
+        await client.query(`DELETE FROM journal_entries WHERE organization_id = $1::uuid AND entry_number >= 900000`, [
+          ORG_MUT,
+        ])
+        await client.query("COMMIT")
+      })
+    }
+  }, 180_000)
+
+  it("#4: el panel se compara con el del ejercicio anterior aunque el `refDate` difiera", async () => {
+    const fy2027 = await tenantTransaction(ORG, USER, async (tx) =>
+      (await tx.fiscalYear.findFirstOrThrow({ where: { code: "2027" } })).id
+    )
+    await getOrCreateReportRun(ORG, {
+      type: "DASHBOARD",
+      ...PERIOD,
+      fiscalYearId,
+      params: { refDate: "2026-12-31", variant: "PYMES" },
+      actor,
+    })
+    const run2027 = await getOrCreateReportRun(ORG, {
+      type: "DASHBOARD",
+      periodStart: "2027-01-01",
+      periodEnd: "2027-12-31",
+      fiscalYearId: fy2027,
+      params: { refDate: "2027-12-31", variant: "PYMES" },
+      actor,
+    })
+    // El `refDate` cambia el `paramsHash` (define el aging), así que exigirlo
+    // dejaba el panel SIEMPRE sin comparativo.
+    expect(run2027.comparativeRunId).not.toBeNull()
+    expect(run2027.comparativeBasis).toBe("SAME_PERIOD_PREVIOUS_YEAR")
+  })
+
+  it("#4: `unpostedDocumentCount` NO entra en el hash: no invalida la caché", async () => {
+    const a = await getOrCreateReportRun(ORG, {
+      type: "DASHBOARD",
+      ...PERIOD,
+      fiscalYearId,
+      params: { refDate: "2026-12-31", variant: "PYMES", unpostedDocumentCount: 0 },
+      actor,
+    })
+    const b = await getOrCreateReportRun(ORG, {
+      type: "DASHBOARD",
+      ...PERIOD,
+      fiscalYearId,
+      params: { refDate: "2026-12-31", variant: "PYMES", unpostedDocumentCount: 7 },
+      actor,
+    })
+    expect(b.id).toBe(a.id)
+    expect(b.origen).toBe("cache")
+  })
+
+  it("#4: cambiar el `refDate` SÍ emite un run nuevo (define el aging)", async () => {
+    const a = await getOrCreateReportRun(ORG, {
+      type: "DASHBOARD",
+      ...PERIOD,
+      fiscalYearId,
+      params: { refDate: "2026-12-31", variant: "PYMES" },
+      actor,
+    })
+    const b = await getOrCreateReportRun(ORG, {
+      type: "DASHBOARD",
+      ...PERIOD,
+      fiscalYearId,
+      params: { refDate: "2026-06-30", variant: "PYMES" },
+      actor,
+    })
+    expect(b.id).not.toBe(a.id)
+  })
+
+  it("A3: un `params.variant` que no es GENERAL ni PYMES se rechaza, no se adivina", async () => {
+    await expect(
+      getOrCreateReportRun(ORG, {
+        type: "BALANCE",
+        ...PERIOD,
+        fiscalYearId,
+        params: { snapshot: "PRE_REGULARIZACION", variant: "NORMAL" },
+        actor,
+      })
+    ).rejects.toThrow(/variant inválido/)
   })
 
   // ── T20: el agregado SQL de la matriz no puede divergir del motor puro ────

@@ -199,6 +199,38 @@ export function validateNewAccount(
 }
 
 /**
+ * #15 — R-18′ en el ALTA y en la importación por CSV, no sólo al editar.
+ *
+ * Una cuenta postable que nace sin bucket de cashflow es un hueco: sus
+ * movimientos contra tesorería no aparecerán en ningún bloque del informe
+ * directo, y nadie se entera hasta que el cashflow no cuadra con el banco. El
+ * hijo hereda el del padre (`validateNewAccount`), así que el aviso sólo salta
+ * cuando el padre tampoco lo tiene.
+ */
+export function checkCashflowBucketCoverage(accounts: readonly PlanAccount[]): AccountWarning[] {
+  const codes = new Set(accounts.map((a) => a.code))
+  const out: AccountWarning[] = []
+  for (const account of accounts) {
+    if (!account.isPostable) continue
+    // 57x es la tesorería: es el sujeto del informe, no una contrapartida.
+    if (account.code.startsWith("57")) continue
+    // Los grupos 8 y 9 (ECPN y analítica interna) nunca son contrapartida.
+    if (account.code.startsWith("8") || account.code.startsWith("9")) continue
+    if (account.cashflowBucket !== null) continue
+    // Una cuenta con hijos no recibe líneas: la comprobación es de las hojas.
+    if ([...codes].some((c) => c !== account.code && c.startsWith(account.code))) continue
+    out.push({
+      code: "CASHFLOW_UNEXPECTED",
+      accountCode: account.code,
+      message:
+        `La cuenta postable ${account.code} no tiene bucket de cashflow: sus movimientos contra ` +
+        "tesorería no entrarán en ningún bloque del informe directo (R-18′)",
+    })
+  }
+  return out
+}
+
+/**
  * R-04: el alta de un hijo degrada al padre a no postable. Devuelve el plan
  * resultante y QUÉ padre hay que degradar; la persistencia de ambos cambios la
  * hace `models/accounts.ts` en UNA transacción (I-E2-2).

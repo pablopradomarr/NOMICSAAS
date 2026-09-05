@@ -8,6 +8,8 @@
 
 import { createHash } from "node:crypto"
 
+import { z } from "zod"
+
 import type { Cents } from "@/lib/ledger/types"
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 
@@ -31,7 +33,15 @@ export function canonicalJson(value: unknown): string {
     return JSON.stringify(value)
   }
   if (typeof value !== "object") return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
+  if (Array.isArray(value)) {
+    // #13: en un objeto, `undefined` significa «esta clave no está» y se puede
+    // descartar; en un ARRAY significa «hay un hueco aquí», y serializarlo como
+    // `null` cambiaría el dato sin avisar. Dos informes distintos compartirían
+    // hash. Se para antes de hashear.
+    const hole = value.findIndex((v) => v === undefined)
+    if (hole >= 0) throw new Error(`canonicalJson: hueco (undefined) en la posición ${hole} de un array`)
+    return `[${value.map(canonicalJson).join(",")}]`
+  }
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, v]) => v !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -150,6 +160,47 @@ export const DEFAULT_REVIEW_THRESHOLDS: ReviewThresholds = {
   kpis: DEFAULT_KPI_THRESHOLDS,
 }
 
+const COMPARATIVE_BASES = [
+  "SAME_PERIOD_PREVIOUS_YEAR",
+  "PREVIOUS_FISCAL_YEAR_CLOSE",
+  "PREVIOUS_PERIOD",
+  "NONE",
+] as const
+
+export const kpiThresholdSchema = z.object({
+  pctBps: z.number().int().min(0).max(1_000_000).nullable(),
+  minAbsCents: z.number().int().min(0).nullable(),
+  minPointsBps: z.number().int().min(0).nullable().default(null),
+})
+
+/**
+ * Schema CANÓNICO de `Organization.reviewThresholds` (#10). Vive en el módulo
+ * puro y `forms/reports.ts` lo reexporta: un segundo schema en el formulario
+ * acabaría admitiendo lo que el motor rechaza, o al revés.
+ */
+export const reviewThresholdsSchema = z.object({
+  version: z.literal(1),
+  comparativeBasis: z.enum(COMPARATIVE_BASES).default(DEFAULT_COMPARATIVE_BASIS),
+  kpis: z.record(z.string(), kpiThresholdSchema).default(DEFAULT_KPI_THRESHOLDS),
+})
+
+/**
+ * Umbrales de la organización, PARSEADOS. Una columna `Json?` puede contener
+ * cualquier cosa —una versión vieja, un `kpis` a medias editado a mano—; sin
+ * parsear, `checkThresholds` leería `pctBps: undefined` y dejaría de disparar en
+ * silencio, que es la peor forma de romper un sello. Ante cualquier cosa que no
+ * valide se cae a los valores por defecto, que son conservadores.
+ */
+export function parseReviewThresholds(raw: unknown): ReviewThresholds {
+  const parsed = reviewThresholdsSchema.safeParse(raw)
+  if (!parsed.success) return DEFAULT_REVIEW_THRESHOLDS
+  return {
+    version: 1,
+    comparativeBasis: parsed.data.comparativeBasis as ComparativeBasis,
+    kpis: parsed.data.kpis,
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Motivos del sello: CÓDIGO CERRADO (O-7)
 //
@@ -167,6 +218,10 @@ export type SealReasonCode =
   | "REVISION_FORZADA"
   | "INVARIANTE_FAIL"
   | "GIT_SHA_DESCONOCIDO"
+  /** A1: el diario del periodo cambió sin que ningún asiento lo justifique. */
+  | "LEDGER_DRIFT"
+  /** #5: el plan de cuentas o el mapa cambiaron desde el informe anterior. */
+  | "PLAN_CAMBIADO"
 
 export type ReportSealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION" | "VARIACION"
 
@@ -291,6 +346,14 @@ export type AlwaysReviewContext = {
   manualReviewReason?: string | null
   /** I-E6-13 en FAIL: las DOS cifras y su diferencia. */
   regularizacionDesfasada?: { i3Cents: Cents; saldo129Cents: Cents } | null
+  /**
+   * A1 / I-E6-20: el `ledgerHash` del periodo NO coincide con el del último
+   * `ReportRun` del mismo periodo y **no hay nada en el diario que lo explique**
+   * (ni asientos nuevos, ni anulaciones, ni reclasificaciones en el `AuditLog`).
+   */
+  ledgerDrift?: { previousHash: string; currentHash: string } | null
+  /** #5: hash del plan o del mapa de cuentas distinto del informe anterior. */
+  planDrift?: { what: "plan" | "mapa"; previous: string; current: string } | null
 }
 
 const UNKNOWN_SHAS: ReadonlySet<string> = new Set(["", "desconocido", "unknown", "dev", "HEAD"])
@@ -341,6 +404,32 @@ export function alwaysReviewReasons(ctx: AlwaysReviewContext): ReportSealReason[
       code: "REVISION_FORZADA",
       kind: "CONFIGURACION",
       message: `revisión forzada por un administrador: ${ctx.manualReviewReason}`,
+    })
+  }
+  // A1 — la manipulación «coherente»: alguien cambia un `account_code` por SQL y
+  // recalcula el `entry_hash` para que I-E3-7 no chille. Los importes siguen
+  // cuadrando, I1 pasa, el sello saldría VALIDADO… y el balance es otro. Lo
+  // único que lo delata es que el `ledgerHash` del periodo se mueva sin que haya
+  // un asiento, una anulación o una reclasificación que lo justifique.
+  if (ctx.ledgerDrift) {
+    out.push({
+      code: "LEDGER_DRIFT",
+      kind: "INVARIANTE",
+      invariantId: "I-E6-20",
+      message:
+        `El diario del periodo ha cambiado (sha256:${ctx.ledgerDrift.previousHash.slice(0, 12)}… → ` +
+        `sha256:${ctx.ledgerDrift.currentHash.slice(0, 12)}…) sin ningún asiento posteado, anulado ` +
+        "ni reclasificado que lo explique. Alguien ha escrito en `journal_lines` fuera de la aplicación",
+    })
+  }
+  if (ctx.planDrift) {
+    out.push({
+      code: "PLAN_CAMBIADO",
+      kind: "CONFIGURACION",
+      message:
+        `Ha cambiado el ${ctx.planDrift.what} de cuentas desde el informe anterior ` +
+        `(${ctx.planDrift.previous.slice(0, 12)}… → ${ctx.planDrift.current.slice(0, 12)}…): ` +
+        "las partidas pueden haberse movido de epígrafe y la variación sería un artefacto",
     })
   }
   if (ctx.regularizacionDesfasada) {

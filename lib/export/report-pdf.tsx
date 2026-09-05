@@ -50,6 +50,14 @@ const sheetBlock = (sheet: ExportSheet, index: number): ReactElement => (
   </View>
 )
 
+/**
+ * #11 — fecha de creación FIJA. `@react-pdf/renderer` estampa `CreationDate` y
+ * `ModDate` con el reloj, así que dos exports del mismo informe daban binarios
+ * distintos y el sha256 no servía para acreditar que el fichero no se había
+ * tocado. Es el mismo motivo por el que el zip lleva fecha fija.
+ */
+const PDF_EPOCH = new Date(Date.UTC(1980, 0, 1))
+
 export async function reportToPdf(doc: ExportDocument): Promise<Buffer> {
   const element = (
     <Document title={doc.title}>
@@ -65,5 +73,24 @@ export async function reportToPdf(doc: ExportDocument): Promise<Buffer> {
       </Page>
     </Document>
   )
-  return await renderToBuffer(element)
+  const buffer = await renderToBuffer(element)
+  // El renderizador no admite fijar las fechas por API: se normalizan sobre el
+  // binario, que es texto plano en esa zona del PDF.
+  return normalizePdfDates(buffer)
+}
+
+/** Sustituye `CreationDate`/`ModDate` por la época fija, sin tocar nada más. */
+function normalizePdfDates(pdf: Buffer): Buffer {
+  const stamp =
+    `D:${PDF_EPOCH.getUTCFullYear()}` +
+    `${String(PDF_EPOCH.getUTCMonth() + 1).padStart(2, "0")}` +
+    `${String(PDF_EPOCH.getUTCDate()).padStart(2, "0")}000000Z`
+  // `replaceAll` sobre latin1 conserva byte a byte todo lo demás, y las cadenas
+  // sustituidas tienen la MISMA longitud, así que no se desplazan los offsets
+  // de la tabla xref.
+  const text = pdf.toString("latin1")
+  const patched = text.replace(/D:\d{14}(?:[+-]\d{2}'\d{2}'|Z)?/g, (match) =>
+    stamp.padEnd(match.length, " ").slice(0, match.length)
+  )
+  return Buffer.from(patched, "latin1")
 }

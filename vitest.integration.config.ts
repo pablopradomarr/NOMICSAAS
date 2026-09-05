@@ -14,6 +14,13 @@ export default defineConfig({
     include: ["lib/**/*.test.ts", "forms/**/*.test.ts", "models/**/*.test.ts", "tests/integration/**/*.test.ts"],
     globalSetup: ["./vitest.integration.setup.ts"],
     fileParallelism: false,
+    // BLOQUEA #1: los ficheros van en SERIE. Cada fichero abre su propio pool de
+    // Prisma contra la misma base, y en paralelo las transacciones largas de uno
+    // agotaban el pool y mataban las de otro con «expired transaction». La
+    // causa de fondo se ha corregido en `models/reports.ts` —la caché se
+    // resuelve con agregados baratos y el cálculo ocurre FUERA de la
+    // transacción—, pero la serie sigue siendo la garantía barata.
+    maxConcurrency: 1,
   },
   resolve: {
     alias: [

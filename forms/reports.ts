@@ -9,7 +9,7 @@
 
 import { z } from "zod"
 
-import { DEFAULT_KPI_THRESHOLDS } from "@/lib/ledger/report-run"
+import { kpiThresholdSchema, reviewThresholdsSchema } from "@/lib/ledger/report-run"
 import { ComparativeBasis, PgcVariant, ReportType, Seal } from "@/prisma/client"
 
 /** `YYYY-MM-DD` real, no «una cadena con guiones». */
@@ -115,20 +115,12 @@ export const clearReviewSchema = z.object({
 // Umbrales de revisión (ADR-0012 D3)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const kpiThresholdSchema = z.object({
-  /** Variación relativa en puntos básicos. `null` = no se mira. */
-  pctBps: z.number().int().min(0).max(1_000_000).nullable(),
-  /** Suelo absoluto en céntimos. Sin él, el sello se ahoga en ruido. */
-  minAbsCents: z.number().int().min(0).nullable(),
-  /** Umbral en PUNTOS de margen, para KPI que ya son un porcentaje. */
-  minPointsBps: z.number().int().min(0).nullable().default(null),
-})
-
-export const reviewThresholdsSchema = z.object({
-  version: z.literal(1),
-  comparativeBasis: z.nativeEnum(ComparativeBasis).default(ComparativeBasis.SAME_PERIOD_PREVIOUS_YEAR),
-  kpis: z.record(z.string(), kpiThresholdSchema).default(DEFAULT_KPI_THRESHOLDS),
-})
+/**
+ * #10 — el schema es UNO y vive en el módulo puro (`lib/ledger/report-run.ts`),
+ * que es quien lo aplica al leer la columna. Tener aquí una segunda copia
+ * acabaría admitiendo en el formulario lo que el motor rechaza, o al revés.
+ */
+export { kpiThresholdSchema, reviewThresholdsSchema }
 
 export type BalanceParamsInput = z.infer<typeof balanceParamsSchema>
 export type PygParamsInput = z.infer<typeof pygParamsSchema>

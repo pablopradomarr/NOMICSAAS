@@ -43,6 +43,7 @@ import {
   canDeactivateAccount,
   canDeleteAccount,
   NewAccountInput,
+  checkCashflowBucketCoverage,
   validateNewAccount,
 } from "@/lib/accounts/validate"
 import {
@@ -204,7 +205,11 @@ export async function createAccount(
       reason: reason ?? null,
       userId: actor.userId,
     })
-    return { ok: true as const, account: created }
+    // #15: R-18′ también en el ALTA. No bloquea —es un aviso—, pero la UI lo
+    // pinta: una cuenta postable sin bucket es un hueco que rompe el cashflow
+    // directo en silencio.
+    const warnings = checkCashflowBucketCoverage([validated.value])
+    return { ok: true as const, account: created, warnings }
   })
 }
 
@@ -367,6 +372,8 @@ export type ImportNpgcResult = {
   taxRates: number
   unresolvedKeys: AccountKey[]
   dryRun: boolean
+  /** #15: R-18′ sobre el plan importado (cuentas postables sin bucket). */
+  cashflowWarnings?: AccountWarning[]
 }
 
 /**
@@ -406,6 +413,7 @@ export async function importNpgc(
         taxRates: 0,
         unresolvedKeys: [],
         dryRun: true,
+        cashflowWarnings: checkCashflowBucketCoverage(incoming),
       }
     }
 
@@ -599,6 +607,9 @@ export async function importNpgc(
       taxRates: taxRateCount,
       unresolvedKeys: unresolved,
       dryRun: false,
+      // #15: R-18′ sobre TODO el plan importado. Con el seed oficial sale vacío;
+      // con un plan traído por CSV es donde aparecen los huecos de verdad.
+      cashflowWarnings: checkCashflowBucketCoverage(incoming),
     }
     },
     // Una siembra son ~900 cuentas + 57 claves + 28 tipos en UNA transacción: el

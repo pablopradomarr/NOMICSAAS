@@ -70,6 +70,18 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */
 export const TENANT_MODELS_WITH_GLOBAL: ReadonlySet<string> = new Set(["Currency"])
 
+/**
+ * #16 — modelos sin `organization_id` que, aun así, se identifican POR la
+ * organización activa. `Organization` es el caso: `tx.organization.findFirst()`
+ * sin `where` devuelve cualquier fila que la política deje ver —la del usuario,
+ * no necesariamente la del informe—, y el informe saldría con la moneda y los
+ * umbrales de otra empresa. Aquí se les fuerza `id = organizationId`.
+ *
+ * `User`, `Session`, `Account` y `Verification` NO están: son pre-tenant y no
+ * tienen forma de acotarse por organización.
+ */
+export const NON_TENANT_SCOPED_BY_ID: ReadonlySet<string> = new Set(["Organization"])
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export class TenantError extends Error {
@@ -159,6 +171,26 @@ export function scopeUniqueWhere(where: unknown, organizationId: string): WhereR
   }
   out.organizationId = organizationId
   return out
+}
+
+/**
+ * #16 — acota por `id` un modelo de `NON_TENANT_SCOPED_BY_ID`. Un `id` ajeno en
+ * el selector es un BUG, no algo que silenciar: se lanza, igual que en
+ * `scopeUniqueWhere`.
+ */
+export function scopeById(args: unknown, organizationId: string, operation: string): WhereRecord {
+  const base = isPlainObject(args) ? { ...args } : {}
+  const where = isPlainObject(base.where) ? { ...base.where } : {}
+  const given = where.id
+  if (given !== undefined && given !== null && given !== organizationId) {
+    throw new TenantError("tenantDb: selector de otra organización sobre un modelo acotado por id")
+  }
+  // Las creaciones no llevan `where`; el alta de organización va por su propio
+  // camino (`withTenantTransaction`), no por aquí.
+  if (operation === "create" || operation === "createMany" || operation === "createManyAndReturn") return base
+  where.id = organizationId
+  base.where = where
+  return base
 }
 
 /** Fija organizationId en los datos de creación; lanza si venía uno ajeno. */
@@ -276,11 +308,14 @@ export const tenantExtension = (organizationId: string) =>
               // escribir. Se despachan sobre el MISMO cliente transaccional; si
               // no hay transacción abierta, se envuelven en una con los GUC,
               // igual que los modelos de negocio.
+              const nonTenantArgs = NON_TENANT_SCOPED_BY_ID.has(model)
+                ? scopeById(args, organizationId, operation)
+                : ((args ?? {}) as WhereRecord)
               const nonTenantStore = tenantGucStorage.getStore()
               if (nonTenantStore && nonTenantStore.organizationId === organizationId) {
-                return await nonTenantStore.client[delegateName(model)][operation](args as WhereRecord)
+                return await nonTenantStore.client[delegateName(model)][operation](nonTenantArgs)
               }
-              return await runWithTenantGucs(organizationId, model, operation, (args ?? {}) as WhereRecord)
+              return await runWithTenantGucs(organizationId, model, operation, nonTenantArgs)
             }
 
             const strictScope: WhereRecord = { organizationId }

@@ -56,6 +56,12 @@ export type ReportsInvariantInput = {
   /** Aging y panel ya calculados: I-E6-14/15/19 los contrastan, no los rehacen. */
   aging?: readonly AgingReport[]
   dashboard?: DashboardReport
+  /**
+   * A1 / **I-E6-20** — deriva del diario. Lo compone `models/reports.ts`, que es
+   * quien puede mirar el `ReportRun` anterior y el `AuditLog`; aquí sólo se
+   * formula el check, para que salga en `validacion.json` junto a los demás.
+   */
+  ledgerDrift?: { previousHash: string; currentHash: string; explainingChanges: number } | null
 }
 
 const MODELS: readonly PgcVariant[] = ["GENERAL", "PYMES"]
@@ -442,6 +448,29 @@ export function runReportInvariants(input: ReportsInvariantInput): CheckResult[]
         "I-E6-19",
         problems.length === 0,
         problems.length === 0 ? "el panel reproduce las cifras de los informes" : problems.join(" · ")
+      )
+    )
+  }
+
+  // ── I-E6-20 (auditor A1): el diario no se mueve solo ──────────────────────
+  //
+  // La manipulación que pasa TODOS los demás invariantes es la «coherente»:
+  // cambiar un `account_code` por SQL y recalcular el `entry_hash` para que
+  // I-E3-7 no chille. Los importes siguen cuadrando, I1 pasa, el balance sigue
+  // sumando cero… y presenta otra cosa. Lo único que la delata es que el
+  // `ledgerHash` del periodo cambie sin que haya un asiento posteado, anulado o
+  // reclasificado que lo justifique.
+  if (input.ledgerDrift !== undefined) {
+    const drift = input.ledgerDrift
+    out.push(
+      check(
+        "I-E6-20",
+        drift === null || drift.explainingChanges > 0,
+        drift === null
+          ? "El diario del periodo no ha cambiado desde el informe anterior"
+          : `El ledgerHash del periodo pasó de sha256:${drift.previousHash.slice(0, 12)}… a ` +
+            `sha256:${drift.currentHash.slice(0, 12)}… con ${drift.explainingChanges} cambio(s) registrados ` +
+            "en el diario. Con 0, alguien ha escrito en `journal_lines` fuera de la aplicación"
       )
     )
   }

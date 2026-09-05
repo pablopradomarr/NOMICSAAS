@@ -29,6 +29,12 @@ ERP SaaS de contabilidad y control de gestión para **empresas de proyectos/serv
 6. **Trazabilidad**: cada asiento referencia documento origen (`File`), extracción (`ExtractionRun` con modelo+prompt-hash), usuario y timestamp. Nada se borra: se anula con contra-asiento.
 7. **Multi-tenant estricto**: toda tabla de negocio lleva `organizationId`; toda query pasa por el helper de tenant; RLS en Supabase como segunda barrera.
 
+## Estándar de calidad (directriz de Pablo, 2026-09-05)
+- **Sin deuda técnica que se acumule**: lo que se aplaza se anota en `docs/ESTADO.md` con épica de cierre y se cierra en ella; el revisor bloquea si una épica añade deuda sin fecha.
+- **Rápido y optimizado**: agregados en SQL (nunca materializar el diario para una cifra), caché por hash antes de leer, índices para toda consulta de periodo, sin N+1, transacciones cortas; medir (ms) en tests de rendimiento sobre el fixture completo.
+- **UX intuitiva**: cada pantalla financiera muestra periodo, sello, cuadre y un camino de drill-down hasta el documento en ≤ 3 clics; acciones destructivas con motivo; textos en español contable claro; estados vacío/carga/error siempre.
+- **Rigor contable y de controlling CFO**: PGC 2007 al pie de la letra, invariantes con tolerancia 0, trazabilidad por celda, sin compensación indebida de saldos, analítica cuadrada con la contable; toda decisión contable la valida `experto-contable` y queda escrita.
+
 ## Cómo trabajar aquí (flujo de agentes)
 - Entrada por **`/epica <nombre>`** (planifica) o **`/sprint <épica>`** (ejecuta). El `orquestador` reparte trabajo; nunca escribe código de producto él mismo.
 - Toda tarea de código sigue: `arquitecto` (diseño + contrato) → `dev-backend` / `dev-frontend` (implementación + tests) → `qa-tester` (tests e2e/invariantes) → `revisor-codigo` (PR review) → `auditor-fiabilidad` (solo si toca cifras, motor contable o informes).

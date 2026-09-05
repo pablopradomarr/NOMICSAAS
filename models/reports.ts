@@ -13,27 +13,29 @@
 import { randomUUID } from "node:crypto"
 
 import { tenantTransaction, type TenantClient, type TenantTransactionClient } from "@/lib/db"
-import type { AccountKey, PgcVariant } from "@/lib/accounts/types"
+import type { AccountKey } from "@/lib/accounts/types"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
-import { buildBalance, type BalanceReport } from "@/lib/ledger/reports/balance"
+import { buildBalance, computeI3, type BalanceReport } from "@/lib/ledger/reports/balance"
 import {
   buildCashflowDirect,
   buildCashflowIndirect,
   buildEfeView,
   type CashflowDirectReport,
   type CashflowIndirectReport,
+  type CashflowLineDetail,
   type EfeReport,
 } from "@/lib/ledger/reports/cashflow"
 import { buildDashboard, type DashboardReport } from "@/lib/ledger/reports/dashboard"
 import { buildPyg, type PygReport } from "@/lib/ledger/reports/pyg"
 import { runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
-import type { ReportLine, StatementAccount } from "@/lib/ledger/reports/types"
+import { buildThresholdContext } from "@/lib/ledger/reports/threshold-context"
+import type { ReportEntry, ReportLine, StatementAccount } from "@/lib/ledger/reports/types"
 import { buildAccountIndex, type BalanceSnapshot } from "@/lib/ledger/reports/types"
 import {
   analyticsKeyOf,
   canonicalResultJson,
   checkThresholds,
-  DEFAULT_REVIEW_THRESHOLDS,
+  parseReviewThresholds,
   paramsHash as paramsHashOf,
   reportRunKey,
   reportSealReasons,
@@ -55,7 +57,7 @@ import { getAnalyticPnl } from "@/models/margins"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
 import { analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { getEntries, getLinesForPeriod, computeLedgerHash } from "@/models/ledger"
-import { ComparativeBasis, Prisma, ReportType, ResultKind, Seal } from "@/prisma/client"
+import { ComparativeBasis, PgcVariant, Prisma, ReportType, ResultKind, Seal } from "@/prisma/client"
 
 export type AnyClient = TenantClient | TenantTransactionClient
 
@@ -133,6 +135,11 @@ const SUMMARY_TYPES: ReadonlySet<ReportType> = new Set([
   ReportType.DIARIO,
   ReportType.MAYOR,
   ReportType.SUMAS_SALDOS,
+  // #6: el `lineDetail` del cashflow y los pares del drill-down crecen con el
+  // diario; con un ejercicio grande revientan la cota de 1 MB del `result`. El
+  // run guarda las cifras y el detalle se recalcula bajo demanda.
+  ReportType.CASHFLOW_DIRECTO,
+  ReportType.CASHFLOW_INDIRECTO,
 ])
 
 /** E10. Se declara en el enum y se rechaza en runtime, que es lo honesto. */
@@ -171,45 +178,32 @@ export async function getOrCreateReportRun(
     throw new Error(`El informe ${request.type} llega en E10: todavía no se emite`)
   }
   const startedAt = Date.now()
+  const gitSha = currentGitSha()
+  const userId = request.actor?.userId ?? undefined
 
-  return await tenantTransaction(organizationId, request.actor?.userId ?? undefined, async (tx) => {
-    const gitSha = currentGitSha()
-
-    // 1. Líneas del periodo, plan y organización.
-    //
-    // EN SERIE, no en paralelo: `getLinesForPeriod` es `$queryRaw` y dentro de
-    // una transacción todas comparten la ÚNICA conexión. Lanzarlas a la vez hace
-    // que el adaptador `pg` mezcle respuestas —la misma lección que E3 y E4
-    // aprendieron en `runLedgerInvariants` y en `getAnalyticPnl`—.
-    const lines = await getLinesForPeriod(tx, {
-      from: request.periodStart,
-      to: request.periodEnd,
-      ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
-    })
-    const accounts = await getStatementAccounts(tx)
-    // `Organization` NO está en `TENANT_MODELS` (es el tenant, no una tabla de
-    // negocio), así que la extensión no le inyecta el filtro: el `where` va
-    // EXPLÍCITO. Sin él, `findFirst` devolvería cualquier organización visible
-    // por la política —la del usuario, no necesariamente la del informe— y el
-    // informe saldría con la moneda y los umbrales de otra empresa.
-    //
-    // El rodeo por `$queryRaw` que hubo aquí ya no hace falta: `tenantDb`
-    // despacha también los modelos no-tenant sobre la transacción de tenant, con
-    // los GUC puestos (corrección de `lib/db.ts`, E6-UI-1).
+  // ── FASE 1 — clave y caché, SIN leer el diario (#7) ──────────────────────
+  //
+  // Todo lo que compone la clave sale de agregados baratos. Una petición que
+  // acierta en caché —la mayoría— no materializa ni una línea, y la transacción
+  // dura lo que dura un `SELECT`. Antes se leía el diario entero, el plan y el
+  // comparativo ANTES de mirar la caché: con varios informes en pantalla eso
+  // agotaba el pool y mataba transacciones ajenas por «expired transaction»
+  // (BLOQUEA #1 de la revisión).
+  const key = await tenantTransaction(organizationId, userId, async (tx) => {
     const organization = await tx.organization.findUniqueOrThrow({
       where: { id: organizationId },
       select: { baseCurrency: true, pgcVariant: true, reviewThresholds: true },
     })
-
-    // 2. Sellos. `ledgerHash` se calcula EN LA BASE (ADR-0011) sobre las mismas
-    //    líneas ordenadas, no materializando el diario en memoria.
     const ledgerHash = await computeLedgerHash(tx, {
       ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
       from: request.periodStart,
       to: request.periodEnd,
     })
-    // El sello analítico se calcula ANTES de mirar la caché: forma parte de la
-    // clave. Sin él, una reimputación (E5) devolvería el informe viejo.
+    const planHash = await computePlanHash(tx)
+    const accountMapHash = await computeAccountMapHash(tx)
+
+    // El sello analítico también forma parte de la clave: sin él, una
+    // reimputación (E5) devolvería el informe viejo.
     let analyticsHash: string | null = null
     let marginHash: string | null = null
     if (ANALYTICS_TYPES.has(request.type)) {
@@ -233,204 +227,303 @@ export async function getOrCreateReportRun(
         null
       )
     }
-    const analyticsKey = analyticsKeyOf({ analyticsHash, marginConfigHash: marginHash })
-    // El aviso de revisión manual entra en `params` y, por tanto, en la clave de
-    // reutilización. Es lo que hace que el criterio 13 funcione con una tabla
-    // append-only: al levantar el flag, la petición siguiente tiene otra clave,
-    // se emite un run nuevo y vuelve a salir `VALIDADO AUTOMÁTICAMENTE`. Si el
-    // flag no formara parte de la clave, la caché seguiría devolviendo para
-    // siempre el run sellado bajo revisión.
     const activeFlag = await activeManualReviewFlag(tx, request)
-    const params: Record<string, unknown> = {
-      currency: organization.baseCurrency,
-      ...request.params,
-      ...(activeFlag ? { reviewFlagId: activeFlag.id } : {}),
-    }
-    const hash = paramsHashOf(params)
+    const { hashed, context } = splitParams(request, organization.baseCurrency, {
+      planHash,
+      accountMapHash,
+      reviewFlagId: activeFlag?.id ?? null,
+    })
+    const paramsHash = paramsHashOf(hashed)
+    const analyticsKey = analyticsKeyOf({ analyticsHash, marginConfigHash: marginHash })
 
-    // 3. ¿Existe ya? Caché por la clave COMPLETA.
-    if (request.noCache !== true) {
-      const cached = await tx.reportRun.findFirst({
+    const cached =
+      request.noCache === true
+        ? null
+        : await tx.reportRun.findFirst({
+            where: {
+              type: request.type,
+              periodStart: toUtcDate(request.periodStart),
+              periodEnd: toUtcDate(request.periodEnd),
+              paramsHash,
+              ledgerHash,
+              analyticsKey,
+              gitSha,
+            },
+            orderBy: { createdAt: "desc" },
+          })
+
+    return {
+      organization,
+      ledgerHash,
+      planHash,
+      accountMapHash,
+      analyticsHash,
+      marginHash,
+      analyticsKey,
+      hashed,
+      context,
+      paramsHash,
+      activeFlagReason: activeFlag?.reason ?? null,
+      cached,
+    }
+  })
+
+  if (key.cached) return toView(key.cached, "cache")
+
+  // ── FASE 2 — lectura y cálculo ───────────────────────────────────────────
+  //
+  // La lectura va en su propia transacción, con presupuesto explícito; el
+  // CÁLCULO ocurre FUERA de ella, porque el motor es puro y no necesita
+  // conexión. Mantener el pool ocupado mientras se construye un árbol de
+  // epígrafes es exactamente lo que agotaba el pool.
+  const inputs = await tenantTransaction(
+    organizationId,
+    userId,
+    async (tx) => {
+      const lines = await getLinesForPeriod(tx, {
+        from: request.periodStart,
+        to: request.periodEnd,
+        ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+      })
+      const accounts = await getStatementAccounts(tx)
+      const resultAccountCode = await accountCodeFor(tx, "RESULTADO_EJERCICIO")
+      const incomeTaxAccountCodes = [
+        await accountCodeFor(tx, "HP_ACREEDORA_IS"),
+        await accountCodeFor(tx, "HP_DEUDORA_IS"),
+      ].filter((c): c is string => c !== null)
+
+      const basis = (request.comparativeBasis ??
+        parseReviewThresholds(key.organization.reviewThresholds).comparativeBasis) as ComparativeBasis
+      const comparative = await comparativeWindow(tx, {
+        basis,
+        periodStart: request.periodStart,
+        periodEnd: request.periodEnd,
+        currentFiscalYearId: request.fiscalYearId,
+      })
+
+      const previous = await previousRunFor(tx, {
+        type: request.type,
+        periodStart: request.periodStart,
+        periodEnd: request.periodEnd,
+        paramsHash: key.paramsHash,
+        basis,
+        definingParams: key.hashed,
+      })
+      // El «informe anterior» con el que se miden EV-7, EV-8, EV-10 y el drift NO
+      // se puede buscar por `paramsHash`: el hash incluye el `planHash`, así que
+      // justo cuando alguien reclasifica una cuenta —el caso que EV-10 existe
+      // para cazar— el hash cambia y no habría anterior con el que comparar. Se
+      // busca por tipo y periodo, y se filtra por lo que hace comparables dos
+      // informes (la foto y el modelo).
+      const lastCandidates = await tx.reportRun.findMany({
         where: {
           type: request.type,
           periodStart: toUtcDate(request.periodStart),
           periodEnd: toUtcDate(request.periodEnd),
-          paramsHash: hash,
-          ledgerHash,
-          analyticsKey,
-          gitSha,
         },
         orderBy: { createdAt: "desc" },
+        take: 25,
+        select: { gitSha: true, analyticsHash: true, ledgerHash: true, createdAt: true, params: true },
       })
-      if (cached) return toView(cached, "cache")
-    }
+      const lastSameKey = lastCandidates.find((run) => comparableParams(run.params, key.hashed)) ?? null
 
-    // 4. Cálculo, invariantes, comparativo y sello.
-    //
-    // El `runId` se genera AQUÍ, antes de construir: la provenance de cada celda
-    // lo lleva dentro, y un identificador distinto del de la fila haría que el
-    // drill-down apuntase a un run que no existe.
-    const runId = randomUUID()
-    const index = buildAccountIndex(accounts)
-    const resultAccountCode = await accountCodeFor(tx, "RESULTADO_EJERCICIO")
-    const incomeTaxAccountCodes = [
-      await accountCodeFor(tx, "HP_ACREEDORA_IS"),
-      await accountCodeFor(tx, "HP_DEUDORA_IS"),
-    ].filter((c): c is string => c !== null)
-
-    const period = {
-      organizationId,
-      from: request.periodStart,
-      to: request.periodEnd,
-      baseCurrency: organization.baseCurrency,
-      ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
-    }
-    const variant = (params.variant as PgcVariant | undefined) ?? organization.pgcVariant
-
-    // Contexto de provenance: cada celda del informe sale con su métrica, el
-    // sello del diario, el módulo que la calculó y la consulta PARAMETRIZADA que
-    // la reproduce. Sin esto el `ReportRun` guarda cifras sin respaldo y el
-    // drill-down de la UI no tiene de dónde tirar (P6/P7).
-    const provenanceCtx = {
-      runId,
-      ledgerHash,
-      gitSha,
-      baseCurrency: organization.baseCurrency,
-      module: "lib/ledger/reports",
-    }
-
-    // Comparativo del MISMO run (§8.7): mismo periodo del ejercicio anterior. Se
-    // resuelve aquí, no con un segundo run, para que `previousCents` viaje en la
-    // misma foto sellada que la cifra con la que se compara — dos runs distintos
-    // podrían tener `ledgerHash` distintos y la columna afirmaría algo falso.
-    const comparativePeriod = await comparativeWindow(tx, {
-      basis: (request.comparativeBasis ?? thresholdsOf(organization.reviewThresholds).comparativeBasis) as ComparativeBasis,
-      periodStart: request.periodStart,
-      periodEnd: request.periodEnd,
-      currentFiscalYearId: request.fiscalYearId,
-    })
-
-    // El libro diario necesita las cabeceras; los demás informes, no. Leerlas
-    // siempre traería el diario entero a memoria sin motivo.
-    const entries =
-      request.type === ReportType.DIARIO
-        ? (await getEntries(tx, request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}, { take: 5_000 })).entries.map(
-            (e) => ({
-              id: e.id,
-              entryNumber: e.entryNumber,
-              entryDate: e.entryDate,
-              documentDate: e.documentDate ?? null,
-              accrualDate: e.accrualDate ?? null,
-              description: e.description,
-              kind: e.kind,
-              sourceType: e.sourceType,
-              sourceId: e.sourceId ?? null,
-              templateCode: e.templateCode ?? null,
-              taxRoundingMode: e.taxRoundingMode,
-              reversesEntryId: e.reversesEntryId ?? null,
-              voidedAt: e.voidedAt ?? null,
-            })
-          )
-        : undefined
-
-    const analyticReport =
-      request.type === ReportType.PYG_ANALITICA
-        ? await getAnalyticPnl(tx, {
+      // A1 / I-E6-20 y EV-10: sólo tiene sentido preguntarlo si hay un run
+      // anterior del mismo informe con el que comparar.
+      let unexplainedDrift: { previousHash: string; currentHash: string } | null = null
+      let driftCheck: { previousHash: string; currentHash: string; explainingChanges: number } | null = null
+      let reclassified: string[] = []
+      if (lastSameKey) {
+        if (lastSameKey.ledgerHash !== key.ledgerHash) {
+          const changes = await ledgerChangesSince(tx, lastSameKey.createdAt, {
             from: request.periodStart,
             to: request.periodEnd,
             ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
-            provenance: { runId: randomUUID(), gitSha, baseCurrency: organization.baseCurrency },
           })
-        : null
-
-    const built = analyticReport
-      ? ({
-          kind: "SUMMARY" as const,
-          module: "lib/analytics/margins.ts",
-          result: analyticReport.pnl as unknown as Record<string, unknown>,
+          driftCheck = {
+            previousHash: lastSameKey.ledgerHash,
+            currentHash: key.ledgerHash,
+            explainingChanges: changes,
+          }
+          if (changes === 0) {
+            unexplainedDrift = { previousHash: lastSameKey.ledgerHash, currentHash: key.ledgerHash }
+          }
+        }
+        reclassified = await reclassifiedAccountsSince(tx, lastSameKey.createdAt, {
+          from: comparative?.from ?? request.periodStart,
+          to: comparative?.to ?? request.periodEnd,
         })
-      : buildReport(
-          request.type,
-          lines,
-          index,
-          {
-            ...period,
-            variant,
-            params,
-            resultAccountCode: resultAccountCode ?? "129",
-            incomeTaxAccountCodes,
-            ...(entries ? { entries } : {}),
-            ...(comparativePeriod ? { comparative: comparativePeriod } : {}),
-          },
-          provenanceCtx
-        )
+      }
 
-    const checks = runReportInvariants({
-      lines,
-      accounts: index,
-      resultAccountCode: resultAccountCode ?? "129",
-      ...period,
-      incomeTaxAccountCodes,
-      ...(built.kind === "DASHBOARD" ? { dashboard: built.dashboard, aging: [built.dashboard.aging.clientes, built.dashboard.aging.proveedores] } : {}),
+      // EV-6: dimensiones vivas en los dos periodos.
+      const dimensionsCurrent = await dimensionsInPeriod(tx, {
+        from: request.periodStart,
+        to: request.periodEnd,
+        ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+      })
+      const dimensionsPrevious = comparative
+        ? await dimensionsInPeriod(tx, { from: comparative.from, to: comparative.to })
+        : []
+
+      // #8: el libro diario cuenta EN LA BASE y pagina; si no cabe entero, se
+      // declara truncado — nunca se sirve un diario a medias como si fuera todo.
+      const journal =
+        request.type === ReportType.DIARIO
+          ? await readJournalHeaders(tx, request)
+          : null
+
+      const analyticReport =
+        request.type === ReportType.PYG_ANALITICA
+          ? await getAnalyticPnl(tx, {
+              from: request.periodStart,
+              to: request.periodEnd,
+              ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+              provenance: { runId: randomUUID(), gitSha, baseCurrency: key.organization.baseCurrency },
+            })
+          : null
+
+      return {
+        lines,
+        accounts,
+        resultAccountCode,
+        incomeTaxAccountCodes,
+        basis,
+        comparative,
+        previous,
+        lastSameKey,
+        unexplainedDrift,
+        driftCheck,
+        reclassified,
+        dimensionsCurrent,
+        dimensionsPrevious,
+        journal,
+        analyticReport,
+      }
+    },
+    REPORT_READ_BUDGET
+  )
+
+  // ── Cálculo puro, sin conexión ───────────────────────────────────────────
+  const runId = randomUUID()
+  const index = buildAccountIndex(inputs.accounts)
+  const provenanceCtx = {
+    runId,
+    ledgerHash: key.ledgerHash,
+    gitSha,
+    baseCurrency: key.organization.baseCurrency,
+    module: "lib/ledger/reports",
+  }
+  // A3 (auditor): la variante se VALIDA antes de construir. Un `params.variant`
+  // con cualquier otra cosa elegiría la columna de epígrafe equivocada en
+  // silencio y el balance saldría con partidas en el sitio de nadie.
+  const variant = parseVariant(key.hashed.variant, key.organization.pgcVariant)
+
+  const period = {
+    organizationId,
+    from: request.periodStart,
+    to: request.periodEnd,
+    baseCurrency: key.organization.baseCurrency,
+    ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+  }
+
+  const built = inputs.analyticReport
+    ? ({
+        kind: "SUMMARY" as const,
+        module: "lib/analytics/margins.ts",
+        result: inputs.analyticReport.pnl as unknown as Record<string, unknown>,
+      })
+    : buildReport(
+        request.type,
+        inputs.lines,
+        index,
+        {
+          ...period,
+          variant,
+          params: { ...key.hashed, ...key.context },
+          resultAccountCode: inputs.resultAccountCode ?? "129",
+          incomeTaxAccountCodes: inputs.incomeTaxAccountCodes,
+          ...(inputs.journal ? { entries: inputs.journal.entries, journalTruncated: inputs.journal.truncated } : {}),
+          ...(inputs.comparative ? { comparative: inputs.comparative } : {}),
+        },
+        provenanceCtx
+      )
+
+  const checks = runReportInvariants({
+    lines: inputs.lines,
+    accounts: index,
+    resultAccountCode: inputs.resultAccountCode ?? "129",
+    ...period,
+    incomeTaxAccountCodes: inputs.incomeTaxAccountCodes,
+    // A1 / I-E6-20: el check sale en `validacion.json` junto a los demás.
+    ledgerDrift: inputs.driftCheck,
+    ...(built.kind === "DASHBOARD"
+      ? { dashboard: built.dashboard, aging: [built.dashboard.aging.clientes, built.dashboard.aging.proveedores] }
+      : {}),
+  })
+  if (inputs.journal?.truncated) {
+    checks.push({
+      id: "I-E6-DIARIO-TRUNCADO",
+      status: "WARN",
+      evidencia:
+        `El libro diario del periodo tiene ${inputs.journal.total} asientos y el run guarda ` +
+        `${inputs.journal.entries.length}: el resumen es parcial y así se declara en \`result.truncado\``,
     })
+  }
 
-    // 5. Comparativo y umbrales (EV-1…EV-10).
-    const basis = request.comparativeBasis ?? thresholdsOf(organization.reviewThresholds).comparativeBasis
-    const previous = await previousRunFor(tx, {
-      type: request.type,
-      periodStart: request.periodStart,
-      periodEnd: request.periodEnd,
-      paramsHash: hash,
-      basis: basis as ComparativeBasis,
-    })
-    const thresholds = thresholdsOf(organization.reviewThresholds)
-    const breaches = checkThresholds(
-      kpisOf(built),
-      previous ? kpisOfStored(previous.result) : null,
-      thresholds,
-      { comparativeBasis: basis as never }
-    )
+  // #2 — los atenuantes EV-1/3/5/6, CALCULADOS sobre el diario.
+  const thresholds = parseReviewThresholds(key.organization.reviewThresholds)
+  const thresholdCtx = {
+    ...buildThresholdContext({
+      lines: inputs.lines,
+      entries: inputs.journal?.entries,
+      index,
+      variant,
+      ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+      dimensionsCurrent: inputs.dimensionsCurrent,
+      dimensionsPrevious: inputs.dimensionsPrevious,
+    }),
+    comparativeBasis: inputs.basis as never,
+  }
+  const breaches = checkThresholds(
+    kpisOf(built),
+    inputs.previous ? kpisOfStored(inputs.previous.result) : null,
+    thresholds,
+    thresholdCtx
+  )
 
-    // EV-7 y EV-8 se miden contra el ÚLTIMO run del MISMO informe —mismo tipo,
-    // mismo periodo, mismos parámetros—, no contra el comparativo, que es de
-    // otro periodo: «primer run tras cambiar el motor» no habla de la variación
-    // interanual, habla de ESTE informe.
-    const lastSameKey = await tx.reportRun.findFirst({
-      where: {
-        type: request.type,
-        periodStart: toUtcDate(request.periodStart),
-        periodEnd: toUtcDate(request.periodEnd),
-        paramsHash: hash,
-      },
-      orderBy: { createdAt: "desc" },
-      select: { gitSha: true, analyticsHash: true },
-    })
-
-    const reasons = reportSealReasons({
-      checks,
-      breaches,
-      always: {
-        gitSha,
-        lastGitSha: lastSameKey?.gitSha ?? null,
-        analyticsHash,
-        lastAnalyticsHash: lastSameKey?.analyticsHash ?? null,
-        manualReviewReason: activeFlag?.reason ?? null,
-      },
-    })
-    const seal = sealOf(reasons) === "VALIDADO_AUTOMATICAMENTE" ? Seal.VALIDADO_AUTOMATICAMENTE : Seal.REQUIERE_REVISION
-
-    const provenance = {
-      runId,
-      ledgerHash: `sha256:${ledgerHash}`,
+  const i3Check = checks.find((c) => c.id === "I-E6-13")
+  const reasons = reportSealReasons({
+    checks,
+    breaches,
+    always: {
       gitSha,
-      module: built.module,
-      generatedFrom: "journal_lines",
-    }
+      lastGitSha: inputs.lastSameKey?.gitSha ?? null,
+      analyticsHash: key.analyticsHash,
+      lastAnalyticsHash: inputs.lastSameKey?.analyticsHash ?? null,
+      manualReviewReason: key.activeFlagReason,
+      ...(inputs.reclassified.length > 0 ? { reclassifiedAccounts: inputs.reclassified } : {}),
+      ...(inputs.unexplainedDrift ? { ledgerDrift: inputs.unexplainedDrift } : {}),
+      ...(planDriftOf(inputs.lastSameKey?.params, key) ?? {}),
+      ...(i3Check?.status === "FAIL"
+        ? { regularizacionDesfasada: regularizacionCifras(inputs.lines, inputs.resultAccountCode ?? "129") }
+        : {}),
+    },
+  })
+  const seal = sealOf(reasons) === "VALIDADO_AUTOMATICAMENTE" ? Seal.VALIDADO_AUTOMATICAMENTE : Seal.REQUIERE_REVISION
 
-    // 6. `INSERT … ON CONFLICT DO NOTHING` y relectura de la fila ganadora: dos
-    //    peticiones simultáneas del mismo informe no pueden dar dos runs ni un
-    //    error al usuario.
-    const durationMs = Math.max(0, Date.now() - startedAt)
+  const provenance = {
+    runId,
+    ledgerHash: `sha256:${key.ledgerHash}`,
+    planHash: `sha256:${key.planHash}`,
+    accountMapHash: `sha256:${key.accountMapHash}`,
+    gitSha,
+    module: built.module,
+    generatedFrom: "journal_lines",
+  }
+
+  // ── FASE 3 — persistencia, en una transacción corta ──────────────────────
+  const durationMs = Math.max(0, Date.now() - startedAt)
+  const storedParams = { ...key.hashed, ...key.context }
+  return await tenantTransaction(organizationId, userId, async (tx) => {
     await tx.$executeRaw`
       INSERT INTO report_runs (
         id, organization_id, type, period_start, period_end, fiscal_year_id,
@@ -441,16 +534,17 @@ export async function getOrCreateReportRun(
         ${runId}::uuid, ${organizationId}::uuid, ${request.type}::report_type,
         ${toUtcDate(request.periodStart)}::date, ${toUtcDate(request.periodEnd)}::date,
         ${request.fiscalYearId ?? null}::uuid,
-        ${JSON.stringify(params)}::jsonb, ${hash}, ${ledgerHash}, ${analyticsHash}, ${marginHash}, ${gitSha},
+        ${JSON.stringify(storedParams)}::jsonb, ${key.paramsHash}, ${key.ledgerHash},
+        ${key.analyticsHash}, ${key.marginHash}, ${gitSha},
         ${canonicalResultJson(built.result)}::jsonb,
-        ${SUMMARY_TYPES.has(request.type) ? "SUMMARY" : "FULL"}::result_kind,
+        ${resultKindOf(request.type)}::result_kind,
         ${JSON.stringify(provenance)}::jsonb,
         ${JSON.stringify({ checks })}::jsonb,
         ${seal}::seal,
         ${JSON.stringify(reasons)}::jsonb,
         ${durationMs},
-        ${previous?.id ?? null}::uuid,
-        ${previous ? basis : null}::comparative_basis,
+        ${inputs.previous?.id ?? null}::uuid,
+        ${inputs.previous ? inputs.basis : null}::comparative_basis,
         ${request.actor?.userId ?? null}::uuid
       )
       -- La clave es un índice único, no una constraint con nombre: se declara
@@ -464,15 +558,150 @@ export async function getOrCreateReportRun(
         type: request.type,
         periodStart: toUtcDate(request.periodStart),
         periodEnd: toUtcDate(request.periodEnd),
-        paramsHash: hash,
-        ledgerHash,
-        analyticsKey,
+        paramsHash: key.paramsHash,
+        ledgerHash: key.ledgerHash,
+        analyticsKey: key.analyticsKey,
         gitSha,
       },
       orderBy: { createdAt: "desc" },
     })
     return toView(stored, stored.id === runId ? "fresh" : "cache")
   })
+}
+
+/**
+ * Presupuesto de la LECTURA de un informe. El de Prisma por defecto son 5 s, que
+ * se quedan cortos con un ejercicio grande y abortan a mitad («Transaction
+ * already closed») dejando al usuario sin informe.
+ */
+const REPORT_READ_BUDGET = { timeout: 30_000, maxWait: 10_000 }
+
+/** Cota del diario que cabe en el `result` (#8). Por encima, se declara truncado. */
+export const MAX_JOURNAL_ENTRIES_IN_RUN = 5_000
+
+/**
+ * #8 — cabeceras del libro diario, CONTADAS en la base y paginadas. Si el
+ * periodo tiene más de las que caben en el `result`, se devuelve lo que cabe y
+ * se marca `truncated`: el run lo declara y el sello lo advierte, en vez de
+ * presentar medio diario como si fuera el diario.
+ */
+async function readJournalHeaders(
+  tx: TenantTransactionClient,
+  request: ReportRequest
+): Promise<{ entries: ReportEntry[]; total: number; truncated: boolean }> {
+  const filter = request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}
+  const total = await tx.journalEntry.count({
+    where: {
+      ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+      entryDate: { gte: toUtcDate(request.periodStart), lte: toUtcDate(request.periodEnd) },
+    },
+  })
+  const entries: ReportEntry[] = []
+  const PAGE = 1_000
+  for (let skip = 0; skip < Math.min(total, MAX_JOURNAL_ENTRIES_IN_RUN); skip += PAGE) {
+    const page = await getEntries(tx, filter, { skip, take: PAGE })
+    if (page.entries.length === 0) break
+    for (const e of page.entries) {
+      entries.push({
+        id: e.id,
+        entryNumber: e.entryNumber,
+        entryDate: e.entryDate,
+        documentDate: e.documentDate ?? null,
+        accrualDate: e.accrualDate ?? null,
+        description: e.description,
+        kind: e.kind,
+        sourceType: e.sourceType,
+        sourceId: e.sourceId ?? null,
+        templateCode: e.templateCode ?? null,
+        taxRoundingMode: e.taxRoundingMode,
+        reversesEntryId: e.reversesEntryId ?? null,
+        voidedAt: e.voidedAt ?? null,
+      })
+    }
+  }
+  return { entries, total, truncated: total > MAX_JOURNAL_ENTRIES_IN_RUN }
+}
+
+/**
+ * #4 — parámetros que DEFINEN el informe (entran en el hash) separados del
+ * contexto de la petición (no entra).
+ *
+ * `refDate` se queda DENTRO del hash a propósito, en contra de la lectura
+ * literal de la revisión: no es contexto, es la fecha de referencia del aging y
+ * por tanto una cifra del informe. Sacarla serviría de caché un aging calculado
+ * a otra fecha, que es justo el bug que `paramsHash` existe para evitar.
+ * `unpostedDocumentCount` sí sale: cuenta documentos que NO están en el informe,
+ * cambia con cada subida y sólo serviría para invalidar la caché sin motivo (la
+ * cifra viva la pone la acción, no el run).
+ */
+function splitParams(
+  request: ReportRequest,
+  baseCurrency: string,
+  derived: { planHash: string; accountMapHash: string; reviewFlagId: string | null }
+): { hashed: Record<string, unknown>; context: Record<string, unknown> } {
+  const { unpostedDocumentCount, ...rest } = request.params as Record<string, unknown>
+  // #14 (parcial): `method`, `granularity` y `view` NO definen las cifras — el
+  // run del cashflow trae SIEMPRE las tres vistas—, así que salen del hash y no
+  // fragmentan la caché en tres runs idénticos.
+  const { method, granularity, view, ...defining } = rest
+  return {
+    // #12: primero lo que pide el cliente, y DESPUÉS lo que deriva el servidor.
+    // Al revés, un `planHash` en la petición pisaría el real y la caché serviría
+    // el informe del plan equivocado.
+    hashed: { ...defining, currency: baseCurrency, planHash: derived.planHash, accountMapHash: derived.accountMapHash, ...(derived.reviewFlagId ? { reviewFlagId: derived.reviewFlagId } : {}) },
+    context: {
+      ...(method !== undefined ? { method } : {}),
+      ...(granularity !== undefined ? { granularity } : {}),
+      ...(view !== undefined ? { view } : {}),
+      ...(unpostedDocumentCount !== undefined ? { unpostedDocumentCount } : {}),
+    },
+  }
+}
+
+/** A3 — `params.variant` validado contra el enum, con la de la organización de respaldo. */
+function parseVariant(raw: unknown, fallback: PgcVariant): PgcVariant {
+  if (raw === undefined || raw === null) return fallback
+  if (raw === PgcVariant.GENERAL || raw === PgcVariant.PYMES) return raw
+  throw new Error(`params.variant inválido: «${String(raw)}». Admitidos: GENERAL | PYMES`)
+}
+
+/** #5 — ¿cambió el plan o el mapa desde el informe anterior del mismo tipo? */
+function planDriftOf(
+  previousParams: Prisma.JsonValue | undefined,
+  key: { planHash: string; accountMapHash: string }
+): { planDrift: { what: "plan" | "mapa"; previous: string; current: string } } | null {
+  if (!previousParams || typeof previousParams !== "object" || Array.isArray(previousParams)) return null
+  const before = previousParams as Record<string, unknown>
+  if (typeof before.planHash === "string" && before.planHash !== key.planHash) {
+    return { planDrift: { what: "plan", previous: before.planHash, current: key.planHash } }
+  }
+  if (typeof before.accountMapHash === "string" && before.accountMapHash !== key.accountMapHash) {
+    return { planDrift: { what: "mapa", previous: before.accountMapHash, current: key.accountMapHash } }
+  }
+  return null
+}
+
+/** Las DOS cifras de I-E6-13, para que el motivo del sello las enseñe. */
+function regularizacionCifras(
+  lines: readonly ReportLine[],
+  resultAccountCode: string
+): { i3Cents: Cents; saldo129Cents: Cents } {
+  return {
+    i3Cents: computeI3(lines),
+    saldo129Cents: lines
+      .filter((l) => l.accountCode === resultAccountCode && l.entryKind !== "CLOSING")
+      .reduce((a, l) => a + l.debitCents - l.creditCents, 0),
+  }
+}
+
+/**
+ * #6 — el cashflow guarda RESUMEN: su `lineDetail` y los pares del drill-down
+ * crecen con el diario y reventarían la cota de 1 MB del `result`. El detalle se
+ * recalcula bajo demanda con `getCashflowBucketDetail`, igual que E4 hace con la
+ * celda de la matriz analítica.
+ */
+function resultKindOf(type: ReportType): "SUMMARY" | "FULL" {
+  return SUMMARY_TYPES.has(type) ? "SUMMARY" : "FULL"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -493,6 +722,8 @@ type BuildContext = {
   entries?: readonly import("@/lib/ledger/reports/types").ReportEntry[]
   /** Ventana comparativa YA leída (§8.7). */
   comparative?: ComparativeWindow
+  /** #8: el periodo tiene más asientos de los que caben en el `result`. */
+  journalTruncated?: boolean
 }
 
 /**
@@ -557,7 +788,18 @@ async function comparativeWindow(
 type BuiltReport =
   | { kind: "BALANCE"; module: string; result: BalanceReport; balance: BalanceReport }
   | { kind: "PYG"; module: string; result: PygReport; pyg: PygReport }
-  | { kind: "CASHFLOW"; module: string; result: { directo: CashflowDirectReport; indirecto: CashflowIndirectReport; efe: EfeReport }; direct: CashflowDirectReport }
+  | {
+      kind: "CASHFLOW"
+      module: string
+      /** `directo` va SIN `lineDetail` ni `provenanceByBucket` (#6): resumen. */
+      result: {
+        directo: Omit<CashflowDirectReport, "lineDetail" | "provenanceByBucket"> & { drillDown: string }
+        indirecto: CashflowIndirectReport
+        efe: EfeReport
+      }
+      /** El informe COMPLETO, para los KPI y los invariantes de este run. */
+      direct: CashflowDirectReport
+    }
   | { kind: "DASHBOARD"; module: string; result: DashboardReport; dashboard: DashboardReport }
   // T19: el diario, el mayor y sumas y saldos pasan también por `ReportRun`,
   // pero con `resultKind = SUMMARY` (D-E6-4): las líneas de un ejercicio no
@@ -617,10 +859,23 @@ function buildReport(
         module: "lib/ledger/reports/cashflow.ts",
       })
       const indirecto = buildCashflowIndirect(lines, cfParams)
+      // #6: fuera del `result` el detalle línea a línea y los pares del
+      // drill-down. Con 6 000 líneas eran cientos de KB por bucket y el CHECK
+      // de 1 MB tumbaba el INSERT — es decir, el informe no se emitía. Las
+      // CIFRAS se guardan enteras; el detalle se recalcula bajo demanda con
+      // `getCashflowBucketDetail`, igual que la celda de la matriz en E4.
+      const { lineDetail: _detail, provenanceByBucket: _prov, ...directoResumen } = directo
       return {
         kind: "CASHFLOW",
         module: "lib/ledger/reports/cashflow.ts",
-        result: { directo, indirecto, efe: buildEfeView(directo, indirecto) },
+        result: {
+          directo: {
+            ...directoResumen,
+            drillDown: "Detalle por bucket bajo demanda: getCashflowBucketDetail(runId, bucket) (#6)",
+          },
+          indirecto,
+          efe: buildEfeView(directo, indirecto),
+        },
         direct: directo,
       }
     }
@@ -651,6 +906,9 @@ function buildReport(
           entryCount: diario.entryCount,
           lineCount: diario.lineCount,
           totals: diario.totals,
+          // #8: si no cabe entero, el run lo DICE. Un diario a medias servido
+          // como si fuera el diario es peor que no servirlo.
+          truncado: ctx.journalTruncated === true,
           // El detalle NO se congela: se relee del diario, que es la fuente
           // única. Lo que el run sella es el RESUMEN y su `ledgerHash`.
           detalle: "Las líneas se releen del diario por `ledgerHash`; el run sella el resumen (D-E6-4)",
@@ -703,7 +961,13 @@ function kpisOf(built: BuiltReport): KpiSnapshot {
     case "CASHFLOW":
       return { tesoreria: built.direct.closingCashCents }
     case "BALANCE":
-      return { tesoreria: 0 }
+      // #9: la tesorería REAL de la foto, no un cero que haría que el umbral
+      // comparase 0 contra 0 y no disparase nunca.
+      return {
+        tesoreria: built.balance.accountDetail
+          .filter((a) => a.code.startsWith("57"))
+          .reduce((acc, a) => acc + a.presentedCents, 0),
+      }
     case "DASHBOARD":
       return Object.fromEntries(built.dashboard.kpis.map((k) => [k.key, k.cents]))
   }
@@ -725,6 +989,86 @@ function kpisOfStored(result: unknown): KpiSnapshot {
   }
   if (r?.directo) return { tesoreria: ((r.directo as Record<string, number>).closingCashCents ?? 0) }
   return {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #6 — Drill-down del cashflow BAJO DEMANDA
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type CashflowBucketDetail = {
+  bucket: string
+  cents: Cents
+  /** La consulta parametrizada que devuelve EXACTAMENTE esas líneas. */
+  provenance: unknown
+  lines: readonly CashflowLineDetail[]
+}
+
+/**
+ * Detalle de un bucket del cashflow, recalculado a partir del run.
+ *
+ * El run guarda las cifras, no las líneas (#6). Aquí se releen las del periodo
+ * que el run selló —mismo `ledgerHash`, comprobado— y se reconstruye el detalle
+ * con el MISMO motor puro: no hay una segunda aritmética que pueda divergir.
+ *
+ * Si el diario ha cambiado desde que se emitió el run, se dice: mejor negar el
+ * drill-down que enseñar líneas que ya no componen la cifra sellada.
+ */
+export async function getCashflowBucketDetail(
+  organizationId: string,
+  runId: string,
+  bucket: string,
+  actor?: Actor
+): Promise<CashflowBucketDetail> {
+  return await tenantTransaction(organizationId, actor?.userId ?? undefined, async (tx) => {
+    const run = await tx.reportRun.findFirstOrThrow({ where: { id: runId } })
+    const period = { from: fromUtcDate(run.periodStart), to: fromUtcDate(run.periodEnd) }
+    const current = await computeLedgerHash(tx, {
+      ...(run.fiscalYearId ? { fiscalYearId: run.fiscalYearId } : {}),
+      ...period,
+    })
+    if (current !== run.ledgerHash) {
+      throw new Error(
+        "El diario ha cambiado desde que se emitió este informe: el detalle ya no compone la cifra sellada. " +
+          "Vuelve a emitirlo."
+      )
+    }
+
+    const lines = await getLinesForPeriod(tx, {
+      ...period,
+      ...(run.fiscalYearId ? { fiscalYearId: run.fiscalYearId } : {}),
+    })
+    const index = buildAccountIndex(await getStatementAccounts(tx))
+    const incomeTaxAccountCodes = [
+      await accountCodeFor(tx, "HP_ACREEDORA_IS"),
+      await accountCodeFor(tx, "HP_DEUDORA_IS"),
+    ].filter((c): c is string => c !== null)
+
+    const directo = buildCashflowDirect(
+      lines,
+      index,
+      {
+        organizationId,
+        ...period,
+        baseCurrency: (run.params as Record<string, unknown>).currency as string,
+        ...(run.fiscalYearId ? { fiscalYearId: run.fiscalYearId } : {}),
+        incomeTaxAccountCodes,
+      },
+      {
+        runId: run.id,
+        ledgerHash: run.ledgerHash,
+        gitSha: run.gitSha,
+        baseCurrency: (run.params as Record<string, unknown>).currency as string,
+        module: "lib/ledger/reports/cashflow.ts",
+      }
+    )
+    const key = bucket as keyof typeof directo.annualCents
+    return {
+      bucket,
+      cents: directo.annualCents[key] ?? 0,
+      provenance: directo.provenanceByBucket?.[key] ?? null,
+      lines: directo.lineDetail.filter((d) => d.bucket === bucket),
+    }
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -767,22 +1111,51 @@ export async function getReportRun(db: AnyClient, id: string): Promise<ReportRun
  */
 async function previousRunFor(
   tx: TenantTransactionClient,
-  input: { type: ReportType; periodStart: LocalDate; periodEnd: LocalDate; paramsHash: string; basis: ComparativeBasis }
+  input: {
+    type: ReportType
+    periodStart: LocalDate
+    periodEnd: LocalDate
+    paramsHash: string
+    basis: ComparativeBasis
+    definingParams: Record<string, unknown>
+  }
 ) {
   if (input.basis === ComparativeBasis.NONE) return null
   const shift = input.basis === ComparativeBasis.PREVIOUS_PERIOD ? 0 : 1
   const previousStart = shiftYears(input.periodStart, shift)
   const previousEnd = shiftYears(input.periodEnd, shift)
-  return await tx.reportRun.findFirst({
+  // #4: el comparativo se busca por TIPO y PERIODO, no por `paramsHash`. En el
+  // panel el `refDate` forma parte del hash —define el aging—, así que el run
+  // del ejercicio anterior tiene por fuerza otro hash y exigirlo dejaba el
+  // panel SIEMPRE sin comparativo. Lo que sí tiene que coincidir es la foto y
+  // el modelo, que son los que hacen comparables dos balances: se filtran sobre
+  // los `params` guardados.
+  const candidates = await tx.reportRun.findMany({
     where: {
       type: input.type,
-      paramsHash: input.paramsHash,
       ...(shift > 0
         ? { periodStart: toUtcDate(previousStart), periodEnd: toUtcDate(previousEnd) }
         : { periodEnd: { lt: toUtcDate(input.periodStart) } }),
     },
     orderBy: { createdAt: "desc" },
+    take: 25,
   })
+  return candidates.find((run) => comparableParams(run.params, input.definingParams)) ?? null
+}
+
+/**
+ * Dos informes son comparables si coinciden en lo que decide QUÉ se presenta: la
+ * foto y el modelo. El `refDate`, el plan y el mapa no: cambiarlos no convierte
+ * el informe en otro distinto a efectos de comparación —el plan sí dispara
+ * `PLAN_CAMBIADO`, que es la señal correcta, no la ausencia de comparativo—.
+ */
+function comparableParams(stored: Prisma.JsonValue, current: Record<string, unknown>): boolean {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return false
+  const before = stored as Record<string, unknown>
+  for (const field of ["snapshot", "variant"]) {
+    if ((before[field] ?? null) !== (current[field] ?? null)) return false
+  }
+  return true
 }
 
 /** Un año atrás, sin construir `Date` con hora (29-feb incluido). */
@@ -933,15 +1306,14 @@ export async function clearManualReviewFlag(
 }
 
 /** Umbrales de la organización, con los siete KPI por defecto si no hay nada. */
+/**
+ * Umbrales de la organización. #10: se PARSEAN con zod y se cae a los valores
+ * por defecto ante cualquier cosa que no valide —una versión vieja, un `kpis`
+ * editado a mano—. Antes se casteaba, y un `pctBps: undefined` dejaba de
+ * disparar en silencio: el peor modo de fallo de un sello.
+ */
 export function thresholdsOf(raw: Prisma.JsonValue | null | undefined): ReviewThresholds {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return DEFAULT_REVIEW_THRESHOLDS
-  const value = raw as Record<string, unknown>
-  if (value.version !== 1) return DEFAULT_REVIEW_THRESHOLDS
-  return {
-    version: 1,
-    comparativeBasis: (value.comparativeBasis as ReviewThresholds["comparativeBasis"]) ?? DEFAULT_REVIEW_THRESHOLDS.comparativeBasis,
-    kpis: (value.kpis as ReviewThresholds["kpis"]) ?? DEFAULT_REVIEW_THRESHOLDS.kpis,
-  }
+  return parseReviewThresholds(raw)
 }
 
 export async function setReviewThresholds(
@@ -1043,3 +1415,130 @@ function toView(row: StoredRun, origen: "fresh" | "cache"): ReportRunView {
 }
 
 export { reportRunKey, canonicalResultJson }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #5 / #7 — Sellos de configuración por AGREGADO SQL
+//
+// Se calculan sin materializar nada: son la parte barata de la clave de caché y
+// permiten decidir si hay que leer el diario y el plan (#7). Un informe cachedo
+// con el plan de ayer presenta las partidas en el epígrafe de ayer: es la misma
+// clase de bug que `paramsHash` cierra para la foto (O-5).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * sha256 de las columnas del plan que DECIDEN la presentación: código,
+ * epígrafes, estado financiero, bucket de cashflow, bidireccional y contra. El
+ * nombre y el resto NO entran: renombrar una cuenta no mueve un céntimo.
+ */
+export async function computePlanHash(tx: TenantTransactionClient): Promise<string> {
+  const rows = await tx.$queryRaw<{ hash: string }[]>`
+    SELECT encode(sha256(convert_to(COALESCE(string_agg(fila, E'\n' ORDER BY code), ''), 'UTF8')), 'hex') AS hash
+      FROM (
+        SELECT concat_ws(E'\t',
+                 a.code,
+                 COALESCE(a.epigraph, '∅'),
+                 COALESCE(a.epigraph_pymes, '∅'),
+                 COALESCE(a.statement::text, '∅'),
+                 COALESCE(a.cashflow_bucket::text, '∅'),
+                 a.bidirectional::text,
+                 a.is_contra::text
+               ) AS fila, a.code
+          FROM accounts a
+         WHERE a.organization_id = ${tx.$organizationId}::uuid
+      ) AS canonico`
+  return rows[0]?.hash ?? ""
+}
+
+/** sha256 del mapa `AccountKey → cuenta`: mueve el 129, el IS y la tesorería. */
+export async function computeAccountMapHash(tx: TenantTransactionClient): Promise<string> {
+  const rows = await tx.$queryRaw<{ hash: string }[]>`
+    SELECT encode(sha256(convert_to(COALESCE(string_agg(fila, E'\n' ORDER BY key), ''), 'UTF8')), 'hex') AS hash
+      FROM (
+        SELECT concat_ws(E'\t', m.key::text, m.account_code) AS fila, m.key::text AS key
+          FROM organization_account_maps m
+         WHERE m.organization_id = ${tx.$organizationId}::uuid
+      ) AS canonico`
+  return rows[0]?.hash ?? ""
+}
+
+/**
+ * A1 / I-E6-20 — ¿hay algo en el diario que explique un `ledgerHash` distinto?
+ *
+ * Cuenta los asientos posteados desde la emisión del run anterior y los
+ * `AuditLog` de posteo, anulación y reclasificación. Si no hay ninguno y el hash
+ * ha cambiado, el diario se ha tocado **por fuera de la aplicación**.
+ */
+export async function ledgerChangesSince(
+  tx: TenantTransactionClient,
+  since: Date,
+  period: { from: LocalDate; to: LocalDate; fiscalYearId?: string }
+): Promise<number> {
+  const rows = await tx.$queryRaw<{ n: bigint }[]>`
+    SELECT (
+      (SELECT COUNT(*) FROM journal_entries e
+        WHERE e.organization_id = ${tx.$organizationId}::uuid
+          -- posted_at es el sello de contabilización: journal_entries no tiene created_at.
+          AND e.posted_at >= ${since}
+          AND e.entry_date BETWEEN ${toUtcDate(period.from)}::date AND ${toUtcDate(period.to)}::date)
+      +
+      (SELECT COUNT(*) FROM audit_logs a
+        WHERE a.organization_id = ${tx.$organizationId}::uuid
+          AND a.ts >= ${since}
+          AND a.action IN ('post', 'void', 'RECLASSIFY_ANALYTICS'))
+    )::bigint AS n`
+  return Number(rows[0]?.n ?? 0)
+}
+
+/**
+ * EV-10 — cuentas cuyo **epígrafe** cambió desde la emisión del run comparado y
+ * que TIENEN líneas en el periodo comparado. La partida cambió de sitio: la
+ * variación de ese epígrafe es un artefacto, no un hecho económico.
+ */
+export async function reclassifiedAccountsSince(
+  tx: TenantTransactionClient,
+  since: Date,
+  period: { from: LocalDate; to: LocalDate }
+): Promise<string[]> {
+  // `AuditLog.entity_id` guarda el **id** de la cuenta, no su código: hay que
+  // resolverlo contra el plan para poder cruzarlo con las líneas del diario.
+  const rows = await tx.$queryRaw<{ code: string }[]>`
+    SELECT DISTINCT acc.code AS code
+      FROM audit_logs a
+      JOIN accounts acc
+        ON acc.organization_id = a.organization_id AND acc.id::text = a.entity_id
+     WHERE a.organization_id = ${tx.$organizationId}::uuid
+       AND a.entity = 'LedgerAccount'
+       AND a.ts >= ${since}
+       -- Sólo lo que MUEVE la partida de sitio: un renombrado no cuenta.
+       AND (a.before -> 'epigraph'       IS DISTINCT FROM a.after -> 'epigraph'
+         OR a.before -> 'epigraphPymes'  IS DISTINCT FROM a.after -> 'epigraphPymes'
+         OR a.before -> 'statement'      IS DISTINCT FROM a.after -> 'statement'
+         OR a.before -> 'cashflowBucket' IS DISTINCT FROM a.after -> 'cashflowBucket')
+       AND EXISTS (
+         SELECT 1 FROM journal_lines l
+          WHERE l.organization_id = a.organization_id
+            AND l.account_code = acc.code
+            AND l.entry_date BETWEEN ${toUtcDate(period.from)}::date AND ${toUtcDate(period.to)}::date)
+     ORDER BY code`
+  return rows.map((r) => r.code)
+}
+
+/** EV-6 — proyectos y CECOs con líneas en el periodo. */
+export async function dimensionsInPeriod(
+  tx: TenantTransactionClient,
+  period: { from: LocalDate; to: LocalDate; fiscalYearId?: string }
+): Promise<string[]> {
+  const rows = await tx.$queryRaw<{ d: string }[]>`
+    SELECT DISTINCT d FROM (
+      SELECT l.project_id::text AS d FROM journal_lines l
+       WHERE l.organization_id = ${tx.$organizationId}::uuid
+         AND l.entry_date BETWEEN ${toUtcDate(period.from)}::date AND ${toUtcDate(period.to)}::date
+         AND l.project_id IS NOT NULL
+      UNION ALL
+      SELECT l.cost_center_id::text AS d FROM journal_lines l
+       WHERE l.organization_id = ${tx.$organizationId}::uuid
+         AND l.entry_date BETWEEN ${toUtcDate(period.from)}::date AND ${toUtcDate(period.to)}::date
+         AND l.cost_center_id IS NOT NULL
+    ) AS dims WHERE d IS NOT NULL ORDER BY d`
+  return rows.map((r) => r.d)
+}

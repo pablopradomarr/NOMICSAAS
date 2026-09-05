@@ -572,3 +572,44 @@ Cada celda: `{valor, moneda, metrica, run_id, ledgerHash, calculado_por: "lib/le
 3. **El override de `476` y de los buckets por organización queda en E9**, como el propio experto propone (§7.2/§7.3): en v1 el mapa de buckets es de sistema.
 
 Lo demás se incorpora **tal cual**, incluidos los cuatro puntos donde la ronda 1 estaba equivocada: la doble resta de `isContra`, el reparto proporcional del cashflow, la partida de cuadre del indirecto y la definición de EBITDA.
+
+---
+
+## 11. Revisión (ronda 1) — resoluciones
+
+Revisión en contexto limpio: **CAMBIOS REQUERIDOS** · auditor **CONFORME en cifras** con cuatro hallazgos de fiabilidad · QA **PASS**. Todo resuelto sobre `HEAD` sin tocar el fixture ni las cifras selladas: los **47 checks** de `estados-esperados.json` siguen reproduciéndose byte a byte.
+
+### Bloqueantes y obligatorios
+
+| # | Hallazgo | Resolución |
+|---|---|---|
+| **1** | `test:integration` en rojo en paralelo: E6 agotaba el pool con transacciones largas | `getOrCreateReportRun` se parte en **tres transacciones cortas**: (1) clave y caché por agregados, (2) lectura con presupuesto explícito, (3) `INSERT`. **El cálculo ocurre fuera de la transacción** —el motor es puro y no necesita conexión—. Los tests que mutan pasan a una organización propia (`ORG_MUT`) y `maxConcurrency: 1` en la config. Verde **3 de 3** |
+| **2** | EV-1/3/5/6 declarados y nunca alimentados | `lib/ledger/reports/threshold-context.ts` los **calcula sobre el diario**: `periodHasSystemEntries`, `structuralDeltaByKpi` (epígrafe del impuesto, **derivado** de la tabla de subtotales, no «20» a mano), `reversalNetByKpi` (sólo pares con original en el periodo) y `dimensionsAliveInBoth`. Test: el cierre con apertura, regularización e IS **no dispara** `VARIACION_KPI` |
+| **3** | EV-10 sin fuente | `reclassifiedAccountsSince()` lee el `AuditLog` (`entity_id` es el **id**, se resuelve contra el plan) y exige que la cuenta tenga líneas en el periodo comparado. `regularizacionDesfasada` se alimenta cuando I-E6-13 sale FAIL. Tests de los dos |
+| **4** | `params` mezclaba definición y contexto | `splitParams()`: `unpostedDocumentCount`, `method`, `granularity` y `view` **fuera** del hash. **`refDate` se queda dentro**, en contra de la lectura literal: no es contexto, define el aging, y sacarlo serviría de caché un aging calculado a otra fecha. El comparativo se busca por **tipo + periodo** filtrando foto y modelo, no por `paramsHash` — con el `refDate` dentro, el panel no encontraba nunca su comparativo |
+| **5** | El plan y el mapa no estaban en la clave | `computePlanHash()` (código, epígrafes, `statement`, bucket, bidireccional, contra) y `computeAccountMapHash()`, por agregado SQL, dentro de `params` → dentro de `paramsHash`. **Sin migración**. Cambiar un epígrafe o el mapa emite run nuevo y sella `PLAN_CAMBIADO`; dos tests |
+| **6** | El `result` del cashflow crecía con el diario | `resultKind = SUMMARY`: fuera `lineDetail` y los pares de provenance. Drill-down bajo demanda con `getCashflowBucketDetail(runId, bucket)`, que **comprueba el `ledgerHash`** antes de responder. Test con 6 200 líneas: `pg_column_size(result) < 1 MB` y las cifras cuadran |
+| **7** | Se leía todo antes de mirar la caché | La fase 1 sólo calcula hashes por agregado y hace `findFirst`; un acierto de caché no materializa **ni una línea** |
+| **8** | El diario podía servirse truncado en silencio | `readJournalHeaders()` cuenta en la base y pagina hasta `MAX_JOURNAL_ENTRIES_IN_RUN`; por encima, `result.truncado = true` y un WARN que sella `REQUIERE REVISIÓN` |
+| **9** | `kpisOf(BALANCE)` devolvía `{tesoreria: 0}` | Devuelve la tesorería **real** de la foto (suma de 57x presentadas): un cero comparaba 0 contra 0 y no disparaba nunca |
+| **10** | `thresholdsOf` casteaba | `parseReviewThresholds()` con zod y caída a los valores por defecto. El schema es **uno** y vive en el módulo puro; `forms/reports.ts` lo reexporta |
+
+### Opcionales atendidos
+
+**#11** PDF con fecha de creación fija → sha256 estable · **#12** los derivados del servidor se aplican **después** del spread del cliente, para que un `planHash` en la petición no pise el real · **#13** `canonicalJson` lanza ante `undefined` dentro de un array (en un objeto es «no está»; en un array es un hueco) · **#15** R-18′ también en el alta y en la importación (`checkCashflowBucketCoverage`) · **#16** `NON_TENANT_SCOPED_BY_ID`: el facade fuerza `where.id = organizationId` en `Organization` y lanza ante un id ajeno.
+
+**#14 no se hace**: unificar los dos `ReportType` de cashflow exige recrear el tipo enum y reescribir las filas existentes, y la ganancia es cosmética. Lo que sí se ha hecho es sacar `method`/`granularity`/`view` del hash, que era el problema real: el run trae **siempre** las tres vistas, así que ya no se fragmenta la caché en tres runs idénticos. Queda anotado.
+
+### Hallazgos del auditor
+
+| ID | Hallazgo | Resolución |
+|---|---|---|
+| **A1** | Una manipulación «coherente» —cambiar `account_code` y recalcular el `entry_hash`— pasaba **todos** los invariantes | **I-E6-20**: si el `ledgerHash` del periodo cambia y no hay asiento posteado, anulado ni reclasificado que lo explique (`journal_entries.posted_at` + `AuditLog`), el check sale FAIL y el sello lleva `LEDGER_DRIFT`. Test de error inyectado con los triggers desactivados |
+| **A3** | `params.variant` sin validar | `parseVariant()` lanza ante cualquier cosa que no sea `GENERAL`/`PYMES`. Antes, un `"NORMAL"` elegía la columna de epígrafe equivocada en silencio |
+| **A4** | `run-invariants.ts` usaba el reloj | Sin `--ref-date`, la fecha se **deriva del ejercicio** (cierre del último, acotado a hoy): auditar 2026 desde 2028 hacía pasar I8 por suerte |
+| **A-spec** | R-CF-7 no estaba en la skill | Añadida a `.claude/skills/estados-financieros/SKILL.md`, con R-CF-1/2/4/5/6/8 y el porqué: el EFE mide flujos **brutos** |
+
+### Dos defectos que aparecieron al escribir los tests
+
+1. **`registros_origen` del cashflow no reproducía su celda**: filtraba por código de cuenta y arrastraba el devengo de la nómina —que no toca el banco— al bucket de personal. Ahora va por pares `(entry_id, account_code)` cruzados con `unnest`, exacto también donde R-CF-7 mueve el IVA de bucket.
+2. **`lastSameKey` se buscaba por `paramsHash`**: con el `planHash` dentro del hash, reclasificar una cuenta —el caso que EV-10 existe para cazar— dejaba el informe sin anterior con el que compararse. Se busca por tipo y periodo, filtrando foto y modelo.

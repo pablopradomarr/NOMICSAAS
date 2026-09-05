@@ -20,10 +20,24 @@ Regla: **ningún informe se almacena como cifras editables**. Se calcula con SQL
 | **Balance de situación** | Saldos de cuentas `statement ∈ BALANCE_*` agrupados por `epigraph`; resultado del ejercicio = PyG (I3) si no está regularizado, mostrado en PN "VII. Resultado del ejercicio". Signos: activo con saldo deudor positivo; pasivo/PN saldo acreedor positivo; cuentas correctoras (28x, 29x, 39x, 49x, 59x) restan en su epígrafe | Activo − (Pasivo + PN) = 0 (I2) |
 | **PyG contable** | Cuentas grupo 6/7 por `epigraph` del modelo normal; ingresos positivos, gastos negativos; subtotales oficiales (A.1 resultado de explotación, A.2 financiero, A.3 antes de impuestos, A.4 del ejercicio) | Resultado = I3 (definición única en skill `fiabilidad`) |
 | **PyG analítica** | Matriz `nivel de margen × (proyecto ∣ línea de negocio ∣ CECO)`; usa `analytic_type` + `MarginLevelConfig` + `AllocationLine` del `AllocationRun` vigente del periodo. Columnas: Ingresos, MC1, %MC1, MC2, %MC2, MC3, %MC3; agregado por LN; columna "CECOs no imputados"; total | I4 e I5 (definición única en skill `fiabilidad`) |
-| **Cashflow directo** | Movimientos de 57x clasificados por `cashflowCategory` de la contrapartida (cobros clientes, pagos proveedores, personal, impuestos, inversión, financiación); por mes | Saldo inicial 57x + flujos = saldo final 57x (I6) |
+| **Cashflow directo** | En cada asiento con al menos una línea 57x, **cada línea no-57x aporta `−(debe − haber)`** a su `cashflowBucket` (R-CF-3: por LÍNEA y exacta, nada de reparto proporcional). Siete buckets sembrados en `seeds/npgc.csv`: cobros de clientes, pagos a proveedores, personal, impuestos, otros de explotación, inversión, financiación; por mes | Saldo inicial 57x + flujos = saldo final 57x (I6) |
 | **Cashflow indirecto** | Resultado + amortizaciones ± Δ circulante (430/400/47x…) ± inversión ± financiación | = variación de 57x del periodo |
 | **Previsión de tesorería** (v2) | Vencimientos de 430/400 + recurrentes + presupuesto; etiquetado `interpretación IA` si hay estimación de modelo | — |
 | **Presupuesto vs real** | `Budget` mensual por proyecto/CECO/cuenta vs real del diario | — |
+
+### Reglas del cashflow que un motor ingenuo se salta
+
+- **R-CF-1** Tesorería = prefijo `57`. El saldo inicial se lee del asiento `OPENING`, **no** de un campo de configuración: un saldo inicial configurable puede diverger del diario.
+- **R-CF-2** Universo: `kind ∉ {OPENING, CLOSING, REGULARIZATION}`. Ninguno de los tres mueve un euro.
+- **R-CF-4** Un asiento cuyas **únicas** líneas son 57x (traspaso banco↔caja) se excluye y se lista aparte. La exclusión es **porque las dos cuentas son 57x**, no porque el neto sea 0: la regla se aplica antes de mirar el importe.
+- **R-CF-7** — **el IVA devengado en el mismo asiento que un cobro o un pago sigue al bloque comercial, no a impuestos.** En un asiento que mezcla tesorería, **un solo** bloque comercial (`43x`/`40x`/`41x`/`438`/`407`) y las cuentas de IVA de esa misma operación (`472`/`477`), las líneas de IVA se asignan al bucket del bloque comercial. Con **varios** bloques comerciales el IVA se queda en `PAGOS_IMPUESTOS` y la Auditoría lo lista como WARN.
+
+  *Por qué:* el EFE mide cobros y pagos **brutos**. Un anticipo de cliente (`572` 242 000 / `438` 200 000 + `477` 42 000) sin R-CF-7 mostraría un cobro de clientes de 200 000 y un **cobro de Hacienda de 42 000**, que es falso: Hacienda no ha pagado nada. Cuando la factura y el cobro son asientos distintos —el caso normal— la cuestión no se plantea, porque en el asiento de cobro la única contrapartida es `430` por el importe bruto. El flujo con Hacienda aparece en su momento, en la liquidación trimestral.
+- **R-CF-8** El impuesto sobre beneficios **no es un bucket**: la línea 8.d del EFE se deriva dentro de `PAGOS_IMPUESTOS` por las claves `HP_ACREEDORA_IS`/`HP_DEUDORA_IS` del mapa de la organización, nunca por códigos escritos a mano.
+- **R-CF-5** El indirecto es una **partición mecánica y exhaustiva**: toda cuenta no-57x cae en exactamente un bloque, así que `Σ bloques = Δ57x` **por álgebra**, con tolerancia 0 y **sin partida de cuadre**.
+- **R-CF-6** Los asientos sin ninguna línea 57x que tocan inversión o financiación son «operaciones que no han supuesto flujos de efectivo»: se listan aparte y explican por qué el indirecto reparte importes que el directo nunca ve.
+
+El cashflow es **informe de gestión**, no cuenta anual: el EFE no es exigible en PYMES ni en el modelo abreviado (art. 257.3 LSC y RD 1515/2007), y la cabecera lo dice.
 
 ## Pestaña **Auditoría** (`/auditoria`)
 Lista de checks I1–I10 + checks de calidad de datos, ejecutados on-demand y en cada cierre, con `PASS/FAIL/WARN`, evidencia (query + primeras 50 filas) y enlace al asiento:

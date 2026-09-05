@@ -123,9 +123,31 @@ async function checkI10(client: Client, organizationId: string | null): Promise<
   }
 }
 
+/**
+ * Fecha de referencia derivada de los ejercicios de la organización: el cierre
+ * del último ejercicio, o hoy si ese cierre todavía no ha llegado. Determinista
+ * respecto a los DATOS, no al reloj de quien ejecuta el script.
+ */
+async function refDateFromFiscalYears(organizationId: string): Promise<string> {
+  const { tenantTransaction } = await import("@/lib/db")
+  const { fromUtcDate } = await import("@/lib/ledger/dates")
+  const today = todayIso()
+  const last = await tenantTransaction(organizationId, undefined, async (tx) =>
+    tx.fiscalYear.findFirst({ orderBy: { endDate: "desc" }, select: { endDate: true } })
+  )
+  if (!last) return today
+  const end = fromUtcDate(last.endDate)
+  return end < today ? end : today
+}
+
 async function main() {
   const { organizationId, out, refDate: refDateArg } = parseArgs(process.argv.slice(2))
-  const refDate = refDateArg ?? todayIso()
+  // A4 (auditor): «hoy» por defecto era el RELOJ, así que auditar un ejercicio
+  // cerrado de 2026 desde 2028 hacía pasar I8 por pura suerte, y auditar uno
+  // futuro lo marcaba entero como asientos por venir. Cuando no se pasa
+  // `--ref-date`, se deriva del ejercicio: el fin del último ejercicio de la
+  // organización, acotado a hoy si el ejercicio aún no ha terminado.
+  const refDate = refDateArg ?? (organizationId ? await refDateFromFiscalYears(organizationId) : todayIso())
 
   // I10: barrido SIN filtro de tenant. Es la única forma de ver un cruce.
   const crossOrg = await withMaintenanceClient(async (client) => checkI10(client, organizationId))
