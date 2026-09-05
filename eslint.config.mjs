@@ -55,6 +55,10 @@ const BUSINESS_DELEGATES = [
   "periodLock",
   "journalEntry",
   "journalLine",
+  // E4: las tres tablas de dimensiones analíticas.
+  "businessLine",
+  "costCenter",
+  "marginLevelConfig",
 ];
 
 const NO_BARE_PRISMA_DELEGATE = {

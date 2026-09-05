@@ -49,7 +49,12 @@ model Organization {
   timezone          String     @default("Europe/Madrid")
   pgcVariant        PgcVariant @default(PYMES) @map("pgc_variant")
   ledgerEnabled     Boolean    @default(true) @map("ledger_enabled")
+  /// R-A8: con `false` las líneas 6/7 sin destino se rutean a `CC-NA` en vez de
+  /// bloquear el asiento. E3 la ignoraba (D-E3-1); E4 la lee.
   analyticsRequired Boolean    @default(true) @map("analytics_required")
+  /// MLC-5 / R-A11: nivel del `NO_ANALITICO` que NO es impuesto sobre
+  /// beneficios. Admisibles EBITDA (default) | EBIT | BAI (CHECK en BD).
+  nonAnalyticLevel  MarginLevel @default(EBITDA) @map("non_analytic_level")
   reviewThresholds  Json?      @map("review_thresholds")
   isPersonal        Boolean    @default(false) @map("is_personal")
   isActive          Boolean    @default(true) @map("is_active")
@@ -105,6 +110,11 @@ model Organization {
   periodLocks    PeriodLock[]
   journalEntries JournalEntry[]
   journalLines   JournalLine[]
+
+  // E4 — analítica
+  businessLines      BusinessLine[]
+  costCenters        CostCenter[]
+  marginLevelConfigs MarginLevelConfig[]
 
   @@map("organizations")
 }
@@ -250,6 +260,9 @@ model Category {
   @@map("categories")
 }
 
+/// **D-E4-1.** NO es una tabla nueva: es el `Project` heredado de TaxHacker al
+/// que E4 añade columnas. `Transaction.projectCode` y toda la UI heredada
+/// siguen funcionando sin tocar una línea.
 model Project {
   id             String        @id @default(uuid()) @db.Uuid
   organizationId String        @map("organization_id") @db.Uuid
@@ -261,7 +274,30 @@ model Project {
   transactions   Transaction[]
   createdAt      DateTime      @default(now()) @map("created_at")
 
+  // ── E4 (docs/design/E4-analitica.md §2.2) ──────────────────────────────────
+  businessLineId     String        @map("business_line_id") @db.Uuid
+  businessLine       BusinessLine  @relation(fields: [organizationId, businessLineId], references: [organizationId, id], onDelete: Restrict)
+  /// E8 crea `Counterparty`; hasta entonces, columna sin FK (patrón §2.3 de E3).
+  counterpartyId     String?       @map("counterparty_id") @db.Uuid
+  status             ProjectStatus @default(ACTIVE)
+  startDate          DateTime?     @map("start_date") @db.Date
+  endDate            DateTime?     @map("end_date") @db.Date
+  /// O-A8: sin fecha de cierre, I-E4-10 no es comprobable.
+  closedAt           DateTime?     @map("closed_at") @db.Date
+  closedById         String?       @map("closed_by_id") @db.Uuid
+  budgetRevenueCents Int?          @map("budget_revenue_cents")
+  budgetCostCents    Int?          @map("budget_cost_cents")
+  sortOrder          Int           @default(0) @map("sort_order")
+  isActive           Boolean       @default(true) @map("is_active")
+  archivedAt         DateTime?     @map("archived_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  lines JournalLine[]
+
   @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, businessLineId])
+  @@index([organizationId, status, isActive])
   @@map("projects")
 }
 
@@ -821,7 +857,10 @@ model JournalEntry {
   idempotencyKey String? @map("idempotency_key") @db.VarChar(64)
 
   /// sha256 canónico de las líneas del asiento (lib/ledger/hash.ts), I-E3-7.
-  entryHash String @map("entry_hash") @db.VarChar(64)
+  /// E4-D2: cubre TODAS las columnas de la línea, dimensiones incluidas, y se
+  /// recalcula al reclasificar. `hashVersion` documenta la forma: 1 = E3, 2 = E4.
+  entryHash   String @map("entry_hash") @db.VarChar(64)
+  hashVersion Int    @default(2) @map("hash_version")
 
   lines         JournalLine[]
   postedFromTxs Transaction[] @relation("TransactionPosted")
@@ -854,11 +893,16 @@ model JournalLine {
   creditCents Int     @default(0) @map("credit_cents")
   description String? @db.VarChar(512)
 
-  /// Destino analítico. Columnas creadas ya, SIN FK: las tablas destino llegan
-  /// en E4 (§2.3, D-E3-1). Hoy un CHECK las obliga a NULL.
+  /// Destino analítico (E4). Las tres columnas llevan **FK COMPUESTA por
+  /// tenant** (O-A1) y el CHECK `journal_lines_analytics_e4` de E3 ha
+  /// desaparecido. `analyticType` es el tipo EFECTIVO ya resuelto y persistido
+  /// (R-A2/R-A3/R-A4): la matriz nunca vuelve a decidir, lee lo guardado.
   projectId      String?       @map("project_id") @db.Uuid
+  project        Project?      @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
   costCenterId   String?       @map("cost_center_id") @db.Uuid
+  costCenter     CostCenter?   @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
   businessLineId String?       @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine? @relation(fields: [organizationId, businessLineId], references: [organizationId, id], onDelete: Restrict)
   analyticType   AnalyticType? @map("analytic_type")
 
   taxRateId      String?   @map("tax_rate_id") @db.Uuid
@@ -880,7 +924,129 @@ model JournalLine {
   @@index([organizationId, entryDate])
   @@index([organizationId, accountCode, entryDate])
   @@index([organizationId, entryId])
-  @@index([organizationId, projectId])
-  @@index([organizationId, costCenterId])
+  @@index([organizationId, projectId, entryDate])
+  @@index([organizationId, costCenterId, entryDate])
+  @@index([organizationId, businessLineId, entryDate])
   @@map("journal_lines")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E4 — Analítica base (docs/design/E4-analitica.md §2.2)
+// Tres dimensiones (BusinessLine, Project, CostCenter), configuración de
+// niveles de margen versionada y hasheada. Todo snake_case físico (O-A5).
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  CLOSED
+
+  @@map("project_status")
+}
+
+enum CostCenterKind {
+  MARKETING_VENTAS
+  OPERACIONES_INDIRECTAS
+  G_A
+  DESARROLLO_PRODUCTO
+  FINANCIERO
+  EXTRAORDINARIO
+  OTROS
+  SIN_ASIGNAR
+
+  @@map("cost_center_kind")
+}
+
+enum MarginLevel {
+  INGRESOS
+  MC1
+  MC2
+  MC3
+  EBITDA
+  EBIT
+  BAI
+  RESULTADO
+
+  @@map("margin_level")
+}
+
+model BusinessLine {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  code           String       @db.VarChar(24)
+  name           String       @db.VarChar(120)
+  color          String       @default("#0A0A0A") @db.VarChar(9)
+  sortOrder      Int          @default(0) @map("sort_order")
+  isActive       Boolean      @default(true) @map("is_active")
+  archivedAt     DateTime?    @map("archived_at")
+  /// Sembrada por la organización y no borrable: destino del backfill de E4.
+  isSystem       Boolean      @default(false) @map("is_system")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  projects Project[]
+  lines    JournalLine[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("business_lines")
+}
+
+model CostCenter {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  code           String         @db.VarChar(24)
+  name           String         @db.VarChar(120)
+  kind           CostCenterKind
+  /// Nivel en el que se descuenta. Solo MC3 | EBITDA (CHECK en BD, §2.7).
+  /// R-A6: **solo aplica a líneas con tipo efectivo `INDIRECTO_CECO`**.
+  marginLevel    MarginLevel    @map("margin_level")
+  /// Si E5 puede repartirlo. CC-FIN, CC-EXT y CC-NA: false (§8.6).
+  allocatable    Boolean        @default(true)
+  sortOrder      Int            @default(0) @map("sort_order")
+  isActive       Boolean        @default(true) @map("is_active")
+  archivedAt     DateTime?      @map("archived_at")
+  /// O-A8, simétrico a `LedgerAccount`: distingue lo sembrado de lo del usuario.
+  origin         AccountOrigin  @default(MANUAL)
+  /// `SIN_ASIGNAR` es de sistema: ni se borra, ni se archiva, ni cambia de kind.
+  isSystem       Boolean        @default(false) @map("is_system")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  lines JournalLine[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, isActive, sortOrder])
+  @@index([organizationId, kind])
+  @@map("cost_centers")
+}
+
+/// O-A7 + §8.4: versionada **y** hasheada. `validFrom`/`validTo` conservan el
+/// histórico; el hash, dentro de `analyticsHash`, impide servir un informe
+/// cacheado con la configuración equivocada. Resuelven problemas distintos.
+model MarginLevelConfig {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  level          MarginLevel
+  label          String         @db.VarChar(60)
+  /// MLC-2: `MC3` y `EBITDA` van SIEMPRE vacíos — `INDIRECTO_CECO` se rutea por
+  /// `CostCenter.marginLevel` (R-A7). Listarlo aquí lo contaría dos veces.
+  analyticTypes  AnalyticType[] @map("analytic_types")
+  sortOrder      Int            @map("sort_order")
+  isVisible      Boolean        @default(true) @map("is_visible")
+  /// La configuración vigente se elige por la **fecha del periodo del informe**,
+  /// no por la de ejecución (§8.4).
+  validFrom      DateTime       @map("valid_from") @db.Date
+  validTo        DateTime?      @map("valid_to") @db.Date
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  @@unique([organizationId, level, validFrom])
+  @@index([organizationId, validFrom, validTo])
+  @@map("margin_level_configs")
 }

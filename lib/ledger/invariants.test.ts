@@ -277,6 +277,7 @@ describe("I-E3-1 … I-E3-7", () => {
     corrupted[1].lines[0].debitCents += 100
     corrupted[1].entryHash = entryHash(
       corrupted[1].lines.map((l) => ({
+        entryId: corrupted[1].id,
         entryDate: corrupted[1].entryDate,
         entryNumber: corrupted[1].entryNumber,
         lineNo: l.lineNo,
@@ -284,9 +285,16 @@ describe("I-E3-1 … I-E3-7", () => {
         debitCents: l.debitCents,
         creditCents: l.creditCents,
         entryKind: corrupted[1].kind,
-        projectId: null,
-        costCenterId: null,
-        businessLineId: null,
+        fiscalYearId: l.fiscalYearId,
+        taxRateId: l.taxRateId ?? null,
+        taxBaseCents: l.taxBaseCents ?? null,
+        counterpartyId: l.counterpartyId ?? null,
+        dueDate: l.dueDate ?? null,
+        description: l.description ?? null,
+        analyticType: l.analyticType ?? null,
+        projectId: l.projectId ?? null,
+        costCenterId: l.costCenterId ?? null,
+        businessLineId: l.businessLineId ?? null,
       }))
     )
     // El hash detecta corrupción NO intencionada, no a un atacante con acceso

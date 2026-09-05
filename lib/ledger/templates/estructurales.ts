@@ -41,6 +41,8 @@ import type {
   TraspasoTesoreriaInput,
 } from "@/lib/ledger/templates/schemas"
 
+import { templateDestination } from "@/lib/ledger/templates/dimensions"
+
 function analyticFor(ctx: LedgerContext, accountCode: string, override?: AnalyticType | null): AnalyticType | null {
   return override ?? ctx.plan.byCode.get(accountCode)?.analyticType ?? null
 }
@@ -100,7 +102,16 @@ export function buildTraspasoTesoreria(input: TraspasoTesoreriaInput, ctx: Ledge
 
   const lines: DraftLine[] = [
     debit(input.amountCents, { accountCode: toCode }),
-    ...(feeCode ? [debit(feeCents, { accountCode: feeCode, analyticType: analyticFor(ctx, feeCode) })] : []),
+    ...(feeCode
+      ? [
+          // E4 · T6: la comisión bancaria de un traspaso es `G_A` por defecto.
+          debit(feeCents, {
+            accountCode: feeCode,
+            analyticType: analyticFor(ctx, feeCode),
+            ...templateDestination(ctx, "G_A", { costCenterId: input.bankFeeCostCenterId ?? null }),
+          }),
+        ]
+      : []),
     credit(input.amountCents + feeCents, { accountCode: fromCode }),
   ]
 
@@ -285,8 +296,11 @@ export function buildAjusteEjercicioCerrado(
         debit(input.amountCents, {
           accountCode: adjustmentCode,
           analyticType: isMaterial ? null : analyticFor(ctx, adjustmentCode, input.analyticType),
-          projectId: isMaterial ? null : (input.projectId ?? null),
-          costCenterId: isMaterial ? null : (input.costCenterId ?? null),
+          // E4 · T6: `678`/`778` son epígrafe 13, DENTRO del resultado de
+          // explotación (§8.3): CECO `G_A` por defecto, nivel EBITDA.
+          ...(isMaterial
+            ? { projectId: null, costCenterId: null }
+            : templateDestination(ctx, "G_A", { projectId: input.projectId ?? null, costCenterId: input.costCenterId ?? null })),
         }),
         ...(vatCode ? [debit(vatCents, { accountCode: vatCode, taxRateId: vatRateId, taxBaseCents: input.amountCents })] : []),
         credit(input.amountCents + vatCents, { accountCode: counterpartCode! }),
@@ -296,8 +310,11 @@ export function buildAjusteEjercicioCerrado(
         credit(input.amountCents, {
           accountCode: adjustmentCode,
           analyticType: isMaterial ? null : analyticFor(ctx, adjustmentCode, input.analyticType),
-          projectId: isMaterial ? null : (input.projectId ?? null),
-          costCenterId: isMaterial ? null : (input.costCenterId ?? null),
+          // E4 · T6: `678`/`778` son epígrafe 13, DENTRO del resultado de
+          // explotación (§8.3): CECO `G_A` por defecto, nivel EBITDA.
+          ...(isMaterial
+            ? { projectId: null, costCenterId: null }
+            : templateDestination(ctx, "G_A", { projectId: input.projectId ?? null, costCenterId: input.costCenterId ?? null })),
         }),
         ...(vatCode ? [credit(vatCents, { accountCode: vatCode, taxRateId: vatRateId, taxBaseCents: input.amountCents })] : []),
       ]

@@ -1,6 +1,7 @@
 import { TenantClient, tenantTransaction } from "@/lib/db"
 import type { PgcVariant } from "@/prisma/client"
 import { importNpgc } from "@/models/accounts"
+import { defaultBusinessLineId, seedAnalyticsDefaults } from "@/models/analytics"
 import {
   DEFAULT_CATEGORIES,
   DEFAULT_CURRENCIES,
@@ -29,11 +30,19 @@ export async function createOrganizationDefaults(
 ) {
   const organizationId = db.$organizationId
 
+  // E4 (§2.8): la analítica se siembra ANTES que los proyectos, porque desde E4
+  // `Project.businessLineId` es NOT NULL y el proyecto heredado «personal»
+  // necesita una línea de negocio a la que colgarse (D-E4-1).
+  await tenantTransaction(organizationId, opts.userId ?? undefined, async (tx) =>
+    seedAnalyticsDefaults(tx, { userId: opts.userId ?? null })
+  )
+  const businessLineId = await defaultBusinessLineId(db)
+
   for (const project of DEFAULT_PROJECTS) {
     await db.project.upsert({
       where: { organizationId_code: { organizationId, code: project.code } },
       update: { name: project.name, color: project.color, llm_prompt: project.llm_prompt },
-      create: { ...project, organizationId },
+      create: { ...project, organizationId, businessLineId },
     })
   }
 

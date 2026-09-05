@@ -33,6 +33,8 @@ import type {
   PeriodificacionInput,
 } from "@/lib/ledger/templates/schemas"
 
+import { templateDestination } from "@/lib/ledger/templates/dimensions"
+
 function analyticFor(ctx: LedgerContext, accountCode: string, override?: AnalyticType | null): AnalyticType | null {
   return override ?? ctx.plan.byCode.get(accountCode)?.analyticType ?? null
 }
@@ -52,17 +54,20 @@ function mapped(ctx: LedgerContext, key: AccountKey, errors: LedgerError[]): str
  */
 function financialLines(
   ctx: LedgerContext,
-  opts: { fxDifferenceCents?: number; roundingCents?: number },
+  opts: { fxDifferenceCents?: number; roundingCents?: number; financialCostCenterId?: string | null },
   errors: LedgerError[]
 ): DraftLine[] {
   const lines: DraftLine[] = []
+  // E4 · T6: `668`/`768` y `669`/`769` son FINANCIERO — columna propia y nivel
+  // BAI (R-A5/R-A6), aunque el CECO por defecto sea `CC-FIN`.
+  const dest = templateDestination(ctx, "FINANCIERO", { costCenterId: opts.financialCostCenterId ?? null })
   const fx = opts.fxDifferenceCents ?? 0
   if (fx < 0) {
     const code = mapped(ctx, "DIFERENCIA_CAMBIO_NEGATIVA", errors)
-    if (code) lines.push(debit(-fx, { accountCode: code, analyticType: analyticFor(ctx, code) }))
+    if (code) lines.push(debit(-fx, { accountCode: code, analyticType: analyticFor(ctx, code), ...dest }))
   } else if (fx > 0) {
     const code = mapped(ctx, "DIFERENCIA_CAMBIO_POSITIVA", errors)
-    if (code) lines.push(credit(fx, { accountCode: code, analyticType: analyticFor(ctx, code) }))
+    if (code) lines.push(credit(fx, { accountCode: code, analyticType: analyticFor(ctx, code), ...dest }))
   }
 
   const rounding = opts.roundingCents ?? 0
@@ -72,10 +77,10 @@ function financialLines(
       errors.push(adjust.error)
     } else if (adjust.kind === "GASTO") {
       const code = mapped(ctx, "REDONDEO_GASTO", errors)
-      if (code) lines.push(debit(adjust.amountCents, { accountCode: code, analyticType: analyticFor(ctx, code) }))
+      if (code) lines.push(debit(adjust.amountCents, { accountCode: code, analyticType: analyticFor(ctx, code), ...dest }))
     } else if (adjust.kind === "INGRESO") {
       const code = mapped(ctx, "REDONDEO_INGRESO", errors)
-      if (code) lines.push(credit(adjust.amountCents, { accountCode: code, analyticType: analyticFor(ctx, code) }))
+      if (code) lines.push(credit(adjust.amountCents, { accountCode: code, analyticType: analyticFor(ctx, code), ...dest }))
     }
   }
   return lines
@@ -103,7 +108,17 @@ export function buildCobroCliente(input: CobroClienteInput, ctx: LedgerContext):
   const lines: DraftLine[] = [
     debit(input.amountReceivedCents, { accountCode: bankCode! }),
     // Servicio bancario exento (art. 20.Uno.18º): sin IVA.
-    ...(feeCode ? [debit(feeCents, { accountCode: feeCode, analyticType: analyticFor(ctx, feeCode) })] : []),
+    ...(feeCode
+      ? [
+          // E4 · T6: la comisión bancaria `626` es estructura de administración
+          // (CECO `G_A` por defecto); con `projectId` R-A3 la deja en MC2 (§8.6).
+          debit(feeCents, {
+            accountCode: feeCode,
+            analyticType: analyticFor(ctx, feeCode),
+            ...templateDestination(ctx, "G_A", { costCenterId: input.bankFeeCostCenterId ?? null, projectId: input.bankFeeProjectId ?? null }),
+          }),
+        ]
+      : []),
     ...financial,
     ...settlementLines,
   ]
@@ -144,7 +159,17 @@ export function buildPagoProveedor(input: PagoProveedorInput, ctx: LedgerContext
 
   const lines: DraftLine[] = [
     ...settlementLines,
-    ...(feeCode ? [debit(feeCents, { accountCode: feeCode, analyticType: analyticFor(ctx, feeCode) })] : []),
+    ...(feeCode
+      ? [
+          // E4 · T6: la comisión bancaria `626` es estructura de administración
+          // (CECO `G_A` por defecto); con `projectId` R-A3 la deja en MC2 (§8.6).
+          debit(feeCents, {
+            accountCode: feeCode,
+            analyticType: analyticFor(ctx, feeCode),
+            ...templateDestination(ctx, "G_A", { costCenterId: input.bankFeeCostCenterId ?? null, projectId: input.bankFeeProjectId ?? null }),
+          }),
+        ]
+      : []),
     ...financial,
     credit(input.amountPaidCents, { accountCode: bankCode! }),
   ]
@@ -311,9 +336,12 @@ export function buildPagoDeuda(
     debit(input.amountCents, { accountCode: liabilityCode! }),
     ...(surchargeCents > 0
       ? [
+          // E4 · T6: recargo `631` e intereses de demora `669` en línea propia,
+          // con destino (CECO `G_A` por defecto).
           debit(surchargeCents, {
             accountCode: input.surchargeAccountCode!,
             analyticType: analyticFor(ctx, input.surchargeAccountCode!),
+            ...templateDestination(ctx, "G_A", { costCenterId: input.surchargeCostCenterId ?? null, projectId: input.surchargeProjectId ?? null }),
           }),
         ]
       : []),

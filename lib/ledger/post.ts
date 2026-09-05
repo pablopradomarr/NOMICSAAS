@@ -11,10 +11,12 @@
  * `FOR UPDATE`, triggers diferidos) es `models/ledger.ts`.
  */
 
+import { resolveEffectiveAnalyticType } from "@/lib/analytics/margins"
 import { compareDates, findFiscalYear, isMonthLocked, isValidLocalDate, monthOf, resolveEntryDate } from "@/lib/ledger/dates"
 import { isInForce, taxAppliesToSide } from "@/lib/taxes/rates"
 import { toUtcDate } from "@/lib/ledger/dates"
 import {
+  AnalyticType,
   Cents,
   DraftLine,
   EntryDraft,
@@ -35,6 +37,13 @@ const MAX_DESCRIPTION = 512
 export const accountGroup = (code: string): number => Number(code.slice(0, 1))
 
 const isPnlAccount = (code: string): boolean => accountGroup(code) === 6 || accountGroup(code) === 7
+
+/**
+ * Asientos exentos de C-9 (§8.7 y §2.5 de `E4-validacion-analitica.md`):
+ * el contra-asiento hereda el destino del original, y la regularización, el
+ * cierre y la apertura quedan fuera de I3/I4 por su `kind`.
+ */
+const EXEMPT_KINDS: ReadonlySet<string> = new Set(["REVERSAL", "REGULARIZATION", "CLOSING", "OPENING"])
 
 const truncate = (s: string, max = MAX_DESCRIPTION): string => (s.length <= max ? s : s.slice(0, max))
 
@@ -66,7 +75,14 @@ export type CheckDraftOptions = {
    * cuenta y el lado que tenía en el original; la rectificativa debe llevar el
    * contrario.
    */
-  rectifies?: readonly { accountCode: string; side: "DEBIT" | "CREDIT"; amountCents: Cents }[]
+  rectifies?: readonly {
+    accountCode: string
+    side: "DEBIT" | "CREDIT"
+    amountCents: Cents
+    /** E4 · C-12 analítico (I-E4-12): destino de la línea rectificada. */
+    projectId?: string | null
+    costCenterId?: string | null
+  }[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -308,37 +324,8 @@ export function checkDraft(draft: EntryDraft, ctx: LedgerContext, opts: CheckDra
     }
   }
 
-  // ── C-9 destino analítico (implementado e INERTE hasta E4, D-E3-1) ──
-  for (const line of draft.lines) {
-    if (!ctx.dimensions.available) {
-      // Guarda de §2.3: en E3 ninguna línea puede llevar una dimensión, porque
-      // las tablas destino no existen y el CHECK de la BD dice lo mismo.
-      if (line.projectId || line.costCenterId || line.businessLineId) {
-        errors.push(
-          err(
-            "ANALYTIC_DIM_UNAVAILABLE",
-            "projectId",
-            "Las dimensiones analíticas (proyecto, centro de coste, línea de negocio) no existen hasta E4",
-            { lineNo: line.lineNo, check: "C-9" }
-          )
-        )
-      }
-      continue
-    }
-    const analyticType = line.analyticType ?? ctx.plan.byCode.get(line.accountCode)?.analyticType ?? null
-    if (!isPnlAccount(line.accountCode) || analyticType === "NO_ANALITICO") continue
-    const destinations = [line.projectId, line.costCenterId].filter((v) => v !== null && v !== undefined).length
-    if (destinations !== 1 && ctx.policy.analyticsRequired) {
-      errors.push(
-        err(
-          "ANALYTIC_DEST_MISSING",
-          "projectId",
-          `La cuenta ${line.accountCode} exige exactamente un destino analítico (proyecto o centro de coste)`,
-          { lineNo: line.lineNo, check: "C-9" }
-        )
-      )
-    }
-  }
+  // ── C-9 destino analítico (E4 · T6: ACTIVO) ──
+  errors.push(...validateAnalytics(draft, ctx))
 
   // ── C-10 tipos vigentes (se seleccionan con `documentDate`, no `entryDate`) ──
   const taxRefDate = draft.documentDate ?? draft.entryDate
@@ -406,6 +393,217 @@ export function checkDraft(draft: EntryDraft, ctx: LedgerContext, opts: CheckDra
 
 /** Alias explícito del diseño (§3.2): validar un borrador ya construido. */
 export const validateEntry = checkDraft
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C-9 — destino analítico (E4 · T6, `E4-analitica.md` §2.4 y §3.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resuelve el destino analítico de cada línea **y lo escribe en el borrador**:
+ * el tipo efectivo (R-A2/R-A3/R-A4), el ruteo a `CC-NA` con
+ * `analyticsRequired = false` (R-A8) y la denormalización de `businessLineId`
+ * desde el proyecto (R-A9). Es deliberadamente mutadora: lo que se persiste es
+ * lo que la matriz usa, y la matriz nunca vuelve a decidir.
+ *
+ * `REVERSAL` **no pasa por aquí** (§8.7): el contra-asiento copia literalmente
+ * las cuatro columnas del original y debe poder postearse aunque el proyecto se
+ * haya cerrado o el CECO archivado entretanto — bloquearlo dejaría vivo un
+ * asiento erróneo para siempre.
+ */
+export function resolveAnalytics(draft: EntryDraft, ctx: LedgerContext): void {
+  if (!ctx.dimensions.available || EXEMPT_KINDS.has(draft.kind)) return
+  const projects = ctx.dimensions.projects ?? []
+  const analyticTypeByAccount = new Map<string, AnalyticType | null>(
+    [...ctx.plan.byCode.entries()].map(([code, a]) => [code, a.analyticType])
+  )
+
+  for (const line of draft.lines) {
+    if (!isPnlAccount(line.accountCode)) continue
+
+    let effective = resolveEffectiveAnalyticType(
+      {
+        accountCode: line.accountCode,
+        analyticType: line.analyticType ?? null,
+        projectId: line.projectId ?? null,
+        costCenterId: line.costCenterId ?? null,
+      },
+      { analyticTypeByAccount }
+    )
+
+    // R-A8: con la regla relajada, la línea sin destino va a `CC-NA` en vez de
+    // quedarse invisible en todas las columnas.
+    const hasDest = Boolean(line.projectId) || Boolean(line.costCenterId)
+    if (!hasDest && effective !== "NO_ANALITICO" && effective !== null && !ctx.policy.analyticsRequired) {
+      const unassigned = ctx.dimensions.unassignedCostCenterId ?? null
+      if (unassigned) {
+        line.costCenterId = unassigned
+        effective = resolveEffectiveAnalyticType(
+          { accountCode: line.accountCode, projectId: null, costCenterId: unassigned },
+          { analyticTypeByAccount }
+        )
+      }
+    }
+
+    line.analyticType = effective
+    // R-A9: la línea de negocio se COPIA del proyecto en el alta y no se
+    // recalcula nunca. Con CECO, va a NULL.
+    line.businessLineId = line.projectId ? (projects.find((p) => p.id === line.projectId)?.businessLineId ?? null) : null
+  }
+}
+
+/**
+ * C-9 completo. Devuelve TODOS los errores, cada uno anclado a su línea.
+ *
+ * - R-A1 / I-E4-5: grupos 1–5 sin dimensión ni `analyticType`.
+ * - I-E4-4: `NO_ANALITICO` (en particular `630`) sin ninguna dimensión.
+ * - destino excluyente, existente, del tenant y activo.
+ * - proyecto `CLOSED` no admite líneas nuevas.
+ * - con `analyticsRequired`, faltar el destino BLOQUEA el asiento.
+ */
+export function validateAnalytics(draft: EntryDraft, ctx: LedgerContext): LedgerError[] {
+  const errors: LedgerError[] = []
+
+  if (!ctx.dimensions.available) {
+    // Guarda de §2.3 (E3): sin tablas destino ninguna línea puede llevar una
+    // dimensión, y el CHECK de la BD dice lo mismo.
+    for (const line of draft.lines) {
+      if (line.projectId || line.costCenterId || line.businessLineId) {
+        errors.push(
+          err(
+            "ANALYTIC_DIM_UNAVAILABLE",
+            "projectId",
+            "Las dimensiones analíticas (proyecto, centro de coste, línea de negocio) no existen hasta E4",
+            { lineNo: line.lineNo, check: "C-9" }
+          )
+        )
+      }
+    }
+    return errors
+  }
+
+  // §8.7: el contra-asiento hereda el destino y NO pasa validateAnalytics —
+  // debe poder postearse aunque el proyecto se haya cerrado entretanto.
+  // T-26/T-27/T-28 (§2.5 del experto): sus líneas 6/7 **no llevan dimensión** y
+  // I3/I4 las excluyen por `kind`, así que exigirles destino sería contradecir
+  // el propio invariante que C-9 sirve.
+  if (EXEMPT_KINDS.has(draft.kind)) return errors
+
+  resolveAnalytics(draft, ctx)
+
+  const projects = ctx.dimensions.projects ?? []
+  const costCenters = ctx.dimensions.costCenters ?? []
+
+  for (const line of draft.lines) {
+    const pnl = isPnlAccount(line.accountCode)
+
+    // R-A1 / I-E4-5 — los grupos 1–5 son balance, no PyG.
+    if (!pnl) {
+      if (line.projectId || line.costCenterId || line.businessLineId || line.analyticType) {
+        errors.push(
+          err(
+            "ANALYTIC_DIM_ON_NON_PNL",
+            "projectId",
+            `La cuenta ${line.accountCode} no es de grupo 6 ni 7: no admite destino analítico (R-A1)`,
+            { lineNo: line.lineNo, check: "C-9" }
+          )
+        )
+      }
+      continue
+    }
+
+    // I-E4-4 — `NO_ANALITICO` nunca lleva dimensión.
+    if (line.analyticType === "NO_ANALITICO") {
+      if (line.projectId || line.costCenterId || line.businessLineId) {
+        errors.push(
+          err(
+            "ANALYTIC_DIM_ON_NON_ANALYTIC",
+            "projectId",
+            `La cuenta ${line.accountCode} es NO_ANALITICO y no admite proyecto ni centro de coste (I-E4-4)`,
+            { lineNo: line.lineNo, check: "C-9" }
+          )
+        )
+      }
+      continue
+    }
+
+    // Destino excluyente (I-E4-2).
+    if (line.projectId && line.costCenterId) {
+      errors.push(
+        err("ANALYTIC_DEST_BOTH", "projectId", "Una línea lleva proyecto O centro de coste, nunca los dos", {
+          lineNo: line.lineNo,
+          check: "C-9",
+        })
+      )
+      continue
+    }
+
+    if (line.projectId) {
+      const project = projects.find((p) => p.id === line.projectId)
+      if (!project) {
+        errors.push(
+          err("ANALYTIC_DEST_UNKNOWN", "projectId", `El proyecto ${line.projectId} no existe en esta organización`, {
+            lineNo: line.lineNo,
+            check: "C-9",
+          })
+        )
+      } else {
+        if (!project.isActive) {
+          errors.push(
+            err("ANALYTIC_DEST_INACTIVE", "projectId", `El proyecto ${project.code} está archivado`, {
+              lineNo: line.lineNo,
+              check: "C-9",
+            })
+          )
+        }
+        if (project.status === "CLOSED") {
+          errors.push(
+            err(
+              "ANALYTIC_PROJECT_CLOSED",
+              "projectId",
+              `El proyecto ${project.code} está cerrado y no admite líneas nuevas (I-E4-10)`,
+              { lineNo: line.lineNo, check: "C-9" }
+            )
+          )
+        }
+      }
+      continue
+    }
+
+    if (line.costCenterId) {
+      const ceco = costCenters.find((c) => c.id === line.costCenterId)
+      if (!ceco) {
+        errors.push(
+          err("ANALYTIC_DEST_UNKNOWN", "costCenterId", `El centro de coste ${line.costCenterId} no existe en esta organización`, {
+            lineNo: line.lineNo,
+            check: "C-9",
+          })
+        )
+      } else if (!ceco.isActive) {
+        errors.push(
+          err("ANALYTIC_DEST_INACTIVE", "costCenterId", `El centro de coste ${ceco.code} está archivado`, {
+            lineNo: line.lineNo,
+            check: "C-9",
+          })
+        )
+      }
+      continue
+    }
+
+    // Sin destino: con la regla estricta, bloquea (R-A8).
+    if (ctx.policy.analyticsRequired) {
+      errors.push(
+        err(
+          "ANALYTIC_DEST_MISSING",
+          "projectId",
+          `La cuenta ${line.accountCode} exige exactamente un destino analítico (proyecto o centro de coste)`,
+          { lineNo: line.lineNo, check: "C-9" }
+        )
+      )
+    }
+  }
+
+  return errors
+}
 
 /** C-5, C-6 y C-7 sobre los importes declarados del documento. */
 export function checkDocument(doc: DocumentCheck): LedgerError[] {
@@ -511,15 +709,26 @@ export function checkPeriod(draft: EntryDraft, ctx: LedgerContext): LedgerError[
  */
 export function checkRectification(
   draft: EntryDraft,
-  original: readonly { accountCode: string; side: "DEBIT" | "CREDIT"; amountCents: Cents }[]
+  original: readonly {
+    accountCode: string
+    side: "DEBIT" | "CREDIT"
+    amountCents: Cents
+    projectId?: string | null
+    costCenterId?: string | null
+  }[]
 ): LedgerError[] {
   const errors: LedgerError[] = []
-  const byAccount = new Map<string, { side: "DEBIT" | "CREDIT"; amountCents: Cents }>()
+  const byAccount = new Map<
+    string,
+    { side: "DEBIT" | "CREDIT"; amountCents: Cents; projectId?: string | null; costCenterId?: string | null }
+  >()
   for (const o of original) {
     const prev = byAccount.get(o.accountCode)
     byAccount.set(o.accountCode, {
       side: o.side,
       amountCents: (prev?.amountCents ?? 0) + o.amountCents,
+      projectId: o.projectId ?? null,
+      costCenterId: o.costCenterId ?? null,
     })
   }
   const rectifiedByAccount = new Map<string, number>()
@@ -537,6 +746,24 @@ export function checkRectification(
         )
       )
     }
+    // E4 · C-12 analítico (I-E4-12): la rectificativa hereda la dimensión de la
+    // línea que rectifica. Un rappel sin el proyecto que lo generó rompería el
+    // margen de ese proyecto.
+    if (isPnlAccount(line.accountCode) && (source.projectId !== undefined || source.costCenterId !== undefined)) {
+      const sameProject = (line.projectId ?? null) === (source.projectId ?? null)
+      const sameCostCenter = (line.costCenterId ?? null) === (source.costCenterId ?? null)
+      if (!sameProject || !sameCostCenter) {
+        errors.push(
+          err(
+            "ANALYTIC_DEST_UNKNOWN",
+            "projectId",
+            `La rectificativa de ${line.accountCode} debe llevar la MISMA dimensión que la línea rectificada (I-E4-12)`,
+            { lineNo: line.lineNo, check: "C-12" }
+          )
+        )
+      }
+    }
+
     const amount = line.debitCents + line.creditCents
     rectifiedByAccount.set(line.accountCode, (rectifiedByAccount.get(line.accountCode) ?? 0) + amount)
   }

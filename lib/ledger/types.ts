@@ -8,10 +8,12 @@
  */
 
 import type { AccountKey, AnalyticType, Plan } from "@/lib/accounts/types"
+import type { BusinessLineRef, CostCenterRef, ProjectRef } from "@/lib/analytics/types"
 import type { TaxRateRow } from "@/lib/taxes/types"
 import type { EntryKind, SourceType, TaxRoundingMode } from "@/prisma/client"
 
 export type { AccountKey, AnalyticType, EntryKind, Plan, SourceType, TaxRateRow, TaxRoundingMode }
+export type { BusinessLineRef, CostCenterRef, ProjectRef }
 
 /** Entero en céntimos; en una línea SIEMPRE ≥ 0 (el signo lo da el lado). */
 export type Cents = number
@@ -51,6 +53,13 @@ export type LedgerErrorCode =
   | "PAYMENT_EXCEEDS_LIABILITY"
   | "ANALYTIC_DEST_MISSING"
   | "ANALYTIC_DIM_UNAVAILABLE"
+  // E4 · T6 (§3.3): C-9 activo.
+  | "ANALYTIC_DEST_UNKNOWN"
+  | "ANALYTIC_DEST_BOTH"
+  | "ANALYTIC_DEST_INACTIVE"
+  | "ANALYTIC_PROJECT_CLOSED"
+  | "ANALYTIC_DIM_ON_NON_PNL"
+  | "ANALYTIC_DIM_ON_NON_ANALYTIC"
   | "ALREADY_REVERSED"
   | "REVERSAL_OF_REVERSAL"
   | "REVERSAL_TARGET_KIND"
@@ -186,8 +195,19 @@ export type LedgerContext = {
   fiscalYears: readonly FiscalYearRef[]
   periodLocks: readonly PeriodLockRef[]
   policy: LedgerPolicy
-  /** D-E3-1: false en E3, true desde E4. Activa C-9 y levanta la guarda analítica. */
-  dimensions: { available: boolean }
+  /**
+   * D-E3-1: `available: false` en E3, `true` desde E4. Con `true`, C-9 muerde:
+   * el motor resuelve el tipo efectivo (R-A2/R-A3/R-A4), exige destino en las
+   * líneas 6/7 y lo valida contra estos catálogos (§3.3).
+   */
+  dimensions: {
+    available: boolean
+    projects?: readonly ProjectRef[]
+    costCenters?: readonly CostCenterRef[]
+    businessLines?: readonly BusinessLineRef[]
+    /** `CC-NA`: destino automático con `analyticsRequired = false` (R-A8). */
+    unassignedCostCenterId?: string | null
+  }
   baseCurrency: string
   /**
    * Saldos por cuenta (`Σdebe − Σhaber`, negativo = acreedor) del periodo que

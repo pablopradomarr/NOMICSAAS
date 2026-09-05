@@ -44,8 +44,12 @@ describe.skipIf(!TEST_DATABASE_URL)("QA adversarial — fuga de tenant en count/
     await prisma.category.create({
       data: { organizationId: ORG_B, code: "leak-cat", name: "B only" },
     })
+    // E4 (D-E4-1): `Project.businessLineId` es NOT NULL desde E4.
+    const leakBusinessLine = await prisma.businessLine.create({
+      data: { organizationId: ORG_B, code: "GENERAL", name: "General", isSystem: true, updatedAt: new Date() },
+    })
     await prisma.project.create({
-      data: { organizationId: ORG_B, code: "leak-proj", name: "B only" },
+      data: { organizationId: ORG_B, code: "leak-proj", name: "B only", businessLineId: leakBusinessLine.id, updatedAt: new Date() },
     })
     await prisma.field.create({
       data: { organizationId: ORG_B, code: "leak-field", name: "B only", type: "text" },

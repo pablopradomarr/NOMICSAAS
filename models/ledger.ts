@@ -18,6 +18,9 @@ import { getPlan, type Actor } from "@/models/accounts"
 import { getAccountMapByKey } from "@/models/account-map"
 import { writeAuditLog } from "@/models/audit-log"
 import { listTaxRates } from "@/models/tax-rates"
+// E4 · T8: el bloque analítico de `runInvariants`. Import circular controlado
+// (`models/analytics` sólo usa de aquí funciones, dentro de cuerpos).
+import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
 import {
   TenantClient,
   TenantTransactionClient,
@@ -327,16 +330,21 @@ export async function getLedgerContext(
 ): Promise<LedgerContext> {
   const organizationId = tx.$organizationId
 
-  const [orgRows, plan, mapByKey, rates, fiscalYears, periodLocks] = await Promise.all([
-    tx.$queryRaw<OrganizationPolicyRow[]>`
+  const [orgRows, plan, mapByKey, rates, fiscalYears, periodLocks, projects, costCenters, businessLines] =
+    await Promise.all([
+      tx.$queryRaw<OrganizationPolicyRow[]>`
       SELECT base_currency, tax_rounding_mode, prorrata_bps, redondeo_tolerancia_cents, analytics_required
         FROM organizations WHERE id = ${organizationId}::uuid`,
-    getPlan(tx),
-    getAccountMapByKey(tx),
-    listTaxRates(tx),
-    listFiscalYearRefs(tx),
-    listPeriodLockRefs(tx),
-  ])
+      getPlan(tx),
+      getAccountMapByKey(tx),
+      listTaxRates(tx),
+      listFiscalYearRefs(tx),
+      listPeriodLockRefs(tx),
+      // E4 · T6: las tres dimensiones. C-9 valida contra ESTOS catálogos.
+      tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
+      tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
+      tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] }),
+    ])
 
   const org = orgRows[0]
   if (!org) {
@@ -357,8 +365,39 @@ export async function getLedgerContext(
       redondeoToleranciaCents: org.redondeo_tolerancia_cents,
       analyticsRequired: org.analytics_required,
     },
-    // D-E3-1: las tablas de dimensiones son E4.
-    dimensions: { available: false },
+    // E4 · T6: C-9 deja de ser inerte (§3.3).
+    dimensions: {
+      available: true,
+      projects: projects.map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        businessLineId: p.businessLineId,
+        status: p.status,
+        sortOrder: p.sortOrder,
+        isActive: p.isActive,
+        closedAt: p.closedAt ? fromUtcDate(p.closedAt) : null,
+      })),
+      costCenters: costCenters.map((c) => ({
+        id: c.id,
+        code: c.code,
+        name: c.name,
+        kind: c.kind,
+        marginLevel: c.marginLevel as "MC3" | "EBITDA",
+        allocatable: c.allocatable,
+        sortOrder: c.sortOrder,
+        isActive: c.isActive,
+        isSystem: c.isSystem,
+      })),
+      businessLines: businessLines.map((b) => ({
+        id: b.id,
+        code: b.code,
+        name: b.name,
+        sortOrder: b.sortOrder,
+        isActive: b.isActive,
+      })),
+      unassignedCostCenterId: costCenters.find((c) => c.kind === "SIN_ASIGNAR")?.id ?? null,
+    },
     baseCurrency: org.base_currency,
     ...(opts.balances ? { balances: opts.balances } : {}),
   }
@@ -544,6 +583,7 @@ type LineRow = {
   credit_cents: number
   description: string | null
   due_date: Date | null
+  tax_rate_id: string | null
 }
 
 /**
@@ -559,7 +599,7 @@ export async function getLinesForPeriod(tx: TenantTransactionClient, filter: Per
 
   const rows = await tx.$queryRaw<LineRow[]>`
     SELECT l.entry_id, e.entry_number, l.entry_date, l.entry_kind, l.fiscal_year_id,
-           l.line_no, l.account_code, l.debit_cents, l.credit_cents, l.description, l.due_date
+           l.line_no, l.account_code, l.debit_cents, l.credit_cents, l.description, l.due_date, l.tax_rate_id
       FROM journal_lines l
       JOIN journal_entries e
         ON e.id = l.entry_id AND e.organization_id = l.organization_id
@@ -582,6 +622,7 @@ export async function getLinesForPeriod(tx: TenantTransactionClient, filter: Per
     creditCents: r.credit_cents,
     description: r.description,
     dueDate: r.due_date ? fromUtcDate(r.due_date) : null,
+    taxRateId: r.tax_rate_id,
   }))
 }
 
@@ -684,10 +725,7 @@ export async function computeLedgerHash(
                  l.account_code,
                  l.debit_cents::text,
                  l.credit_cents::text,
-                 l.entry_kind::text,
-                 COALESCE(l.project_id::text, '∅'),
-                 COALESCE(l.cost_center_id::text, '∅'),
-                 COALESCE(l.business_line_id::text, '∅')
+                 l.entry_kind::text
                ) AS fila
           FROM journal_lines l
           JOIN journal_entries e ON e.id = l.entry_id AND e.organization_id = l.organization_id
@@ -716,6 +754,7 @@ export async function computeLedgerHashInMemory(
     ...(filter.fiscalYearId ? { fiscalYearId: filter.fiscalYearId } : {}),
   })
   const hashable: HashableLine[] = lines.map((l) => ({
+    entryId: l.entryId,
     entryDate: l.entryDate,
     entryNumber: l.entryNumber,
     lineNo: l.lineNo,
@@ -723,9 +762,8 @@ export async function computeLedgerHashInMemory(
     debitCents: l.debitCents,
     creditCents: l.creditCents,
     entryKind: l.entryKind,
-    projectId: null,
-    costCenterId: null,
-    businessLineId: null,
+    fiscalYearId: l.fiscalYearId,
+    taxRateId: l.taxRateId ?? null,
   }))
   return ledgerHash(hashable)
 }
@@ -823,8 +861,13 @@ export async function countEntries(tx: TenantTransactionClient, fiscalYearId?: s
 // Escritura: postEntry (§4.3)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function hashableOf(draft: EntryDraft, entryNumber: number): HashableLine[] {
+/**
+ * E4-D2: `entryHash` cubre TODAS las columnas de la línea. `entryId` sólo se
+ * conoce después del INSERT, así que se pasa aparte y el hash se calcula con él.
+ */
+function hashableOf(draft: EntryDraft, entryNumber: number, entryId: string | null = null): HashableLine[] {
   return draft.lines.map((l) => ({
+    entryId,
     entryDate: draft.entryDate,
     entryNumber,
     lineNo: l.lineNo,
@@ -832,10 +875,16 @@ function hashableOf(draft: EntryDraft, entryNumber: number): HashableLine[] {
     debitCents: l.debitCents,
     creditCents: l.creditCents,
     entryKind: draft.kind,
-    // E3: siempre NULL (D-E3-1, CHECK `journal_lines_analytics_e4`).
-    projectId: null,
-    costCenterId: null,
-    businessLineId: null,
+    fiscalYearId: draft.fiscalYearId,
+    taxRateId: l.taxRateId ?? null,
+    taxBaseCents: l.taxBaseCents ?? null,
+    counterpartyId: l.counterpartyId ?? null,
+    dueDate: l.dueDate ?? null,
+    description: l.description ?? null,
+    analyticType: l.analyticType ?? null,
+    projectId: l.projectId ?? null,
+    costCenterId: l.costCenterId ?? null,
+    businessLineId: l.businessLineId ?? null,
   }))
 }
 
@@ -888,11 +937,15 @@ export async function postEntryTx(
   }
 
   const entryNumber = fy.last_entry_number + 1
-  const hash = entryHash(hashableOf(draft, entryNumber))
+  // El id se genera AQUÍ para que entre en la forma canónica v2 del sello: el
+  // hash se calcula ANTES del INSERT y describe exactamente lo que se inserta.
+  const entryId = randomUUID()
+  const hash = entryHash(hashableOf(draft, entryNumber, entryId))
 
   {
     const entry = await tx.journalEntry.create({
       data: {
+        id: entryId,
         organizationId,
         fiscalYearId: draft.fiscalYearId,
         entryNumber,
@@ -927,11 +980,12 @@ export async function postEntryTx(
         taxBaseCents: l.taxBaseCents ?? null,
         counterpartyId: l.counterpartyId ?? null,
         dueDate: l.dueDate ? toUtcDate(l.dueDate) : null,
+        // E4: el tipo EFECTIVO y las tres dimensiones ya resueltas por
+        // `resolveAnalytics` (R-A2/R-A3/R-A4/R-A9) se persisten tal cual.
         analyticType: l.analyticType ?? null,
-        // D-E3-1: las tres dimensiones van a NULL hasta E4.
-        projectId: null,
-        costCenterId: null,
-        businessLineId: null,
+        projectId: l.projectId ?? null,
+        costCenterId: l.costCenterId ?? null,
+        businessLineId: l.businessLineId ?? null,
         entryDate: toUtcDate(draft.entryDate),
         fiscalYearId: draft.fiscalYearId,
         entryKind: draft.kind,
@@ -1408,9 +1462,13 @@ export async function runLedgerInvariants(
         checks: [
           i1,
           i7,
-          ...["N-5", "I8", "I9", "I10", "I-E3-1", "I-E3-2", "I-E3-3", "I-E3-4", "I-E3-5", "I-E3-6", "I-E3-7"].map(
-            skipped
-          ),
+          ...[
+            "N-5", "I8", "I9", "I10",
+            "I-E3-1", "I-E3-2", "I-E3-3", "I-E3-4", "I-E3-5", "I-E3-6", "I-E3-7",
+            // E4: el barrido analítico también materializa las líneas.
+            "I4", "I-E4-1", "I-E4-2", "I-E4-3", "I-E4-4", "I-E4-5", "I-E4-6",
+            "I-E4-7", "I-E4-8", "I-E4-9", "I-E4-10", "I-E4-11", "I-E4-12",
+          ].map(skipped),
         ],
       }
     } else {
@@ -1420,6 +1478,20 @@ export async function runLedgerInvariants(
         tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } }),
         listPeriodLockRefs(tx),
         tx.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } }),
+      ])
+
+      // E4 · T8: bloque analítico (I4 + los doce `I-E4-*`). El periodo es el
+      // del ejercicio pedido o el rango completo, y la configuración se elige
+      // por la fecha de fin del periodo (§8.4).
+      const analyticFy = opts.fiscalYearId ? fiscalYearRows.find((fy) => fy.id === opts.fiscalYearId) : undefined
+      const analyticPeriod = {
+        from: analyticFy ? fromUtcDate(analyticFy.startDate) : "0001-01-01",
+        to: analyticFy ? fromUtcDate(analyticFy.endDate) : opts.refDate,
+        ...(opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {}),
+      }
+      const [analyticsConfig, analyticLines] = await Promise.all([
+        getAnalyticsConfig(tx, { periodEnd: analyticPeriod.to }),
+        getAnalyticLines(tx, analyticPeriod),
       ])
 
       const input: InvariantInput = {
@@ -1442,6 +1514,7 @@ export async function runLedgerInvariants(
         ...(opts.requiredTemplateCoverage !== undefined
           ? { requiredTemplateCoverage: opts.requiredTemplateCoverage }
           : {}),
+        analytics: { lines: analyticLines, config: analyticsConfig, period: analyticPeriod },
       }
       validacion = runInvariantsPure(input, opts.refDate)
 

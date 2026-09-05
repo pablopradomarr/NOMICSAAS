@@ -58,6 +58,10 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "PeriodLock",
   "JournalEntry",
   "JournalLine",
+  // E4 — analítica (docs/design/E4-analitica.md §2.2). `Project` ya está desde E1.
+  "BusinessLine",
+  "CostCenter",
+  "MarginLevelConfig",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */

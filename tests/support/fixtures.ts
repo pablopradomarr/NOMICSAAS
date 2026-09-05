@@ -6,10 +6,11 @@
  * plan PYMES sembrado y el mapa de defaults, y un `EntryDraft` por asiento con
  * las `AccountKey` ya resueltas a código.
  *
- * **D-E3-1:** `projectCode` / `costCenterCode` / `businessLineCode` se
- * DESCARTAN — las tablas de dimensiones son E4 y en E3 las columnas van a NULL.
- * Hay un test que fija ese comportamiento para que se rompa a propósito el día
- * que E4 lo cambie.
+ * **E4 · T9 (invierte D-E3-1):** `projectCode` / `costCenterCode` /
+ * `businessLineCode` YA NO se descartan. El cargador construye las tres
+ * dimensiones declaradas en el fixture con ids deterministas, las pone en
+ * `ctx.dimensions` (`available: true`) y resuelve cada línea a su `projectId` /
+ * `costCenterId`, con `businessLineId` denormalizado del proyecto (R-A9).
  *
  * Los fixtures **no se editan**: se regeneran con
  * `docs/design/fixtures/build_ejercicio_completo.py`.
@@ -21,7 +22,9 @@ import path from "node:path"
 import { buildPlan } from "@/lib/accounts/codes"
 import { filterByVariant, parseNpgcCsv, seedRowsToPlanAccounts } from "@/lib/accounts/csv"
 import { defaultAccountMap } from "@/lib/accounts/map"
-import type { AccountKey, Plan } from "@/lib/accounts/types"
+import type { AccountKey, AnalyticType, Plan } from "@/lib/accounts/types"
+import { resolveEffectiveAnalyticType } from "@/lib/analytics/margins"
+import type { BusinessLineRef, CostCenterMarginLevel, CostCenterRef, ProjectRef } from "@/lib/analytics/types"
 import { entryHash, HashableLine } from "@/lib/ledger/hash"
 import type {
   Cents,
@@ -51,10 +54,11 @@ export type FixtureLine = {
   creditCents: number
   lineNo: number
   taxRateCode?: string
-  /** D-E3-1: se leen y se DESCARTAN en E3. */
+  /** E4: se resuelven a id y se persisten en la línea. */
   projectCode?: string
   costCenterCode?: string
   businessLineCode?: string
+  analyticType?: string
 }
 
 export type FixtureEntry = {
@@ -125,6 +129,9 @@ export function planForVariant(variant: "GENERAL" | "PYMES"): Plan {
 /** Ids deterministas: el fixture debe producir el MISMO hash en dos ejecuciones. */
 const stableId = (prefix: string, key: string): string => `${prefix}-${key}`
 
+/** Grupos 6 y 7: los únicos con destino analítico (R-A1). */
+const isPnl = (code: string): boolean => code.startsWith("6") || code.startsWith("7")
+
 export type LoadedFixture = {
   file: FixtureFile
   plan: Plan
@@ -135,8 +142,15 @@ export type LoadedFixture = {
   drafts: (EntryDraft & { ref: string; entryNumber: number })[]
   /** Los mismos asientos como si estuvieran ya posteados (informes, invariantes). */
   posted: PostedEntry[]
-  /** Códigos analíticos descartados (D-E3-1): se cuentan, no se persisten. */
-  discardedDimensions: { projectCodes: number; costCenterCodes: number; businessLineCodes: number }
+  /** E4 · T9: las tres dimensiones del fixture con ids deterministas. */
+  dimensions: {
+    businessLines: BusinessLineRef[]
+    projects: ProjectRef[]
+    costCenters: CostCenterRef[]
+    unassignedCostCenterId: string | null
+  }
+  /** Códigos analíticos RESUELTOS (antes de E4 se descartaban). */
+  resolvedDimensions: { projectCodes: number; costCenterCodes: number; businessLineCodes: number }
 }
 
 /**
@@ -191,6 +205,44 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
 
   const refDate = opts.refDate ?? fixtureRefDate(file)
 
+  // ── E4 · T9: las tres dimensiones, con ids deterministas ──────────────────
+  const businessLines: BusinessLineRef[] = (file.businessLines ?? []).map((b) => ({
+    id: stableId("bl", b.code),
+    code: b.code,
+    name: b.name,
+    sortOrder: b.sortOrder,
+    isActive: true,
+  }))
+  const blIdByCode = new Map(businessLines.map((b) => [b.code, b.id]))
+  const projects: ProjectRef[] = (file.projects ?? []).map((p, index) => ({
+    id: stableId("proj", p.code),
+    code: p.code,
+    name: p.name,
+    businessLineId: blIdByCode.get(p.businessLineCode) ?? "",
+    status: p.status as ProjectRef["status"],
+    sortOrder: index + 1,
+    isActive: true,
+    closedAt: null,
+  }))
+  const projectIdByCode = new Map(projects.map((p) => [p.code, p.id]))
+  const costCenters: CostCenterRef[] = (file.costCenters ?? []).map((c, index) => ({
+    id: stableId("cc", c.code),
+    code: c.code,
+    name: c.name,
+    kind: c.kind as CostCenterRef["kind"],
+    marginLevel: c.marginLevel as CostCenterMarginLevel,
+    allocatable: c.allocatable,
+    sortOrder: index + 1,
+    isActive: true,
+    isSystem: c.kind === "SIN_ASIGNAR",
+  }))
+  const ccIdByCode = new Map(costCenters.map((c) => [c.code, c.id]))
+  const unassignedCostCenterId = costCenters.find((c) => c.kind === "SIN_ASIGNAR")?.id ?? null
+
+  const analyticTypeByAccount = new Map<string, AnalyticType | null>(
+    [...plan.byCode.entries()].map(([code, account]) => [code, account.analyticType])
+  )
+
   const ctx: LedgerContext = {
     organizationId,
     refDate,
@@ -205,12 +257,12 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
       redondeoToleranciaCents: file.organization.redondeoToleranciaCents,
       analyticsRequired: file.organization.analyticsRequired,
     },
-    // D-E3-1: las dimensiones no existen en E3.
-    dimensions: { available: false },
+    // E4 · T9: las dimensiones YA existen y C-9 muerde sobre ellas.
+    dimensions: { available: true, projects, costCenters, businessLines, unassignedCostCenterId },
     baseCurrency: file.organization.baseCurrency,
   }
 
-  const discarded = { projectCodes: 0, costCenterCodes: 0, businessLineCodes: 0 }
+  const resolved = { projectCodes: 0, costCenterCodes: 0, businessLineCodes: 0 }
 
   const drafts = file.entries.map((entry) => {
     const fy = fyByCode.get(entry.fiscalYearCode)
@@ -220,16 +272,34 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
       .slice()
       .sort((a, b) => a.lineNo - b.lineNo)
       .map((l, index) => {
-        // D-E3-1: se leen para contarlos y se descartan al construir la línea.
-        if (l.projectCode) discarded.projectCodes++
-        if (l.costCenterCode) discarded.costCenterCodes++
-        if (l.businessLineCode) discarded.businessLineCodes++
+        if (l.projectCode) resolved.projectCodes++
+        if (l.costCenterCode) resolved.costCenterCodes++
+        if (l.businessLineCode) resolved.businessLineCodes++
 
         const accountCode = l.accountKey ? map(l.accountKey as AccountKey) : (l.accountCode ?? null)
         if (!accountCode) {
           throw new Error(`El asiento ${entry.ref}, línea ${l.lineNo}, no resuelve a ninguna cuenta`)
         }
         const rate = l.taxRateCode ? rateByCode.get(l.taxRateCode) : undefined
+
+        // E4: destino resuelto a id; `businessLineId` COPIADO del proyecto
+        // (R-A9) y NULL cuando la línea va a un CECO.
+        const projectId = l.projectCode ? (projectIdByCode.get(l.projectCode) ?? null) : null
+        if (l.projectCode && !projectId) {
+          throw new Error(`El asiento ${entry.ref}, línea ${l.lineNo}, apunta al proyecto ${l.projectCode}, que el fixture no declara`)
+        }
+        const costCenterId = l.costCenterCode ? (ccIdByCode.get(l.costCenterCode) ?? null) : null
+        if (l.costCenterCode && !costCenterId) {
+          throw new Error(`El asiento ${entry.ref}, línea ${l.lineNo}, apunta al CECO ${l.costCenterCode}, que el fixture no declara`)
+        }
+        const businessLineId = projectId ? (projects.find((p) => p.id === projectId)?.businessLineId ?? null) : null
+        const analyticType = isPnl(accountCode)
+          ? resolveEffectiveAnalyticType(
+              { accountCode, analyticType: (l.analyticType as AnalyticType | undefined) ?? null, projectId, costCenterId },
+              { analyticTypeByAccount }
+            )
+          : null
+
         return {
           lineNo: index + 1,
           accountKey: (l.accountKey as AccountKey) ?? null,
@@ -241,11 +311,10 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
           taxBaseCents: null,
           counterpartyId: null,
           dueDate: null,
-          analyticType: plan.byCode.get(accountCode)?.analyticType ?? null,
-          // Siempre NULL en E3: el CHECK de la BD dice lo mismo.
-          projectId: null,
-          costCenterId: null,
-          businessLineId: null,
+          analyticType,
+          projectId,
+          costCenterId,
+          businessLineId,
         }
       })
 
@@ -283,14 +352,15 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
       counterpartyId: null,
       dueDate: null,
       analyticType: l.analyticType ?? null,
-      projectId: null,
-      costCenterId: null,
-      businessLineId: null,
+      projectId: l.projectId ?? null,
+      costCenterId: l.costCenterId ?? null,
+      businessLineId: l.businessLineId ?? null,
       entryDate: draft.entryDate,
       fiscalYearId: draft.fiscalYearId,
       entryKind: draft.kind,
     }))
     const hashable: HashableLine[] = lines.map((l) => ({
+      entryId: stableId("entry", draft.ref),
       entryDate: draft.entryDate,
       entryNumber: draft.entryNumber,
       lineNo: l.lineNo,
@@ -298,9 +368,16 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
       debitCents: l.debitCents,
       creditCents: l.creditCents,
       entryKind: draft.kind,
-      projectId: null,
-      costCenterId: null,
-      businessLineId: null,
+      fiscalYearId: draft.fiscalYearId,
+      taxRateId: l.taxRateId ?? null,
+      taxBaseCents: l.taxBaseCents ?? null,
+      counterpartyId: l.counterpartyId ?? null,
+      dueDate: l.dueDate ?? null,
+      description: l.description ?? null,
+      analyticType: l.analyticType ?? null,
+      projectId: l.projectId ?? null,
+      costCenterId: l.costCenterId ?? null,
+      businessLineId: l.businessLineId ?? null,
     }))
     return {
       id: stableId("entry", draft.ref),
@@ -323,7 +400,17 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
     }
   })
 
-  return { file, plan, ctx, rates, fiscalYears, drafts, posted, discardedDimensions: discarded }
+  return {
+    file,
+    plan,
+    ctx,
+    rates,
+    fiscalYears,
+    drafts,
+    posted,
+    dimensions: { businessLines, projects, costCenters, unassignedCostCenterId },
+    resolvedDimensions: resolved,
+  }
 }
 
 /**
@@ -370,6 +457,7 @@ export function toReportLines(posted: readonly PostedEntry[]): ReportLine[] {
       creditCents: l.creditCents,
       description: l.description ?? null,
       dueDate: null,
+      taxRateId: l.taxRateId ?? null,
     }))
   )
 }

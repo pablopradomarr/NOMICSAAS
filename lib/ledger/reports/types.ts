@@ -25,6 +25,8 @@ export type ReportLine = {
   creditCents: Cents
   description?: string | null
   dueDate?: LocalDate | null
+  /** E4-D2: entra en la forma canónica v2 de `ledgerHash`. */
+  taxRateId?: string | null
 }
 
 /** Cabecera del asiento, para el libro diario. */

@@ -19,7 +19,7 @@ import { createCategory, deleteCategory, updateCategory } from "@/models/categor
 import { createCurrency, deleteCurrency, updateCurrency } from "@/models/currencies"
 import { createField, deleteField, updateField } from "@/models/fields"
 import { updateOrganization } from "@/models/organizations"
-import { createProject, deleteProject, updateProject } from "@/models/projects"
+import { createProject, deleteProject, DimensionInUseError, updateProject } from "@/models/projects"
 import { SELF_HOSTED_ONLY_SETTINGS, SettingsMap, updateSettings } from "@/models/settings"
 import { updateUser } from "@/models/users"
 import { Organization, Prisma, User } from "@/prisma/client"
@@ -186,6 +186,8 @@ export async function deleteProjectAction(code: string) {
   try {
     await deleteProject(db, code)
   } catch (error) {
+    // E4: `DIMENSION_IN_USE` es una respuesta de negocio, no un fallo técnico.
+    if (error instanceof DimensionInUseError) return { success: false, error: error.message }
     return { success: false, error: "Failed to delete project" + error }
   }
   revalidatePath("/settings/projects")

@@ -17,7 +17,8 @@
  *      ejercicio; cerrarlo es otra operación (`closeFiscalYear`).
  *   3. Postea los 5 / 84 asientos **por `postEntry`** — el mismo camino que la
  *      aplicación, con su validación C-1…C-13, su `FOR UPDATE` y sus triggers.
- *      D-E3-1: `projectCode`/`costCenterCode`/`businessLineCode` se descartan.
+ *      E4 · T9: `projectCode`/`costCenterCode`/`businessLineCode` se CREAN y se
+ *      persisten en la línea (antes se descartaban, D-E3-1).
  *   4. Comprueba el bloque `expected` del fichero contra lo que quedó en la BD
  *      y calcula el `ledgerHash`. Dos cargas del mismo fixture sobre bases
  *      limpias dan el MISMO hash: es lo que hace la carga byte-idéntica.
@@ -29,6 +30,7 @@
 
 import { tenantTransaction } from "@/lib/db"
 import type { Cents, EntryDraft, LocalDate } from "@/lib/ledger/types"
+import { seedAnalyticsDefaults } from "@/models/analytics"
 import { importNpgc } from "@/models/accounts"
 import { openFiscalYear } from "@/models/fiscal-years"
 import {
@@ -43,6 +45,7 @@ import { fixtureRefDate, loadFixture, readFixture, type FixtureName } from "@/te
 import { existsSync, statSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
+import type { CostCenterKind, MarginLevel } from "@/prisma/client"
 
 export type LoadFixtureOptions = {
   organizationId: string
@@ -112,6 +115,78 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
     say(`· plan ${file.organization.pgcVariant}: ${seeded.created} cuentas`)
   }
 
+  // ── 1b. E4 · T9: dimensiones analíticas del fichero ───────────────────────
+  // Antes se descartaban (D-E3-1). Ahora se crean —líneas de negocio, proyectos
+  // y CECOs— y cada línea 6/7 se postea con su destino, de modo que C-9 muerde
+  // sobre datos reales y la matriz de I4 se puede calcular contra la BD.
+  const dimensionIds = await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
+    // La semilla de fábrica (8 CECOs + 8 niveles + LN GENERAL) primero: el
+    // fixture puede reutilizar sus códigos y `upsert` no los duplica.
+    await seedAnalyticsDefaults(tx, { validFrom: file.fiscalYear.startDate, userId: actor.userId })
+
+    const businessLines = new Map<string, string>()
+    for (const bl of file.businessLines ?? []) {
+      const row = await tx.businessLine.upsert({
+        where: { organizationId_code: { organizationId, code: bl.code } },
+        update: { name: bl.name, sortOrder: bl.sortOrder },
+        create: { organizationId, code: bl.code, name: bl.name, sortOrder: bl.sortOrder },
+      })
+      businessLines.set(bl.code, row.id)
+    }
+    const projects = new Map<string, string>()
+    for (const [index, p] of (file.projects ?? []).entries()) {
+      const businessLineId = businessLines.get(p.businessLineCode)
+      if (!businessLineId) throw new Error(`El proyecto ${p.code} apunta a la línea ${p.businessLineCode}, que el fixture no declara`)
+      const row = await tx.project.upsert({
+        where: { organizationId_code: { organizationId, code: p.code } },
+        update: { name: p.name, businessLineId, sortOrder: index + 1 },
+        create: { organizationId, code: p.code, name: p.name, businessLineId, sortOrder: index + 1 },
+      })
+      projects.set(p.code, row.id)
+    }
+    const costCenters = new Map<string, string>()
+    for (const [index, c] of (file.costCenters ?? []).entries()) {
+      const row = await tx.costCenter.upsert({
+        where: { organizationId_code: { organizationId, code: c.code } },
+        update: { name: c.name },
+        create: {
+          organizationId,
+          code: c.code,
+          name: c.name,
+          kind: c.kind as CostCenterKind,
+          marginLevel: c.marginLevel as MarginLevel,
+          allocatable: c.allocatable,
+          sortOrder: index + 1,
+          isSystem: c.kind === "SIN_ASIGNAR",
+          origin: "SEED",
+        },
+      })
+      costCenters.set(c.code, row.id)
+    }
+    return { businessLines, projects, costCenters }
+  })
+  say(
+    `· analítica: ${dimensionIds.businessLines.size} línea(s) de negocio, ` +
+      `${dimensionIds.projects.size} proyecto(s), ${dimensionIds.costCenters.size} CECO(s)`
+  )
+
+  /** Ids sintéticos del cargador puro → ids reales de esta organización. */
+  const realProjectId = (syntheticId: string | null | undefined): string | null => {
+    if (!syntheticId) return null
+    const code = loaded.dimensions.projects.find((p) => p.id === syntheticId)?.code
+    return code ? (dimensionIds.projects.get(code) ?? null) : null
+  }
+  const realCostCenterId = (syntheticId: string | null | undefined): string | null => {
+    if (!syntheticId) return null
+    const code = loaded.dimensions.costCenters.find((c) => c.id === syntheticId)?.code
+    return code ? (dimensionIds.costCenters.get(code) ?? null) : null
+  }
+  const realBusinessLineId = (syntheticId: string | null | undefined): string | null => {
+    if (!syntheticId) return null
+    const code = loaded.dimensions.businessLines.find((b) => b.id === syntheticId)?.code
+    return code ? (dimensionIds.businessLines.get(code) ?? null) : null
+  }
+
   // ── 2. Ejercicios ─────────────────────────────────────────────────────────
   const fiscalYearIds: Record<string, string> = {}
   for (const fy of [file.fiscalYear, ...file.fiscalYearsExtra]) {
@@ -158,9 +233,9 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
       lines: draft.lines.map((l) => ({
         ...l,
         taxRateId: realTaxRateId(l.taxRateId),
-        projectId: null,
-        costCenterId: null,
-        businessLineId: null,
+        projectId: realProjectId(l.projectId),
+        costCenterId: realCostCenterId(l.costCenterId),
+        businessLineId: realBusinessLineId(l.businessLineId),
       })),
     }
 

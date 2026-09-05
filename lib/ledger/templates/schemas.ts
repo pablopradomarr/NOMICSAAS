@@ -175,9 +175,14 @@ export const cobroClienteSchema = z.object({
     .min(1),
   amountReceivedCents: centsSchema,
   bankFeeCents: centsSchema.optional(),
+  /** E4 · T6: destino de la comisión `626`. Default: el CECO de kind `G_A`. */
+  bankFeeCostCenterId: uuidSchema.optional(),
+  bankFeeProjectId: uuidSchema.optional(),
   /** + ganancia (768), − pérdida (668). Signo del input, no de la línea. */
   fxDifferenceCents: signedCentsSchema.optional(),
   roundingCents: signedCentsSchema.optional(),
+  /** E4 · T6: destino de `668`/`768` y `669`/`769`. Default: CECO `FINANCIERO`. */
+  financialCostCenterId: uuidSchema.optional(),
   description: z.string().max(512).optional(),
 })
 export type CobroClienteInput = z.infer<typeof cobroClienteSchema>
@@ -200,8 +205,13 @@ export const pagoProveedorSchema = z.object({
     .min(1),
   amountPaidCents: centsSchema,
   bankFeeCents: centsSchema.optional(),
+  /** E4 · T6: destino de la comisión `626`. Default: el CECO de kind `G_A`. */
+  bankFeeCostCenterId: uuidSchema.optional(),
+  bankFeeProjectId: uuidSchema.optional(),
   fxDifferenceCents: signedCentsSchema.optional(),
   roundingCents: signedCentsSchema.optional(),
+  /** E4 · T6: destino de `668`/`768` y `669`/`769`. Default: CECO `FINANCIERO`. */
+  financialCostCenterId: uuidSchema.optional(),
   description: z.string().max(512).optional(),
 })
 export type PagoProveedorInput = z.infer<typeof pagoProveedorSchema>
@@ -252,6 +262,9 @@ export const pagoDeudaSchema = z.object({
   /** Recargo o intereses de demora: línea propia, nunca engordan la deuda. */
   surchargeCents: centsSchema.optional(),
   surchargeAccountCode: accountCodeSchema.optional(),
+  /** E4 · T6: destino del recargo `631`/`669`. Default: el CECO de kind `G_A`. */
+  surchargeCostCenterId: uuidSchema.optional(),
+  surchargeProjectId: uuidSchema.optional(),
   description: z.string().max(512).optional(),
 })
 export type PagoDeudaInput = z.infer<typeof pagoDeudaSchema>
@@ -313,6 +326,9 @@ export const traspasoTesoreriaSchema = z.object({
   toAccountCode: accountCodeSchema.optional(),
   amountCents: centsSchema.min(1),
   bankFeeCents: centsSchema.optional(),
+  /** E4 · T6: destino de la comisión `626`. Default: el CECO de kind `G_A`. */
+  bankFeeCostCenterId: uuidSchema.optional(),
+  bankFeeProjectId: uuidSchema.optional(),
   description: z.string().max(512).optional(),
 })
 export type TraspasoTesoreriaInput = z.infer<typeof traspasoTesoreriaSchema>

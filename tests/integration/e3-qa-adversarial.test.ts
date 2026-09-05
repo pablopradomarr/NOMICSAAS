@@ -60,6 +60,7 @@ const {
   voidEntry,
 } = await import("@/models/ledger")
 const { buildEntry } = await import("@/lib/ledger/post")
+const { seedAnalyticsDefaults } = await import("@/models/analytics")
 
 type Draft = Awaited<ReturnType<typeof buildEntry>>
 
@@ -76,6 +77,22 @@ const VIEWER_USER = "e3900000-0000-4000-8000-0000000000b3"
 
 const adminActor = { userId: ADMIN_USER }
 const editorActor = { userId: EDITOR_USER }
+
+/**
+ * E4 · R-A8 — estas suites de E3 postean líneas de 6/7 sin destino analítico
+ * porque comprueban OTRA cosa (numeración, atomicidad, sellos). Desde E4, C-9
+ * muerde: se declara `analyticsRequired = false`, que es la configuración
+ * documentada para ese caso, y el motor las rutea al CECO de sistema `CC-NA`.
+ * La regla estricta (bloquear) se ejerce en `tests/integration/e4-analytics.test.ts`.
+ */
+async function relaxAnalytics(organizationIds: readonly string[]): Promise<void> {
+  for (const organizationId of organizationIds) {
+    await tenantTransaction(organizationId, async (tx) => {
+      await seedAnalyticsDefaults(tx, { validFrom: "2026-01-01", userId: null })
+      await tx.$executeRaw`UPDATE organizations SET analytics_required = false WHERE id = ${organizationId}::uuid`
+    })
+  }
+}
 
 async function owner<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: TEST_DATABASE_URL })
@@ -131,6 +148,8 @@ describe.skipIf(!TEST_DATABASE_URL)("QA E3 · pruebas adversariales", () => {
 
     // ORG_B: un ejercicio con un asiento, para el ataque de cuenta ajena.
     await openFiscalYear(ORG_B, { code: "2026", startDate: "2026-01-01", endDate: "2026-12-31" }, adminActor)
+
+    await relaxAnalytics(ALL_ORGS)
   }, 240_000)
 
   afterAll(async () => {

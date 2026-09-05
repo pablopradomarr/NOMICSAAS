@@ -1,46 +1,17 @@
-import { addProjectAction, deleteProjectAction, editProjectAction } from "@/app/(app)/settings/actions"
-import { CrudTable } from "@/components/settings/crud"
-import { SettingsPageHeader } from "@/components/settings/page-header"
-import { requireOrg } from "@/lib/authz"
-import { randomHexColor } from "@/lib/utils"
-import { getProjects } from "@/models/projects"
-import { Prisma } from "@/prisma/client"
+/**
+ * E4 · D-E4-1 — `/settings/projects` queda sustituido por `/analytics/projects`.
+ *
+ * El CRUD heredado de TaxHacker (en inglés, sin línea de negocio, sin estado ni
+ * presupuesto) no puede crear un proyecto válido desde E4: `businessLineId` es
+ * NOT NULL y el proyecto es ahora la dimensión analítica, no una etiqueta. La
+ * ruta se conserva como redirección permanente para no romper enlaces guardados
+ * ni el histórico del navegador; la pantalla nueva la construye T13.
+ */
 
-export default async function ProjectsSettingsPage() {
-  const { db } = await requireOrg("VIEWER")
-  const projects = await getProjects(db)
-  const projectsWithActions = projects.map((project) => ({
-    ...project,
-    isEditable: true,
-    isDeletable: true,
-  }))
+import { redirect, permanentRedirect } from "next/navigation"
 
-  return (
-    <div className="space-y-6">
-      <SettingsPageHeader
-        title="Projects"
-        description="Use projects to differentiate between the type of activities you do. For example: Freelancing, YouTube channel, Blogging. Projects are just a convenient way to separate statistics."
-      />
-      <CrudTable
-        items={projectsWithActions}
-        columns={[
-          { key: "name", label: "Name", editable: true },
-          { key: "llm_prompt", label: "LLM Prompt", editable: true },
-          { key: "color", label: "Color", type: "color", defaultValue: randomHexColor(), editable: true },
-        ]}
-        onDelete={async (code) => {
-          "use server"
-          return await deleteProjectAction(code)
-        }}
-        onAdd={async (data) => {
-          "use server"
-          return await addProjectAction(data as Prisma.ProjectCreateInput)
-        }}
-        onEdit={async (code, data) => {
-          "use server"
-          return await editProjectAction(code, data as Prisma.ProjectUpdateInput)
-        }}
-      />
-    </div>
-  )
+export default function ProjectsSettingsPage(): never {
+  permanentRedirect("/analytics/projects")
+  // Inalcanzable: `permanentRedirect` lanza. Queda por si el runtime cambia.
+  redirect("/analytics/projects")
 }

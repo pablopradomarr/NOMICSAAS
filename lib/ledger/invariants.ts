@@ -8,21 +8,14 @@
  * Módulo PURO: recibe los datos ya leídos y una `refDate` por parámetro.
  */
 
+import { type AnalyticsInvariantInput, runAnalyticInvariants } from "@/lib/analytics/invariants"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HashableLine } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
 import type { Cents, FiscalYearRef, LocalDate, PeriodLockRef, PostedEntry } from "@/lib/ledger/types"
 
-export type CheckStatus = "PASS" | "FAIL" | "WARN" | "INFO"
-
-export type CheckResult = {
-  id: string
-  status: CheckStatus
-  /** Qué se ha comprobado y con qué resultado, con cifras concretas. */
-  evidencia: string
-  /** Consulta que reproduce la evidencia, cuando la hay. */
-  query?: string
-}
+export type { CheckResult, CheckStatus } from "@/lib/ledger/invariants-types"
+import type { CheckResult } from "@/lib/ledger/invariants-types"
 
 export type Validacion = {
   run_id: string
@@ -53,6 +46,12 @@ export type InvariantInput = {
   knownTemplateCodes?: readonly string[]
   /** Cobertura exigida (el fixture completo declara 28/28). */
   requiredTemplateCoverage?: number
+  /**
+   * E4: bloque analítico. Cuando viene, `runInvariants` añade **I4** y los doce
+   * `I-E4-*`; cuando no, la salida es la de E3 sin cambios (`analytics` es
+   * opcional a propósito: E5/E6 tampoco lo aportan siempre).
+   */
+  analytics?: Omit<AnalyticsInvariantInput, "entries">
 }
 
 const pass = (id: string, evidencia: string, query?: string): CheckResult =>
@@ -403,7 +402,10 @@ export function checkIE37(entries: readonly PostedEntry[]): CheckResult {
   for (const e of entries) {
     if (!e.entryHash) continue
     checked++
+    // E4-D2: `entryHash` cubre TODAS las columnas de la línea. Recomponerlo con
+    // menos daría un falso FAIL en cuanto una línea llevara impuesto o destino.
     const hashable: HashableLine[] = e.lines.map((l) => ({
+      entryId: e.id,
       entryDate: e.entryDate,
       entryNumber: e.entryNumber,
       lineNo: l.lineNo,
@@ -411,6 +413,13 @@ export function checkIE37(entries: readonly PostedEntry[]): CheckResult {
       debitCents: l.debitCents,
       creditCents: l.creditCents,
       entryKind: e.kind,
+      fiscalYearId: l.fiscalYearId,
+      taxRateId: l.taxRateId ?? null,
+      taxBaseCents: l.taxBaseCents ?? null,
+      counterpartyId: l.counterpartyId ?? null,
+      dueDate: l.dueDate ?? null,
+      description: l.description ?? null,
+      analyticType: l.analyticType ?? null,
       projectId: l.projectId ?? null,
       costCenterId: l.costCenterId ?? null,
       businessLineId: l.businessLineId ?? null,
@@ -450,6 +459,8 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
       checkIE35(input),
       checkIE36(input),
       checkIE37(input.entries),
+      // E4: I4 + I-E4-1…12, solo si el llamante aporta el bloque analítico.
+      ...(input.analytics ? runAnalyticInvariants({ ...input.analytics, entries: input.entries }) : []),
     ],
   }
 }
@@ -520,3 +531,22 @@ export const lockedMonthsOf = (locks: readonly PeriodLockRef[], fiscalYearId: st
 
 /** Mes de una fecha contable: lo usa la Auditoría al listar bloqueos. */
 export { monthOf }
+
+/** E4 — re-exportados para que la Auditoría los consuma desde un solo módulo. */
+export {
+  checkI4,
+  checkIE41,
+  checkIE42,
+  checkIE43,
+  checkIE44,
+  checkIE45,
+  checkIE46,
+  checkIE47,
+  checkIE48,
+  checkIE49,
+  checkIE410,
+  checkIE411,
+  checkIE412,
+  runAnalyticInvariants,
+} from "@/lib/analytics/invariants"
+export type { AnalyticsInvariantInput } from "@/lib/analytics/invariants"

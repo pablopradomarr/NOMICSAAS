@@ -24,6 +24,9 @@ export type Provenance = {
   /** Parámetros de la consulta, en orden ($1, $2, …). Nunca se interpolan. */
   parametros: readonly (string | number)[]
   confianza: Confidence
+  /** E4-D2: sello analítico de la celda. Ausente en los informes financieros. */
+  analyticsHash?: string
+  marginConfigHash?: string
 }
 
 export type ProvenanceParams = {
@@ -45,6 +48,15 @@ export type ProvenanceParams = {
   /** Consulta que devuelve las líneas que componen la cifra. */
   query?: string
   extraParams?: readonly (string | number)[]
+  // ── E4 (§3.3): dimensiones analíticas de la celda. Todo parametrizado. ──
+  projectId?: string
+  costCenterId?: string
+  businessLineId?: string
+  analyticType?: string
+  /** Prefijos de cuenta que acotan la celda ("6", "7"). Solo documental. */
+  accountPrefixes?: readonly string[]
+  analyticsHash?: string
+  marginConfigHash?: string
 }
 
 const DEFAULT_QUERY =
@@ -84,6 +96,23 @@ export function cellProvenance(
     parametros.push(params.entryKind)
     query += ` AND entry_kind = $${parametros.length}`
   }
+  // E4: las dimensiones también entran PARAMETRIZADAS, nunca interpoladas.
+  if (params.query === undefined && params.projectId) {
+    parametros.push(params.projectId)
+    query += ` AND project_id = $${parametros.length}`
+  }
+  if (params.query === undefined && params.costCenterId) {
+    parametros.push(params.costCenterId)
+    query += ` AND cost_center_id = $${parametros.length}`
+  }
+  if (params.query === undefined && params.businessLineId) {
+    parametros.push(params.businessLineId)
+    query += ` AND business_line_id = $${parametros.length}`
+  }
+  if (params.query === undefined && params.analyticType) {
+    parametros.push(params.analyticType)
+    query += ` AND analytic_type = $${parametros.length}`
+  }
   if (params.extraParams) parametros.push(...params.extraParams)
 
   return {
@@ -96,5 +125,7 @@ export function cellProvenance(
     registros_origen: query,
     parametros,
     confianza: confidence,
+    ...(params.analyticsHash ? { analyticsHash: `sha256:${params.analyticsHash}` } : {}),
+    ...(params.marginConfigHash ? { marginConfigHash: `sha256:${params.marginConfigHash}` } : {}),
   }
 }

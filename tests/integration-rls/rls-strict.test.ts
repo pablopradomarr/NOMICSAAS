@@ -31,6 +31,8 @@ const USER_A = "e3c00000-0000-4000-8000-0000000000a1"
 const TABLAS_ESTRICTAS = [
   "settings",
   "categories",
+  // E4: `business_lines` va ANTES que `projects`, que la referencia (D-E4-1).
+  "business_lines",
   "projects",
   "fields",
   "files",
@@ -42,6 +44,9 @@ const TABLAS_ESTRICTAS = [
   "organization_account_maps",
   "tax_rates",
   "audit_logs",
+  // E4 (criterio 17): las otras dos tablas de dimensiones analíticas.
+  "cost_centers",
+  "margin_level_configs",
 ] as const
 
 /** Todas las que deben llevar RLS + FORCE (las de arriba, más las cuatro sueltas). */
@@ -113,9 +118,31 @@ function insertCompleto(tabla: (typeof TABLAS_ESTRICTAS)[number], organizationId
         [organizationId],
       ]
     case "projects":
+      // E4 (D-E4-1): `business_line_id` es NOT NULL y su FK es compuesta por
+      // tenant, así que la línea de negocio del INSERT anterior es la única
+      // que se puede referenciar — y sólo se ve con el GUC puesto.
       return [
-        `INSERT INTO "projects" (id, organization_id, code, name)
-         VALUES (gen_random_uuid(), $1, 'e3-rls-${sufijo}', 'RLS')`,
+        `INSERT INTO "projects" (id, organization_id, code, name, business_line_id, updated_at)
+         VALUES (gen_random_uuid(), $1, 'e3-rls-${sufijo}', 'RLS',
+                 (SELECT id FROM "business_lines" WHERE organization_id = $1 ORDER BY code LIMIT 1), now())`,
+        [organizationId],
+      ]
+    case "business_lines":
+      return [
+        `INSERT INTO "business_lines" (id, organization_id, code, name, updated_at)
+         VALUES (gen_random_uuid(), $1, 'BL-${sufijo}', 'RLS', now())`,
+        [organizationId],
+      ]
+    case "cost_centers":
+      return [
+        `INSERT INTO "cost_centers" (id, organization_id, code, name, kind, margin_level, updated_at)
+         VALUES (gen_random_uuid(), $1, 'CC-${sufijo}', 'RLS', 'G_A'::cost_center_kind, 'EBITDA'::margin_level, now())`,
+        [organizationId],
+      ]
+    case "margin_level_configs":
+      return [
+        `INSERT INTO "margin_level_configs" (id, organization_id, level, label, sort_order, valid_from, updated_at)
+         VALUES (gen_random_uuid(), $1, 'INGRESOS'::margin_level, 'RLS', 1, DATE '1970-01-01', now())`,
         [organizationId],
       ]
     case "fields":

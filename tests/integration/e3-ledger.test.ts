@@ -37,6 +37,7 @@ const {
 } = await import("@/models/ledger")
 const { getLedgerContext, runLedgerTransaction } = await import("@/models/ledger")
 const { buildEntry } = await import("@/lib/ledger/post")
+const { seedAnalyticsDefaults } = await import("@/models/analytics")
 const { fixtureRefDate, readFixture } = await import("@/tests/support/fixtures")
 const { buildSumasSaldos } = await import("@/lib/ledger/reports/sumas-saldos")
 const { getLinesForPeriod } = await import("@/models/ledger")
@@ -59,6 +60,22 @@ const actor = { userId: USER }
 const GIT_SHA = "c0e828f0000000000000000000000000000000ab"
 /** #4: «hoy» sale del PROPIO fixture, nunca del reloj (I8 sería no determinista). */
 const REF_MINIMO = fixtureRefDate(readFixture("ejercicio-minimo"))
+
+/**
+ * E4 · R-A8 — estas suites de E3 postean líneas de 6/7 sin destino analítico
+ * porque comprueban OTRA cosa (numeración, atomicidad, sellos). Desde E4, C-9
+ * muerde: se declara `analyticsRequired = false`, que es la configuración
+ * documentada para ese caso, y el motor las rutea al CECO de sistema `CC-NA`.
+ * La regla estricta (bloquear) se ejerce en `tests/integration/e4-analytics.test.ts`.
+ */
+async function relaxAnalytics(organizationIds: readonly string[]): Promise<void> {
+  for (const organizationId of organizationIds) {
+    await tenantTransaction(organizationId, async (tx) => {
+      await seedAnalyticsDefaults(tx, { validFrom: "2026-01-01", userId: null })
+      await tx.$executeRaw`UPDATE organizations SET analytics_required = false WHERE id = ${organizationId}::uuid`
+    })
+  }
+}
 
 async function owner<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: TEST_DATABASE_URL })
@@ -86,6 +103,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
     await prisma.membership.create({
       data: { organizationId: ORG_MIN, userId: USER, role: "ADMIN", updatedAt: new Date() },
     })
+    await relaxAnalytics(ALL_ORGS)
   }, 180_000)
 
   afterAll(async () => {
@@ -707,7 +725,10 @@ describe.skipIf(!TEST_DATABASE_URL)("E3 · libro diario en base de datos", () =>
             await client.query(`ALTER TABLE journal_lines FORCE ROW LEVEL SECURITY`)
           }
         })
-      ).rejects.toThrow(/descuadrado|23514/)
+        // E4 (ADR-0010): además del trigger de cuadre, ahora corta primero
+        // `journal_lines_only_analytics_update` — una línea posteada solo admite
+        // reclasificación analítica. Cualquiera de los dos es la barrera correcta.
+      ).rejects.toThrow(/descuadrado|23514|solo admite reclasificación analítica/)
 
       // (b) Con los triggers caídos, la corrupción entra… y la detecta la Capa 1.
       try {

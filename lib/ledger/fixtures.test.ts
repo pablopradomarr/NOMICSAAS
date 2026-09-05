@@ -109,19 +109,35 @@ describe.each(["ejercicio-minimo", "ejercicio-completo"] as const)("fixture %s",
     }
   })
 
-  it("D-E3-1: el cargador DESCARTA proyecto, CECO y línea de negocio", () => {
+  it("E4 · T9 (invierte D-E3-1): el cargador RESUELVE proyecto, CECO y línea de negocio", () => {
+    // El día que E4 activó las dimensiones, este test se invirtió a propósito:
+    // antes exigía que las tres columnas fueran NULL.
+    if (name === "ejercicio-completo") {
+      expect(loaded.resolvedDimensions.projectCodes + loaded.resolvedDimensions.costCenterCodes).toBeGreaterThan(0)
+      expect(loaded.dimensions.projects.length).toBeGreaterThan(0)
+      expect(loaded.dimensions.costCenters.length).toBeGreaterThan(0)
+      expect(loaded.ctx.dimensions.available).toBe(true)
+    }
+
+    const blOfProject = new Map(loaded.dimensions.projects.map((p) => [p.id, p.businessLineId]))
+    let withDestination = 0
     for (const entry of posted) {
       for (const line of entry.lines) {
-        expect(line.projectId).toBeNull()
-        expect(line.costCenterId).toBeNull()
-        expect(line.businessLineId).toBeNull()
+        // R-A1 / I-E4-5: los grupos 1–5 nunca llevan dimensión.
+        if (!line.accountCode.startsWith("6") && !line.accountCode.startsWith("7")) {
+          expect(line.projectId).toBeNull()
+          expect(line.costCenterId).toBeNull()
+          expect(line.businessLineId).toBeNull()
+          continue
+        }
+        // I-E4-2: nunca las dos dimensiones a la vez.
+        expect(line.projectId !== null && line.costCenterId !== null).toBe(false)
+        if (line.projectId || line.costCenterId) withDestination++
+        // I-E4-3 / R-A9: la línea de negocio es la del proyecto, y NULL sin él.
+        expect(line.businessLineId).toBe(line.projectId ? (blOfProject.get(line.projectId) ?? null) : null)
       }
     }
-    // El fichero SÍ los trae: se leen y se tiran. Cuando E4 los persista, este
-    // test se invierte a propósito.
-    if (name === "ejercicio-completo") {
-      expect(loaded.discardedDimensions.projectCodes + loaded.discardedDimensions.costCenterCodes).toBeGreaterThan(0)
-    }
+    if (name === "ejercicio-completo") expect(withDestination).toBeGreaterThan(0)
   })
 
   it("dos ejecuciones producen un resultado BYTE-IDÉNTICO (C1)", () => {

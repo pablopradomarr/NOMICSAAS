@@ -22,6 +22,12 @@ export type AuditEntity =
   | "JournalEntry"
   | "FiscalYear"
   | "PeriodLock"
+  // E4 · T12 — analítica (docs/design/E4-analitica.md §4).
+  | "BusinessLine"
+  | "Project"
+  | "CostCenter"
+  | "MarginLevelConfig"
+  | "JournalLine"
 
 export type AuditAction =
   | "create"
@@ -43,6 +49,9 @@ export type AuditAction =
   | "lock"
   | "unlock"
   | "open"
+  // E4 · T12 — archivado de dimensiones y reclasificación analítica (ADR-0010).
+  | "archive"
+  | "RECLASSIFY_ANALYTICS"
 
 export type AuditLogInput = {
   entity: AuditEntity

@@ -61,6 +61,7 @@ const { closeFiscalYear, openFiscalYear } = await import("@/models/fiscal-years"
 const { lockPeriod } = await import("@/models/period-locks")
 const { getEntries, getLedgerContext, postEntry, runLedgerInvariants, voidEntry } = await import("@/models/ledger")
 const { buildEntry } = await import("@/lib/ledger/post")
+const { seedAnalyticsDefaults } = await import("@/models/analytics")
 
 describe.skipIf(!OWNER_URL)("E3 · diario, ejercicios y bloqueos como app_runtime", () => {
   let fiscalYearId = ""
@@ -87,6 +88,18 @@ describe.skipIf(!OWNER_URL)("E3 · diario, ejercicios y bloqueos como app_runtim
     })
     await importNpgc(ORG_A, "PYMES", { actor, now: new Date("2026-01-01"), useSubaccounts: false })
     await importNpgc(ORG_B, "PYMES", { actor: { userId: null }, now: new Date("2026-01-01"), useSubaccounts: false })
+
+    // E4 · R-A8: esta suite comprueba RLS y privilegios de columna, no C-9. Se
+    // siembra la analítica y se relaja `analyticsRequired`, de modo que las
+    // líneas 6/7 sin destino se ruteen al CECO de sistema `CC-NA` en vez de
+    // bloquear el asiento. La siembra corre YA como `app_runtime`: es, de paso,
+    // la prueba de que las tres tablas nuevas pasan sus políticas.
+    for (const organizationId of ORGS) {
+      await tenantTransaction(organizationId, async (tx) => {
+        await seedAnalyticsDefaults(tx, { validFrom: "2026-01-01", userId: null })
+        await tx.$executeRaw`UPDATE organizations SET analytics_required = false WHERE id = ${organizationId}::uuid`
+      })
+    }
   }, 180_000)
 
   afterAll(async () => {
@@ -239,6 +252,12 @@ describe.skipIf(!OWNER_URL)("E3 · diario, ejercicios y bloqueos como app_runtim
 
     const run = await runLedgerInvariants(ORG_A, { refDate: "2026-12-31", gitSha: GIT_SHA, noCache: true })
     expect(run.validacion.checks.filter((c) => c.status === "FAIL")).toEqual([])
-    expect(run.sello.sello).toBe("VALIDADO AUTOMÁTICAMENTE")
+    // E4: esta organización postea con `analyticsRequired = false`, así que sus
+    // líneas 6/7 acaban en `CC-NA` e I-E4-1 emite un WARN permanente (R7 / §7:
+    // saldo en «Sin asignar» ⇒ el sello pide revisión). Lo que el criterio 17
+    // exige —ningún invariante en FAIL— sigue comprobado arriba.
+    expect(run.sello.sello).toBe("REQUIERE REVISIÓN")
+    expect(run.sello.motivos.join(" ")).toMatch(/aviso/)
+    expect(run.validacion.checks.find((c) => c.id === "I-E4-1")?.status).toBe("WARN")
   }, 120_000)
 })
