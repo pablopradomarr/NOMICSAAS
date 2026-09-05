@@ -44,6 +44,7 @@ import {
 } from "@/lib/ledger/report-run"
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 import type { Cents, LocalDate } from "@/lib/ledger/types"
+import type { ProvenanceContext } from "@/lib/ledger/provenance"
 import { getAccountMapByKey } from "@/models/account-map"
 import type { Actor } from "@/models/accounts"
 import { writeAuditLog } from "@/models/audit-log"
@@ -188,27 +189,17 @@ export async function getOrCreateReportRun(
     const accounts = await getStatementAccounts(tx)
     // `Organization` NO está en `TENANT_MODELS` (es el tenant, no una tabla de
     // negocio), así que la extensión no le inyecta el filtro: el `where` va
-    // EXPLÍCITO. Sin él, `findFirst` devuelve cualquier organización visible por
-    // la política —la del usuario, no necesariamente la del informe— y el
-    // informe se emitiría con la moneda y los umbrales de otra empresa.
+    // EXPLÍCITO. Sin él, `findFirst` devolvería cualquier organización visible
+    // por la política —la del usuario, no necesariamente la del informe— y el
+    // informe saldría con la moneda y los umbrales de otra empresa.
     //
-    // BUG E6-UI-1: se leía con `tx.organization.findUniqueOrThrow(...)`, y el
-    // facade de `tenantTransaction` despacha los modelos NO tenant sobre el
-    // cliente de fuera de la transacción, que no lleva los GUC: con la RLS
-    // estricta la fila no es visible y TODO informe moría con «No record was
-    // found for a query». Se lee con SQL parametrizado sobre la MISMA
-    // transacción (`$queryRaw` sí va al cliente transaccional), que además deja
-    // el `where` explícito por organización.
-    const [organization] = await tx.$queryRaw<
-      { baseCurrency: string; pgcVariant: PgcVariant; reviewThresholds: Prisma.JsonValue }[]
-    >`
-      SELECT base_currency AS "baseCurrency",
-             pgc_variant::text AS "pgcVariant",
-             review_thresholds AS "reviewThresholds"
-        FROM organizations
-       WHERE id = ${organizationId}::uuid
-    `
-    if (!organization) throw new Error("La organización del informe no existe o no es visible")
+    // El rodeo por `$queryRaw` que hubo aquí ya no hace falta: `tenantDb`
+    // despacha también los modelos no-tenant sobre la transacción de tenant, con
+    // los GUC puestos (corrección de `lib/db.ts`, E6-UI-1).
+    const organization = await tx.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { baseCurrency: true, pgcVariant: true, reviewThresholds: true },
+    })
 
     // 2. Sellos. `ledgerHash` se calcula EN LA BASE (ADR-0011) sobre las mismas
     //    líneas ordenadas, no materializando el diario en memoria.
@@ -275,6 +266,11 @@ export async function getOrCreateReportRun(
     }
 
     // 4. Cálculo, invariantes, comparativo y sello.
+    //
+    // El `runId` se genera AQUÍ, antes de construir: la provenance de cada celda
+    // lo lleva dentro, y un identificador distinto del de la fila haría que el
+    // drill-down apuntase a un run que no existe.
+    const runId = randomUUID()
     const index = buildAccountIndex(accounts)
     const resultAccountCode = await accountCodeFor(tx, "RESULTADO_EJERCICIO")
     const incomeTaxAccountCodes = [
@@ -290,6 +286,29 @@ export async function getOrCreateReportRun(
       ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
     }
     const variant = (params.variant as PgcVariant | undefined) ?? organization.pgcVariant
+
+    // Contexto de provenance: cada celda del informe sale con su métrica, el
+    // sello del diario, el módulo que la calculó y la consulta PARAMETRIZADA que
+    // la reproduce. Sin esto el `ReportRun` guarda cifras sin respaldo y el
+    // drill-down de la UI no tiene de dónde tirar (P6/P7).
+    const provenanceCtx = {
+      runId,
+      ledgerHash,
+      gitSha,
+      baseCurrency: organization.baseCurrency,
+      module: "lib/ledger/reports",
+    }
+
+    // Comparativo del MISMO run (§8.7): mismo periodo del ejercicio anterior. Se
+    // resuelve aquí, no con un segundo run, para que `previousCents` viaje en la
+    // misma foto sellada que la cifra con la que se compara — dos runs distintos
+    // podrían tener `ledgerHash` distintos y la columna afirmaría algo falso.
+    const comparativePeriod = await comparativeWindow(tx, {
+      basis: (request.comparativeBasis ?? thresholdsOf(organization.reviewThresholds).comparativeBasis) as ComparativeBasis,
+      periodStart: request.periodStart,
+      periodEnd: request.periodEnd,
+      currentFiscalYearId: request.fiscalYearId,
+    })
 
     // El libro diario necesita las cabeceras; los demás informes, no. Leerlas
     // siempre traería el diario entero a memoria sin motivo.
@@ -330,14 +349,21 @@ export async function getOrCreateReportRun(
           module: "lib/analytics/margins.ts",
           result: analyticReport.pnl as unknown as Record<string, unknown>,
         })
-      : buildReport(request.type, lines, index, {
-      ...period,
-      variant,
-      params,
-      resultAccountCode: resultAccountCode ?? "129",
-      incomeTaxAccountCodes,
-      ...(entries ? { entries } : {}),
-    })
+      : buildReport(
+          request.type,
+          lines,
+          index,
+          {
+            ...period,
+            variant,
+            params,
+            resultAccountCode: resultAccountCode ?? "129",
+            incomeTaxAccountCodes,
+            ...(entries ? { entries } : {}),
+            ...(comparativePeriod ? { comparative: comparativePeriod } : {}),
+          },
+          provenanceCtx
+        )
 
     const checks = runReportInvariants({
       lines,
@@ -393,7 +419,6 @@ export async function getOrCreateReportRun(
     })
     const seal = sealOf(reasons) === "VALIDADO_AUTOMATICAMENTE" ? Seal.VALIDADO_AUTOMATICAMENTE : Seal.REQUIERE_REVISION
 
-    const runId = randomUUID()
     const provenance = {
       runId,
       ledgerHash: `sha256:${ledgerHash}`,
@@ -466,6 +491,67 @@ type BuildContext = {
   incomeTaxAccountCodes: readonly string[]
   /** Cabeceras de asiento: sólo las necesita el libro diario. */
   entries?: readonly import("@/lib/ledger/reports/types").ReportEntry[]
+  /** Ventana comparativa YA leída (§8.7). */
+  comparative?: ComparativeWindow
+}
+
+/**
+ * Periodo con el que se compara y sus líneas, ya leídas. `fiscalYearId` es el
+ * del ejercicio ANTERIOR: sin él, el balance comparativo filtraría por el
+ * ejercicio en curso y saldría vacío.
+ */
+export type ComparativeWindow = {
+  lines: readonly ReportLine[]
+  from: LocalDate
+  to: LocalDate
+  fiscalYearId?: string
+  label: string
+  basis: ComparativeBasis
+}
+
+/**
+ * Resuelve la ventana comparativa y LEE sus líneas.
+ *
+ * Base por defecto `SAME_PERIOD_PREVIOUS_YEAR` (§8.7): en una empresa de
+ * proyectos la estacionalidad es fortísima y comparar un trimestre contra el
+ * ejercicio anterior completo compara cuatro meses con doce.
+ *
+ * Si el ejercicio anterior **no existe**, se devuelve `null` y las celdas salen
+ * sin `previousCents`: la UI pinta «sin comparativo». Nunca un cero, que sería
+ * una cifra y afirmaría algo falso.
+ */
+async function comparativeWindow(
+  tx: TenantTransactionClient,
+  input: {
+    basis: ComparativeBasis
+    periodStart: LocalDate
+    periodEnd: LocalDate
+    currentFiscalYearId?: string
+  }
+): Promise<ComparativeWindow | null> {
+  if (input.basis === ComparativeBasis.NONE) return null
+
+  const from = shiftYears(input.periodStart, 1)
+  const to = shiftYears(input.periodEnd, 1)
+
+  // El ejercicio anterior es el que CONTIENE la fecha de corte desplazada, no
+  // «el de código − 1»: los ejercicios pueden no ser naturales ni consecutivos.
+  const previousFy = await tx.fiscalYear.findFirst({
+    where: { startDate: { lte: toUtcDate(to) }, endDate: { gte: toUtcDate(to) } },
+  })
+  if (!previousFy || previousFy.id === input.currentFiscalYearId) return null
+
+  const lines = await getLinesForPeriod(tx, { from, to, fiscalYearId: previousFy.id })
+  if (lines.length === 0) return null
+
+  return {
+    lines,
+    from,
+    to,
+    fiscalYearId: previousFy.id,
+    label: `${from} … ${to}`,
+    basis: input.basis,
+  }
 }
 
 type BuiltReport =
@@ -482,7 +568,8 @@ function buildReport(
   type: ReportType,
   lines: readonly ReportLine[],
   index: ReturnType<typeof buildAccountIndex>,
-  ctx: BuildContext
+  ctx: BuildContext,
+  provenanceCtx: ProvenanceContext
 ): BuiltReport {
   const period = {
     organizationId: ctx.organizationId,
@@ -493,22 +580,42 @@ function buildReport(
   }
   switch (type) {
     case ReportType.BALANCE: {
-      const balance = buildBalance(lines, index, {
-        ...period,
-        variant: ctx.variant,
-        snapshot: (ctx.params.snapshot as BalanceSnapshot | undefined) ?? "PRE_REGULARIZACION",
-        resultAccountCode: ctx.resultAccountCode,
-      })
+      const balance = buildBalance(
+        lines,
+        index,
+        {
+          ...period,
+          variant: ctx.variant,
+          snapshot: (ctx.params.snapshot as BalanceSnapshot | undefined) ?? "PRE_REGULARIZACION",
+          resultAccountCode: ctx.resultAccountCode,
+          ...(ctx.comparative ? { comparative: ctx.comparative } : {}),
+        },
+        { ...provenanceCtx, module: "lib/ledger/reports/balance.ts" }
+      )
       return { kind: "BALANCE", module: "lib/ledger/reports/balance.ts", result: balance, balance }
     }
     case ReportType.PYG: {
-      const pyg = buildPyg(lines, index, { ...period, variant: ctx.variant })
+      const pyg = buildPyg(
+        lines,
+        index,
+        {
+          ...period,
+          variant: ctx.variant,
+          ...(ctx.comparative
+            ? { comparative: { lines: ctx.comparative.lines, label: ctx.comparative.label, basis: ctx.comparative.basis } }
+            : {}),
+        },
+        { ...provenanceCtx, module: "lib/ledger/reports/pyg.ts" }
+      )
       return { kind: "PYG", module: "lib/ledger/reports/pyg.ts", result: pyg, pyg }
     }
     case ReportType.CASHFLOW_DIRECTO:
     case ReportType.CASHFLOW_INDIRECTO: {
       const cfParams = { ...period, incomeTaxAccountCodes: ctx.incomeTaxAccountCodes }
-      const directo = buildCashflowDirect(lines, index, cfParams)
+      const directo = buildCashflowDirect(lines, index, cfParams, {
+        ...provenanceCtx,
+        module: "lib/ledger/reports/cashflow.ts",
+      })
       const indirecto = buildCashflowIndirect(lines, cfParams)
       return {
         kind: "CASHFLOW",
@@ -518,15 +625,21 @@ function buildReport(
       }
     }
     case ReportType.DASHBOARD: {
-      const dashboard = buildDashboard(lines, index, {
-        ...period,
-        variant: ctx.variant,
-        refDate: (ctx.params.refDate as LocalDate | undefined) ?? ctx.to,
-        incomeTaxAccountCodes: ctx.incomeTaxAccountCodes,
-        ...(typeof ctx.params.unpostedDocumentCount === "number"
-          ? { unpostedDocumentCount: ctx.params.unpostedDocumentCount }
-          : {}),
-      })
+      const dashboard = buildDashboard(
+        lines,
+        index,
+        {
+          ...period,
+          variant: ctx.variant,
+          refDate: (ctx.params.refDate as LocalDate | undefined) ?? ctx.to,
+          incomeTaxAccountCodes: ctx.incomeTaxAccountCodes,
+          ...(typeof ctx.params.unpostedDocumentCount === "number"
+            ? { unpostedDocumentCount: ctx.params.unpostedDocumentCount }
+            : {}),
+        },
+        { ...provenanceCtx, module: "lib/ledger/reports/dashboard.ts" },
+        ctx.comparative ? { lines: ctx.comparative.lines, label: ctx.comparative.label } : undefined
+      )
       return { kind: "DASHBOARD", module: "lib/ledger/reports/dashboard.ts", result: dashboard, dashboard }
     }
     case ReportType.DIARIO: {

@@ -255,12 +255,32 @@ export const tenantExtension = (organizationId: string) =>
       name: `tenant:${organizationId}`,
       query: {
         $allModels: {
-          async $allOperations({ model, operation, args, query }) {
+          // `query` (el siguiente eslabón de la cadena de extensiones) NO se usa
+          // en ninguna rama: todas las operaciones se despachan a mano sobre el
+          // cliente de la transacción de tenant, que es el único que lleva los
+          // GUC. Delegar en `query` sacaría la consulta de esa transacción.
+          async $allOperations({ model, operation, args, query: _query }) {
             const isTenantModel = TENANT_MODELS.has(model)
             const isHybridModel = TENANT_MODELS_WITH_GLOBAL.has(model)
             if (!isTenantModel && !isHybridModel) {
-              // User, Session, Account, Verification, Organization
-              return query(args)
+              // `User`, `Session`, `Account`, `Verification`, `Organization`: no
+              // llevan `organization_id`, así que la barrera 1 no les añade
+              // nada. Lo que SÍ necesitan es la conexión correcta.
+              //
+              // E6 (hallazgo de dev-frontend): `return query(args)` los sacaba
+              // de la transacción de tenant y los ejecutaba SIN los GUC. Con RLS
+              // estricta eso hace que `tx.organization.findUnique()` dentro de
+              // `tenantTransaction` no vea su propia fila —`app.current_org()`
+              // está sin fijar en esa otra conexión—, y además rompe la
+              // atomicidad: la lectura no ve lo que la transacción acaba de
+              // escribir. Se despachan sobre el MISMO cliente transaccional; si
+              // no hay transacción abierta, se envuelven en una con los GUC,
+              // igual que los modelos de negocio.
+              const nonTenantStore = tenantGucStorage.getStore()
+              if (nonTenantStore && nonTenantStore.organizationId === organizationId) {
+                return await nonTenantStore.client[delegateName(model)][operation](args as WhereRecord)
+              }
+              return await runWithTenantGucs(organizationId, model, operation, (args ?? {}) as WhereRecord)
             }
 
             const strictScope: WhereRecord = { organizationId }

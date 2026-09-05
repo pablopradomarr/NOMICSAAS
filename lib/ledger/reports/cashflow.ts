@@ -375,28 +375,46 @@ export function buildCashflowDirect(
   if (ctx) {
     // Provenance por bucket: la celda de un bucket es la suma de sus líneas, y
     // la consulta las devuelve todas — no una muestra.
+    // Provenance por bucket. La consulta tiene que devolver EXACTAMENTE las
+    // líneas que suman la celda, ni una más:
+    //
+    //  · sólo entran los asientos con al menos una línea 57x (R-CF-3): filtrar
+    //    por código de cuenta a secas arrastraría, por ejemplo, el devengo de la
+    //    nómina —que no toca el banco— al bucket de personal;
+    //  · y hay que ir por PARES `(asiento, cuenta)`, no por el producto de dos
+    //    listas: con R-CF-7 la misma cuenta de IVA cae en el bloque comercial en
+    //    un asiento y en impuestos en otro, así que `entry_id = ANY(...) AND
+    //    account_code = ANY(...)` mezclaría buckets.
+    //
+    // Los dos arrays viajan como arrays de verdad y se cruzan con `unnest`: nada
+    // se interpola. Un test de integración ejecuta esta consulta y comprueba que
+    // reproduce el importe de la celda.
     report.provenanceByBucket = Object.fromEntries(
-      CASHFLOW_BUCKET_ORDER.map((bucket) => [
-        bucket,
-        cellProvenance(
-          `cashflow.directo.${bucket}`,
-          annualCents[bucket],
-          {
-            organizationId: params.organizationId,
-            from: params.from,
-            to: params.to,
-            query:
-              "SELECT l.id FROM journal_lines l WHERE l.organization_id = $1 " +
-              "AND l.entry_date BETWEEN $2 AND $3 AND l.account_code = ANY($4::text[]) " +
-              "AND NOT (l.entry_kind::text = ANY($5::text[]))",
-            extraParams: [
-              [...new Set(lineDetail.filter((d) => d.bucket === bucket).map((d) => d.code))].sort(),
-              CASHFLOW_EXCLUDED_KINDS as readonly string[],
-            ],
-          },
-          ctx
-        ),
-      ])
+      CASHFLOW_BUCKET_ORDER.map((bucket) => {
+        const pairs = [
+          ...new Map(
+            lineDetail.filter((d) => d.bucket === bucket).map((d) => [`${d.entryId}|${d.code}`, d])
+          ).values(),
+        ]
+        return [
+          bucket,
+          cellProvenance(
+            `cashflow.directo.${bucket}`,
+            annualCents[bucket],
+            {
+              organizationId: params.organizationId,
+              from: params.from,
+              to: params.to,
+              query:
+                "SELECT l.id FROM journal_lines l WHERE l.organization_id = $1 " +
+                "AND l.entry_date BETWEEN $2 AND $3 " +
+                "AND (l.entry_id, l.account_code) IN (SELECT * FROM unnest($4::uuid[], $5::text[]))",
+              extraParams: [pairs.map((d) => d.entryId), pairs.map((d) => d.code)],
+            },
+            ctx
+          ),
+        ]
+      })
     ) as Record<CashflowBucket, Provenance>
   }
 

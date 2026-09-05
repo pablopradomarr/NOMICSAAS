@@ -249,6 +249,29 @@ describe.skipIf(!OWNER_URL)("E6 · informes y avisos de revisión bajo RLS estri
     expect(rows.rows[0].relforcerowsecurity).toBe(true)
   })
 
+  // ── E6-UI-1: modelos NO tenant dentro de `tenantTransaction`, como app_runtime ──
+
+  it("E6-UI-1: `tx.organization.*` ve su fila dentro de tenantTransaction (GUC fijados)", async () => {
+    // Éste es el caso que la extensión rompía: los modelos sin `organization_id`
+    // salían de la transacción y por tanto SIN `app.current_org`. Con RLS
+    // estricta y como `app_runtime` —el rol real de la aplicación—, eso deja la
+    // fila invisible y `findUniqueOrThrow` lanza «No record was found».
+    const { tenantTransaction } = await import("@/lib/db")
+    const org = await tenantTransaction(ORG_A, USER_A, async (tx) =>
+      tx.organization.findUniqueOrThrow({ where: { id: ORG_A }, select: { id: true, slug: true } })
+    )
+    expect(org.id).toBe(ORG_A)
+    expect(org.slug).toBe("e6-rls-a")
+  })
+
+  it("E6-UI-1: y sigue SIN ver la organización ajena (la RLS no se ha aflojado)", async () => {
+    const { tenantTransaction } = await import("@/lib/db")
+    const ajena = await tenantTransaction(ORG_A, USER_A, async (tx) =>
+      tx.organization.findFirst({ where: { id: ORG_B }, select: { id: true } })
+    )
+    expect(ajena).toBeNull()
+  })
+
   it("las dos tablas están en `TENANT_MODELS`", async () => {
     const { TENANT_MODELS } = await import("@/lib/db")
     expect(TENANT_MODELS.has("ReportRun")).toBe(true)

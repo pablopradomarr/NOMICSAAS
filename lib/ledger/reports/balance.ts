@@ -84,6 +84,9 @@ export function mirrorEpigraphOf(code: string, variant: PgcVariant): string | nu
  * hoja del XLSX: muchos programas netean `473` contra `4752` y el ERP no lo
  * hace; hay que decirlo, no dejarlo implícito.
  */
+/** Límite inferior del drill-down de una celda de balance: el saldo es acumulado. */
+export const BALANCE_DRILLDOWN_FROM = "0001-01-01"
+
 export const NOTA_NO_COMPENSACION =
   "Sin compensación de saldos: los créditos frente a la Hacienda Pública (retenciones y pagos a " +
   "cuenta soportados, 473) se presentan en el activo y la deuda por impuesto corriente (4752) en el " +
@@ -97,6 +100,11 @@ export type BalanceComparative = {
   lines: readonly ReportLine[]
   from: LocalDate
   to: LocalDate
+  /**
+   * Ejercicio ANTERIOR. Sin él, la foto comparativa filtraría por el ejercicio
+   * en curso y saldría vacía: el balance se acota por ejercicio, no por fechas.
+   */
+  fiscalYearId?: string
   label: string
   basis: string
 }
@@ -385,7 +393,19 @@ export function buildBalance(
   // ser distintas y una columna comparativa de otro informe sería una mentira
   // con formato de tabla.
   const previousByPath = params.comparative
-    ? leavesByPath(buildBalance(params.comparative.lines, index, { ...params, to: params.comparative.to, comparative: undefined, previousClose: undefined }))
+    ? leavesByPath(
+        buildBalance(params.comparative.lines, index, {
+          ...params,
+          from: params.comparative.from,
+          to: params.comparative.to,
+          // El ejercicio del COMPARATIVO, no el de la foto actual.
+          ...(params.comparative.fiscalYearId
+            ? { fiscalYearId: params.comparative.fiscalYearId }
+            : { fiscalYearId: undefined }),
+          comparative: undefined,
+          previousClose: undefined,
+        })
+      )
     : undefined
 
   const treeOpts = previousByPath ? { previousByPath } : {}
@@ -446,7 +466,11 @@ function attachProvenance(
       row.cents,
       {
         organizationId: params.organizationId,
-        from: params.from,
+        // El balance es un SALDO DE STOCK: la celda la componen TODAS las líneas
+        // hasta la fecha de corte, no sólo las del periodo pedido. Con
+        // `from = params.from` el drill-down de un balance a 30 de junio se
+        // dejaría fuera el primer semestre y no reproduciría la cifra.
+        from: BALANCE_DRILLDOWN_FROM,
         to: params.to,
         query: registrosOrigen({
           withFiscalYear: Boolean(params.fiscalYearId),

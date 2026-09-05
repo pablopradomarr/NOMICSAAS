@@ -471,6 +471,120 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
     ).rejects.toThrow(/E10/)
   })
 
+  // ── E6-UI-1: los modelos NO tenant dentro de `tenantTransaction` ──────────
+
+  it("E6-UI-1: `tx.organization.*` funciona dentro de tenantTransaction con RLS estricta", async () => {
+    // `Organization` no está en `TENANT_MODELS`, y la extensión los despachaba
+    // FUERA de la transacción y sin GUC: con RLS estricta la fila no era visible
+    // y todo informe moría con «No record was found for a query».
+    const seen = await tenantTransaction(ORG, USER, async (tx) => {
+      const org = await tx.organization.findUniqueOrThrow({
+        where: { id: ORG },
+        select: { id: true, baseCurrency: true },
+      })
+      // Y ve lo que la MISMA transacción acaba de escribir: está dentro de ella.
+      await tx.$executeRaw`UPDATE organizations SET timezone = 'Atlantic/Canary' WHERE id = ${ORG}::uuid`
+      const after = await tx.organization.findUniqueOrThrow({ where: { id: ORG }, select: { timezone: true } })
+      return { id: org.id, currency: org.baseCurrency, timezone: after.timezone }
+    })
+    expect(seen.id).toBe(ORG)
+    expect(seen.currency).toBe("EUR")
+    expect(seen.timezone).toBe("Atlantic/Canary")
+  })
+
+  it("E6-UI-1: un `User` (pre-tenant) también se lee dentro de la transacción", async () => {
+    const email = await tenantTransaction(ORG, USER, async (tx) =>
+      (await tx.user.findUniqueOrThrow({ where: { id: USER }, select: { email: true } })).email
+    )
+    expect(email).toBe("e6@test.local")
+  })
+
+  // ── E6-UI-2: comparativo y provenance en el MISMO run ─────────────────────
+
+  it("E6-UI-2: el balance trae `previousCents` por celda y `comparativeRunId`", async () => {
+    // El fixture tiene 2026 y 2027; el balance de 2027 compara contra 2026.
+    const fy2027 = await tenantTransaction(ORG, USER, async (tx) =>
+      (await tx.fiscalYear.findFirstOrThrow({ where: { code: "2027" } })).id
+    )
+    const run = await getOrCreateReportRun(ORG, {
+      type: "BALANCE",
+      periodStart: "2027-01-01",
+      periodEnd: "2027-12-31",
+      fiscalYearId: fy2027,
+      params: { snapshot: "PRE_REGULARIZACION", variant: "PYMES" },
+      actor,
+    })
+    const result = run.result as { activo: { path: string; cents: number; previousCents?: number }[] }
+    const conComparativo = result.activo.filter((r) => r.previousCents !== undefined)
+    expect(conComparativo.length).toBeGreaterThan(0)
+    // La apertura de 2027 reproduce el balance formulado de 2026: mismo total.
+    const total = result.activo.find((r) => r.path === "A) Activo no corriente")
+    expect(total?.previousCents).toBe(2_665_000)
+  })
+
+  it("E6-UI-2: sin ejercicio anterior, la celda NO trae `previousCents` (nunca 0)", async () => {
+    const run = await balance("PRE_REGULARIZACION")
+    const result = run.result as { activo: { previousCents?: number }[] }
+    // 2026 es el primer ejercicio del fixture: «sin comparativo», no «cero».
+    expect(result.activo.every((r) => r.previousCents === undefined)).toBe(true)
+  })
+
+  it("E6-UI-2: la provenance de 3 celdas se EJECUTA y reproduce su valor", async () => {
+    type Prov = { valor: number; registros_origen: string; parametros: unknown[]; calculado_por: string }
+    type Row = { path?: string; cents: number; provenance?: Prov }
+
+    const balanceRun = await balance("PRE_REGULARIZACION")
+    const pygRun = await getOrCreateReportRun(ORG, {
+      type: "PYG",
+      ...PERIOD,
+      fiscalYearId,
+      params: { variant: "PYMES" },
+      actor,
+    })
+    const cashRun = await getOrCreateReportRun(ORG, {
+      type: "CASHFLOW_DIRECTO",
+      ...PERIOD,
+      fiscalYearId,
+      params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },
+      actor,
+    })
+
+    /** Ejecuta `registros_origen` tal cual, con sus parámetros, y suma las líneas. */
+    const reproduce = async (prov: Prov): Promise<{ debit: number; credit: number }> =>
+      await tenantTransaction(ORG, USER, async (tx) => {
+        const ids = await tx.$queryRawUnsafe<{ id: string }[]>(prov.registros_origen, ...prov.parametros)
+        expect(ids.length).toBeGreaterThan(0)
+        const rows = await tx.$queryRaw<{ d: bigint; c: bigint }[]>`
+          SELECT COALESCE(SUM(debit_cents)::bigint, 0) AS d, COALESCE(SUM(credit_cents)::bigint, 0) AS c
+            FROM journal_lines WHERE id = ANY(${ids.map((r) => r.id)}::uuid[])`
+        return { debit: Number(rows[0].d), credit: Number(rows[0].c) }
+      })
+
+    // 1. Balance: una hoja del ACTIVO. Presentación `+saldo` (R-B2).
+    const activo = (balanceRun.result as { activo: Row[] }).activo
+    const celdaBalance = activo.find((r) => r.path?.endsWith("1. Tesorería"))!
+    expect(celdaBalance.provenance?.calculado_por).toContain("lib/ledger/reports/balance.ts@")
+    const b = await reproduce(celdaBalance.provenance!)
+    expect(b.debit - b.credit).toBe(celdaBalance.cents)
+    expect(celdaBalance.cents).toBe(2_943_920)
+
+    // 2. PyG: el epígrafe 6. Aporte `haber − debe` (R-P1).
+    const lineas = (pygRun.result as { lines: Row[] }).lines
+    const celdaPyg = lineas.find((r) => r.path === "6. Gastos de personal")!
+    expect(celdaPyg.provenance?.calculado_por).toContain("lib/ledger/reports/pyg.ts@")
+    const p = await reproduce(celdaPyg.provenance!)
+    expect(p.credit - p.debit).toBe(celdaPyg.cents)
+    expect(celdaPyg.cents).toBe(-2_640_000)
+
+    // 3. Cashflow: el bucket de personal. Aporte `−(debe − haber)` (R-CF-3).
+    const directo = (cashRun.result as { directo: { annualCents: Record<string, number>; provenanceByBucket: Record<string, Prov> } }).directo
+    const provBucket = directo.provenanceByBucket.PAGOS_PERSONAL
+    expect(provBucket.calculado_por).toContain("lib/ledger/reports/cashflow.ts@")
+    const c = await reproduce(provBucket)
+    expect(-(c.debit - c.credit)).toBe(directo.annualCents.PAGOS_PERSONAL)
+    expect(directo.annualCents.PAGOS_PERSONAL).toBe(-2_340_000)
+  })
+
   // ── T20: el agregado SQL de la matriz no puede divergir del motor puro ────
 
   it("T20: `getAnalyticAggregates` suma exactamente lo mismo que las líneas (R6)", async () => {

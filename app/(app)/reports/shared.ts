@@ -156,7 +156,11 @@ export function statementNodes(
   const roots: StatementNode[] = []
 
   for (const row of rows) {
-    const previous = opts.previousByPath?.get(row.path)
+    // El motor ya trae `previousCents` por celda cuando el run llevaba
+    // comparativo (E6-UI-2). El mapa externo sigue admitiéndose —la pantalla
+    // puede componer la columna con un segundo run— y manda si viene, pero ya no
+    // hace falta. `undefined` ≠ 0: sin comparativo la celda se pinta vacía.
+    const previous = opts.previousByPath?.get(row.path) ?? row.previousCents
     const node: StatementNode = {
       id: `${opts.prefix}:${row.path}`,
       label: row.label,
