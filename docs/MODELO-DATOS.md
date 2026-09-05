@@ -99,24 +99,52 @@ Constraints SQL: `CHECK(debit>=0 AND credit>=0 AND (debit=0)<>(credit=0))`; FK c
 **Asientos tipo:** las 28 plantillas (T-01…T-28), su aritmética, sus 13 comprobaciones comunes (C-1…C-13) y los invariantes propios I-E3-1…7 están en `docs/design/E3-asientos-tipo.md`. Fixtures inmutables verificados: `tests/fixtures/ejercicio-{minimo,completo}.json`, generados por `docs/design/fixtures/build_ejercicio_completo.py` (84 asientos, 326 líneas, 28/28 plantillas).
 
 ## Analítica
+> Actualizado por **E4** (`docs/design/E4-analitica.md` ronda 2) tras la validación contable (`docs/design/E4-validacion-analitica.md`, **CONFORME CON OBSERVACIONES**). Se incorporan O-A1 (FK compuestas), O-A2 (CHECK de exclusividad y de «sin dimensión fuera de 6/7»), O-A3 (`analyticsHash`), O-A4 (`GRANT UPDATE` acotado), O-A5 (**`@@map`/`@map` en todo el bloque, que faltaba en los 14 modelos**), O-A7 (`MarginLevelConfig` versionada) y O-A8 (`closedAt`, `origin`, `isSystem`). O-A6 (uniques parciales de `Budget`) queda **anotada como deuda** para E5/E7. Reglas de destino R-A1…R-A12 e invariantes I-E4-1…12: en el documento de validación.
+
 ```prisma
-model BusinessLine { id; organizationId; code; name; color; sortOrder; isActive; @@unique([organizationId,code]) }
-model Project { id; organizationId; code; name; businessLineId; counterpartyId?; status ProjectStatus; startDate; endDate?; budgetRevenueCents?; budgetCostCents?; color; llmPrompt?; isActive; @@unique([organizationId,code]) }
-enum ProjectStatus { PLANNED ACTIVE CLOSED }
-model CostCenter { id; organizationId; code; name; kind CostCenterKind; marginLevel MarginLevel; allocatable Boolean true; isActive; @@unique([organizationId,code]) }
-enum CostCenterKind { MARKETING_VENTAS OPERACIONES_INDIRECTAS G_A DESARROLLO_PRODUCTO FINANCIERO EXTRAORDINARIO OTROS SIN_ASIGNAR }
-enum MarginLevel { INGRESOS MC1 MC2 MC3 EBITDA EBIT BAI RESULTADO }   // CostCenter.marginLevel ∈ {MC3, EBITDA} (validado)
-model MarginLevelConfig { id; organizationId; level MarginLevel; label String; analyticTypes AnalyticType[]; sortOrder; @@unique([organizationId,level]) }
-model AllocationRule { id; organizationId; code; name; sourceCostCenterId; targetKind TargetKind; driver Driver; period AllocPeriod; priority Int; targetFilter Json?; validFrom Date; validTo Date?; isActive; targets AllocationRuleTarget[] }
-model AllocationRuleTarget { id; ruleId; projectId?; businessLineId?; costCenterId?; percentPermille Int? }
+model BusinessLine { id; organizationId @map("organization_id"); code; name; color; sortOrder @map("sort_order"); isActive @map("is_active"); archivedAt? @map("archived_at"); isSystem @map("is_system"); createdAt; updatedAt
+  @@unique([organizationId,code]) @@unique([organizationId,id]) @@map("business_lines") }
+// `Project` NO es una tabla nueva: es el heredado de TaxHacker (`projects`, ya bajo RLS
+// desde E1), al que E4 añade columnas. Así sobreviven la FK `Transaction.projectCode` y
+// toda la UI heredada (D-E4-1). `color` y `llm_prompt` se conservan: E8 los usa.
+model Project { id; organizationId; code; name; color; llm_prompt?; businessLineId @map("business_line_id"); counterpartyId? @map("counterparty_id"); status ProjectStatus ACTIVE; startDate? @db.Date; endDate? @db.Date; closedAt? @db.Date; closedById?; budgetRevenueCents?; budgetCostCents?; sortOrder; isActive; archivedAt?; createdAt; updatedAt
+  @@unique([organizationId,code]) @@unique([organizationId,id]) @@map("projects") }
+enum ProjectStatus { PLANNED ACTIVE CLOSED }   @@map("project_status")
+model CostCenter { id; organizationId; code; name; kind CostCenterKind; marginLevel MarginLevel @map("margin_level"); allocatable Boolean true; sortOrder; isActive; archivedAt?; origin AccountOrigin MANUAL; isSystem Boolean false; createdAt; updatedAt
+  @@unique([organizationId,code]) @@unique([organizationId,id]) @@map("cost_centers") }
+enum CostCenterKind { MARKETING_VENTAS OPERACIONES_INDIRECTAS G_A DESARROLLO_PRODUCTO FINANCIERO EXTRAORDINARIO OTROS SIN_ASIGNAR }   @@map("cost_center_kind")
+enum MarginLevel { INGRESOS MC1 MC2 MC3 EBITDA EBIT BAI RESULTADO }   @@map("margin_level")  // CostCenter.marginLevel ∈ {MC3, EBITDA} (CHECK)
+// O-A7: versionada Y hasheada. `validFrom/validTo` conservan el histórico (un ejercicio
+// cerrado reimprime con SU configuración, elegida por la fecha del periodo del informe);
+// el hash, dentro de `analyticsHash`, impide servir un informe cacheado con otra.
+// MLC-2: MC3 y EBITDA van SIEMPRE con `analyticTypes = []` — `INDIRECTO_CECO` se rutea por
+// `CostCenter.marginLevel` (R-A7); listarlo contaría el importe dos veces.
+model MarginLevelConfig { id; organizationId; level MarginLevel; label; analyticTypes AnalyticType[] @map("analytic_types"); sortOrder @map("sort_order"); isVisible @map("is_visible"); validFrom Date @map("valid_from"); validTo? Date @map("valid_to"); updatedAt
+  @@unique([organizationId,level,validFrom]) @@map("margin_level_configs") }
+model AllocationRule { id; organizationId; code; name; sourceCostCenterId; targetKind TargetKind; driver Driver; period AllocPeriod; priority Int; targetFilter Json?; validFrom Date; validTo Date?; isActive; targets AllocationRuleTarget[] @@map("allocation_rules") }
+model AllocationRuleTarget { id; ruleId; projectId?; businessLineId?; costCenterId?; percentPermille Int? @@map("allocation_rule_targets") }
 enum TargetKind { PROJECTS BUSINESS_LINES COST_CENTERS MIXED }  enum Driver { FIXED_PERCENT REVENUE_SHARE DIRECT_COST_SHARE HOURS HEADCOUNT EQUAL MANUAL }  enum AllocPeriod { MONTH QUARTER YEAR }
-model AllocationRun { id; organizationId; periodStart Date; periodEnd Date; ledgerHash String; rulesHash String; gitSha String; runBy; runAt; supersededById?; reversedAt?; lines AllocationLine[] }
-model AllocationLine { id; runId; ruleId; sourceCostCenterId; targetProjectId?; targetBusinessLineId?; targetCostCenterId?; amountCents Int; driverBase Int; driverSharePermille Int }
-model Budget { id; organizationId; year Int; month Int; projectId?; costCenterId?; accountCode?; amountCents Int; @@unique([organizationId,year,month,projectId,costCenterId,accountCode]) }
-model TimeEntry { id; organizationId; userId; projectId; date Date; minutes Int; note? }
-model EmployeeRate { id; organizationId; userId; hourlyCostCents Int; validFrom; validTo? }
-model Counterparty { id; organizationId; kind CounterpartyKind; name; taxId?; accountCode?; defaultTaxRateId?; email?; @@unique([organizationId,taxId]) }  // clientes/proveedores
+model AllocationRun { id; organizationId; periodStart Date; periodEnd Date; ledgerHash String; analyticsHash String; rulesHash String; gitSha String; runBy; runAt; supersededById?; reversedAt?; lines AllocationLine[] @@map("allocation_runs") }
+model AllocationLine { id; runId; ruleId; sourceCostCenterId; targetProjectId?; targetBusinessLineId?; targetCostCenterId?; amountCents Int; driverBase Int; driverSharePermille Int @@map("allocation_lines") }
+model Budget { id; organizationId; year Int; month Int; projectId?; costCenterId?; accountCode?; amountCents Int; @@unique([organizationId,year,month,projectId,costCenterId,accountCode]) @@map("budgets") }
+// DEUDA O-A6 (E5/E7): ese `@@unique` con TRES columnas nullables NO impide duplicados —
+// en PostgreSQL NULL <> NULL. Sustituir por índices únicos parciales por combinación (o
+// `NULLS NOT DISTINCT`, PG 15+) y añadir CHECK `(project_id IS NULL) <> (cost_center_id IS NULL)`.
+model TimeEntry { id; organizationId; userId; projectId; date Date; minutes Int; note? @@map("time_entries") }
+model EmployeeRate { id; organizationId; userId; hourlyCostCents Int; validFrom; validTo? @@map("employee_rates") }
+model Counterparty { id; organizationId; kind CounterpartyKind; name; taxId?; accountCode?; defaultTaxRateId?; email?; @@unique([organizationId,taxId]) @@map("counterparties") }  // clientes/proveedores
+// `Organization.nonAnalyticLevel MarginLevel EBITDA` (CHECK ∈ {EBITDA, EBIT, BAI}): R-A11 —
+// `630`/`633`/`638` van SIEMPRE a RESULTADO (fijo); el resto de NO_ANALITICO (73x/74x/75x,
+// que son resultado de explotación) cae en este nivel. Nunca por encima de MC3.
 ```
+
+**Dimensiones en la línea (E4).** `JournalLine.projectId/costCenterId/businessLineId` pierden el `CHECK` `journal_lines_analytics_e4` de E3 y ganan **FK compuestas por tenant** `(organization_id, project_id) → projects(organization_id, id)` y equivalentes para CECO y LN (O-A1, I-E4-7). Tres CHECK nuevos (O-A2): `project_id IS NULL OR cost_center_id IS NULL` (exclusividad, I-E4-2), `business_line_id IS NULL OR project_id IS NOT NULL`, y `left(account_code,1) IN ('6','7') OR (las cuatro columnas analíticas IS NULL)` (R-A1, I-E4-5). `analytic_type` almacena el **tipo efectivo** ya resuelto al postear (R-A2, con los override implícitos R-A3 `INDIRECTO_CECO + projectId ⇒ COSTE_DIRECTO_MC2` y R-A4 `directo + costCenterId ⇒ INDIRECTO_CECO`): la matriz lee, no decide. `business_line_id` lo copia el motor del proyecto **en el alta** y un trigger lo verifica (R-A9); nunca se recalcula, así que mover un proyecto de línea de negocio no altera informes ya emitidos.
+
+**Tres sellos (E4-D2, ADR-0010).** `ledgerHash` **financiero v2 EXCLUYE** las cuatro columnas analíticas — si las incluyera, reimputar un gasto invalidaría balance, PyG, cashflow y diario ya sellados, que no cambian en un céntimo (P3/P7). `entryHash` sí las incluye y **se recalcula** al reclasificar, con lo que I-E3-7 sigue en PASS. `analyticsHash` (nuevo) = dimensiones + `marginConfigHash` + `allocationRunId`, y es el único que caduca informes, y solo los analíticos. `JournalEntry.hashVersion Int @default(2)`; la migración de E4 recalcula el histórico (viable solo por la ausencia de datos en producción) y v2 no se vuelve a tocar. `ReportRun.analyticsHash String?`, obligatorio por CHECK para `PYG_ANALITICA`/`PRESUPUESTO_REAL`/`DASHBOARD`, con clave de reutilización `(organizationId, type, ledgerHash, analyticsHash)`.
+
+**Reclasificación analítica (ADR-0010, PROPUESTO).** `journal_lines` deja de ser estrictamente append-only: `GRANT UPDATE ("project_id","cost_center_id","business_line_id","analytic_type") ON journal_lines TO app_runtime` — **y nada más** — más `GRANT UPDATE ("entry_hash") ON journal_entries`, con trigger `journal_lines_only_analytics_update` que lanza si cambia cualquier otra columna (el propietario esquiva los GRANT, el trigger no) y trigger de ventana que prohíbe el `UPDATE` con el ejercicio `CLOSED`. Mes bloqueado: solo ADMIN con motivo. `AuditLog(entity="JournalLine", action="RECLASSIFY_ANALYTICS")` con `before`/`after` de las cuatro columnas y de ambos hashes, en la misma transacción.
+
+**Semilla por organización.** Ocho CECOs (`CC-OPS` MC3 · `CC-DEV` MC3 · `CC-MKT` EBITDA · `CC-GA` EBITDA · `CC-FIN` no imputable · `CC-EXT` no imputable · `CC-OTR` · `CC-NA` `SIN_ASIGNAR`, de sistema y no imputable) y las ocho filas de `MarginLevelConfig`. Con `analyticsRequired = false`, una línea 6/7 sin destino se rutea a `CC-NA` y la Auditoría la marca WARN (R-A8); nunca queda a NULL.
 
 ## Extracción, FX, informes, auditoría
 ```prisma
@@ -145,7 +173,10 @@ model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int
 | Denormalización de `entryDate`/`fiscalYearId`/`entryKind` coherente con el asiento | FK compuesta contra `@@unique([organizationId,id,entryDate,fiscalYearId,kind])` |
 | Un solo contra-asiento por asiento, y nunca de un `REVERSAL` | índice único parcial + trigger |
 | Método de redondeo y fechas del documento reproducibles | `taxRoundingMode`, `documentDate`, `accrualDate` sellados en el asiento |
-| 6/7 con destino analítico si `analyticsRequired` | código |
+| 6/7 con destino analítico si `analyticsRequired` (C-9, R-A8); exclusividad proyecto/CECO; sin dimensión fuera de 6/7 ni en `NO_ANALITICO` | código (E4) **+ CHECK + FK compuestas `(organization_id, project_id\|cost_center_id\|business_line_id)`** |
+| `business_line_id` de la línea = el del proyecto en el alta (R-A9, I-E4-3) | código + trigger `journal_lines_business_line_denorm` (verifica, nunca rellena: rompería `entry_hash`) |
+| Σ matriz analítica = PyG contable (I4) por nivel y en `RESULTADO`, tolerancia 0 | `lib/analytics/margins.ts` + test byte a byte contra `docs/design/fixtures/pyg-analitica-esperada.json` |
+| Línea posteada: solo mutan las cuatro columnas analíticas, con motivo y `AuditLog` | `GRANT` de columna + triggers `journal_lines_only_analytics_update` y `..._reclassify_window` (ADR-0010) |
 | Nada se borra: asientos, líneas, cuentas con movimientos, runs | RLS `FOR DELETE USING(false)` + código |
 | Anulación solo por contra-asiento; sin flag que excluya líneas de informes | código + ausencia de columna `voided` en líneas |
 | Tenant | `tenantDb` + RLS |

@@ -1,0 +1,1265 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "docs/design/fixtures/build_pyg_analitica_esperada.py",
+  "note": "PyG analitica esperada del fixture tests/fixtures/ejercicio-completo.json. Centimos enteros. Signo: positivo suma al margen, negativo resta. Matriz CUMULATIVA por nivel. Las columnas businessLines son agregados de las columnas de proyecto y NO entran en el total.",
+  "source": {
+    "fixture": "tests/fixtures/ejercicio-completo.json",
+    "fiscalYear": "2026",
+    "excludedKinds": [
+      "CLOSING",
+      "OPENING",
+      "REGULARIZATION"
+    ]
+  },
+  "marginLevelConfig": {
+    "INGRESOS": [
+      "INGRESO_DIRECTO"
+    ],
+    "MC1": [
+      "COSTE_DIRECTO_MC1"
+    ],
+    "MC2": [
+      "COSTE_DIRECTO_MC2"
+    ],
+    "MC3": [],
+    "EBITDA": [],
+    "EBIT": [
+      "AMORTIZACION_DETERIORO"
+    ],
+    "BAI": [
+      "FINANCIERO",
+      "EXTRAORDINARIO"
+    ],
+    "RESULTADO": [
+      "NO_ANALITICO"
+    ]
+  },
+  "nonAnalyticSplit": {
+    "taxPrefixes": [
+      "630",
+      "633",
+      "638"
+    ],
+    "taxLevel": "RESULTADO",
+    "nonAnalyticLevel": "EBITDA"
+  },
+  "levels": [
+    "INGRESOS",
+    "MC1",
+    "MC2",
+    "MC3",
+    "EBITDA",
+    "EBIT",
+    "BAI",
+    "RESULTADO"
+  ],
+  "columns": [
+    "PROJ:P-01",
+    "PROJ:P-02",
+    "PROJ:P-03",
+    "CECO:OPERACIONES_INDIRECTAS",
+    "CECO:DESARROLLO_PRODUCTO",
+    "CECO:MARKETING_VENTAS",
+    "CECO:G_A",
+    "CECO:FINANCIERO",
+    "CECO:EXTRAORDINARIO",
+    "CECO:OTROS",
+    "CECO:SIN_ASIGNAR",
+    "AMORTIZACION_DETERIORO",
+    "FINANCIERO",
+    "EXTRAORDINARIO",
+    "NO_ANALITICO"
+  ],
+  "matrixCents": {
+    "INGRESOS": {
+      "PROJ:P-01": 2050000,
+      "PROJ:P-02": 2550000,
+      "PROJ:P-03": 1650000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "MC1": {
+      "PROJ:P-01": 1900000,
+      "PROJ:P-02": 2370000,
+      "PROJ:P-03": 1400000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "MC2": {
+      "PROJ:P-01": 316000,
+      "PROJ:P-02": 1560000,
+      "PROJ:P-03": 1400000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "MC3": {
+      "PROJ:P-01": 316000,
+      "PROJ:P-02": 1560000,
+      "PROJ:P-03": 1400000,
+      "CECO:OPERACIONES_INDIRECTAS": -91890,
+      "CECO:DESARROLLO_PRODUCTO": -100000,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "EBITDA": {
+      "PROJ:P-01": 316000,
+      "PROJ:P-02": 1560000,
+      "PROJ:P-03": 1400000,
+      "CECO:OPERACIONES_INDIRECTAS": -91890,
+      "CECO:DESARROLLO_PRODUCTO": -100000,
+      "CECO:MARKETING_VENTAS": -60500,
+      "CECO:G_A": -633180,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "EBIT": {
+      "PROJ:P-01": 316000,
+      "PROJ:P-02": 1560000,
+      "PROJ:P-03": 1400000,
+      "CECO:OPERACIONES_INDIRECTAS": -91890,
+      "CECO:DESARROLLO_PRODUCTO": -100000,
+      "CECO:MARKETING_VENTAS": -60500,
+      "CECO:G_A": -633180,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": -395000,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "BAI": {
+      "PROJ:P-01": 316000,
+      "PROJ:P-02": 1560000,
+      "PROJ:P-03": 1400000,
+      "CECO:OPERACIONES_INDIRECTAS": -91890,
+      "CECO:DESARROLLO_PRODUCTO": -100000,
+      "CECO:MARKETING_VENTAS": -60500,
+      "CECO:G_A": -633180,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": -395000,
+      "FINANCIERO": 1000,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "RESULTADO": {
+      "PROJ:P-01": 316000,
+      "PROJ:P-02": 1560000,
+      "PROJ:P-03": 1400000,
+      "CECO:OPERACIONES_INDIRECTAS": -91890,
+      "CECO:DESARROLLO_PRODUCTO": -100000,
+      "CECO:MARKETING_VENTAS": -60500,
+      "CECO:G_A": -633180,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": -395000,
+      "FINANCIERO": 1000,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": -499108
+    }
+  },
+  "businessLineMatrixCents": {
+    "INGRESOS": {
+      "BL-CONS": 4600000,
+      "BL-DEV": 1650000
+    },
+    "MC1": {
+      "BL-CONS": 4270000,
+      "BL-DEV": 1400000
+    },
+    "MC2": {
+      "BL-CONS": 1876000,
+      "BL-DEV": 1400000
+    },
+    "MC3": {
+      "BL-CONS": 1876000,
+      "BL-DEV": 1400000
+    },
+    "EBITDA": {
+      "BL-CONS": 1876000,
+      "BL-DEV": 1400000
+    },
+    "EBIT": {
+      "BL-CONS": 1876000,
+      "BL-DEV": 1400000
+    },
+    "BAI": {
+      "BL-CONS": 1876000,
+      "BL-DEV": 1400000
+    },
+    "RESULTADO": {
+      "BL-CONS": 1876000,
+      "BL-DEV": 1400000
+    }
+  },
+  "levelTotalsCents": {
+    "INGRESOS": 6250000,
+    "MC1": 5670000,
+    "MC2": 3276000,
+    "MC3": 3084110,
+    "EBITDA": 2390430,
+    "EBIT": 1995430,
+    "BAI": 1996430,
+    "RESULTADO": 1497322
+  },
+  "contributionByLevelCents": {
+    "INGRESOS": {
+      "PROJ:P-01": 2050000,
+      "PROJ:P-02": 2550000,
+      "PROJ:P-03": 1650000
+    },
+    "MC1": {
+      "PROJ:P-01": -150000,
+      "PROJ:P-02": -180000,
+      "PROJ:P-03": -250000
+    },
+    "MC2": {
+      "PROJ:P-01": -1584000,
+      "PROJ:P-02": -810000
+    },
+    "MC3": {
+      "CECO:DESARROLLO_PRODUCTO": -100000,
+      "CECO:OPERACIONES_INDIRECTAS": -91890
+    },
+    "EBITDA": {
+      "CECO:G_A": -633180,
+      "CECO:MARKETING_VENTAS": -60500
+    },
+    "EBIT": {
+      "AMORTIZACION_DETERIORO": -395000
+    },
+    "BAI": {
+      "FINANCIERO": 1000
+    },
+    "RESULTADO": {
+      "NO_ANALITICO": -499108
+    }
+  },
+  "pygContableCents": 1497322,
+  "lineCount67": 85,
+  "checks": [
+    {
+      "id": "I4",
+      "level": "RESULTADO",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "Sigma columnas (RESULTADO) = PyG contable I3"
+    },
+    {
+      "id": "I-E4-1",
+      "status": "PASS",
+      "expected": 85,
+      "actual": 85,
+      "evidencia": "toda linea 6/7 del periodo tiene destino en la matriz"
+    },
+    {
+      "id": "I-E4-3",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "businessLine de toda linea con proyecto = la del proyecto"
+    },
+    {
+      "id": "I-E4-2",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "linea 6/7 no NO_ANALITICO con exactamente una dimension"
+    },
+    {
+      "id": "I-E4-4",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "NO_ANALITICO nunca lleva dimension"
+    }
+  ],
+  "lineDetail": [
+    {
+      "entryRef": "R-001",
+      "lineNo": 1,
+      "accountCode": "607",
+      "analyticType": "COSTE_DIRECTO_MC1",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC1",
+      "column": "PROJ:P-01",
+      "amountCents": -200000
+    },
+    {
+      "entryRef": "F-001",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-01",
+      "amountCents": 500000
+    },
+    {
+      "entryRef": "F-001",
+      "lineNo": 3,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-01",
+      "amountCents": 120000
+    },
+    {
+      "entryRef": "R-002",
+      "lineNo": 1,
+      "accountCode": "621",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -120000
+    },
+    {
+      "entryRef": "NOM-01",
+      "lineNo": 1,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -300000
+    },
+    {
+      "entryRef": "NOM-01",
+      "lineNo": 2,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -125000
+    },
+    {
+      "entryRef": "NOM-01",
+      "lineNo": 3,
+      "accountCode": "640",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -75000
+    },
+    {
+      "entryRef": "NOM-01",
+      "lineNo": 4,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -96000
+    },
+    {
+      "entryRef": "NOM-01",
+      "lineNo": 5,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -40000
+    },
+    {
+      "entryRef": "NOM-01",
+      "lineNo": 6,
+      "accountCode": "642",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -24000
+    },
+    {
+      "entryRef": "AM-01",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-01",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "AJ-001",
+      "lineNo": 1,
+      "accountCode": "678",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -35000
+    },
+    {
+      "entryRef": "R-003",
+      "lineNo": 1,
+      "accountCode": "623",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -150000
+    },
+    {
+      "entryRef": "F-002",
+      "lineNo": 3,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-02",
+      "amountCents": 800000
+    },
+    {
+      "entryRef": "AM-02",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-02",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "R-004",
+      "lineNo": 1,
+      "accountCode": "628",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -81680
+    },
+    {
+      "entryRef": "F-003",
+      "lineNo": 4,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-03",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-03",
+      "amountCents": 600000
+    },
+    {
+      "entryRef": "AM-03",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-03",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "R-005",
+      "lineNo": 1,
+      "accountCode": "629",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-MKT",
+      "level": "EBITDA",
+      "column": "CECO:MARKETING_VENTAS",
+      "amountCents": -60500
+    },
+    {
+      "entryRef": "F-004",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-01",
+      "amountCents": 300000
+    },
+    {
+      "entryRef": "CO-003",
+      "lineNo": 2,
+      "accountCode": "626",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -500
+    },
+    {
+      "entryRef": "NOM-04",
+      "lineNo": 1,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -300000
+    },
+    {
+      "entryRef": "NOM-04",
+      "lineNo": 2,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -125000
+    },
+    {
+      "entryRef": "NOM-04",
+      "lineNo": 3,
+      "accountCode": "640",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -75000
+    },
+    {
+      "entryRef": "NOM-04",
+      "lineNo": 4,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -96000
+    },
+    {
+      "entryRef": "NOM-04",
+      "lineNo": 5,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -40000
+    },
+    {
+      "entryRef": "NOM-04",
+      "lineNo": 6,
+      "accountCode": "642",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -24000
+    },
+    {
+      "entryRef": "AM-04",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-04",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "AB-001",
+      "lineNo": 1,
+      "accountCode": "7080",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-01",
+      "amountCents": -100000
+    },
+    {
+      "entryRef": "R-006",
+      "lineNo": 1,
+      "accountCode": "623",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-DEV",
+      "level": "MC3",
+      "column": "CECO:DESARROLLO_PRODUCTO",
+      "amountCents": -100000
+    },
+    {
+      "entryRef": "F-005",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-01",
+      "amountCents": 400000
+    },
+    {
+      "entryRef": "CO-004",
+      "lineNo": 2,
+      "accountCode": "668",
+      "analyticType": "FINANCIERO",
+      "projectCode": null,
+      "costCenterCode": "CC-FIN",
+      "level": "BAI",
+      "column": "FINANCIERO",
+      "amountCents": -5000
+    },
+    {
+      "entryRef": "AM-05",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-05",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "AB-R-001",
+      "lineNo": 2,
+      "accountCode": "6080",
+      "analyticType": "COSTE_DIRECTO_MC1",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC1",
+      "column": "PROJ:P-01",
+      "amountCents": 50000
+    },
+    {
+      "entryRef": "F-006",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-02",
+      "amountCents": 450000
+    },
+    {
+      "entryRef": "CO-005",
+      "lineNo": 2,
+      "accountCode": "768",
+      "analyticType": "FINANCIERO",
+      "projectCode": null,
+      "costCenterCode": "CC-FIN",
+      "level": "BAI",
+      "column": "FINANCIERO",
+      "amountCents": 6000
+    },
+    {
+      "entryRef": "AM-06",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-06",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "PER-G-01",
+      "lineNo": 2,
+      "accountCode": "628",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": 60000
+    },
+    {
+      "entryRef": "PER-I-01",
+      "lineNo": 1,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-03",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-03",
+      "amountCents": -90000
+    },
+    {
+      "entryRef": "R-007",
+      "lineNo": 1,
+      "accountCode": "607",
+      "analyticType": "COSTE_DIRECTO_MC1",
+      "projectCode": "P-03",
+      "costCenterCode": null,
+      "level": "MC1",
+      "column": "PROJ:P-03",
+      "amountCents": -250000
+    },
+    {
+      "entryRef": "F-007",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-03",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-03",
+      "amountCents": 500000
+    },
+    {
+      "entryRef": "CO-006",
+      "lineNo": 2,
+      "accountCode": "669",
+      "analyticType": "FINANCIERO",
+      "projectCode": null,
+      "costCenterCode": "CC-FIN",
+      "level": "BAI",
+      "column": "FINANCIERO",
+      "amountCents": -1
+    },
+    {
+      "entryRef": "NOM-07",
+      "lineNo": 1,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -300000
+    },
+    {
+      "entryRef": "NOM-07",
+      "lineNo": 2,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -125000
+    },
+    {
+      "entryRef": "NOM-07",
+      "lineNo": 3,
+      "accountCode": "640",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -75000
+    },
+    {
+      "entryRef": "NOM-07",
+      "lineNo": 4,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -96000
+    },
+    {
+      "entryRef": "NOM-07",
+      "lineNo": 5,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -40000
+    },
+    {
+      "entryRef": "NOM-07",
+      "lineNo": 6,
+      "accountCode": "642",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -24000
+    },
+    {
+      "entryRef": "AM-07",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-07",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "F-008",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-01",
+      "amountCents": 350000
+    },
+    {
+      "entryRef": "PA-003",
+      "lineNo": 3,
+      "accountCode": "769",
+      "analyticType": "FINANCIERO",
+      "projectCode": null,
+      "costCenterCode": "CC-FIN",
+      "level": "BAI",
+      "column": "FINANCIERO",
+      "amountCents": 1
+    },
+    {
+      "entryRef": "AM-08",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-08",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -12500
+    },
+    {
+      "entryRef": "R-008",
+      "lineNo": 1,
+      "accountCode": "607",
+      "analyticType": "COSTE_DIRECTO_MC1",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC1",
+      "column": "PROJ:P-02",
+      "amountCents": -180000
+    },
+    {
+      "entryRef": "F-009",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-02",
+      "amountCents": 600000
+    },
+    {
+      "entryRef": "AM-09",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-09",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -43750
+    },
+    {
+      "entryRef": "PER-G-02",
+      "lineNo": 1,
+      "accountCode": "628",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -60000
+    },
+    {
+      "entryRef": "R-ERR",
+      "lineNo": 1,
+      "accountCode": "607",
+      "analyticType": "COSTE_DIRECTO_MC1",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC1",
+      "column": "PROJ:P-01",
+      "amountCents": -100000
+    },
+    {
+      "entryRef": "REV-R-ERR",
+      "lineNo": 2,
+      "accountCode": "607",
+      "analyticType": "COSTE_DIRECTO_MC1",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC1",
+      "column": "PROJ:P-01",
+      "amountCents": 100000
+    },
+    {
+      "entryRef": "F-010",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-03",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-03",
+      "amountCents": 550000
+    },
+    {
+      "entryRef": "NOM-10",
+      "lineNo": 1,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -300000
+    },
+    {
+      "entryRef": "NOM-10",
+      "lineNo": 2,
+      "accountCode": "640",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -125000
+    },
+    {
+      "entryRef": "NOM-10",
+      "lineNo": 3,
+      "accountCode": "640",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -75000
+    },
+    {
+      "entryRef": "NOM-10",
+      "lineNo": 4,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-01",
+      "amountCents": -96000
+    },
+    {
+      "entryRef": "NOM-10",
+      "lineNo": 5,
+      "accountCode": "642",
+      "analyticType": "COSTE_DIRECTO_MC2",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "MC2",
+      "column": "PROJ:P-02",
+      "amountCents": -40000
+    },
+    {
+      "entryRef": "NOM-10",
+      "lineNo": 6,
+      "accountCode": "642",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBITDA",
+      "column": "CECO:G_A",
+      "amountCents": -24000
+    },
+    {
+      "entryRef": "AM-10",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-10",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -43750
+    },
+    {
+      "entryRef": "PER-I-02",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-03",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-03",
+      "amountCents": 90000
+    },
+    {
+      "entryRef": "R-010",
+      "lineNo": 1,
+      "accountCode": "628",
+      "analyticType": "INDIRECTO_CECO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "MC3",
+      "column": "CECO:OPERACIONES_INDIRECTAS",
+      "amountCents": -91890
+    },
+    {
+      "entryRef": "F-011",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-01",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-01",
+      "amountCents": 480000
+    },
+    {
+      "entryRef": "AM-11",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-11",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -43750
+    },
+    {
+      "entryRef": "F-012",
+      "lineNo": 2,
+      "accountCode": "705",
+      "analyticType": "INGRESO_DIRECTO",
+      "projectCode": "P-02",
+      "costCenterCode": null,
+      "level": "INGRESOS",
+      "column": "PROJ:P-02",
+      "amountCents": 700000
+    },
+    {
+      "entryRef": "AM-12",
+      "lineNo": 1,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-GA",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -10000
+    },
+    {
+      "entryRef": "AM-12",
+      "lineNo": 2,
+      "accountCode": "681",
+      "analyticType": "AMORTIZACION_DETERIORO",
+      "projectCode": null,
+      "costCenterCode": "CC-OPS",
+      "level": "EBIT",
+      "column": "AMORTIZACION_DETERIORO",
+      "amountCents": -43750
+    },
+    {
+      "entryRef": "IS-2026",
+      "lineNo": 1,
+      "accountCode": "6300",
+      "analyticType": "NO_ANALITICO",
+      "projectCode": null,
+      "costCenterCode": null,
+      "level": "RESULTADO",
+      "column": "NO_ANALITICO",
+      "amountCents": -499108
+    }
+  ]
+}
