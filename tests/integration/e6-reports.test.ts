@@ -43,6 +43,7 @@ const { analyticsKeyOf, canonicalResultJson, DEFAULT_REVIEW_THRESHOLDS } = await
 const { exportRun } = await import("@/lib/export/report-export")
 const { getAnalyticAggregates, getAnalyticLines } = await import("@/models/analytics")
 const { computeAccountMapHash, computePlanHash, getCashflowBucketDetail } = await import("@/models/reports")
+const { computeLedgerHash } = await import("@/models/ledger")
 const { updateAccount } = await import("@/models/accounts")
 const { appRuntimeDatabaseUrl } = await import("@/tests/support/env")
 
@@ -879,6 +880,144 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
       })
     }
   }, 180_000)
+
+  it("N1: un asiento posteado ENTRE fases obliga a rehacer el run con su propio hash", async () => {
+    // Sin la re-comprobación, el run se guardaba con el `ledgerHash` de la fase
+    // 1 y las cifras de la fase 2: un informe sellado que miente sobre de dónde
+    // salen sus números, y además envenena la caché para todo el que pida ese
+    // `ledgerHash` después.
+    let posted = false
+    const run = await getOrCreateReportRun(ORG_MUT, {
+      type: "SUMAS_SALDOS",
+      ...PERIOD,
+      fiscalYearId: fiscalYearIdMut,
+      params: { marcaN1: "1" },
+      actor,
+      // Se postea UNA sola vez: el segundo intento tiene que salir limpio.
+      onPhaseBoundary: async () => {
+        if (posted) return
+        posted = true
+        await owner(async (client) => {
+          await client.query("BEGIN")
+          await client.query("SET LOCAL session_replication_role = replica")
+          const user = USER
+          const entryId = (
+            await client.query<{ id: string }>(
+              `INSERT INTO journal_entries
+                 (id, organization_id, fiscal_year_id, entry_number, entry_date, description, kind,
+                  source_type, tax_rounding_mode, posted_by_id, entry_hash, hash_version)
+               VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 990001, DATE '2026-06-20', 'asiento entre fases',
+                       'NORMAL', 'MANUAL', 'PER_TIPO', $3::uuid, md5(random()::text), 2)
+               RETURNING id`,
+              [ORG_MUT, fiscalYearIdMut, user]
+            )
+          ).rows[0].id
+          await client.query(
+            `INSERT INTO journal_lines
+               (id, organization_id, entry_id, line_no, account_code, debit_cents, credit_cents,
+                entry_date, fiscal_year_id, entry_kind)
+             VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 1, '572', 7777, 0, DATE '2026-06-20', $3::uuid, 'NORMAL'),
+                    (gen_random_uuid(), $1::uuid, $2::uuid, 2, '4300', 0, 7777, DATE '2026-06-20', $3::uuid, 'NORMAL')`,
+            [ORG_MUT, entryId, fiscalYearIdMut]
+          )
+          await client.query("COMMIT")
+        })
+      },
+    })
+    try {
+      expect(posted).toBe(true)
+      // El hash del run tiene que ser el del diario CON el asiento nuevo.
+      const actual = await tenantTransaction(ORG_MUT, USER, async (tx) =>
+        computeLedgerHash(tx, { fiscalYearId: fiscalYearIdMut, from: PERIOD.periodStart, to: PERIOD.periodEnd })
+      )
+      expect(run.ledgerHash).toBe(actual)
+      // Y las cifras son las de ESE diario: el asiento nuevo está dentro.
+      const totals = (run.result as { totals: { totalDebitCents: number } }).totals
+      const suma = await owner(async (client) =>
+        Number(
+          (
+            await client.query<{ n: string }>(
+              `SELECT COALESCE(SUM(debit_cents),0)::text AS n FROM journal_lines
+                WHERE organization_id = $1::uuid AND fiscal_year_id = $2::uuid
+                  AND entry_date BETWEEN DATE '2026-01-01' AND DATE '2026-12-31'`,
+              [ORG_MUT, fiscalYearIdMut]
+            )
+          ).rows[0].n
+        )
+      )
+      expect(totals.totalDebitCents).toBe(suma)
+    } finally {
+      await owner(async (client) => {
+        await client.query("BEGIN")
+        await client.query("SET LOCAL session_replication_role = replica")
+        await client.query(
+          `DELETE FROM journal_lines WHERE organization_id = $1::uuid
+            AND entry_id IN (SELECT id FROM journal_entries WHERE organization_id = $1::uuid AND entry_number = 990001)`,
+          [ORG_MUT]
+        )
+        await client.query(`DELETE FROM journal_entries WHERE organization_id = $1::uuid AND entry_number = 990001`, [
+          ORG_MUT,
+        ])
+        await client.query("COMMIT")
+      })
+    }
+  }, 120_000)
+
+  it("N1: si el diario no para, el informe se rinde en vez de sellar cifras incoherentes", async () => {
+    let n = 0
+    await expect(
+      getOrCreateReportRun(ORG_MUT, {
+        type: "SUMAS_SALDOS",
+        ...PERIOD,
+        fiscalYearId: fiscalYearIdMut,
+        params: { marcaN1: "bucle" },
+        actor,
+        onPhaseBoundary: async () => {
+          n += 1
+          await owner(async (client) => {
+            await client.query("BEGIN")
+            await client.query("SET LOCAL session_replication_role = replica")
+            // El `ledgerHash` se calcula sobre las LÍNEAS: un asiento sin ellas
+            // no lo movería y el reintento nunca saltaría.
+            const id = (
+              await client.query<{ id: string }>(
+                `INSERT INTO journal_entries
+                   (id, organization_id, fiscal_year_id, entry_number, entry_date, description, kind,
+                    source_type, tax_rounding_mode, posted_by_id, entry_hash, hash_version)
+                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, DATE '2026-06-21', 'bucle', 'NORMAL',
+                         'MANUAL', 'PER_TIPO', $4::uuid, md5(random()::text), 2)
+                 RETURNING id`,
+                [ORG_MUT, fiscalYearIdMut, 991000 + n, USER]
+              )
+            ).rows[0].id
+            await client.query(
+              `INSERT INTO journal_lines
+                 (id, organization_id, entry_id, line_no, account_code, debit_cents, credit_cents,
+                  entry_date, fiscal_year_id, entry_kind)
+               VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 1, '572', 11, 0, DATE '2026-06-21', $3::uuid, 'NORMAL'),
+                      (gen_random_uuid(), $1::uuid, $2::uuid, 2, '4300', 0, 11, DATE '2026-06-21', $3::uuid, 'NORMAL')`,
+              [ORG_MUT, id, fiscalYearIdMut]
+            )
+            await client.query("COMMIT")
+          })
+        },
+      })
+    ).rejects.toThrow(/tres veces/)
+    expect(n).toBe(3)
+    await owner(async (client) => {
+      await client.query("BEGIN")
+      await client.query("SET LOCAL session_replication_role = replica")
+      await client.query(
+        `DELETE FROM journal_lines WHERE organization_id = $1::uuid
+          AND entry_id IN (SELECT id FROM journal_entries WHERE organization_id = $1::uuid AND entry_number >= 991000)`,
+        [ORG_MUT]
+      )
+      await client.query(`DELETE FROM journal_entries WHERE organization_id = $1::uuid AND entry_number >= 991000`, [
+        ORG_MUT,
+      ])
+      await client.query("COMMIT")
+    })
+  }, 120_000)
 
   it("#4: el panel se compara con el del ejercicio anterior aunque el `refDate` difiera", async () => {
     const fy2027 = await tenantTransaction(ORG, USER, async (tx) =>

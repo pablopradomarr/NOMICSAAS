@@ -103,6 +103,12 @@ export type ReportRequest = {
   actor?: Actor
   /** Los tests de corrupción y de reproducibilidad necesitan saltarse la caché. */
   noCache?: boolean
+  /**
+   * N1 — punto de inyección **sólo para tests**: se ejecuta entre la fase 1 (que
+   * fija la clave) y la fase 2 (que lee las líneas), para simular que alguien
+   * postea justo en medio. En producción nadie lo pasa.
+   */
+  onPhaseBoundary?: () => Promise<void>
 }
 
 export type ReportRunView = {
@@ -180,6 +186,36 @@ export async function getOrCreateReportRun(
   const startedAt = Date.now()
   const gitSha = currentGitSha()
   const userId = request.actor?.userId ?? undefined
+
+  // N1 — el diario puede moverse ENTRE la fase 1 (que fija la clave) y la fase 2
+  // (que lee las líneas). Si eso pasa, el run se guardaría con el `ledgerHash`
+  // de antes y las cifras de después: un informe sellado que miente sobre de
+  // dónde salen sus números, y encima envenena la caché. La fase 2 vuelve a
+  // calcular el hash EN SU MISMA transacción y, si no coincide, se reintenta
+  // desde el principio — el mismo patrón que `getCashflowBucketDetail`, que
+  // niega el drill-down cuando el diario ya no es el del run.
+  for (let attempt = 1; attempt <= MAX_REPORT_ATTEMPTS; attempt++) {
+    const result = await attemptReportRun(organizationId, request, { startedAt, gitSha, userId })
+    if (result !== RETRY) return result
+  }
+  throw new Error(
+    "El diario cambió tres veces mientras se emitía el informe: vuelve a pedirlo. " +
+      "Si se repite, hay un proceso posteando en bucle sobre este periodo."
+  )
+}
+
+/** N1: tres intentos. Con más, un diario muy activo dejaría el informe colgado. */
+const MAX_REPORT_ATTEMPTS = 3
+
+/** Señal de «el diario se movió entre fases»: hay que rehacer la clave. */
+const RETRY = Symbol("report-run-retry")
+
+async function attemptReportRun(
+  organizationId: string,
+  request: ReportRequest,
+  env: { startedAt: number; gitSha: string; userId: string | undefined }
+): Promise<ReportRunView | typeof RETRY> {
+  const { startedAt, gitSha, userId } = env
 
   // ── FASE 1 — clave y caché, SIN leer el diario (#7) ──────────────────────
   //
@@ -270,6 +306,10 @@ export async function getOrCreateReportRun(
 
   if (key.cached) return toView(key.cached, "cache")
 
+  // Punto de inyección de los tests: simula que alguien postea justo entre la
+  // fase 1 y la fase 2. En producción no existe.
+  if (request.onPhaseBoundary) await request.onPhaseBoundary()
+
   // ── FASE 2 — lectura y cálculo ───────────────────────────────────────────
   //
   // La lectura va en su propia transacción, con presupuesto explícito; el
@@ -280,6 +320,16 @@ export async function getOrCreateReportRun(
     organizationId,
     userId,
     async (tx) => {
+      // N1: el hash se recalcula AQUÍ, en la misma transacción y antes de leer,
+      // de modo que las líneas que vienen a continuación son exactamente las que
+      // ese hash sella.
+      const ledgerHashNow = await computeLedgerHash(tx, {
+        ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+        from: request.periodStart,
+        to: request.periodEnd,
+      })
+      if (ledgerHashNow !== key.ledgerHash) return RETRY
+
       const lines = await getLinesForPeriod(tx, {
         from: request.periodStart,
         to: request.periodEnd,
@@ -401,6 +451,7 @@ export async function getOrCreateReportRun(
     },
     REPORT_READ_BUDGET
   )
+  if (inputs === RETRY) return RETRY
 
   // ── Cálculo puro, sin conexión ───────────────────────────────────────────
   const runId = randomUUID()

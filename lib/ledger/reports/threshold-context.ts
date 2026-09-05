@@ -13,7 +13,7 @@
 
 import type { Cents, EntryKind, LocalDate } from "@/lib/ledger/types"
 import type { ThresholdContext } from "@/lib/ledger/report-run"
-import { epigraphNumberOf, PYG_SUBTOTALS } from "@/lib/ledger/reports/pyg"
+import { EBITDA_REVERSED_EPIGRAPHS, epigraphNumberOf, PYG_SUBTOTALS } from "@/lib/ledger/reports/pyg"
 import type { AccountIndex, PgcVariant, ReportEntry, ReportLine } from "@/lib/ledger/reports/types"
 
 /** Los tres `kind` que no son actividad del periodo (EV-1). */
@@ -116,19 +116,29 @@ function reversalNet(
   }
   if (paired.size === 0) return {}
 
+  // N2: cada KPI se neta por SUS PROPIOS epígrafes. Copiar `resultado` en
+  // `ebitda` era falso en cuanto el par rectificaba una amortización o un
+  // deterioro de inmovilizado: esos epígrafes están FUERA del EBITDA, así que el
+  // atenuante habría descontado del EBITDA un importe que nunca estuvo en él.
+  const operating = PYG_SUBTOTALS[variant]["A.1) RESULTADO DE EXPLOTACION"]
+  const reversed = EBITDA_REVERSED_EPIGRAPHS[variant]
   let ingresos = 0
   let resultado = 0
+  let ebitda = 0
   for (const l of lines) {
     if (!paired.has(l.entryId)) continue
     const isPnl = l.accountCode.startsWith("6") || l.accountCode.startsWith("7")
     if (!isPnl || SYSTEM_KINDS.includes(l.entryKind)) continue
     const aporte = l.creditCents - l.debitCents
+    const n = epigraphNumberOf(index.epigraphOf(l.accountCode, variant) ?? "")
     resultado += aporte
-    if (epigraphNumberOf(index.epigraphOf(l.accountCode, variant) ?? "") === 1) ingresos += aporte
+    if (n === 1) ingresos += aporte
+    // EBITDA = A.1 revirtiendo amortización (8) y deterioro de inmovilizado (11).
+    if (n !== null && operating.includes(n) && !reversed.includes(n)) ebitda += aporte
   }
   // El neto de un par completo es 0 por construcción; se devuelve calculado —no
   // asumido— porque un par mal formado (importes distintos) tiene que notarse.
-  return { ingresos, resultado, ebitda: resultado }
+  return { ingresos, resultado, ebitda }
 }
 
 /** Meses `YYYY-MM` de las líneas, para los KPI que se comparan por trimestre (EV-4). */

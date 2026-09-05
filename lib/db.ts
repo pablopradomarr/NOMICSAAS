@@ -287,11 +287,7 @@ export const tenantExtension = (organizationId: string) =>
       name: `tenant:${organizationId}`,
       query: {
         $allModels: {
-          // `query` (el siguiente eslabón de la cadena de extensiones) NO se usa
-          // en ninguna rama: todas las operaciones se despachan a mano sobre el
-          // cliente de la transacción de tenant, que es el único que lleva los
-          // GUC. Delegar en `query` sacaría la consulta de esa transacción.
-          async $allOperations({ model, operation, args, query: _query }) {
+          async $allOperations({ model, operation, args, query }) {
             const isTenantModel = TENANT_MODELS.has(model)
             const isHybridModel = TENANT_MODELS_WITH_GLOBAL.has(model)
             if (!isTenantModel && !isHybridModel) {
@@ -315,7 +311,15 @@ export const tenantExtension = (organizationId: string) =>
               if (nonTenantStore && nonTenantStore.organizationId === organizationId) {
                 return await nonTenantStore.client[delegateName(model)][operation](nonTenantArgs)
               }
-              return await runWithTenantGucs(organizationId, model, operation, nonTenantArgs)
+              // FUERA de una transacción de tenant se despacha por la cadena, SIN
+              // envolver en una transacción propia. Envolverlas costó caro: cada
+              // lectura de `Organization` o `User` —y hay una por render de
+              // layout— tomaba una conexión del pool para un `BEGIN`/`COMMIT`, y
+              // con varias páginas a la vez el pool se agotaba («Unable to start
+              // a transaction in the given time»). Estos modelos no llevan
+              // `organization_id`; lo que necesitaban era la conexión CORRECTA
+              // cuando hay transacción abierta, que es lo de arriba.
+              return query(nonTenantArgs)
             }
 
             const strictScope: WhereRecord = { organizationId }

@@ -138,6 +138,42 @@ describe("EV-5 — un REVERSAL y su original en el mismo periodo se netean", () 
     expect(ctx.reversalNetByKpi).toEqual({})
   })
 
+  it("N2: `ebitda` se neta por SUS epígrafes, no copiando `resultado`", () => {
+    // Un par que rectifica una AMORTIZACIÓN (epígrafe 8, PYMES) mueve el
+    // resultado pero NO el EBITDA: el 8 está revertido en su definición.
+    // Copiar `resultado` habría descontado del EBITDA algo que nunca estuvo ahí.
+    const original2 = entry({ id: "o2" })
+    const reversal2 = entry({ id: "r2", kind: "REVERSAL", reversesEntryId: "o2" })
+    const ctx = buildThresholdContext({
+      lines: [
+        line({ entryId: "o2", accountCode: "681", debitCents: 300_000, creditCents: 0 }),
+        line({ entryId: "r2", accountCode: "681", debitCents: 100_000, creditCents: 0 }),
+      ],
+      entries: [original2, reversal2],
+      index,
+      variant: "PYMES",
+    })
+    expect(ctx.reversalNetByKpi?.resultado).toBe(-400_000)
+    expect(ctx.reversalNetByKpi?.ebitda).toBe(0)
+    expect(ctx.reversalNetByKpi?.ingresos).toBe(0)
+  })
+
+  it("N2: un par sobre un gasto de explotación SÍ mueve el EBITDA", () => {
+    const original3 = entry({ id: "o3" })
+    const reversal3 = entry({ id: "r3", kind: "REVERSAL", reversesEntryId: "o3" })
+    const ctx = buildThresholdContext({
+      lines: [
+        line({ entryId: "o3", accountCode: "621", debitCents: 200_000, creditCents: 0 }),
+        line({ entryId: "r3", accountCode: "621", debitCents: 50_000, creditCents: 0 }),
+      ],
+      entries: [original3, reversal3],
+      index,
+      variant: "PYMES",
+    })
+    expect(ctx.reversalNetByKpi?.ebitda).toBe(-250_000)
+    expect(ctx.reversalNetByKpi?.resultado).toBe(-250_000)
+  })
+
   it("un par MAL FORMADO (importes distintos) no se neutraliza en silencio", () => {
     const ctx = buildThresholdContext({
       lines: [

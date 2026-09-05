@@ -183,6 +183,20 @@ describe("reproducibilidad del binario", () => {
 })
 
 describe("PDF real con @react-pdf/renderer", () => {
+  it("N3: sólo reescribe CreationDate/ModDate, no una fecha del contenido", async () => {
+    const { reportToPdf } = await import("@/lib/export/report-pdf")
+    // Una celda con una cadena que casa con `D:\d{14}`: es un DATO del informe y
+    // no se puede tocar. Con el regex suelto anterior se reescribía.
+    const doc = runToDocument(run, ["Referencia del expediente: D:20260415123000"])
+    const body = await reportToPdf(doc)
+    const text = body.toString("latin1")
+    expect(text).toContain("%PDF-")
+    // El metadato queda fijado (va como objeto indirecto: `/CreationDate N 0 R`).
+    expect(text).toContain("(D:19800101000000Z)")
+    // Y NO se ha reescrito ninguna otra fecha del documento: sólo hay una.
+    expect(text.match(/D:\d{14}/g)).toEqual(["D:19800101000000"])
+  }, 30_000)
+
   it("produce un PDF que abre y lleva las hojas de procedencia y validación", async () => {
     const { reportToPdf } = await import("@/lib/export/report-pdf")
     const body = await reportToPdf(runToDocument(run, NOTES))

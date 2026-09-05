@@ -79,18 +79,48 @@ export async function reportToPdf(doc: ExportDocument): Promise<Buffer> {
   return normalizePdfDates(buffer)
 }
 
-/** Sustituye `CreationDate`/`ModDate` por la época fija, sin tocar nada más. */
+/**
+ * Sustituye SÓLO `CreationDate` y `ModDate` por la época fija.
+ *
+ * N3: `@react-pdf/renderer` las escribe como **objetos indirectos**
+ * (`/CreationDate 14 0 R`, y en el objeto 14 la cadena `(D:…)`), así que hay que
+ * resolver la referencia. Un `replace` sobre todo `D:\d{14}` del binario también
+ * pisaría una fecha escrita por el usuario en una celda del informe, que es un
+ * DATO del documento y no un metadato.
+ *
+ * El relleno va con espacios ANTES de `endobj` —whitespace legal en PDF— para
+ * que el fichero no cambie de longitud: los offsets de la tabla `xref` son
+ * absolutos y desplazarlos rompería el documento.
+ */
 function normalizePdfDates(pdf: Buffer): Buffer {
   const stamp =
     `D:${PDF_EPOCH.getUTCFullYear()}` +
     `${String(PDF_EPOCH.getUTCMonth() + 1).padStart(2, "0")}` +
     `${String(PDF_EPOCH.getUTCDate()).padStart(2, "0")}000000Z`
-  // `replaceAll` sobre latin1 conserva byte a byte todo lo demás, y las cadenas
-  // sustituidas tienen la MISMA longitud, así que no se desplazan los offsets
-  // de la tabla xref.
-  const text = pdf.toString("latin1")
-  const patched = text.replace(/D:\d{14}(?:[+-]\d{2}'\d{2}'|Z)?/g, (match) =>
-    stamp.padEnd(match.length, " ").slice(0, match.length)
+
+  let text = pdf.toString("latin1")
+
+  // 1. Qué objetos referencian las dos claves de fecha.
+  const targets = new Set<string>()
+  for (const match of text.matchAll(/\/(?:CreationDate|ModDate)\s+(\d+)\s+\d+\s+R/g)) {
+    targets.add(match[1])
+  }
+  // 2. Y la forma directa, por si una versión futura deja de indirectar.
+  text = text.replace(
+    /\/(CreationDate|ModDate)\s*\((D:[^)]*)\)/g,
+    (match, key: string, value: string) => sameLength(match, `/${key} (${stamp})`, value.length)
   )
-  return Buffer.from(patched, "latin1")
+
+  // 3. Cada objeto referenciado, reescrito en su sitio.
+  for (const objectNumber of targets) {
+    const re = new RegExp(`(${objectNumber}\\s+\\d+\\s+obj\\s*)\\((D:[^)]*)\\)`, "g")
+    text = text.replace(re, (match, head: string) => sameLength(match, `${head}(${stamp})`, 0))
+  }
+  return Buffer.from(text, "latin1")
+}
+
+/** Rellena con espacios hasta la longitud original, o deja el original si no cabe. */
+function sameLength(original: string, replacement: string, _valueLength: number): string {
+  if (replacement.length > original.length) return original
+  return replacement + " ".repeat(original.length - replacement.length)
 }
