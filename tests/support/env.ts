@@ -28,3 +28,20 @@ export function appRuntimeDatabaseUrl(base: string = ownerDatabaseUrl()): string
   url.password = appRuntimePassword()
   return url.toString()
 }
+
+/** Contraseña del rol de mantenimiento (ADR-0009 §6); la fija `scripts/dev-db-setup.sh`. */
+export function appMaintenancePassword(): string {
+  return process.env.APP_MAINTENANCE_PASSWORD || "app_maintenance"
+}
+
+/**
+ * Misma base que `ownerDatabaseUrl()` pero con el rol `app_maintenance`
+ * (BYPASSRLS). Es lo que consume `DATABASE_URL_MAINTENANCE`: los scripts de
+ * operador y el check de I10, nunca la aplicación.
+ */
+export function appMaintenanceDatabaseUrl(base: string = ownerDatabaseUrl()): string {
+  const url = new URL(base)
+  url.username = "app_maintenance"
+  url.password = appMaintenancePassword()
+  return url.toString()
+}

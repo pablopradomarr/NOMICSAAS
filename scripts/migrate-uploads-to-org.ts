@@ -30,9 +30,16 @@
  *   npx tsx scripts/migrate-uploads-to-org.ts --apply --uploads ./data/uploads
  */
 
-import { prisma } from "@/lib/db"
-import { getOrganizationStorageUsed } from "@/lib/files"
-import { updateOrganization } from "@/models/organizations"
+// E3-T2 (ADR-0009 §6): este script recorre TODAS las organizaciones, así que
+// desde la RLS estricta no puede conectar con el rol de la aplicación —vería 0
+// filas y daría por bueno un barrido vacío—. Conecta como `app_maintenance`
+// (BYPASSRLS) mediante `DATABASE_URL_MAINTENANCE`.
+//
+// Los módulos que abren la conexión se importan DINÁMICAMENTE, después de
+// apuntar `DATABASE_URL` a la credencial de mantenimiento: `lib/db.ts` lee la
+// variable al evaluarse, y un `import` estático se evaluaría antes.
+import { maintenanceDatabaseUrl } from "@/lib/db-maintenance"
+import type { PrismaClient } from "@/prisma/client"
 import { constants } from "node:fs"
 import { access, mkdir, readdir, rename, rm, stat } from "node:fs/promises"
 import path from "node:path"
@@ -57,6 +64,32 @@ function parseArgs(argv: string[]) {
       ? argv[uploadsIndex + 1]
       : process.env.UPLOAD_PATH || "./data/uploads"
   return { apply, uploadsPath: path.resolve(uploadsPath) }
+}
+
+let prisma: PrismaClient
+let getOrganizationStorageUsed: (organization: { id: string }) => Promise<number>
+let updateOrganization: (organizationId: string, data: { storageUsed: number }) => Promise<unknown>
+
+/** Conecta como `app_maintenance` y comprueba que de verdad esquiva RLS. */
+async function connectAsMaintenance(): Promise<void> {
+  process.env.DATABASE_URL = maintenanceDatabaseUrl()
+  const db = await import("@/lib/db")
+  const files = await import("@/lib/files")
+  const organizations = await import("@/models/organizations")
+  prisma = db.prisma as unknown as PrismaClient
+  getOrganizationStorageUsed = files.getOrganizationStorageUsed
+  updateOrganization = organizations.updateOrganization as typeof updateOrganization
+
+  const rows = await prisma.$queryRaw<{ rolname: string; rolbypassrls: boolean }[]>`
+    SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = current_user
+  `
+  if (!rows[0]?.rolbypassrls) {
+    throw new Error(
+      `DATABASE_URL_MAINTENANCE conecta como \`${rows[0]?.rolname ?? "?"}\`, que NO tiene BYPASSRLS. ` +
+        "Con RLS estricta (ADR-0009) este script vería 0 ficheros y no migraría nada. " +
+        "Apunta la variable al rol `app_maintenance`."
+    )
+  }
 }
 
 async function exists(target: string): Promise<boolean> {
@@ -100,6 +133,7 @@ async function fallbackOrganizationId(userId: string): Promise<{ id: string; ori
 
 async function main() {
   const { apply, uploadsPath } = parseArgs(process.argv.slice(2))
+  await connectAsMaintenance()
   console.log(`[uploads] raíz: ${uploadsPath}`)
   console.log(apply ? "[uploads] MODO REAL (--apply)" : "[uploads] SIMULACIÓN (usa --apply para ejecutar)")
 
@@ -231,5 +265,6 @@ main()
     process.exitCode = 1
   })
   .finally(async () => {
-    await prisma.$disconnect()
+    // `prisma` sólo existe si `connectAsMaintenance()` llegó a ejecutarse.
+    await prisma?.$disconnect()
   })

@@ -24,6 +24,40 @@ const TENANT_FREE_FILES = [
   "scripts/**",
 ];
 
+/**
+ * E3-T3 (ADR-0009): con la RLS estricta, una consulta de negocio que salga del
+ * cliente sin tenant NO da error — devuelve vacío en silencio, que es mucho peor.
+ * `no-restricted-imports` ya impide importar `prisma` fuera de la lista blanca;
+ * esto cierra el otro flanco, DENTRO de esa lista blanca: los cuatro modelos que
+ * sí pueden importarlo sólo tienen permitido usarlo para invocar las funciones
+ * `SECURITY DEFINER` (`$queryRaw`), nunca para tocar un delegado de negocio.
+ */
+const BUSINESS_DELEGATES = [
+  "setting",
+  "category",
+  "project",
+  "field",
+  "file",
+  "transaction",
+  "appData",
+  "progress",
+  "membership",
+  "invitation",
+  "organization",
+  "currency",
+  "ledgerAccount",
+  "organizationAccountMap",
+  "taxRate",
+  "auditLog",
+];
+
+const NO_BARE_PRISMA_DELEGATE = {
+  selector: `MemberExpression[object.name="prisma"][property.name=/^(${BUSINESS_DELEGATES.join("|")})$/]`,
+  message:
+    "`prisma.<modelo>` no fija app.current_org/app.current_user: con RLS estricta (ADR-0009) devuelve VACÍO en silencio. " +
+    "Usa tenantDb(orgId), tenantTransaction(orgId, …) o withTenantGucs(orgId|null, userId, …).",
+};
+
 const eslintConfig = [
   ...nextConfig,
   {
@@ -84,6 +118,15 @@ const eslintConfig = [
           ],
         },
       ],
+    },
+  },
+  {
+    // La lista blanca de `no-restricted-imports` incluida: aquí `prisma` sólo
+    // vale para `$queryRaw` sobre las funciones `SECURITY DEFINER` de `app.`.
+    files: ["models/**/*.ts", "app/**/*.ts", "app/**/*.tsx", "ai/**/*.ts", "lib/**/*.ts", "forms/**/*.ts"],
+    ignores: ["lib/db.ts", "lib/db.test.ts", "lib/email-sync/ingest.test.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", NO_BARE_PRISMA_DELEGATE],
     },
   },
 ];

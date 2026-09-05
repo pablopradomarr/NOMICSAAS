@@ -764,22 +764,22 @@
       "template": "FACTURA_EMITIDA_SERVICIOS",
       "lines": [
         {
+          "accountKey": "CLIENTES",
+          "debitCents": 484000,
+          "creditCents": 0,
+          "lineNo": 1
+        },
+        {
           "accountKey": "ANTICIPOS_CLIENTES",
           "debitCents": 200000,
           "creditCents": 0,
-          "lineNo": 1
+          "lineNo": 2
         },
         {
           "accountKey": "IVA_REPERCUTIDO",
           "debitCents": 42000,
           "creditCents": 0,
           "taxRateCode": "IVA_21",
-          "lineNo": 2
-        },
-        {
-          "accountKey": "CLIENTES",
-          "debitCents": 484000,
-          "creditCents": 0,
           "lineNo": 3
         },
         {
@@ -1506,16 +1506,16 @@
           "lineNo": 1
         },
         {
-          "accountKey": "CLIENTES",
-          "debitCents": 0,
-          "creditCents": 300000,
-          "lineNo": 2
-        },
-        {
           "accountKey": "DIFERENCIA_CAMBIO_POSITIVA",
           "debitCents": 0,
           "creditCents": 6000,
           "costCenterCode": "CC-FIN",
+          "lineNo": 2
+        },
+        {
+          "accountKey": "CLIENTES",
+          "debitCents": 0,
+          "creditCents": 300000,
           "lineNo": 3
         }
       ],
@@ -2831,7 +2831,7 @@
           "lineNo": 1
         },
         {
-          "accountCode": "608",
+          "accountCode": "6080",
           "debitCents": 50000,
           "creditCents": 0,
           "lineNo": 2
@@ -2867,7 +2867,7 @@
           "lineNo": 7
         },
         {
-          "accountCode": "630",
+          "accountCode": "6300",
           "debitCents": 0,
           "creditCents": 499108,
           "lineNo": 8
@@ -2915,7 +2915,7 @@
           "lineNo": 15
         },
         {
-          "accountCode": "708",
+          "accountCode": "7080",
           "debitCents": 0,
           "creditCents": 100000,
           "lineNo": 16
@@ -2999,7 +2999,7 @@
           "lineNo": 8
         },
         {
-          "accountCode": "400",
+          "accountCode": "4000",
           "debitCents": 1959800,
           "creditCents": 0,
           "lineNo": 9
@@ -3011,13 +3011,13 @@
           "lineNo": 10
         },
         {
-          "accountCode": "410",
+          "accountCode": "4100",
           "debitCents": 2587100,
           "creditCents": 0,
           "lineNo": 11
         },
         {
-          "accountCode": "430",
+          "accountCode": "4300",
           "debitCents": 0,
           "creditCents": 7723900,
           "lineNo": 12
@@ -3125,7 +3125,7 @@
           "lineNo": 8
         },
         {
-          "accountCode": "400",
+          "accountCode": "4000",
           "debitCents": 0,
           "creditCents": 1959800,
           "lineNo": 9
@@ -3137,13 +3137,13 @@
           "lineNo": 10
         },
         {
-          "accountCode": "410",
+          "accountCode": "4100",
           "debitCents": 0,
           "creditCents": 2587100,
           "lineNo": 11
         },
         {
-          "accountCode": "430",
+          "accountCode": "4300",
           "debitCents": 7723900,
           "creditCents": 0,
           "lineNo": 12
@@ -3206,10 +3206,10 @@
     "impuestoBeneficiosCents": 499108,
     "saldo129Cents": 1497322,
     "balancesBeforeClosingCents": {
-      "430": 7723900,
+      "4300": 7723900,
       "436": 121000,
-      "400": -1959800,
-      "410": -2587100,
+      "4000": -1959800,
+      "4100": -2587100,
       "472": 0,
       "477": 0,
       "4750": -245490,
@@ -3235,11 +3235,29 @@
       "2817": -335000,
       "460": 0
     },
-    "balancesBeforeRegularizationCents": {
+    "balancesByPrefix3Cents": {
+      "100": -3000000,
+      "113": -250000,
+      "120": -3560000,
+      "129": -1497322,
+      "216": 1200000,
+      "217": 2100000,
+      "281": -635000,
+      "400": -1959800,
+      "407": 100000,
+      "410": -2587100,
       "430": 7723900,
       "436": 121000,
-      "400": -1959800,
-      "410": -2587100,
+      "473": 120000,
+      "475": -819598,
+      "570": 30000,
+      "572": 2913920
+    },
+    "balancesBeforeRegularizationCents": {
+      "4300": 7723900,
+      "436": 121000,
+      "4000": -1959800,
+      "4100": -2587100,
       "472": 0,
       "477": 0,
       "4750": -245490,

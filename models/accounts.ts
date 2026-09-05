@@ -627,6 +627,8 @@ export async function importCustomPlan(
     dryRun: boolean
     fileName?: string
     reason?: string | null
+    /** Límites de la transacción; por defecto `SEED_TRANSACTION_OPTIONS` (60 s). */
+    transaction?: TenantTransactionOptions
   }
 ): Promise<Result<ImportCustomPlanResult>> {
   const parsed = parseCustomPlanCsv(csvText, mapping, { ...opts.defaults, epigraphCatalog: opts.epigraphCatalog })
@@ -635,7 +637,10 @@ export async function importCustomPlan(
   // línea del fichero del usuario, no a un código suelto (hallazgo 9).
   const rowNumbers = rowNumbersByCode(csvText, mapping, opts.defaults.delimiter ?? ",")
 
-  return await tenantTransaction(organizationId, opts.actor.userId ?? undefined, async (tx) => {
+  return await tenantTransaction(
+    organizationId,
+    opts.actor.userId ?? undefined,
+    async (tx) => {
     const plan = await getPlan(tx)
     const resolved = resolveImportedParents(parsed.value, plan, rowNumbers)
     if (!resolved.ok) return resolved as Result<ImportCustomPlanResult>
@@ -662,14 +667,32 @@ export async function importCustomPlan(
     }
     if (opts.dryRun) return ok(summary)
 
-    for (const account of [...diff.create].sort((a, b) => (a.code < b.code ? -1 : 1))) {
-      await tx.ledgerAccount.create({ data: accountCreateData(organizationId, account) })
+    // E3-T10: alta por `createMany` AGRUPADO POR NIVEL, igual que `importNpgc`.
+    // El bucle fila a fila eran hasta `MAX_IMPORT_ROWS` INSERT sueltos en una
+    // sola transacción. Agrupar por nivel (longitud del código) respeta la FK
+    // compuesta `(organization_id, parent_code)`: el padre siempre tiene menos
+    // dígitos que el hijo, así que el nivel N-1 está confirmado antes de
+    // insertar el N.
+    const byLevel = new Map<number, PlanAccount[]>()
+    for (const account of diff.create) {
+      const bucket = byLevel.get(account.level)
+      if (bucket) bucket.push(account)
+      else byLevel.set(account.level, [account])
+    }
+    for (const level of [...byLevel.keys()].sort((a, b) => a - b)) {
+      const rows = (byLevel.get(level) ?? []).sort((a, b) => (a.code < b.code ? -1 : 1))
+      await tx.ledgerAccount.createMany({ data: rows.map((a) => accountCreateData(organizationId, a)) })
     }
     for (const change of diff.update) {
       await tx.ledgerAccount.updateMany({ where: { code: change.code }, data: change.patch })
     }
-    for (const change of diff.postableChanges) {
-      await tx.ledgerAccount.updateMany({ where: { code: change.code }, data: { isPostable: change.isPostable } })
+    // Los cambios de `isPostable` van en dos `updateMany` (uno por valor), no en
+    // uno por cuenta.
+    for (const value of [true, false]) {
+      const codes = diff.postableChanges.filter((c) => c.isPostable === value).map((c) => c.code)
+      if (codes.length > 0) {
+        await tx.ledgerAccount.updateMany({ where: { code: { in: codes } }, data: { isPostable: value } })
+      }
     }
 
     await writeAuditLog(tx, {
@@ -690,7 +713,12 @@ export async function importCustomPlan(
       userId: opts.actor.userId,
     })
     return ok(summary)
-  })
+    },
+    // E3-T10: un import puede traer hasta `MAX_IMPORT_ROWS` cuentas; el
+    // presupuesto por defecto de Prisma (5 s) aborta la transacción a mitad y
+    // deja al usuario sin plan y sin mensaje. Mismo presupuesto que la siembra.
+    opts.transaction ?? SEED_TRANSACTION_OPTIONS
+  )
 }
 
 /** Atajo para código de aplicación que ya tiene el `orgId`. */

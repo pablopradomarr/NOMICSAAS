@@ -144,11 +144,13 @@ describe.skipIf(!TEST_DATABASE_URL)("QA adversarial — RLS con rol app_runtime"
     expect(guc[0].u).toBe(USER_A)
   })
 
-  it("DOCUMENTADO COMO DEUDA (no FORCE RLS): sin app.current_org fijado, app_runtime ve filas de ambas orgs", async () => {
-    // La política usa `OR app.current_org() IS NULL` como cláusula de escape (E3
-    // la retirará junto con FORCE ROW LEVEL SECURITY, ver migración 20260904120300).
-    // Este test deja constancia explícita del riesgo: si el código de aplicación
-    // alguna vez omite fijar el GUC, RLS NO protege por sí sola.
+  it("DEUDA RETIRADA en E3 (ADR-0009): sin app.current_org fijado, app_runtime no ve NADA", async () => {
+    // Hasta E3 la política llevaba `OR app.current_org() IS NULL` (ADR-0007) y
+    // este test dejaba constancia del riesgo: una lectura que olvidara fijar el
+    // GUC veía TODAS las organizaciones. La migración
+    // `20260906100000_e3_rls_strict` retiró la cláusula, así que ahora el mismo
+    // escenario devuelve 0 filas. La cobertura completa, tabla por tabla, está en
+    // `tests/integration-rls/rls-strict.test.ts`.
     const client = new Client({ connectionString: runtimeUrl() })
     await client.connect()
     try {
@@ -156,7 +158,7 @@ describe.skipIf(!TEST_DATABASE_URL)("QA adversarial — RLS con rol app_runtime"
         'SELECT organization_id FROM "transactions" WHERE organization_id IN ($1, $2)',
         [ORG_A, ORG_B]
       )
-      expect(res.rows.length).toBe(2)
+      expect(res.rows.length).toBe(0)
     } finally {
       await client.end()
     }

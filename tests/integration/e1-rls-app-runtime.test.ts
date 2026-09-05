@@ -40,7 +40,11 @@ async function runtimeClient(): Promise<Client> {
 /** Crea organización + membresía ADMIN como lo hace `createOrganizationWithOwner`. */
 async function createOrgWithOwner(client: Client, orgId: string, userId: string, slug: string) {
   await client.query("BEGIN")
-  await client.query("SELECT set_config('app.current_org', '', true)")
+  // E3-T3 (ADR-0009): retirado `OR app.current_user() IS NOT NULL` del WITH CHECK
+  // de `organizations`, el alta exige fijar `app.current_org` con el uuid que la
+  // aplicación acaba de generar — que es justo lo que hace
+  // `createOrganizationWithOwner`. Antes bastaba con haber un usuario identificado.
+  await client.query("SELECT set_config('app.current_org', $1, true)", [orgId])
   await client.query("SELECT set_config('app.current_user', $1, true)", [userId])
   await client.query(
     `INSERT INTO "organizations" (id, slug, name, updated_at) VALUES ($1, $2, $2, now())`,

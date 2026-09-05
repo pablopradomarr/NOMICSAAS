@@ -27,6 +27,22 @@ import { useEffect, useMemo, useState, useTransition } from "react"
 
 const ALL = "__all__"
 
+/**
+ * E3-T10 (§4.4.3) — Tope de filas pintadas de una vez.
+ *
+ * El plan NPGC tiene ~900 cuentas y en E3 este mismo árbol se abre dentro del
+ * popover de autocompletado del editor de asientos: pintar 900 `<tr>` con sus
+ * badges y menús en cada pulsación de tecla del buscador bloquea el hilo
+ * principal varios cientos de milisegundos.
+ *
+ * Se ha elegido el tope en lugar de virtualizar con `@tanstack/react-virtual`:
+ * es una dependencia menos, no rompe la semántica de `<table>` (el
+ * virtualizador exige altura fija y posicionamiento absoluto, que aquí pelea
+ * con el `colSpan` y con la sangría por nivel) y resuelve el mismo problema —
+ * nadie recorre visualmente 900 filas: filtra. Cuando se recorta, se dice.
+ */
+const MAX_VISIBLE_ROWS = 300
+
 type Filters = {
   query: string
   showInactive: boolean
@@ -128,7 +144,7 @@ export function AccountsTree({
 
   const searching = filters.query.trim() !== ""
 
-  const visible = useMemo(() => {
+  const allVisible = useMemo(() => {
     if (!tree.ok) return []
     const rows: { node: AccountNode; depth: number }[] = []
     const walk = (nodes: readonly AccountNode[], depth: number) => {
@@ -142,6 +158,9 @@ export function AccountsTree({
     walk(tree.ok ? tree.value : [], 0)
     return rows
   }, [tree, expanded, searching])
+
+  const visible = useMemo(() => allVisible.slice(0, MAX_VISIBLE_ROWS), [allVisible])
+  const truncated = allVisible.length - visible.length
 
   const shownCount = useMemo(() => {
     if (!tree.ok) return 0
@@ -260,6 +279,13 @@ export function AccountsTree({
           {shownCount} coinciden con el filtro
         </span>
       </div>
+
+      {truncated > 0 && (
+        <p className="text-sm text-[#B37400]">
+          Se muestran las primeras {MAX_VISIBLE_ROWS} filas de {allVisible.length}: hay {truncated} más sin
+          pintar. {searching ? "Afina la búsqueda" : "Pliega alguna rama o usa el buscador"} para ver el resto.
+        </p>
+      )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
       {!tree.ok && (

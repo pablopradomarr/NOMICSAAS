@@ -49,6 +49,16 @@ export async function createOrganizationAction(
     return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
   }
 
+  const now = new Date()
+
+  // E3-T10 (§4.4.2): organización + membresía ADMIN + siembra (proyectos,
+  // categorías, monedas, campos, settings, plan NPGC, mapa de cuentas de sistema
+  // y tipos impositivos) en UNA sola transacción con `SEED_TRANSACTION_OPTIONS`.
+  //
+  // Antes eran dos unidades: si la siembra fallaba, la organización quedaba
+  // creada y VACÍA —sin plan de cuentas— y el usuario entraba a un ERP que no
+  // podía contabilizar nada. No hace falta borrado compensatorio: si algo
+  // revienta dentro, Postgres revierte también el INSERT de la organización.
   let organization: Organization
   try {
     organization = await createOrganizationWithOwner(
@@ -60,12 +70,35 @@ export async function createOrganizationAction(
         pgcVariant: validated.data.pgcVariant,
       },
       user.id,
-      new Date()
+      now,
+      {
+        seed: async (organizationId) => {
+          await createOrganizationDefaults(tenantDb(organizationId), {
+            pgcVariant: validated.data.pgcVariant,
+            now,
+            userId: user.id,
+          })
+        },
+      }
     )
-    await createOrganizationDefaults(tenantDb(organization.id))
-    await setActiveOrg(organization.id, user.id)
-  } catch {
+  } catch (error) {
+    // Nada de `catch` mudo: sin este log, un fallo de siembra (seed corrupto,
+    // presupuesto de transacción agotado, I-plan-1) sólo se ve como «no se ha
+    // podido crear la organización» y no hay por dónde empezar a mirar.
+    console.error(
+      `[organizations] alta fallida para el usuario ${user.id}:`,
+      error instanceof Error ? `${error.name}: ${error.message}` : error
+    )
     return { success: false, error: "No se ha podido crear la organización" }
+  }
+
+  try {
+    await setActiveOrg(organization.id, user.id)
+  } catch (error) {
+    // La organización SÍ existe y está bien sembrada: sólo ha fallado dejarla
+    // activa. Se informa sin destruir nada; el switcher la resolverá.
+    console.error(`[organizations] ${organization.id} creada pero no se pudo activar:`, error)
+    return { success: false, error: "La organización se ha creado, pero no se ha podido activar. Selecciónala en el conmutador." }
   }
 
   revalidatePath("/", "layout")

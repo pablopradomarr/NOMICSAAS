@@ -22,16 +22,23 @@ npx tsx scripts/migrate-uploads-to-org.ts --apply    # ejecuta (idempotente)
 ```
 Resuelve la organización destino por `files.uploaded_by_id` y, en su defecto, por la organización personal del usuario. Sin este paso, los ficheros anteriores dejan de encontrarse (las filas de `files` no cambian: sólo cambia el directorio raíz).
 
-### Deuda RLS a retirar en E3
-ADR-0007 está aprobado y es inmutable, así que la deuda que introduce E1-fix se anota aquí. Las tres se retiran en la misma migración de E3 (Nivel 2, ADR nuevo), cuando todo el código de negocio corra dentro de `tenantTransaction`:
+### Deuda RLS retirada en E3 (migraciones `20260906090000_e3_rls_helpers` + `20260906100000_e3_rls_strict`)
 
-| Deuda | Dónde | Riesgo real hoy | Condición para retirarla |
-|---|---|---|---|
-| `WITH CHECK` de `organizations` con `OR app.current_user() IS NOT NULL` | `20260904150000_e1_rls_round2` | Un usuario identificado podría insertar una organización con el id que quisiera **si esquivara la barrera 1**; hoy sólo `createOrganizationWithOwner` escribe en esa tabla, y fija `app.current_org` con el uuid que acaba de generar. | Que TODA alta de organización pase por ese camino (ya lo hace) y un test lo garantice ⇒ dejar sólo `id = app.current_org()`. |
-| Cláusula de escape `OR app.current_org() IS NULL` en los `USING` | `20260904120300_e1_rls` (todas las tablas de negocio) | Una lectura que olvide fijar el GUC ve TODAS las organizaciones; la barrera 1 (`tenantDb`) es la que filtra. | Verificar en CI que ninguna query de negocio corre fuera de transacción (lint `no-restricted-imports` + suite `test:integration:rls`) ⇒ borrar el `OR …  IS NULL`. |
-| Una transacción por operación en `tenantDb` | `lib/db.ts` | Ninguno de seguridad: es coste (BEGIN + dos `set_config` + COMMIT por consulta y una conexión del pool ocupada). | Código de negocio agrupado dentro de `tenantTransaction` ⇒ la envoltura por operación deja de hacer falta. |
-| Cláusula de escape en las CUATRO tablas de E2 (`accounts`, `organization_account_maps`, `tax_rates`, `audit_logs`) | `20260905110000_e2_rls` (ADR-0008) | El mismo que la fila anterior, extendido a ocho tablas de negocio. **`audit_logs` NO hereda la deuda en UPDATE/DELETE**: lleva políticas `RESTRICTIVE … USING (false)` y es inmutable desde el primer día. | La misma migración de E3 que retire el escape de E1 lo retira aquí y activa `FORCE ROW LEVEL SECURITY` en las ocho. |
-| **El append-only de `audit_logs` depende de conectar como `app_runtime`** | `20260905110000_e2_rls` + `20260905120000_e2_audit_logs_revoke` | La barrera 1 NO lo impide: `tenantDb(org).auditLog.update/delete` existe y funciona si quien conecta es el PROPIETARIO de las tablas (migraciones, scripts, `psql` de un operador), porque sin `FORCE ROW LEVEL SECURITY` el propietario esquiva las políticas. En producción la aplicación conecta como `app_runtime`, que no tiene ni el privilegio ni la política. | Activar `FORCE ROW LEVEL SECURITY` en E3 (mismo trabajo que retirar el escape) ⇒ el registro pasa a ser inmutable también para el propietario. |
+**ADR-0009 (APROBADO) aplicado.** Las cinco deudas que introdujeron ADR-0007 y ADR-0008 están cerradas: no queda ninguna cláusula de escape y las **veinte** tablas de negocio (12 de E1 + 4 de E2 + 4 de E3) están en `ENABLE` + `FORCE ROW LEVEL SECURITY`. Una consulta de negocio que salga fuera de `tenantDb` / `tenantTransaction` / `withTenantGucs` ya no ve nada.
+
+| Deuda (ADR-0007 / ADR-0008) | Cómo se ha cerrado |
+|---|---|
+| `WITH CHECK` de `organizations` con `OR app.current_user() IS NOT NULL` | Retirado. Queda `WITH CHECK (id = app.current_org())`. El alta pasa por un único camino (`createOrganizationWithOwner`), que genera el uuid y lo fija en `app.current_org` antes del INSERT — y desde E3 siembra el plan **en la misma transacción**. |
+| Cláusula de escape `OR app.current_org() IS NULL` en los `USING` | Retirada de las dieciséis tablas. `currencies` conserva sólo su rama de catálogo global (`organization_id IS NULL`). |
+| Una transacción por operación en `tenantDb` | **Deja de ser deuda de seguridad y queda como coste conocido** (§2.6 del diseño). Agrupados los caminos con ≥ 3 operaciones seguidas: `getOrgContext` (una transacción por petición, vía `getMembershipWithOrganization`), `isLastAdmin`, cada iteración de `runEmailSync` y el alta de organización con su siembra. El resto del código heredado se queda con la envoltura por operación. |
+| Cláusula de escape en las cuatro tablas de E2 | Retirada, y `FORCE` activado en las cuatro (no lo tenían). |
+| El append-only de `audit_logs` dependía de conectar como `app_runtime` | Cerrada: con `FORCE`, el propietario también queda sujeto a las políticas `RESTRICTIVE … USING (false)`. El registro es inmutable también para las migraciones y para un `psql` de operador. |
+
+**Lo que queda (por diseño, no es deuda).** Tres puertas `SECURITY DEFINER` acotadas, propiedad de `app_maintenance` y con `GRANT EXECUTE` sólo a `app_runtime`, para los accesos que ninguna política puede autorizar: `app.invitation_by_token_hash(text)` (aceptar una invitación: no hay organización ni membresía todavía), `app.list_email_sync_targets()` (el cron enumera pares `(organización, usuario)` y acota cada iteración) y `app.organization_id_by_stripe_customer(text)` (el webhook no tiene sesión). Y el rol **`app_maintenance`** (`BYPASSRLS`, `NOLOGIN` por defecto, credencial en `DATABASE_URL_MAINTENANCE`) para los scripts de operador (`scripts/migrate-uploads-to-org.ts`) y el check de I10 (`scripts/run-invariants.ts`), que sólo puede detectar un cruce si consulta sin filtro de tenant. **La aplicación web nunca conecta con él.**
+
+**Red de seguridad.** ESLint `no-restricted-imports` (importar `prisma`) + `no-restricted-syntax` (usar `prisma.<modelo de negocio>` dentro de la lista blanca) y la suite `test:integration:rls`, que demuestra tabla por tabla que **sin GUC no se lee (0 filas) ni se escribe (42501) nada**, que ninguna tabla queda en `NO FORCE` y que no sobrevive ninguna cláusula de escape.
+
+**Patrón obligatorio para backfills futuros (ADR-0009 §7).** Con `FORCE`, una migración que actualice datos de negocio no ve nada. Hay que envolverla en `ALTER TABLE x NO FORCE ROW LEVEL SECURITY; … ; ALTER TABLE x FORCE ROW LEVEL SECURITY;` dentro de la misma migración, o ejecutarla como `app_maintenance`. Documentado también en `CLAUDE.md`.
 
 ### Deuda anotada: una transacción por operación
 `tenantDb(orgId)` envuelve CADA operación en su propia transacción para poder fijar `app.current_org`/`app.current_user` (`SET LOCAL`) y que RLS filtre: son tres viajes extra a la base (BEGIN + dos `set_config` + COMMIT) y una conexión del pool ocupada mientras dura. Es el precio de tener la barrera 2 activa sin refactorizar de golpe los 32 ficheros heredados (ADR-0007). **En E3**, cuando el código de negocio esté agrupado dentro de `tenantTransaction`, la envoltura por operación deja de hacer falta: dentro de esa función todas las operaciones comparten una sola transacción. `tenantDb(org).$transaction()` lanza un error explícito que remite a `tenantTransaction`.
@@ -40,8 +47,10 @@ ADR-0007 está aprobado y es inmutable, así que la deuda que introduce E1-fix s
 `DATABASE_URL` debe apuntar ahora al rol **`app_runtime`** (LOGIN, NOBYPASSRLS, no propietario) y `DIRECT_URL` al propietario, que es el que usan las migraciones (`prisma.config.ts`). Las migraciones **ya no fijan contraseñas** (quedarían en el repositorio): crean el rol sin LOGIN y garantizan `NOBYPASSRLS`. La credencial la pone el operador:
 
 ```bash
-APP_RUNTIME_PASSWORD='…' ./scripts/dev-db-setup.sh     # local y CI (default: app_runtime)
+APP_RUNTIME_PASSWORD='…' APP_MAINTENANCE_PASSWORD='…' ./scripts/dev-db-setup.sh   # local y CI
 ```
+
+Desde E3 hay un tercer rol: **`app_maintenance`** (`BYPASSRLS`, `NOLOGIN` por defecto). Se consume por `DATABASE_URL_MAINTENANCE` y **sólo** desde `scripts/`: `migrate-uploads-to-org.ts` y `run-invariants.ts` abortan con un mensaje explícito si la variable falta o si el rol no tiene `BYPASSRLS` — un barrido que ve 0 filas en silencio es peor que uno que no arranca.
 
 **Acción pendiente del operador:** en cualquier entorno donde ya se aplicó `20260904140000_e1_rls_effective`, esa migración dejó la contraseña literal `app_runtime`; hay que ROTARLA. La migración no se edita porque ya está aplicada (`CLAUDE.md`).
 

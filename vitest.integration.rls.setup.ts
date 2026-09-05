@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { Client } from "pg"
-import { appRuntimePassword, ownerDatabaseUrl } from "./tests/support/env"
+import { appMaintenancePassword, appRuntimePassword, ownerDatabaseUrl } from "./tests/support/env"
 
 /**
  * Aplica las migraciones con el rol propietario y da credencial al rol de
@@ -30,6 +30,20 @@ export default async function setup() {
     )
     await client.query(`ALTER ROLE app_runtime WITH LOGIN NOBYPASSRLS PASSWORD '${appRuntimePassword()}'`)
     await client.query(`GRANT USAGE ON SCHEMA public TO app_runtime`)
+
+    // E3 (ADR-0009 §6): rol de mantenimiento con BYPASSRLS. Las migraciones lo
+    // crean NOLOGIN a propósito; la credencial la pone el operador, y aquí el
+    // arranque de la suite, igual que con `app_runtime`. Lo usan los tests que
+    // comprueban el barrido cross-org del cron de email y el check de I10.
+    await client.query(
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_maintenance') THEN
+           CREATE ROLE app_maintenance NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS NOINHERIT;
+         END IF;
+       END $$;`
+    )
+    await client.query(`ALTER ROLE app_maintenance WITH LOGIN BYPASSRLS PASSWORD '${appMaintenancePassword()}'`)
+    await client.query(`GRANT USAGE ON SCHEMA public, app TO app_maintenance`)
     // Los privilegios de tabla los conceden LAS MIGRACIONES (E1 sobre todas las
     // tablas + `ALTER DEFAULT PRIVILEGES` para las que nazcan después). El
     // `GRANT … ON ALL TABLES` que había aquí volvía a conceder UPDATE y DELETE

@@ -73,7 +73,7 @@ export default async function TaxesSettingsPage() {
       <section className="space-y-3">
         <h3 className="text-lg font-semibold">Política fiscal de la organización</h3>
         <TaxPolicyForm
-          prorrataPermille={org.prorrataPermille}
+          prorrataBps={org.prorrataBps}
           taxRoundingMode={org.taxRoundingMode}
           redondeoToleranciaCents={org.redondeoToleranciaCents}
           canEdit={canEdit}

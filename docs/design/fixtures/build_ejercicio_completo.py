@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """
-E3 · Generador de los fixtures inmutables del libro diario.
+E3 · Generador de los fixtures inmutables del libro diario.  (v1.1)
+
+Historial
+  v1.0  primera version.
+  v1.1  correccion previa al sellado, con E3 aun abierta (revision del arquitecto):
+        · I9: toda linea resuelve ahora a la HOJA POSTABLE del plan (misma regla que
+          lib/accounts/map.ts::resolvePostable). Con `useSubaccounts = false` el motor
+          desciende igualmente a la hoja: CLIENTES -> 4300, PROVEEDORES -> 4000,
+          ACREEDORES -> 4100, DEVOLUCION_COMPRAS -> 6080, DEVOLUCION_VENTAS -> 7080,
+          IMPUESTO_BENEFICIOS_GASTO -> 6300. Antes se emitian los codigos padre
+          (430/400/410/608/708/630), NO postables, y T-26/T-27/T-28 los arrastraban.
+        · I-E3-5: orden de lineas canonico y unico por plantilla (el de la tabla de
+          docs/design/E3-asientos-tipo.md §1), aplicado por `canonical_rank()`.
+        · `expected.balancesByPrefix3Cents`: agregado jerarquico a 3 digitos, ADEMAS
+          del saldo por hoja (que sigue siendo el autoritativo).
+        Ningun importe cambia: solo codigos y orden.
 
     python3 docs/design/fixtures/build_ejercicio_completo.py [--check]
 
@@ -136,6 +151,46 @@ BY_CODE_USED = {
     "681": "Amortizacion del inmovilizado material",
 }
 
+# ---------------------------------------------------------------------------
+# Plan de la organizacion (variante PYMES del seed) y resolucion a hoja postable
+# ---------------------------------------------------------------------------
+
+SEED_CSV = ROOT / "seeds" / "npgc.csv"
+
+
+def load_plan(variant: str = "PYMES") -> tuple[set[str], set[str]]:
+    """Devuelve (codigos del plan, codigos postables). Postable = sin hijos."""
+    import csv
+    with SEED_CSV.open(encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    codes = {r["codigo"] for r in rows if variant != "PYMES" or r["pymes"] == "1"}
+    postable = {c for c in codes if not any(o != c and o.startswith(c) for o in codes)}
+    return codes, postable
+
+
+PLAN_CODES, PLAN_POSTABLE = load_plan("PYMES")
+
+
+def resolve_postable(code: str) -> str:
+    """Misma regla que lib/accounts/map.ts::resolvePostable: si el codigo no existe
+    sube al ancestro mas cercano; si no es postable baja a la hoja de menor codigo
+    (en el PGC, siempre la subcuenta "general": 430 -> 4300, 630 -> 6300)."""
+    current = code
+    if current not in PLAN_CODES:
+        for n in range(len(current) - 1, 0, -1):
+            if current[:n] in PLAN_CODES:
+                current = current[:n]
+                break
+        else:
+            raise KeyError(f"{code} no existe en el plan ni tiene ancestro")
+    if current in PLAN_POSTABLE:
+        return current
+    leaves = sorted(c for c in PLAN_POSTABLE if c != current and c.startswith(current))
+    if not leaves:
+        raise KeyError(f"{code} no es postable y no tiene hoja")
+    return leaves[0]
+
+
 IVA21, IVA10, RE52, IRPF15, IRPF19, PRORRATA, IS_BPS = 2100, 1000, 520, 1500, 1900, 9000, 2500
 
 # ---------------------------------------------------------------------------
@@ -196,6 +251,128 @@ def L(acc: str, debit: int = 0, credit: int = 0, project: str | None = None, cc:
 
 ENTRIES: list[Entry] = []
 
+# ---------------------------------------------------------------------------
+# Orden canonico de lineas por plantilla (I-E3-5).
+# Es EXACTAMENTE el orden de las tablas de docs/design/E3-asientos-tipo.md §1:
+# el asiento que genera la plantilla debe ser reproducible byte a byte, asi que
+# el orden no puede depender de como se escriba el input.
+# ---------------------------------------------------------------------------
+
+def canonical_rank(template: str | None, line: Line) -> int:
+    """Posicion de la linea dentro de su plantilla. Menor = antes."""
+    if template is None:
+        return 0
+    code = code_of(line)
+    debe = line["debitCents"] > 0
+    g = code[0]
+
+    if template in ("FACTURA_EMITIDA_SERVICIOS",):
+        # 1 CLIENTES · 2 473 IRPF · 3 438 anticipo · 4 477 reversion anticipo
+        # 5 ingresos 7xx · 6 477 cuota por tipo (incl. recargo)
+        if code.startswith("430"):
+            return 1
+        if code.startswith("473"):
+            return 2
+        if code.startswith("438"):
+            return 3
+        if code.startswith("477"):
+            return 4 if debe else 6
+        if g == "7":
+            return 5
+        return 9
+    if template == "ABONO_EMITIDO":
+        # 1 708/706/709 (o cuenta de ingreso) · 2 477 · 3 473 · 4 CLIENTES
+        if g == "7":
+            return 1
+        if code.startswith("477"):
+            return 2
+        if code.startswith("473"):
+            return 3
+        if code.startswith("430"):
+            return 4
+        return 9
+    if template in ("FACTURA_RECIBIDA", "FACTURA_RECIBIDA_ISP"):
+        # 1 gasto/inmovilizado · 2 472 · 3 407 · 4 proveedor/acreedor · 5 4751 · 6 477 (ISP)
+        if code.startswith("472"):
+            return 2
+        if code.startswith("407"):
+            return 3
+        if code.startswith("400") or code.startswith("410"):
+            return 4
+        if code.startswith("4751"):
+            return 5
+        if code.startswith("477"):
+            return 6
+        return 1
+    if template == "ABONO_RECIBIDO":
+        # 1 proveedor · 2 4751 · 3 608/606/609 (o gasto) · 4 472
+        if code.startswith("400") or code.startswith("410"):
+            return 1
+        if code.startswith("4751"):
+            return 2
+        if code.startswith("472"):
+            return 4
+        return 3
+    if template == "ANTICIPO_CLIENTE":
+        return 1 if code.startswith("57") else (2 if code.startswith("438") else 3)
+    if template == "ANTICIPO_PROVEEDOR":
+        return 1 if code.startswith("407") else (2 if code.startswith("472") else 3)
+    if template == "COBRO_CLIENTE":
+        # 1 tesoreria · 2 626 · 3 668 · 4 768 · 5 669/769 · 6 credito
+        if code.startswith("57"):
+            return 1
+        if code.startswith("626"):
+            return 2
+        if code.startswith("668"):
+            return 3
+        if code.startswith("768"):
+            return 4
+        if code.startswith("669") or code.startswith("769"):
+            return 5
+        return 6
+    if template == "PAGO_PROVEEDOR":
+        # 1 deuda · 2 626 · 3 668 · 4 669 · 5 tesoreria · 6 768/769
+        if code.startswith("400") or code.startswith("410"):
+            return 1
+        if code.startswith("626"):
+            return 2
+        if code.startswith("668"):
+            return 3
+        if code.startswith("669"):
+            return 4
+        if code.startswith("57"):
+            return 5
+        return 6
+    if template == "NOMINA":
+        # 1 640 · 2 642 · 3 465 · 4 460 · 5 476 · 6 4751
+        if code.startswith("640"):
+            return 1
+        if code.startswith("642"):
+            return 2
+        if code.startswith("465"):
+            return 3
+        if code.startswith("460"):
+            return 4
+        if code.startswith("476"):
+            return 5
+        return 6
+    if template == "AMORTIZACION_MENSUAL":
+        return 1 if code.startswith("68") else 2
+    if template == "REGULARIZACION_IVA":
+        # 1 477 · 2 472 · 3 4700 · 4 4750
+        if code.startswith("477"):
+            return 1
+        if code.startswith("472"):
+            return 2
+        if code.startswith("4700"):
+            return 3
+        return 4
+    if template == "CONTRA_ASIENTO":
+        return 0  # espejo: conserva el orden del asiento original
+    # Resto (traspaso, pagos, periodificaciones, manual, cierre/apertura por saldo):
+    # el orden declarado ya es el canonico (debe antes que haber, luego por codigo).
+    return 0
+
 
 def E(d: str, kind: str, description: str, lines: list[Line], template: str | None = None,
       source: str = "MANUAL", reverses: str | None = None, ref: str | None = None,
@@ -210,13 +387,16 @@ def E(d: str, kind: str, description: str, lines: list[Line], template: str | No
         e["template"] = template
     if reverses:
         e["reversesRef"] = reverses
-    e["lines"] = lines
+    ordered = sorted(enumerate(lines), key=lambda pair: (canonical_rank(template, pair[1]), pair[0]))
+    e["lines"] = [ln for _, ln in ordered]
     ENTRIES.append(e)
     return e
 
 
 def code_of(line: Line) -> str:
-    return KEY_TO_CODE[line["accountKey"]] if "accountKey" in line else line["accountCode"]
+    """Codigo REALMENTE posteado: siempre una hoja postable del plan (I9)."""
+    raw = KEY_TO_CODE[line["accountKey"]] if "accountKey" in line else line["accountCode"]
+    return resolve_postable(raw)
 
 
 def q(d: str) -> int:
@@ -758,6 +938,15 @@ for e in ENTRIES:
         assert ln["debitCents"] >= 0 and ln["creditCents"] >= 0
 
 
+# I9: toda linea postea en una hoja postable del plan de la organizacion
+for e in ENTRIES:
+    for ln in e["lines"]:
+        c = code_of(ln)
+        assert c in PLAN_POSTABLE, f"I9 roto: {e['ref']} postea en {c}, que no es hoja postable"
+    ranks = [canonical_rank(e.get("template"), ln) for ln in e["lines"]]
+    assert ranks == sorted(ranks), f"I-E3-5: orden de lineas no canonico en {e['ref']}"
+
+
 def totals(fy: str | None = None) -> tuple[int, int]:
     d = c = 0
     for e in ENTRIES:
@@ -779,7 +968,8 @@ def saldo(code: str, exclude_kinds: set[str], fy: str = "2026") -> int:
     return s
 
 
-TRACKED = ["430", "436", "400", "410", "472", "477", "4750", "4700", "4751", "4752", "476", "465",
+# Codigos HOJA realmente posteados (no los padres 430/400/410: v1.1).
+TRACKED = ["4300", "436", "4000", "4100", "472", "477", "4750", "4700", "4751", "4752", "476", "465",
            "572", "570", "473", "407", "438", "480", "485", "129", "113", "120", "100",
            "216", "217", "2816", "2817", "460"]
 
@@ -801,6 +991,17 @@ for e in ENTRIES:
         if code_of(ln)[0] not in "67":
             activo_pasivo += ln["debitCents"] - ln["creditCents"]
 assert activo_pasivo == 0, f"I2 roto: {activo_pasivo}"
+
+# Agregado jerarquico a 3 digitos (criterio de sumas y saldos). NO sustituye al
+# saldo por hoja: es un check ADICIONAL, porque un error entre dos hojas hermanas
+# (4300 vs 4304) se cancela al agregar por prefijo y solo lo caza el saldo por hoja.
+prefix3_raw: dict[str, int] = defaultdict(int)
+for e in ENTRIES:
+    if e["fiscalYearCode"] != "2026" or e["kind"] == "CLOSING":
+        continue
+    for ln in e["lines"]:
+        prefix3_raw[code_of(ln)[:3]] += ln["debitCents"] - ln["creditCents"]
+prefix3_balances = {k: v for k, v in sorted(prefix3_raw.items()) if v != 0}
 
 template_coverage: dict[str, int] = defaultdict(int)
 for e in ENTRIES:
@@ -827,6 +1028,7 @@ expected = {
     "impuestoBeneficiosCents": cuota_is,
     "saldo129Cents": saldo_129,
     "balancesBeforeClosingCents": {c: saldo(c, {"CLOSING"}) for c in TRACKED},
+    "balancesByPrefix3Cents": prefix3_balances,
     "balancesBeforeRegularizationCents": {c: saldo(c, {"CLOSING", "REGULARIZATION"}) for c in TRACKED},
     "templateCoverage": template_coverage,
     "ivaQuarters": iva_quarters,

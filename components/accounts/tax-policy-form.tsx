@@ -16,12 +16,12 @@ import { useActionState } from "react"
  * cambiarlos exige motivo y queda en la auditoría.
  */
 export function TaxPolicyForm({
-  prorrataPermille,
+  prorrataBps,
   taxRoundingMode,
   redondeoToleranciaCents,
   canEdit,
 }: {
-  prorrataPermille: number | null
+  prorrataBps: number | null
   taxRoundingMode: string
   redondeoToleranciaCents: number
   canEdit: boolean
@@ -32,11 +32,11 @@ export function TaxPolicyForm({
     <form action={action} className="max-w-2xl space-y-4">
       <div className="grid gap-4 sm:grid-cols-3">
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Prorrata (‰)</span>
+          <span className="text-sm font-medium">Prorrata (puntos básicos)</span>
           <Input
-            name="prorrataPermille"
-            defaultValue={prorrataPermille ?? ""}
-            placeholder="1000 = 100 % deducible"
+            name="prorrataBps"
+            defaultValue={prorrataBps ?? ""}
+            placeholder="10000 = 100 % deducible"
             inputMode="numeric"
             disabled={!canEdit}
             className="font-code"

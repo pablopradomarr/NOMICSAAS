@@ -664,7 +664,9 @@ Generados y verificados por **`docs/design/fixtures/build_ejercicio_completo.py`
 }
 ```
 
-`accountKey` se usa **siempre que existe clave**: 38 claves distintas aparecen en los asientos de plantilla. `accountCode` se reserva a (a) cuentas de negocio sin clave — `100`, `113`, `216`, `217`, `2816`, `2817`, `621`, `623`, `628`, `629`, `678`, `681` — y (b) los asientos generados **por saldos** (T-26 regularización, T-27 cierre, T-28 apertura), donde la cuenta no la elige la plantilla sino el propio saldo del mayor y por eso llega ya como código. `useSubaccounts = false` en el fixture para que la resolución `AccountKey → código` sea la tabla de defaults de `lib/accounts/map.ts` sin overrides.
+`accountKey` se usa **siempre que existe clave**: 38 claves distintas aparecen en los asientos de plantilla. `accountCode` se reserva a (a) cuentas de negocio sin clave — `100`, `113`, `216`, `217`, `2816`, `2817`, `621`, `623`, `628`, `629`, `678`, `681` — y (b) los asientos generados **por saldos** (T-26 regularización, T-27 cierre, T-28 apertura), donde la cuenta no la elige la plantilla sino el propio saldo del mayor y por eso llega ya como código. `useSubaccounts = false` en el fixture, pero **la resolución sigue la regla real de `lib/accounts/map.ts::resolvePostable`**: si el código default no es postable (tiene hijos en el plan), se desciende a la hoja de menor código, que en el PGC es siempre la subcuenta "general". Por eso el fixture postea en `4300`, `4000`, `4100`, `6080`, `7080` y `6300`, no en `430`, `400`, `410`, `608`, `708` y `630`, que son cuentas padre y violarían I9 (corregido en v1.1 del script, antes del sellado). El script valida esto con una aserción: **toda línea, incluidas las de T-26/T-27/T-28 generadas por saldos, resuelve a una hoja postable**.
+
+**Orden de líneas canónico (I-E3-5).** El orden de las líneas de cada asiento es el de la tabla de su plantilla en §1 y lo impone `canonical_rank()` del script, no el orden en que se escriba el input: sin esto, dos facturas de la misma plantilla (una con retención, otra con anticipo) producían secuencias distintas y la comparación byte a byte contra la plantilla era imposible. La plantilla `CONTRA_ASIENTO` es la excepción documentada: conserva el orden del asiento original, porque es su espejo.
 
 ### 4.2 Contenido
 
@@ -693,14 +695,14 @@ Casos límite deliberadamente incluidos: dos tipos de IVA en un mismo documento 
 | Saldo acreedor de `129` tras T-26 | **1 497 322** (I3 ✓) |
 | I2 (`Activo − Pasivo − PN` antes del cierre) | **0** |
 
-Saldos por cuenta a 31-12-2026 **antes del asiento de cierre** (signo: `Σdebe − Σhaber`; negativo = acreedor):
+Saldos **por cuenta hoja** a 31-12-2026 **antes del asiento de cierre** (signo: `Σdebe − Σhaber`; negativo = acreedor). Es el bloque autoritativo: son los códigos que contienen las líneas del diario.
 
 | Cuenta | Saldo | Cuenta | Saldo | Cuenta | Saldo |
 |---|---:|---|---:|---|---:|
-| `430` Clientes | 7 723 900 | `472` IVA soportado | **0** | `216` Mobiliario | 1 200 000 |
+| `4300` Clientes | 7 723 900 | `472` IVA soportado | **0** | `216` Mobiliario | 1 200 000 |
 | `436` Dudoso cobro | 121 000 | `477` IVA repercutido | **0** | `217` Equipos | 2 100 000 |
-| `400` Proveedores | −1 959 800 | `4750` HP acreedora IVA | −245 490 | `2816` A.A. mobiliario | −300 000 |
-| `410` Acreedores | −2 587 100 | `4700` HP deudora IVA | **0** | `2817` A.A. equipos | −335 000 |
+| `4000` Proveedores | −1 959 800 | `4750` HP acreedora IVA | −245 490 | `2816` A.A. mobiliario | −300 000 |
+| `4100` Acreedores | −2 587 100 | `4700` HP deudora IVA | **0** | `2817` A.A. equipos | −335 000 |
 | `572` Bancos | 2 913 920 | `4751` HP retenciones | −75 000 | `100` Capital | −3 000 000 |
 | `570` Caja | 30 000 | `4752` HP acreedora IS | −499 108 | `113` Reservas | −250 000 |
 | `473` Retenciones soportadas | 120 000 | `476` SS acreedora | **0** | `120` Remanente | −3 560 000 |
@@ -715,6 +717,8 @@ Liquidaciones de IVA (`expected.ivaQuarters`), en céntimos:
 | 2T | 257 100 | 31 500 | 0 | **225 600** a ingresar |
 | 3T | 304 500 | 405 300 | 0 | **−100 800** a compensar |
 | 4T | 363 300 | 17 010 | 100 800 | **245 490** a ingresar |
+
+**`expected.balancesByPrefix3Cents`** añade el mismo saldo **agregado por prefijo de 3 dígitos** (criterio del balance de sumas y saldos jerárquico): `430` 7 723 900 · `400` −1 959 800 · `410` −2 587 100 · `475` −819 598 (agrega 4750+4751+4752) · `281` −635 000 (agrega 2816+2817), etc. Es un check **adicional**, nunca el sustituto del saldo por hoja: al agregar por prefijo, un error entre dos hojas hermanas (postear en `4304` en vez de `4300`, o en `4751` en vez de `4752`) se cancela dentro del mismo padre y queda invisible — que es exactamente la clase de defecto que el agregado a 3 dígitos ocultó en v1.0. Regla: **el test compara por hoja; el agregado por prefijo se usa para conciliar con informes jerárquicos (mayor, sumas y saldos, balance por epígrafe), no para validar el diario.**
 
 Retenciones (`expected.irpfQuarters`): 1T `120 300` · 2T `75 000` · 3T `75 000` ingresados; el 4T (`75 000`) queda vivo en `4751` a 31-12 (se ingresa en enero de 2027), que es exactamente el saldo de la tabla anterior.
 

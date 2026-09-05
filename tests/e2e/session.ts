@@ -39,7 +39,19 @@ function appEnv(): Record<string, string> {
 
 const ENV = appEnv()
 
-export const DATABASE_URL = ENV.DATABASE_URL || "postgresql://postgres@localhost:5432/erp"
+/**
+ * Conexión de INSPECCIÓN de los tests, no la de la aplicación.
+ *
+ * E3 (ADR-0009): desde la RLS estricta, `DATABASE_URL` apunta al rol
+ * `app_runtime` también en local — que es lo que hace que el smoke ejercite de
+ * verdad la barrera 2. Ese rol, sin `app.current_org` fijado, no ve NADA: un
+ * `SELECT … FROM audit_logs` de comprobación devolvería 0 filas y el test
+ * fallaría por la razón equivocada. Las lecturas y siembras del arnés van, por
+ * tanto, por el rol PROPIETARIO (`DIRECT_URL`), igual que `DATABASE_URL_OWNER`
+ * en la suite `test:integration:rls`.
+ */
+export const DATABASE_URL =
+  ENV.DIRECT_URL || ENV.DATABASE_URL_OWNER || ENV.DATABASE_URL || "postgresql://postgres@localhost:5432/erp"
 
 /**
  * Modo de la instalación, resuelto con la MISMA regla y la misma fuente que

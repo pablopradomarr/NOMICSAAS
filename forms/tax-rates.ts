@@ -95,16 +95,19 @@ export const closeTaxRateFormSchema = z.object({
 
 /** Política fiscal de la organización (D2-8). Motivo obligatorio (§7). */
 export const taxPolicyFormSchema = z.object({
-  prorrataPermille: z
+  // O-7 (E3): PUNTOS BÁSICOS, no tanto por mil. `TaxRate.rateBps` ya está en
+  // bps y el IVA deducible es `applyBps(cuota, prorrataBps)`: mezclar escalas
+  // en la misma fórmula es un error latente.
+  prorrataBps: z
     .union([z.string().trim(), z.number()])
     .optional()
     .transform((value, ctx) => {
       if (value === undefined || value === "") return null
       const raw = typeof value === "number" ? value : Number(value)
-      if (!Number.isInteger(raw) || raw < 0 || raw > 1000) {
+      if (!Number.isInteger(raw) || raw < 0 || raw > 10000) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "La prorrata se expresa en tanto por mil: un entero entre 0 y 1000",
+          message: "La prorrata se expresa en puntos básicos: un entero entre 0 y 10000 (90 % = 9000)",
         })
         return z.NEVER
       }

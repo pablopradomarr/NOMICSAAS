@@ -1,5 +1,6 @@
 import { Prisma } from "@/prisma/client"
 import { prisma, tenantDb, withTenantGucs } from "@/lib/db"
+import { isMaintenanceConfigured, withMaintenanceClient } from "@/lib/db-maintenance"
 import { decryptSecret } from "@/lib/encryption"
 import { ingestUnsortedFile, syncOrganizationStorage, UploadContext } from "@/lib/uploads"
 import { File, Organization, User } from "@/prisma/client"
@@ -134,37 +135,113 @@ function isThrottled(server: EmailServer): boolean {
   return elapsedMinutes < intervalMinutes
 }
 
+export type EmailSyncTarget = { organizationId: string; userId: string }
+
+/**
+ * Enumera los pares (organización, usuario) con app de email configurada.
+ *
+ * E3-T2 (ADR-0009 §5). Antes era un `prisma.appData.findMany` SIN GUC que se
+ * apoyaba en la cláusula de escape `OR app.current_org() IS NULL`: al retirarla
+ * devolvería 0 filas y **el cron dejaría de sincronizar en silencio, sin
+ * error**. Ahora:
+ *
+ *   · con `scope.organizationId`, no hace falta ver más de una organización: se
+ *     lee con `app.current_org` fijado, como cualquier otra lectura de negocio
+ *     (es el camino del botón «Sincronizar ahora» de la aplicación web);
+ *   · sin él —el barrido del cron— se usa la puerta estrecha
+ *     `app.list_email_sync_targets()`, `SECURITY DEFINER`, que devuelve SÓLO el
+ *     par de identificadores: ni credenciales ni `data`. El contenedor del cron
+ *     puede además llevar `DATABASE_URL_MAINTENANCE` y hacer el barrido como
+ *     `app_maintenance` (ADR-0009 §6); se prefiere si está configurada.
+ */
+export async function listEmailSyncTargets(
+  scope: { organizationId?: string; userId?: string } = {}
+): Promise<EmailSyncTarget[]> {
+  if (scope.organizationId) {
+    const organizationId = scope.organizationId
+    const rows = await withTenantGucs(organizationId, scope.userId, async (tx) =>
+      tx.appData.findMany({
+        where: { app: "email", organizationId, ...(scope.userId ? { userId: scope.userId } : {}) },
+        select: { organizationId: true, userId: true },
+        orderBy: [{ organizationId: "asc" }, { userId: "asc" }],
+      })
+    )
+    return rows.map((row) => ({ organizationId: row.organizationId, userId: row.userId }))
+  }
+
+  const filterByUser = (targets: EmailSyncTarget[]) =>
+    scope.userId ? targets.filter((t) => t.userId === scope.userId) : targets
+
+  if (isMaintenanceConfigured()) {
+    const rows = await withMaintenanceClient(async (client) =>
+      client.query<{ organization_id: string; user_id: string }>(
+        `SELECT d.organization_id, d.user_id
+           FROM app_data d JOIN organizations o ON o.id = d.organization_id
+          WHERE d.app = 'email' AND o.is_active
+          ORDER BY d.organization_id, d.user_id`
+      )
+    )
+    return filterByUser(rows.rows.map((r) => ({ organizationId: r.organization_id, userId: r.user_id })))
+  }
+
+  const rows = await prisma.$queryRaw<{ organization_id: string; user_id: string }[]>`
+    SELECT organization_id, user_id FROM app.list_email_sync_targets()
+  `
+  return filterByUser(rows.map((r) => ({ organizationId: r.organization_id, userId: r.user_id })))
+}
+
+/**
+ * Carga, EN UNA sola transacción de tenant, todo lo que necesita una iteración
+ * del sync: la configuración de la app de email, la organización y el usuario
+ * (deuda 3 de `docs/ESTADO.md`, §2.6 del diseño). La transacción se cierra ANTES
+ * de hablar con el servidor IMAP: una conexión del pool no se queda abierta
+ * mientras dura una descarga de adjuntos.
+ */
+async function loadSyncContext(
+  target: EmailSyncTarget
+): Promise<{ servers: EmailServer[]; organization: Organization; user: User } | null> {
+  return await withTenantGucs(target.organizationId, target.userId, async (tx) => {
+    const row = await tx.appData.findUnique({
+      where: {
+        organizationId_userId_app: {
+          organizationId: target.organizationId,
+          userId: target.userId,
+          app: "email",
+        },
+      },
+      include: { user: true, organization: true },
+    })
+    if (!row) return null
+    const data = row.data as Record<string, unknown>
+    return {
+      servers: (data?.servers as EmailServer[]) || [],
+      organization: row.organization satisfies Organization,
+      user: row.user satisfies User,
+    }
+  })
+}
+
 export async function runEmailSync(
   scope: { organizationId?: string; userId?: string; serverId?: string; respectInterval?: boolean } = {}
 ): Promise<SyncResult[]> {
-  // Cliente sin tenant a propósito: el cron recorre TODAS las organizaciones y
-  // acota cada iteración con `tenantDb(row.organizationId)`.
-  const rows = await prisma.appData.findMany({
-    where: {
-      app: "email",
-      ...(scope.organizationId ? { organizationId: scope.organizationId } : {}),
-      ...(scope.userId ? { userId: scope.userId } : {}),
-    },
-    include: { user: true, organization: true },
-  })
+  const targets = await listEmailSyncTargets(scope)
 
   const results: SyncResult[] = []
-  for (const row of rows) {
-    const data = row.data as Record<string, unknown>
-    const servers: EmailServer[] = ((data?.servers as EmailServer[]) || []).filter(
-      (s) => s.isActive && (!scope.serverId || s.id === scope.serverId)
-    )
+  for (const target of targets) {
+    const loaded = await loadSyncContext(target)
+    if (!loaded) continue
+    const servers = loaded.servers.filter((s) => s.isActive && (!scope.serverId || s.id === scope.serverId))
     for (const server of servers) {
       if (scope.respectInterval && isThrottled(server)) continue
       const ctx: UploadContext = {
-        db: tenantDb(row.organizationId),
-        organization: row.organization satisfies Organization,
-        user: row.user satisfies User,
+        db: tenantDb(target.organizationId),
+        organization: loaded.organization,
+        user: loaded.user,
       }
       const result = await syncServer(server, ctx)
-      await applySyncResult(row.organizationId, row.userId, result)
+      await applySyncResult(target.organizationId, target.userId, result)
       if (result.processed > 0) {
-        await syncOrganizationStorage(row.organizationId)
+        await syncOrganizationStorage(target.organizationId)
       }
       results.push(result)
     }

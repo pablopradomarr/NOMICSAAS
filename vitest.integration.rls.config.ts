@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config"
 import path from "path"
-import { appRuntimeDatabaseUrl, ownerDatabaseUrl } from "./tests/support/env"
+import { appMaintenanceDatabaseUrl, appRuntimeDatabaseUrl, ownerDatabaseUrl } from "./tests/support/env"
 
 /**
  * Suite de RLS EFECTIVA (ronda 2, hallazgo #6).
@@ -22,6 +22,8 @@ export default defineConfig({
       DATABASE_URL: appRuntimeDatabaseUrl(),
       // Para fixtures y limpieza (usuarios y datos pre-tenant).
       DATABASE_URL_OWNER: ownerDatabaseUrl(),
+      // Rol de mantenimiento (BYPASSRLS): scripts de operador e I10, ADR-0009 §6.
+      DATABASE_URL_MAINTENANCE: appMaintenanceDatabaseUrl(),
     },
     include: ["tests/integration-rls/**/*.test.ts"],
     globalSetup: ["./vitest.integration.rls.setup.ts"],

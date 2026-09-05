@@ -62,17 +62,17 @@ describe("E2 · T9 — schemas de impuestos", () => {
 
   it("la política fiscal admite prorrata vacía y valida los rangos", () => {
     const ok = taxPolicyFormSchema.safeParse({
-      prorrataPermille: "",
+      prorrataBps: "",
       taxRoundingMode: "PER_TIPO",
       redondeoToleranciaCents: "1",
       reason: "política acordada en el cierre",
     })
     expect(ok.success).toBe(true)
-    if (ok.success) expect(ok.data.prorrataPermille).toBeNull()
+    if (ok.success) expect(ok.data.prorrataBps).toBeNull()
 
     expect(
       taxPolicyFormSchema.safeParse({
-        prorrataPermille: "1001",
+        prorrataBps: "10001",
         taxRoundingMode: "PER_TIPO",
         redondeoToleranciaCents: "1",
         reason: "fuera de rango",
@@ -80,7 +80,7 @@ describe("E2 · T9 — schemas de impuestos", () => {
     ).toBe(false)
     expect(
       taxPolicyFormSchema.safeParse({
-        prorrataPermille: "500",
+        prorrataBps: "500",
         taxRoundingMode: "PER_TIPO",
         redondeoToleranciaCents: "0,5",
         reason: "céntimos no enteros",

@@ -53,6 +53,11 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "OrganizationAccountMap",
   "TaxRate",
   "AuditLog",
+  // E3 — libro diario (docs/design/E3-libro-diario.md §2.2)
+  "FiscalYear",
+  "PeriodLock",
+  "JournalEntry",
+  "JournalLine",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */
@@ -513,7 +518,13 @@ export async function tenantTransaction<T>(
 export async function withTenantGucs<T>(
   organizationId: string | null,
   userId: string | undefined,
-  fn: (tx: Omit<PrismaClient, "$transaction" | "$connect" | "$disconnect" | "$on" | "$extends" | "$use">) => Promise<T>
+  fn: (tx: Omit<PrismaClient, "$transaction" | "$connect" | "$disconnect" | "$on" | "$extends" | "$use">) => Promise<T>,
+  /**
+   * Presupuesto de la transacción. Como en `tenantTransaction`, quien haga un
+   * lote largo (alta de organización + siembra del plan: ~900 cuentas) debe
+   * declararlo: con los 5 s por defecto de Prisma la transacción aborta a mitad.
+   */
+  options?: TenantTransactionOptions
 ): Promise<T> {
   const outer = tenantGucStorage.getStore()
   if (outer && outer.organizationId === organizationId) {
@@ -525,5 +536,5 @@ export async function withTenantGucs<T>(
       { organizationId, userId, client: tx as unknown as ClientByModel },
       async () => fn(tx)
     )
-  })
+  }, options)
 }

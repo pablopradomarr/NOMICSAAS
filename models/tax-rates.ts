@@ -164,7 +164,7 @@ export async function updateTaxRate(
  * posterior, así que el motivo es obligatorio y queda en `AuditLog` (§7).
  */
 export type TaxPolicyPatch = {
-  prorrataPermille: number | null
+  prorrataBps: number | null
   taxRoundingMode: TaxRoundingMode
   redondeoToleranciaCents: number
 }
@@ -184,12 +184,12 @@ export async function updateTaxPolicy(
       entityId: organizationId,
       action: "update",
       before: {
-        prorrataPermille: before.prorrataPermille,
+        prorrataBps: before.prorrataBps,
         taxRoundingMode: before.taxRoundingMode,
         redondeoToleranciaCents: before.redondeoToleranciaCents,
       },
       after: {
-        prorrataPermille: after.prorrataPermille,
+        prorrataBps: after.prorrataBps,
         taxRoundingMode: after.taxRoundingMode,
         redondeoToleranciaCents: after.redondeoToleranciaCents,
       },

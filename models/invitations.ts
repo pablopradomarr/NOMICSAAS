@@ -143,9 +143,53 @@ export async function markInvitationExpired(db: TenantClient, id: string): Promi
   return await db.invitation.update({ where: { id }, data: { status: InvitationStatus.EXPIRED } })
 }
 
-/** Búsqueda por token en claro; la organización aún no se conoce. */
-export async function getInvitationByToken(token: string): Promise<Invitation | null> {
-  return await prisma.invitation.findUnique({ where: { tokenHash: hashInvitationToken(token) } })
+/**
+ * Lo que la puerta estrecha devuelve: lo justo para decidir si la invitación se
+ * puede aceptar y para crear la membresía. Ni `tokenHash`, ni fechas de
+ * aceptación/revocación, ni nada más.
+ */
+export type InvitationByToken = Pick<
+  Invitation,
+  "id" | "organizationId" | "email" | "role" | "status" | "expiresAt" | "attempts" | "invitedById"
+>
+
+/**
+ * Búsqueda por token en claro; la organización aún no se conoce.
+ *
+ * E3-T2 (ADR-0009 §5): sin organización activa ni membresía, NINGUNA política de
+ * `invitations` puede autorizar esta lectura — al retirar la cláusula de escape
+ * devolvía `null` siempre y ninguna invitación se podía aceptar. Se resuelve por
+ * `app.invitation_by_token_hash()`, `SECURITY DEFINER` propiedad de
+ * `app_maintenance`, con `GRANT EXECUTE` sólo a `app_runtime`: una puerta
+ * estrecha, acotada por un secreto de 256 bits y por las columnas que devuelve,
+ * en lugar de un agujero general en la política.
+ */
+export async function getInvitationByToken(token: string): Promise<InvitationByToken | null> {
+  const rows = await prisma.$queryRaw<
+    {
+      id: string
+      organization_id: string
+      email: string
+      role: Role
+      status: InvitationStatus
+      expires_at: Date
+      attempts: number
+      invited_by_id: string
+    }[]
+  >`SELECT * FROM app.invitation_by_token_hash(${hashInvitationToken(token)})`
+
+  const row = rows[0]
+  if (!row) return null
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    expiresAt: row.expires_at,
+    attempts: row.attempts,
+    invitedById: row.invited_by_id,
+  }
 }
 
 export async function markInvitationAccepted(
@@ -172,7 +216,7 @@ export async function markInvitationAccepted(
  * P2002 y se trata como idempotente.
  */
 export async function acceptInvitation(
-  invitation: Invitation,
+  invitation: InvitationByToken,
   userId: string,
   now: Date
 ): Promise<{ membership: Membership; invitation: Invitation }> {

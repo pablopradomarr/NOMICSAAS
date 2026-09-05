@@ -2,22 +2,42 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 // --- import-time mocks so importing ./ingest doesn't run config Zod validation or create a Prisma client ---
 vi.mock("@/lib/uploads", () => ({ ingestUnsortedFile: vi.fn(), syncOrganizationStorage: vi.fn() }))
+// E3-T2: `runEmailSync` ya no hace un `findMany` cross-org sin GUC. Enumera los
+// destinos por la puerta `app.list_email_sync_targets()` (`prisma.$queryRaw`) y
+// carga cada iteración dentro de `withTenantGucs`. El fixture de la fila de
+// `app_data` se inyecta con `setEmailRow`.
+const fixture = vi.hoisted(() => ({ row: null as Record<string, unknown> | null }))
+
 vi.mock("@/lib/db", () => {
   // applyResult now locks + re-reads inside a transaction; provide a tx with $queryRaw + update.
-  const tx = { $queryRaw: vi.fn(async () => [{ data: { servers: [] } }]), appData: { update: vi.fn() } }
+  const tx = {
+    $queryRaw: vi.fn(async () => [{ data: { servers: [] } }]),
+    appData: { update: vi.fn(), findUnique: vi.fn(async () => fixture.row) },
+  }
   return {
-    prisma: { appData: { findMany: vi.fn() }, $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(tx)) },
+    prisma: {
+      $queryRaw: vi.fn(async () =>
+        fixture.row
+          ? [{ organization_id: fixture.row.organizationId, user_id: fixture.row.userId }]
+          : []
+      ),
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(tx)),
+    },
     tenantDb: vi.fn(() => ({})),
     // Ronda 2 (#4): applySyncResult fija los GUC de tenant con withTenantGucs.
     withTenantGucs: vi.fn(async (_org: unknown, _user: unknown, fn: (tx: unknown) => unknown) => fn(tx)),
   }
 })
+vi.mock("@/lib/db-maintenance", () => ({
+  // Sin `DATABASE_URL_MAINTENANCE` el barrido usa la función SECURITY DEFINER.
+  isMaintenanceConfigured: () => false,
+  withMaintenanceClient: vi.fn(),
+}))
 vi.mock("@/lib/files", () => ({ getDirectorySize: vi.fn(), getOrganizationUploadsDirectory: vi.fn(() => "dir") }))
 vi.mock("@/models/users", () => ({ updateUser: vi.fn() }))
 vi.mock("@/lib/email-sync/imap-client", () => ({ realImapClient: { fetchMessages: vi.fn() } }))
 
 const { syncServer, runEmailSync } = await import("./ingest")
-import { prisma } from "@/lib/db"
 import { realImapClient } from "@/lib/email-sync/imap-client"
 import { ingestUnsortedFile, syncOrganizationStorage } from "@/lib/uploads"
 import { File, User } from "@/prisma/client"
@@ -31,6 +51,11 @@ const user = { id: "user-1", email: "u@example.com" } as unknown as User
 const organization = { id: "org-1", storageUsed: 0, storageLimit: -1 }
 // E1 (T10/T11): syncServer recibe el contexto de tenant, no un User suelto.
 const ctx = { db: {}, organization, user } as unknown as Parameters<typeof syncServer>[1]
+
+/** Fija la (única) fila de `app_data` que ven la puerta y `loadSyncContext`. */
+function setEmailRow(row: Record<string, unknown>) {
+  fixture.row = row
+}
 
 function makeServer(overrides: Partial<EmailServer> = {}): EmailServer {
   return {
@@ -118,9 +143,7 @@ describe("syncServer", () => {
 describe("runEmailSync storage recompute guard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(prisma.appData.findMany).mockResolvedValue([
-      { userId: "u1", organizationId: "org-1", user, organization, data: { servers: [makeServer()] } },
-    ] as unknown as File)
+    setEmailRow({ userId: "u1", organizationId: "org-1", user, organization, data: { servers: [makeServer()] } })
   })
 
   it("skips the storage recompute when nothing was ingested (regression: ENOENT on missing uploads dir)", async () => {
@@ -139,33 +162,27 @@ describe("runEmailSync storage recompute guard", () => {
   })
 
   it("cron run (respectInterval) skips a server still within its syncInterval", async () => {
-    vi.mocked(prisma.appData.findMany).mockResolvedValue([
-      { userId: "u1", organizationId: "org-1", user, organization, data: { servers: [makeServer({ lastSyncedAt: new Date().toISOString(), syncInterval: 6 })] } },
-    ] as unknown as File)
+    setEmailRow({ userId: "u1", organizationId: "org-1", user, organization, data: { servers: [makeServer({ lastSyncedAt: new Date().toISOString(), syncInterval: 6 })] } })
     const results = await runEmailSync({ respectInterval: true })
     expect(realImapClient.fetchMessages).not.toHaveBeenCalled()
     expect(results).toHaveLength(0)
   })
 
   it("treats syncInterval as MINUTES: a server synced 90 min ago with interval 60 is not throttled", async () => {
-    vi.mocked(prisma.appData.findMany).mockResolvedValue([
-      {
+    setEmailRow({
         userId: "u1",
         organizationId: "org-1",
         user,
         organization,
         data: { servers: [makeServer({ lastSyncedAt: new Date(Date.now() - 90 * 60_000).toISOString(), syncInterval: 60 })] },
-      },
-    ] as unknown as File)
+      })
     vi.mocked(realImapClient.fetchMessages).mockResolvedValue([])
     await runEmailSync({ respectInterval: true })
     expect(realImapClient.fetchMessages).toHaveBeenCalledTimes(1)
   })
 
   it("manual sync (no respectInterval) bypasses the interval throttle", async () => {
-    vi.mocked(prisma.appData.findMany).mockResolvedValue([
-      { userId: "u1", organizationId: "org-1", user, organization, data: { servers: [makeServer({ lastSyncedAt: new Date().toISOString(), syncInterval: 6 })] } },
-    ] as unknown as File)
+    setEmailRow({ userId: "u1", organizationId: "org-1", user, organization, data: { servers: [makeServer({ lastSyncedAt: new Date().toISOString(), syncInterval: 6 })] } })
     vi.mocked(realImapClient.fetchMessages).mockResolvedValue([])
     await runEmailSync({ userId: "u1" })
     expect(realImapClient.fetchMessages).toHaveBeenCalledTimes(1)

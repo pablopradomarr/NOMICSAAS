@@ -69,8 +69,11 @@ model Organization {
   aiBalance           Int       @default(0) @map("ai_balance")
 
   // E2 — política fiscal de la organización (D2-8; la consume el motor en E3)
-  /// Prorrata general aplicable (‰). Null = 100 % deducible.
-  prorrataPermille        Int?            @map("prorrata_permille")
+  /// Prorrata general aplicable en PUNTOS BÁSICOS (90 % = 9000). Null = 100 %
+  /// deducible. O-7 de E3: `TaxRate.rateBps` ya está en bps y el cálculo del IVA
+  /// deducible es `applyBps(cuota, prorrataBps)`; dos escalas en la misma
+  /// fórmula son un error latente.
+  prorrataBps             Int?            @map("prorrata_bps")
   /// R-IVA-1 canónica: una cuota por tipo impositivo.
   taxRoundingMode         TaxRoundingMode @default(PER_TIPO) @map("tax_rounding_mode")
   /// R-IVA-7: diferencia residual admitida contra 669/769. Por encima, bloquea.
@@ -96,6 +99,12 @@ model Organization {
   accountMaps    OrganizationAccountMap[]
   taxRates       TaxRate[]
   auditLogs      AuditLog[]
+
+  // E3 — libro diario
+  fiscalYears    FiscalYear[]
+  periodLocks    PeriodLock[]
+  journalEntries JournalEntry[]
+  journalLines   JournalLine[]
 
   @@map("organizations")
 }
@@ -319,6 +328,15 @@ model Transaction {
   updatedAt             DateTime     @updatedAt @map("updated_at")
   text                  String?
 
+  // E3 — enganche con el libro diario (§2.2). `status` sustituye a cualquier
+  // flag heredado: una operación se contabiliza una sola vez.
+  status         TransactionStatus @default(DRAFT)
+  journalEntryId String?           @map("journal_entry_id") @db.Uuid
+  journalEntry   JournalEntry?     @relation("TransactionPosted", fields: [journalEntryId], references: [id], onDelete: SetNull)
+  entries        JournalEntry[]    @relation("TransactionEntry")
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status])
   @@index([organizationId, createdById])
   @@index([organizationId, issuedAt])
   @@index([organizationId, categoryCode])
@@ -523,24 +541,24 @@ model LedgerAccount {
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  code   String  @db.VarChar(12)
-  name   String  @db.VarChar(255)
+  code       String  @db.VarChar(12)
+  name       String  @db.VarChar(255)
   /// Longitud del código (1–4 oficial; >4 subcuenta propia).
-  level  Int
+  level      Int
   /// Prefijo estricto más largo que EXISTE en el plan (no `code[:-1]`, ver T-6).
   parentCode String? @map("parent_code") @db.VarChar(12)
 
-  nature    Nature
-  statement Statement?
+  nature        Nature
+  statement     Statement?
   /// Epígrafe del modelo NORMAL (columna `epigrafe` del seed).
-  epigraph  String?    @db.VarChar(255)
+  epigraph      String?    @db.VarChar(255)
   /// Epígrafe del modelo PYMES/abreviado. Se guardan LOS DOS (C-1).
-  epigraphPymes String? @map("epigraph_pymes") @db.VarChar(255)
+  epigraphPymes String?    @map("epigraph_pymes") @db.VarChar(255)
   /// Cuenta de saldo indistinto (551, 552, 5523–5525, 554, 555 · 7 en el seed).
-  bidirectional Boolean @default(false)
+  bidirectional Boolean    @default(false)
   /// Contra-cuenta: naturaleza contraria a su masa (165 en el seed). El
   /// renderizador RESTA, no suma (R-13).
-  isContra      Boolean @default(false) @map("is_contra")
+  isContra      Boolean    @default(false) @map("is_contra")
 
   analyticType     AnalyticType?     @map("analytic_type")
   cashflowCategory CashflowCategory? @map("cashflow_category")
@@ -560,6 +578,7 @@ model LedgerAccount {
   accountMaps     OrganizationAccountMap[]
   taxRatesMain    TaxRate[]                @relation("TaxRateAccount")
   taxRatesCounter TaxRate[]                @relation("TaxRateCounterAccount")
+  journalLines    JournalLine[]
 
   @@unique([organizationId, code])
   @@index([organizationId, parentCode])
@@ -590,24 +609,25 @@ model TaxRate {
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  code String  @db.VarChar(24)
-  name String  @db.VarChar(128)
-  kind TaxKind
+  code      String       @db.VarChar(24)
+  name      String       @db.VarChar(128)
+  kind      TaxKind
   /// Puntos básicos: 21 % = 2100, 5,2 % = 520, 1,75 % = 175 (E-1).
   rateBps   Int          @map("rate_bps")
   appliesTo TaxAppliesTo @default(BOTH) @map("applies_to")
 
   /// Cuenta del lado VENTA (repercutido 477 / retención que practicamos 4751).
-  accountCode String        @map("account_code") @db.VarChar(12)
-  account     LedgerAccount @relation("TaxRateAccount", fields: [organizationId, accountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
+  accountCode        String         @map("account_code") @db.VarChar(12)
+  account            LedgerAccount  @relation("TaxRateAccount", fields: [organizationId, accountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
   /// Cuenta del lado COMPRA (soportado 472 / retención que nos practican 473).
   counterAccountCode String?        @map("counter_account_code") @db.VarChar(12)
   counterAccount     LedgerAccount? @relation("TaxRateCounterAccount", fields: [organizationId, counterAccountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
 
   /// Recargo de equivalencia → el tipo de IVA al que acompaña (C-2).
-  linkedTaxRateId String?   @map("linked_tax_rate_id") @db.Uuid
-  linkedTaxRate   TaxRate?  @relation("TaxRateLink", fields: [linkedTaxRateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  linkedBy        TaxRate[] @relation("TaxRateLink")
+  linkedTaxRateId String?       @map("linked_tax_rate_id") @db.Uuid
+  linkedTaxRate   TaxRate?      @relation("TaxRateLink", fields: [linkedTaxRateId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  linkedBy        TaxRate[]     @relation("TaxRateLink")
+  journalLines    JournalLine[]
 
   /// Vigencia siempre explícita (C-7): un asiento de 2024 no coge el tipo de 2026.
   validFrom DateTime  @map("valid_from") @db.Date
@@ -630,17 +650,226 @@ model AuditLog {
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   /// Null solo para mutaciones de sistema (seed de alta de organización, CLI).
-  userId String? @map("user_id") @db.Uuid
+  userId         String?      @map("user_id") @db.Uuid
 
-  entity   String  @db.VarChar(64)
-  entityId String  @map("entity_id") @db.VarChar(64)
-  action   String  @db.VarChar(64)
+  entity   String   @db.VarChar(64)
+  entityId String   @map("entity_id") @db.VarChar(64)
+  action   String   @db.VarChar(64)
   before   Json?
   after    Json?
-  reason   String? @db.VarChar(512)
+  reason   String?  @db.VarChar(512)
   ts       DateTime @default(now())
 
   @@index([organizationId, ts])
   @@index([organizationId, entity, entityId, ts])
   @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E3 — Libro diario (docs/design/E3-libro-diario.md §2.2)
+// Fuente única de cifras (ADR-0003). Asientos inmutables, partida doble
+// garantizada en la BD, numeración sin huecos por ejercicio.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum FyStatus {
+  OPEN
+  CLOSED
+
+  @@map("fy_status")
+}
+
+enum EntryKind {
+  NORMAL
+  OPENING
+  CLOSING
+  REGULARIZATION
+  REVERSAL
+  RECURRING
+
+  @@map("entry_kind")
+}
+
+enum SourceType {
+  MANUAL
+  DOCUMENT
+  INVOICE_OUT
+  BANK_IMPORT
+  CSV_IMPORT
+  RECURRING
+  SYSTEM
+
+  @@map("source_type")
+}
+
+enum TransactionStatus {
+  DRAFT
+  PROPOSED
+  POSTED
+  VOID
+
+  @@map("transaction_status")
+}
+
+/// Ejercicio contable. `lastEntryNumber` es el contador de numeración sin
+/// huecos: se incrementa bajo `SELECT … FOR UPDATE` en la misma transacción que
+/// inserta el asiento (§4.3, N-1…N-4).
+model FiscalYear {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Etiqueta del ejercicio: "2026", "2026-27". Único por organización.
+  code      String   @db.VarChar(16)
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  status    FyStatus @default(OPEN)
+
+  /// Último número de asiento asignado. 0 = ejercicio sin asientos.
+  lastEntryNumber Int @default(0) @map("last_entry_number")
+
+  closedAt   DateTime? @map("closed_at")
+  closedById String?   @map("closed_by_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  periodLocks PeriodLock[]
+  entries     JournalEntry[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, startDate, endDate])
+  @@map("fiscal_years")
+}
+
+/// Bloqueo mensual. La existencia de la fila ES el bloqueo (no hay columna
+/// booleana): desbloquear = borrar la fila, y el AuditLog guarda ambas cosas.
+model PeriodLock {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fiscalYearId   String       @map("fiscal_year_id") @db.Uuid
+  fiscalYear     FiscalYear   @relation(fields: [fiscalYearId], references: [id], onDelete: Restrict)
+
+  /// 1–12 (CHECK). El mes natural, no el periodo de liquidación.
+  month      Int
+  lockedAt   DateTime @default(now()) @map("locked_at")
+  lockedById String?  @map("locked_by_id") @db.Uuid
+  reason     String?  @db.VarChar(512)
+
+  @@unique([organizationId, fiscalYearId, month])
+  @@map("period_locks")
+}
+
+/// Asiento. INMUTABLE salvo las tres columnas informativas de anulación
+/// (`voided_at`, `voided_by_id`, `void_reason`), que la BD permite actualizar
+/// por GRANT de columna y nada más (§2.4). Anular = contra-asiento con
+/// `reversesEntryId`; NINGÚN informe filtra por `voidedAt` (ADR-0003).
+model JournalEntry {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fiscalYearId   String       @map("fiscal_year_id") @db.Uuid
+  fiscalYear     FiscalYear   @relation(fields: [fiscalYearId], references: [id], onDelete: Restrict)
+
+  /// Correlativo por ejercicio, sin huecos, asignado bajo bloqueo pesimista.
+  entryNumber Int @map("entry_number")
+
+  /// Las TRES fechas (O-1). Solo `entryDate` manda en ejercicio, mes, informes y
+  /// hash; `documentDate` es además la que selecciona el TaxRate vigente (C-10).
+  documentDate DateTime? @map("document_date") @db.Date
+  accrualDate  DateTime? @map("accrual_date") @db.Date
+  entryDate    DateTime  @map("entry_date") @db.Date
+
+  description String    @db.VarChar(512)
+  kind        EntryKind @default(NORMAL)
+
+  /// Método de redondeo de impuestos SELLADO en el asiento (O-2, R-IVA-4).
+  taxRoundingMode TaxRoundingMode @default(PER_TIPO) @map("tax_rounding_mode")
+
+  sourceType SourceType @default(MANUAL) @map("source_type")
+  /// Id opaco en el sistema de origen (nº de extracto, id de recurrente…).
+  sourceId   String?    @map("source_id") @db.VarChar(128)
+
+  /// Enganches de trazabilidad. `extractionRunId` es texto hasta que E8 cree la
+  /// tabla; entonces pasa a FK sin migración de datos (hoy siempre NULL).
+  transactionId   String?      @map("transaction_id") @db.Uuid
+  transaction     Transaction? @relation("TransactionEntry", fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
+  fileId          String?      @map("file_id") @db.Uuid
+  extractionRunId String?      @map("extraction_run_id") @db.Uuid
+  templateCode    String?      @map("template_code") @db.VarChar(32)
+
+  /// Asiento que ESTE anula. El anulado guarda además `voided_*`.
+  reversesEntryId String?        @map("reverses_entry_id") @db.Uuid
+  reverses        JournalEntry?  @relation("EntryReversal", fields: [reversesEntryId], references: [id], onDelete: Restrict)
+  reversedBy      JournalEntry[] @relation("EntryReversal")
+
+  voidedAt   DateTime? @map("voided_at")
+  voidedById String?   @map("voided_by_id") @db.Uuid
+  voidReason String?   @map("void_reason") @db.VarChar(512)
+
+  postedById String   @map("posted_by_id") @db.Uuid
+  postedAt   DateTime @default(now()) @map("posted_at")
+
+  /// sha256 canónico de las líneas del asiento (lib/ledger/hash.ts), I-E3-7.
+  entryHash String @map("entry_hash") @db.VarChar(64)
+
+  lines         JournalLine[]
+  postedFromTxs Transaction[] @relation("TransactionPosted")
+
+  @@unique([organizationId, fiscalYearId, entryNumber])
+  @@unique([organizationId, id, entryDate, fiscalYearId, kind], name: "journal_entries_denorm_key")
+  @@index([organizationId, entryDate])
+  @@index([organizationId, transactionId])
+  @@index([organizationId, templateCode])
+  @@map("journal_entries")
+}
+
+/// Línea. Sin columna de anulación, por diseño (ADR-0003). `entryDate`,
+/// `fiscalYearId` y `entryKind` están DENORMALIZADOS: la coherencia la impone la
+/// FK compuesta contra `journal_entries_denorm_key` (§2.4), no el código.
+model JournalLine {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entryId        String       @map("entry_id") @db.Uuid
+  entry          JournalEntry @relation(fields: [entryId], references: [id], onDelete: Restrict)
+
+  /// Orden dentro del asiento, 1..n. Único por asiento.
+  lineNo      Int           @map("line_no")
+  accountCode String        @map("account_code") @db.VarChar(12)
+  account     LedgerAccount @relation(fields: [organizationId, accountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
+
+  /// Exactamente uno > 0 (CHECK). Nunca negativos: el signo lo da el lado.
+  debitCents  Int     @default(0) @map("debit_cents")
+  creditCents Int     @default(0) @map("credit_cents")
+  description String? @db.VarChar(512)
+
+  /// Destino analítico. Columnas creadas ya, SIN FK: las tablas destino llegan
+  /// en E4 (§2.3, D-E3-1). Hoy un CHECK las obliga a NULL.
+  projectId      String?       @map("project_id") @db.Uuid
+  costCenterId   String?       @map("cost_center_id") @db.Uuid
+  businessLineId String?       @map("business_line_id") @db.Uuid
+  analyticType   AnalyticType? @map("analytic_type")
+
+  taxRateId      String?   @map("tax_rate_id") @db.Uuid
+  taxRate        TaxRate?  @relation(fields: [taxRateId], references: [id], onDelete: Restrict)
+  /// Base sobre la que se calculó la cuota de esta línea. Null si no es de
+  /// impuesto. Hace reproducible R-IVA-5.
+  taxBaseCents   Int?      @map("tax_base_cents")
+  counterpartyId String?   @map("counterparty_id") @db.Uuid
+  dueDate        DateTime? @map("due_date") @db.Date
+
+  // Denormalizado desde el asiento (FK compuesta en §2.4).
+  entryDate    DateTime  @map("entry_date") @db.Date
+  fiscalYearId String    @map("fiscal_year_id") @db.Uuid
+  entryKind    EntryKind @map("entry_kind")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([entryId, lineNo])
+  @@index([organizationId, entryDate])
+  @@index([organizationId, accountCode, entryDate])
+  @@index([organizationId, entryId])
+  @@index([organizationId, projectId])
+  @@index([organizationId, costCenterId])
+  @@map("journal_lines")
 }

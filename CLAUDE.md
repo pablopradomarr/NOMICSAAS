@@ -42,6 +42,11 @@ ERP SaaS de contabilidad y control de gestión para **empresas de proyectos/serv
 - Validación de entrada con `zod` en `forms/`. Un schema por entidad.
 - Tests unitarios junto al fichero (`*.test.ts`). Invariantes contables en `lib/ledger/invariants.test.ts` con fixtures fijos (vacío, un asiento, negativos, cierre de ejercicio).
 - Migraciones Prisma nombradas `NNNN_<que_hace>`; nunca editar una migración aplicada.
+- **RLS estricta desde E3 (ADR-0009).** Las veinte tablas de negocio llevan `ENABLE` + `FORCE ROW LEVEL SECURITY` y política `USING (organization_id = app.current_org())`, sin cláusula de escape. Consecuencias que hay que tener presentes al escribir código y migraciones:
+  - Una consulta de negocio fuera de `tenantDb` / `tenantTransaction` / `withTenantGucs` **no da error: devuelve vacío**. Lo impiden ESLint (`no-restricted-imports` + `no-restricted-syntax`) y la suite `test:integration:rls`.
+  - **Backfills en migraciones**: con `FORCE`, el propietario tampoco esquiva las políticas, así que un `UPDATE`/`INSERT` de datos ve 0 filas. Patrón obligatorio, dentro de la MISMA migración (el DDL es transaccional): `ALTER TABLE x NO FORCE ROW LEVEL SECURITY;` → backfill → `ALTER TABLE x FORCE ROW LEVEL SECURITY;`. Alternativa: ejecutarlo como `app_maintenance`. Un test comprueba que ninguna tabla queda en `NO FORCE`.
+  - Una tabla de negocio NUEVA se protege con `SELECT app.enforce_tenant_rls('<tabla>');` (política estricta + ENABLE + FORCE) y se añade a `TENANT_MODELS` en `lib/db.ts`.
+  - Roles: `DATABASE_URL` → `app_runtime` (NOBYPASSRLS); `DIRECT_URL` → propietario (migraciones); `DATABASE_URL_MAINTENANCE` → `app_maintenance` (BYPASSRLS), **sólo** para `scripts/` de operador y el check de I10. La aplicación nunca conecta con el último.
 - Prohibido: `any`, `Float` para dinero, cálculos en prompts, borrar asientos, `Date.now()` dentro de `lib/ledger/` y `lib/analytics/` (el hook `.claude/hooks/guard.sh` lo bloquea antes de escribir).
 - Anulación de asientos: SOLO por contra-asiento (`reversesEntryId`); no existe flag que excluya líneas de los informes.
 
@@ -52,5 +57,5 @@ npm run test       # vitest
 npm run lint
 npx prisma migrate dev --name <nombre>
 npx tsx seeds/import_npgc.ts --org <id> --variant PYMES   # (a crear en E2) carga NPGC en una organización
-npx tsx scripts/run-invariants.ts --org <id>            # (a crear en E7) invariantes I1–I10 → validacion.json
+DATABASE_URL_MAINTENANCE=… npx tsx scripts/run-invariants.ts --org <id>   # invariantes → validacion.json (I10 desde E3; el resto, E3-T6)
 ```

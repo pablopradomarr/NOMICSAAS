@@ -8,8 +8,7 @@ import {
 } from "@/lib/authz-core"
 import config from "@/lib/config"
 import { TenantClient, tenantDb } from "@/lib/db"
-import { getMembership, getUserMemberships } from "@/models/memberships"
-import { getOrganizationById } from "@/models/organizations"
+import { getMembership, getMembershipWithOrganization, getUserMemberships } from "@/models/memberships"
 import { Organization, Role, User } from "@/prisma/client"
 import { ActionState } from "@/lib/actions"
 import { cookies } from "next/headers"
@@ -39,11 +38,16 @@ export const getOrgContext = cache(async (): Promise<OrgContext | null> => {
   const cookieOrgId = parseActiveOrgCookie(cookieStore.get(ACTIVE_ORG_COOKIE)?.value, user.id, config.auth.secret)
 
   if (cookieOrgId) {
-    const membership = await getMembership(cookieOrgId, user.id)
-    if (membership) {
-      const org = await getOrganizationById(cookieOrgId)
-      if (org && org.isActive) {
-        return { org, user, role: membership.role, db: tenantDb(org.id) }
+    // E3-T2 (deuda 3 de docs/ESTADO.md): membresía + organización en UNA sola
+    // transacción con GUC. Antes eran dos, cada una con su BEGIN + dos
+    // set_config + COMMIT, en CADA petición.
+    const membership = await getMembershipWithOrganization(cookieOrgId, user.id)
+    if (membership && membership.organization.isActive) {
+      return {
+        org: membership.organization,
+        user,
+        role: membership.role,
+        db: tenantDb(membership.organizationId),
       }
     }
   }
