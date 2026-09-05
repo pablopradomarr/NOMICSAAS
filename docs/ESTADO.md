@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-05 (cierre E4) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-05 (E6 backend + UI implementados, pendiente verificación) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
 ## Hecho
 | Épica | Estado | Commits |
@@ -84,7 +84,15 @@ npm run test:all              # los tres
     c. auditor-fiabilidad en contexto limpio: reconstruir por SQL/Python la matriz (INGRESOS 6.250.000 · MC1 5.670.000 · MC2 3.276.000 · MC3 3.084.110 · EBITDA 2.390.430 · EBIT 1.995.430 · BAI 1.996.430 · RESULTADO 1.497.322) y P-02/CC-GA; error inyectado en dimensión.
     d. revisor-codigo en contexto limpio sobre `git diff a6e4a14...HEAD`; rondas de fix hasta APROBADO.
     e. documentador: ROADMAP E4 = CERRADA, runs/registro.jsonl, ESTADO; push.
-13. **SIGUIENTE**: `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
+13. ✅ E6 DISEÑADA y aprobada (docs/design/E6-informes.md, E6-validacion-estados.md, ADR-0012; estados esperados en docs/design/fixtures/estados-esperados.json). Backend implementado (commit 8d8055a: 766 unit / 995 integración / 105 RLS; balance/PyG/cashflow byte a byte con los esperados: activo 13.673.820, PN 8.307.322, resultado 1.497.322, cash 2.943.920). UI implementada por dev-frontend hasta corte por límite de uso (commit siguiente): rutas /reports/{balance,pyg,cashflow,aging,runs}, /settings/review-thresholds, dashboard reescrito, tests/e2e/informes.spec.ts escrito pero NO ejecutado; tsc y lint en verde.
+14. **SIGUIENTE (E6 pendiente de cierre)** — en este orden:
+    a. dev-frontend: retomar UI E6 — arrancar dev (`npm run dev` como app_runtime), `npm run build`, ejecutar `npm run test:e2e` (tests/e2e/informes.spec.ts) y corregir; capturas en /tmp/e6-screens; revisar que dashboard no usa models/stats.ts (eliminado) y que sidebar tiene sección Informes.
+    b. qa-tester (criterios docs/design/E6-informes.md §8; adversarial: ReportRun inmutable como app_runtime, caché por paramsHash, umbral de variación EV-*, ManualReviewFlag, export válido, I2/I3/I6 sobre fixture, bidireccionales por signo, VIEWER).
+    c. auditor-fiabilidad contexto limpio: reconstruir balance (activo 13.673.820 / PN 8.307.322), PyG (A.4 1.497.322), cashflow (Δ −1.056.080, cash final 2.943.920) por SQL/Python; error inyectado.
+    d. revisor-codigo contexto limpio sobre `git diff 97221fb...HEAD`; rondas hasta APROBADO.
+    e. cierre E6 (ROADMAP, registro, ESTADO, push).
+15. Después: `/epica E5` (liquidación de CECOs: AllocationRule/Run/Line, drivers, Hamilton, I5, PyG analítica con MC3/EBITDA imputados) → `/sprint E5` → E8 (OCR → asientos) → E7 (Auditoría) → E9 → E10 → E11 → E12.
+~~13. `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
 ~~11. `/epica E4` (analítica base: BusinessLine, Project, CostCenter, AnalyticType en líneas, MarginLevelConfig, PyG analítica sin imputaciones, I4; retirar CHECK NULL de dimensiones + FKs; fixtures con projectCode/costCenterCode activados) → `/sprint E4` → E6 (informes: balance, PyG, cashflow, ReportRun) → E5 (liquidación CECOs).
 ~~10. `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.
 
