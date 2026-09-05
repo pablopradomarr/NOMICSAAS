@@ -133,14 +133,23 @@ export const analyticPnlAction = withOrg(
     if (!parsed.success) return invalid(parsed.error)
     const runId = randomUUID()
     const sha = gitSha()
-    const report = await tenantTransaction(org.id, async (tx) =>
-      getAnalyticPnl(tx, {
-        from: parsed.data.from,
-        to: parsed.data.to,
-        ...(parsed.data.fiscalYearId ? { fiscalYearId: parsed.data.fiscalYearId } : {}),
-        provenance: { runId, gitSha: sha, baseCurrency: org.baseCurrency },
-      })
-    )
+    // E4-UI-1.b: una excepción del motor analítico NO tumba /analytics/pyg. Se
+    // devuelve el motivo y la pantalla lo pinta como REQUIERE REVISIÓN, sin
+    // pintar media matriz.
+    let report
+    try {
+      report = await tenantTransaction(org.id, async (tx) =>
+        getAnalyticPnl(tx, {
+          from: parsed.data.from,
+          to: parsed.data.to,
+          ...(parsed.data.fiscalYearId ? { fiscalYearId: parsed.data.fiscalYearId } : {}),
+          provenance: { runId, gitSha: sha, baseCurrency: org.baseCurrency },
+        })
+      )
+    } catch (error) {
+      const motivo = error instanceof Error ? error.message : String(error)
+      return { success: false, error: `REQUIERE REVISIÓN — el motor analítico ha fallado: ${motivo}` }
+    }
     return { success: true, data: { ...report, runId, gitSha: sha } }
   }
 )

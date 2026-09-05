@@ -6,7 +6,14 @@
  * `runInvariants` los cablea cuando el llamante aporta el bloque `analytics`.
  */
 
-import { buildAnalyticPnl, contribution, isPnlAccount, isPnlLine, pnlContableCents } from "@/lib/analytics/margins"
+import {
+  buildAnalyticPnl,
+  contribution,
+  isPnlAccount,
+  isPnlLine,
+  pnlContableCents,
+  resolveDestination,
+} from "@/lib/analytics/margins"
 import { validateMarginLevels } from "@/lib/analytics/seed"
 import {
   AnalyticLine,
@@ -120,6 +127,13 @@ export function checkIE41(input: AnalyticsInvariantInput): CheckResult {
   const orphans = input.lines.filter(
     (l) => isPnlLine(l) && l.analyticType !== "NO_ANALITICO" && !l.projectId && !l.costCenterId
   )
+  // Líneas que el motor ha tenido que degradar a NO_ANALITICO (tipo NULL o
+  // desconocido sin default de cuenta, CECO/proyecto inexistente). No lanzan:
+  // se declaran aquí en WARN, o FAIL si la organización exige destino (R-A8).
+  const degraded = input.lines
+    .filter(isPnlLine)
+    .map((l) => ({ line: l, fallback: resolveDestination(l, input.config).fallback }))
+    .filter((d): d is { line: AnalyticLine; fallback: NonNullable<typeof d.fallback> } => d.fallback !== null)
   const unassignedId = input.config.unassignedCostCenterId
   const inUnassigned = input.lines.filter((l) => isPnlLine(l) && unassignedId !== null && l.costCenterId === unassignedId)
   const unassignedCents = inUnassigned.reduce((a, l) => a + contribution(l), 0)
@@ -129,6 +143,15 @@ export function checkIE41(input: AnalyticsInvariantInput): CheckResult {
       .slice(0, 10)
       .map((l) => `${l.entryId}#${l.lineNo} (${l.accountCode})`)
       .join(", ")}`
+    return input.config.analyticsRequired ? fail("I-E4-1", evidencia) : warn("I-E4-1", evidencia)
+  }
+  if (degraded.length > 0) {
+    const evidencia =
+      `${degraded.length} línea(s) 6/7 servidas en la columna NO_ANALITICO porque su destino no es resoluble: ` +
+      degraded
+        .slice(0, 10)
+        .map((d) => `${d.line.entryId}#${d.line.lineNo} (${d.line.accountCode}, ${d.fallback.code})`)
+        .join(", ")
     return input.config.analyticsRequired ? fail("I-E4-1", evidencia) : warn("I-E4-1", evidencia)
   }
   if (inUnassigned.length > 0) {
@@ -230,9 +253,14 @@ export function checkIE47(input: AnalyticsInvariantInput): CheckResult {
 /** I-E4-8 — estabilidad: dos ejecuciones con los mismos sellos dan la misma matriz. */
 export function checkIE48(input: AnalyticsInvariantInput): CheckResult {
   const ctx = { runId: "x", ledgerHash: "", gitSha: "", baseCurrency: "EUR", module: "lib/analytics/margins.ts" }
-  const a = buildAnalyticPnl(input.lines, input.config, input.period, ctx)
-  const b = buildAnalyticPnl(input.lines, input.config, input.period, ctx)
-  const same = JSON.stringify(a.matrixCents) === JSON.stringify(b.matrixCents)
+  let same: boolean
+  try {
+    const a = buildAnalyticPnl(input.lines, input.config, input.period, ctx)
+    const b = buildAnalyticPnl(input.lines, input.config, input.period, ctx)
+    same = JSON.stringify(a.matrixCents) === JSON.stringify(b.matrixCents)
+  } catch (error) {
+    return fail("I-E4-8", `la matriz no se puede calcular: ${(error as Error).message}`)
+  }
   return same
     ? pass("I-E4-8", "dos ejecuciones de la matriz sobre el mismo conjunto son idénticas (P7)")
     : fail("I-E4-8", "la matriz no es reproducible: dos ejecuciones difieren")
@@ -326,23 +354,40 @@ export function checkIE412(entries: readonly PostedEntry[]): CheckResult {
     : fail("I-E4-12", failures.slice(0, 10).join(" · "))
 }
 
+/**
+ * Ejecuta un check aislando su excepción: un fallo del motor analítico se
+ * declara como FAIL de ese invariante, nunca tumba el informe que lo pide
+ * (E4-UI-1.b). El sello resultante es entonces `REQUIERE REVISIÓN`.
+ */
+function safely(id: string, run: () => CheckResult): CheckResult {
+  try {
+    return run()
+  } catch (error) {
+    return fail(id, `el motor analítico no ha podido evaluar ${id}: ${(error as Error).message}`)
+  }
+}
+
 /** Los trece checks de la épica, en orden de presentación en Auditoría. */
 export function runAnalyticInvariants(input: AnalyticsInvariantInput): CheckResult[] {
   const checks = [
-    checkI4(input),
-    checkIE41(input),
-    checkIE42(input),
-    checkIE43(input),
-    checkIE44(input),
-    checkIE45(input),
+    safely("I4", () => checkI4(input)),
+    safely("I-E4-1", () => checkIE41(input)),
+    safely("I-E4-2", () => checkIE42(input)),
+    safely("I-E4-3", () => checkIE43(input)),
+    safely("I-E4-4", () => checkIE44(input)),
+    safely("I-E4-5", () => checkIE45(input)),
     checkIE46(),
-    checkIE47(input),
-    checkIE48(input),
-    checkIE49(input),
-    checkIE410(input),
+    safely("I-E4-7", () => checkIE47(input)),
+    safely("I-E4-8", () => checkIE48(input)),
+    safely("I-E4-9", () => checkIE49(input)),
+    safely("I-E4-10", () => checkIE410(input)),
   ]
   if (input.entries) {
-    checks.push(checkIE411(input.entries), checkIE412(input.entries))
+    const entries = input.entries
+    checks.push(
+      safely("I-E4-11", () => checkIE411(entries)),
+      safely("I-E4-12", () => checkIE412(entries))
+    )
   }
   return checks
 }

@@ -16,6 +16,7 @@ import {
   AnalyticPeriod,
   AnalyticsConfig,
   AnalyticsError,
+  AnalyticsErrorCode,
   AnalyticType,
   Cents,
   cecoColumn,
@@ -99,8 +100,150 @@ export function levelByType(config: Pick<AnalyticsConfig, "levels">): ReadonlyMa
   return out
 }
 
+/** Los ocho valores del enum `AnalyticType`. Un valor fuera de aquí es basura. */
+export const ANALYTIC_TYPES: ReadonlySet<string> = new Set<AnalyticType>([
+  "INGRESO_DIRECTO",
+  "COSTE_DIRECTO_MC1",
+  "COSTE_DIRECTO_MC2",
+  "INDIRECTO_CECO",
+  "AMORTIZACION_DETERIORO",
+  "FINANCIERO",
+  "EXTRAORDINARIO",
+  "NO_ANALITICO",
+])
+
+/** Motivo por el que una línea no se pudo clasificar por la vía normal. */
+export type ResolutionFallback = { code: AnalyticsErrorCode; message: string }
+
 /**
- * Nivel de margen. Determinista y total.
+ * Destino completo de una línea. **Total**: siempre devuelve nivel y columna.
+ * Una línea que no se puede clasificar cae en `NO_ANALITICO` con `fallback`
+ * relleno, y el aporte se conserva: I4 (Σ matriz = PyG contable) sigue en PASS
+ * aunque los datos estén sucios. Antes esto lanzaba y tumbaba la pantalla.
+ */
+export type LineDestination = {
+  analyticType: AnalyticType | null
+  level: MarginLevel
+  column: ColumnKey
+  fallback: ResolutionFallback | null
+}
+
+/** R-A11: el impuesto sobre beneficios va clavado a RESULTADO. */
+const nonAnalyticLevelOf = (line: AnalyticLine, config: AnalyticsConfig): MarginLevel =>
+  config.incomeTaxPrefixes.some((p) => line.accountCode.startsWith(p)) ? "RESULTADO" : config.nonAnalyticLevel
+
+const where = (line: AnalyticLine): string => `La línea ${line.lineNo} de ${line.entryId}`
+
+/**
+ * Destino (tipo efectivo, nivel y columna) de una línea 6/7, sin excepciones
+ * salvo la incoherencia de configuración `CECO_MARGIN_LEVEL` (la BD tiene un
+ * CHECK que la impide, así que ahí sí queremos ruido).
+ *
+ * Orden:
+ *   1. tipo persistido, si es un `AnalyticType` conocido;
+ *   2. si es NULL o desconocido, se REHACE por el default de la cuenta con las
+ *      reglas R-A3/R-A4 (`resolveEffectiveAnalyticType`) — el caso normal de una
+ *      línea 6/7 con CECO o proyecto y `analytic_type` sin poblar;
+ *   3. si tampoco hay default, columna `NO_ANALITICO` + `fallback` (I-E4-1).
+ */
+export function resolveDestination(line: AnalyticLine, config: AnalyticsConfig): LineDestination {
+  const declared = line.analyticType
+  const known = declared !== null && ANALYTIC_TYPES.has(declared) ? declared : null
+
+  let type = known
+  if (type !== null) {
+    // R-A3/R-A4 sobre el tipo persistido: la dimensión de la línea manda cuando
+    // contradice al tipo (p. ej. una línea rutada a CC-NA por R-A8 conserva
+    // `INGRESO_DIRECTO` y sin esto quedaría sin columna).
+    const hasProject = line.projectId !== null && line.projectId !== undefined
+    const hasCostCenter = line.costCenterId !== null && line.costCenterId !== undefined
+    if (type === "INDIRECTO_CECO" && hasProject && !hasCostCenter) type = "COSTE_DIRECTO_MC2"
+    else if (DIRECT_TYPES.has(type) && hasCostCenter && !hasProject) type = "INDIRECTO_CECO"
+  }
+  if (type === null) {
+    // R-A4 y R-A3: default de la cuenta con herencia de hoja, ajustado por la
+    // dimensión que sí trae la línea.
+    type = resolveEffectiveAnalyticType(
+      {
+        accountCode: line.accountCode,
+        analyticType: null,
+        projectId: line.projectId,
+        costCenterId: line.costCenterId,
+      },
+      config
+    )
+    if (type === null) {
+      const detalle = declared === null ? "no tiene tipo analítico" : `tiene el tipo desconocido «${declared}»`
+      return {
+        analyticType: null,
+        level: nonAnalyticLevelOf(line, config),
+        column: "NO_ANALITICO",
+        fallback: {
+          code: "TYPE_UNKNOWN",
+          message: `${where(line)} ${detalle} y la cuenta ${line.accountCode} no tiene tipo por defecto (R-A4)`,
+        },
+      }
+    }
+  }
+
+  if (type === "NO_ANALITICO") {
+    return { analyticType: type, level: nonAnalyticLevelOf(line, config), column: "NO_ANALITICO", fallback: null }
+  }
+
+  if (type === "INDIRECTO_CECO") {
+    const ceco = config.costCenters.find((c) => c.id === line.costCenterId)
+    if (!ceco) {
+      return {
+        analyticType: type,
+        level: nonAnalyticLevelOf(line, config),
+        column: "NO_ANALITICO",
+        fallback: {
+          code: "CECO_UNKNOWN",
+          message: `${where(line)} apunta a un centro de coste desconocido (${line.costCenterId})`,
+        },
+      }
+    }
+    if (ceco.marginLevel !== "MC3" && ceco.marginLevel !== "EBITDA") {
+      // Incoherencia de CONFIGURACIÓN, no de datos: la impide un CHECK en la BD.
+      throw new AnalyticsError(
+        "CECO_MARGIN_LEVEL",
+        `El centro de coste ${ceco.code} tiene marginLevel ${ceco.marginLevel}: solo MC3 o EBITDA`
+      )
+    }
+    return { analyticType: type, level: ceco.marginLevel, column: cecoColumn(ceco.kind), fallback: null }
+  }
+
+  const configured = levelByType(config).get(type)
+  const level = configured ?? nonAnalyticLevelOf(line, config)
+  const levelFallback: ResolutionFallback | null = configured
+    ? null
+    : { code: "TYPE_UNKNOWN", message: `El tipo ${type} no está en ningún nivel de MarginLevelConfig (MLC-1)` }
+
+  const projectOf = (): { column: ColumnKey; fallback: ResolutionFallback | null } => {
+    const project = config.projects.find((p) => p.id === line.projectId)
+    if (project) return { column: projectColumn(project.code), fallback: levelFallback }
+    return {
+      column: "NO_ANALITICO",
+      fallback:
+        levelFallback ??
+        (line.projectId
+          ? { code: "PROJECT_UNKNOWN", message: `${where(line)} apunta a un proyecto desconocido (${line.projectId})` }
+          : { code: "DEST_MISSING", message: `Tipo ${type} sin proyecto en ${where(line).toLowerCase()}` }),
+    }
+  }
+
+  if (DIRECT_TYPES.has(type)) return { analyticType: type, level, ...projectOf() }
+  if (type === "AMORTIZACION_DETERIORO") {
+    if (!line.projectId) return { analyticType: type, level, column: "AMORTIZACION_DETERIORO", fallback: levelFallback }
+    return { analyticType: type, level, ...projectOf() }
+  }
+  if (type === "FINANCIERO") return { analyticType: type, level, column: "FINANCIERO", fallback: levelFallback }
+  if (type === "EXTRAORDINARIO") return { analyticType: type, level, column: "EXTRAORDINARIO", fallback: levelFallback }
+  return { analyticType: type, level, column: "NO_ANALITICO", fallback: levelFallback }
+}
+
+/**
+ * Nivel de margen. Determinista y **total** (nunca lanza por datos sucios).
  *   `INDIRECTO_CECO`  → `CostCenter.marginLevel` (MC3 | EBITDA)   (R-A6/R-A7)
  *   `NO_ANALITICO`    → `RESULTADO` si la cuenta ∈ `incomeTaxPrefixes`,
  *                       si no `config.nonAnalyticLevel`           (R-A11)
@@ -109,50 +252,7 @@ export function levelByType(config: Pick<AnalyticsConfig, "levels">): ReadonlyMa
  * `CC-FIN` cae en BAI, no en EBITDA (R-A6).
  */
 export function resolveLevel(line: AnalyticLine, config: AnalyticsConfig): MarginLevel {
-  const type = line.analyticType
-  if (type === null) {
-    throw new AnalyticsError("TYPE_UNKNOWN", `La línea ${line.lineNo} de ${line.entryId} no tiene tipo analítico efectivo`)
-  }
-  if (type === "INDIRECTO_CECO") {
-    const ceco = findCostCenter(line, config)
-    if (ceco.marginLevel !== "MC3" && ceco.marginLevel !== "EBITDA") {
-      throw new AnalyticsError(
-        "CECO_MARGIN_LEVEL",
-        `El centro de coste ${ceco.code} tiene marginLevel ${ceco.marginLevel}: solo MC3 o EBITDA`
-      )
-    }
-    return ceco.marginLevel
-  }
-  if (type === "NO_ANALITICO") {
-    return config.incomeTaxPrefixes.some((p) => line.accountCode.startsWith(p)) ? "RESULTADO" : config.nonAnalyticLevel
-  }
-  const level = levelByType(config).get(type)
-  if (!level) {
-    throw new AnalyticsError("TYPE_UNKNOWN", `El tipo ${type} no está en ningún nivel de MarginLevelConfig (MLC-1)`)
-  }
-  return level
-}
-
-function findCostCenter(line: AnalyticLine, config: AnalyticsConfig) {
-  const ceco = config.costCenters.find((c) => c.id === line.costCenterId)
-  if (!ceco) {
-    throw new AnalyticsError(
-      "CECO_UNKNOWN",
-      `La línea ${line.lineNo} de ${line.entryId} apunta a un centro de coste desconocido (${line.costCenterId})`
-    )
-  }
-  return ceco
-}
-
-function findProject(line: AnalyticLine, config: AnalyticsConfig) {
-  const project = config.projects.find((p) => p.id === line.projectId)
-  if (!project) {
-    throw new AnalyticsError(
-      "PROJECT_UNKNOWN",
-      `La línea ${line.lineNo} de ${line.entryId} apunta a un proyecto desconocido (${line.projectId})`
-    )
-  }
-  return project
+  return resolveDestination(line, config).level
 }
 
 /**
@@ -160,23 +260,7 @@ function findProject(line: AnalyticLine, config: AnalyticsConfig) {
  * única: `AMORTIZACION_DETERIORO` con `projectId` va a la columna del proyecto.
  */
 export function resolveColumn(line: AnalyticLine, config: AnalyticsConfig): ColumnKey {
-  const type = line.analyticType
-  if (type === null) {
-    throw new AnalyticsError("TYPE_UNKNOWN", `La línea ${line.lineNo} de ${line.entryId} no tiene tipo analítico efectivo`)
-  }
-  if (DIRECT_TYPES.has(type)) {
-    if (!line.projectId) {
-      throw new AnalyticsError("DEST_MISSING", `Tipo ${type} sin proyecto en la línea ${line.lineNo} de ${line.entryId}`)
-    }
-    return projectColumn(findProject(line, config).code)
-  }
-  if (type === "INDIRECTO_CECO") return cecoColumn(findCostCenter(line, config).kind)
-  if (type === "AMORTIZACION_DETERIORO") {
-    return line.projectId ? projectColumn(findProject(line, config).code) : "AMORTIZACION_DETERIORO"
-  }
-  if (type === "FINANCIERO") return "FINANCIERO"
-  if (type === "EXTRAORDINARIO") return "EXTRAORDINARIO"
-  return "NO_ANALITICO"
+  return resolveDestination(line, config).column
 }
 
 /** Aporte: `creditCents − debitCents`. Ingreso +, gasto −, contra-cuentas solas. */
@@ -199,7 +283,8 @@ export function classifyLine(
   line: AnalyticLine,
   config: AnalyticsConfig
 ): { level: MarginLevel; column: ColumnKey; amountCents: Cents } {
-  return { level: resolveLevel(line, config), column: resolveColumn(line, config), amountCents: contribution(line) }
+  const dest = resolveDestination(line, config)
+  return { level: dest.level, column: dest.column, amountCents: contribution(line) }
 }
 
 /**
@@ -229,6 +314,17 @@ export type LineDetail = {
   level: MarginLevel
   column: ColumnKey
   amountCents: Cents
+  /** Solo presente si la línea NO se pudo clasificar por la vía normal. */
+  fallback?: string
+}
+
+/** Línea que cayó en `NO_ANALITICO` (o en un nivel de reserva) por datos sucios. */
+export type UnresolvedLine = {
+  entryRef: string
+  lineNo: number
+  accountCode: string
+  code: AnalyticsErrorCode
+  message: string
 }
 
 export type AnalyticCheck = {
@@ -256,6 +352,8 @@ export type AnalyticPnl = {
   lineCount67: number
   checks: readonly AnalyticCheck[]
   lineDetail: readonly LineDetail[]
+  /** Líneas degradadas a `NO_ANALITICO`: alimentan I-E4-1 en WARN/FAIL. */
+  unresolved: readonly UnresolvedLine[]
   /** Ids de línea cubiertos por la matriz (I4.c). */
   coveredLineIds: ReadonlySet<string>
   /** Provenance por celda, clave `${level}|${column}`. No entra en el canónico. */
@@ -309,6 +407,7 @@ export function buildAnalyticPnl(
   for (const level of MARGIN_LEVELS) contrib[level] = new Map()
 
   const detail: LineDetail[] = []
+  const unresolved: UnresolvedLine[] = []
   const covered = new Set<string>()
   let pygContable = 0
   let lineCount67 = 0
@@ -318,19 +417,30 @@ export function buildAnalyticPnl(
     lineCount67++
     const amount = contribution(line)
     pygContable += amount
-    const { level, column } = classifyLine(line, config)
+    const { level, column, analyticType, fallback } = resolveDestination(line, config)
     contrib[level].set(column, (contrib[level].get(column) ?? 0) + amount)
     covered.add(lineKey(line))
+    const entryRef = opts.entryRefOf ? opts.entryRefOf(line) : line.entryId
+    if (fallback) {
+      unresolved.push({
+        entryRef,
+        lineNo: line.lineNo,
+        accountCode: line.accountCode,
+        code: fallback.code,
+        message: fallback.message,
+      })
+    }
     detail.push({
-      entryRef: opts.entryRefOf ? opts.entryRefOf(line) : line.entryId,
+      entryRef,
       lineNo: line.lineNo,
       accountCode: line.accountCode,
-      analyticType: line.analyticType as AnalyticType,
+      analyticType: analyticType ?? "NO_ANALITICO",
       projectCode: line.projectId ? (projectCodeById.get(line.projectId) ?? null) : null,
       costCenterCode: line.costCenterId ? (cecoCodeById.get(line.costCenterId) ?? null) : null,
       level,
       column,
       amountCents: amount,
+      ...(fallback ? { fallback: fallback.code } : {}),
     })
   }
 
@@ -383,6 +493,8 @@ export function buildAnalyticPnl(
     detail,
     businessLineCodes,
     blCodeOfProject,
+    unresolved,
+    analyticsRequired: config.analyticsRequired,
   })
 
   // Provenance por celda (§7): métrica, hashes y consulta PARAMETRIZADA.
@@ -425,6 +537,7 @@ export function buildAnalyticPnl(
     lineCount67,
     checks,
     lineDetail: detail,
+    unresolved,
     coveredLineIds: covered,
     provenance,
     period,
@@ -466,6 +579,8 @@ function buildChecks(input: {
   detail: readonly LineDetail[]
   businessLineCodes: readonly string[]
   blCodeOfProject: ReadonlyMap<string, string | null>
+  unresolved: readonly UnresolvedLine[]
+  analyticsRequired: boolean
 }): AnalyticCheck[] {
   const { levelTotalsCents, pygContable, lineCount67, detail } = input
   const checks: AnalyticCheck[] = []
@@ -477,12 +592,30 @@ function buildChecks(input: {
     actual: levelTotalsCents.RESULTADO,
     evidencia: "Sigma columnas (RESULTADO) = PyG contable I3",
   })
+  // I-E4-1: cobertura. Toda línea 6/7 tiene celda (la matriz es total), pero las
+  // que llegan ahí degradadas a NO_ANALITICO no son un PASS: WARN, o FAIL si la
+  // organización exige destino analítico (R-A8).
+  const degraded = input.unresolved
   checks.push({
     id: "I-E4-1",
-    status: detail.length === lineCount67 ? "PASS" : "FAIL",
+    status:
+      detail.length !== lineCount67
+        ? "FAIL"
+        : degraded.length === 0
+          ? "PASS"
+          : input.analyticsRequired
+            ? "FAIL"
+            : "WARN",
     expected: lineCount67,
-    actual: detail.length,
-    evidencia: "toda linea 6/7 del periodo tiene destino en la matriz",
+    actual: detail.length - degraded.length,
+    evidencia:
+      degraded.length === 0
+        ? "toda linea 6/7 del periodo tiene destino en la matriz"
+        : `${degraded.length} linea(s) 6/7 sin destino resoluble, servidas en NO_ANALITICO: ` +
+          degraded
+            .slice(0, 10)
+            .map((u) => `${u.entryRef}#${u.lineNo} (${u.accountCode}, ${u.code})`)
+            .join(", "),
   })
   const badBl = detail.filter(
     (d) => d.projectCode !== null && !input.businessLineCodes.includes(input.blCodeOfProject.get(d.projectCode) ?? "")
@@ -494,8 +627,9 @@ function buildChecks(input: {
     actual: badBl.length,
     evidencia: "businessLine de toda linea con proyecto = la del proyecto",
   })
+  // Las líneas degradadas ya las reporta I-E4-1: no se cuentan dos veces.
   const badDim = detail.filter(
-    (d) => d.analyticType !== "NO_ANALITICO" && (d.projectCode === null) === (d.costCenterCode === null)
+    (d) => d.fallback === undefined && d.analyticType !== "NO_ANALITICO" && (d.projectCode === null) === (d.costCenterCode === null)
   )
   checks.push({
     id: "I-E4-2",
@@ -504,7 +638,9 @@ function buildChecks(input: {
     actual: badDim.length,
     evidencia: "linea 6/7 no NO_ANALITICO con exactamente una dimension",
   })
-  const badNa = detail.filter((d) => d.analyticType === "NO_ANALITICO" && (d.projectCode || d.costCenterCode))
+  const badNa = detail.filter(
+    (d) => d.fallback === undefined && d.analyticType === "NO_ANALITICO" && (d.projectCode || d.costCenterCode)
+  )
   checks.push({
     id: "I-E4-4",
     status: badNa.length === 0 ? "PASS" : "FAIL",

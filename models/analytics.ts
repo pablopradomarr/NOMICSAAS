@@ -7,6 +7,8 @@
  * `tenantDb` / `tenantTransaction` (barrera 1) y por RLS (barrera 2).
  */
 
+import { randomUUID } from "node:crypto"
+
 import { marginConfigHash } from "@/lib/analytics/hash"
 import {
   checkReclassify,
@@ -37,7 +39,7 @@ import type {
 } from "@/lib/analytics/types"
 import { INCOME_TAX_PREFIXES } from "@/lib/analytics/types"
 import { getPlan } from "@/models/accounts"
-import { writeAuditLog } from "@/models/audit-log"
+import { writeAuditLog, writeAuditLogs } from "@/models/audit-log"
 import {
   abort,
   abortWith,
@@ -859,15 +861,47 @@ export async function reclassifyLines(
       await tx.journalEntry.update({ where: { id: entryId }, data: { entryHash: after } })
     }
 
-    await writeAuditLog(tx, {
-      entity: "JournalLine",
-      entityId: applied.map((r) => r.lineId).join(","),
-      action: "RECLASSIFY_ANALYTICS",
-      before: { lines: applied.map((r) => ({ lineId: r.lineId, ...r.before })), entryHashes: entryHashes.map((h) => ({ entryId: h.entryId, entryHash: h.before })) },
-      after: { lines: applied.map((r) => ({ lineId: r.lineId, ...r.after })), entryHashes: entryHashes.map((h) => ({ entryId: h.entryId, entryHash: h.after })) },
-      reason: request.reason.trim(),
-      userId: actor.userId,
-    })
+    // E4-UI-1.c — Auditoría: **una fila por línea reclasificada** más una de
+    // resumen. Antes se escribía una sola fila con `entityId` = los ids de todas
+    // las líneas concatenados por comas; `audit_logs.entity_id` es VARCHAR(64),
+    // así que a partir de la segunda línea (36 caracteres por UUID) el INSERT
+    // fallaba con «value too long» y se perdía la transacción entera. `before` y
+    // `after` sí son JSONB y nunca fueron el problema.
+    const reason = request.reason.trim()
+    const batchId = randomUUID()
+    const hashBefore = new Map(entryHashes.map((h) => [h.entryId, h.before]))
+    const hashAfter = new Map(entryHashes.map((h) => [h.entryId, h.after]))
+
+    await writeAuditLogs(tx, [
+      {
+        // Resumen de la operación, direccionable por su propio id de lote.
+        entity: "JournalLine",
+        entityId: batchId,
+        action: "RECLASSIFY_ANALYTICS",
+        before: {
+          batchId,
+          lineCount: applied.length,
+          entryHashes: entryHashes.map((h) => ({ entryId: h.entryId, entryHash: h.before })),
+        },
+        after: {
+          batchId,
+          lineCount: applied.length,
+          lineIds: applied.map((r) => r.lineId),
+          entryHashes: entryHashes.map((h) => ({ entryId: h.entryId, entryHash: h.after })),
+        },
+        reason,
+        userId: actor.userId,
+      },
+      ...applied.map((r) => ({
+        entity: "JournalLine" as const,
+        entityId: r.lineId,
+        action: "RECLASSIFY_ANALYTICS" as const,
+        before: { batchId, lineId: r.lineId, entryId: r.entryId, ...r.before, entryHash: hashBefore.get(r.entryId) ?? null },
+        after: { batchId, lineId: r.lineId, entryId: r.entryId, ...r.after, entryHash: hashAfter.get(r.entryId) ?? null },
+        reason,
+        userId: actor.userId,
+      })),
+    ])
 
     return { applied, entryHashes }
   })

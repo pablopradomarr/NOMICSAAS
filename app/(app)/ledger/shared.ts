@@ -200,11 +200,35 @@ export async function reportHeader(
   userId: string,
   params: { from: string; to: string; baseCurrency: string; fiscalYearId?: string; refDate: string }
 ): Promise<ReportHeaderView> {
-  const run = await runLedgerInvariants(organizationId, {
-    refDate: params.refDate,
-    ...(params.fiscalYearId ? { fiscalYearId: params.fiscalYearId } : {}),
-    actor: { userId },
-  })
+  let run: Awaited<ReturnType<typeof runLedgerInvariants>>
+  try {
+    run = await runLedgerInvariants(organizationId, {
+      refDate: params.refDate,
+      ...(params.fiscalYearId ? { fiscalYearId: params.fiscalYearId } : {}),
+      actor: { userId },
+    })
+  } catch (error) {
+    // E4-UI-1.b: ninguna excepción del bloque de invariantes (en particular del
+    // motor analítico) puede tumbar un informe. El informe se sirve con las
+    // cifras del diario y la cabecera dice, con motivo, que REQUIERE REVISIÓN.
+    const motivo = error instanceof Error ? error.message : String(error)
+    return {
+      from: params.from,
+      to: params.to,
+      baseCurrency: params.baseCurrency,
+      runId: "",
+      ledgerHash: "",
+      gitSha: process.env.GIT_SHA ?? "desconocido",
+      seal: { sello: "REQUIERE REVISIÓN", motivos: [`los invariantes no se han podido evaluar: ${motivo}`] },
+      checks: [
+        {
+          id: "VALIDACION",
+          status: "FAIL",
+          evidencia: `el bloque de invariantes ha fallado: ${motivo}`,
+        },
+      ],
+    }
+  }
 
   return {
     from: params.from,

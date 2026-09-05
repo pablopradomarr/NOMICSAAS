@@ -127,6 +127,31 @@ describe("I-E4-1 … I-E4-12 sobre el fixture completo", () => {
     expect(result.evidencia).toContain("SIN_ASIGNAR")
   })
 
+  it("I-E4-1: línea con CECO y `analyticType` NULL sin default de cuenta es WARN/FAIL, no excepción (E4-UI-1.b)", () => {
+    const rota: AnalyticLine[] = [
+      { ...LINES.find((l) => l.costCenterId)!, analyticType: null },
+    ]
+    const sinPlan = { ...CONFIG, analyticTypeByAccount: new Map<string, null>() }
+    expect(() => checkIE41({ ...INPUT, lines: rota, config: sinPlan })).not.toThrow()
+    const requerido = checkIE41({ ...INPUT, lines: rota, config: sinPlan })
+    expect(requerido.status).toBe("FAIL")
+    expect(requerido.evidencia).toContain("NO_ANALITICO")
+    expect(checkIE41({ ...INPUT, lines: rota, config: { ...sinPlan, analyticsRequired: false } }).status).toBe("WARN")
+    // Y con el plan real la línea se resuelve por el default de la cuenta (R-A4).
+    expect(checkIE41({ ...INPUT, lines: rota }).status).toBe("PASS")
+  })
+
+  it("los trece checks no lanzan nunca: una línea con el tipo sin poblar da FAIL/WARN", () => {
+    const rota: AnalyticLine[] = [{ ...LINES.find((l) => l.costCenterId)!, analyticType: null }]
+    const sinPlan = { ...CONFIG, analyticTypeByAccount: new Map<string, null>() }
+    let checks: ReturnType<typeof runAnalyticInvariants> = []
+    expect(() => {
+      checks = runAnalyticInvariants({ ...INPUT, lines: rota, config: sinPlan })
+    }).not.toThrow()
+    expect(checks.find((c) => c.id === "I4")?.status).toBe("PASS")
+    expect(checks.find((c) => c.id === "I-E4-1")?.status).toBe("FAIL")
+  })
+
   it("I-E4-2: proyecto y CECO a la vez es FAIL", () => {
     const both: AnalyticLine[] = [{ ...LINES.find((l) => l.projectId)!, costCenterId: "cc-CC-GA" }]
     expect(checkIE42({ ...INPUT, lines: both }).status).toBe("FAIL")

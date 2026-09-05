@@ -21,6 +21,7 @@ import {
   marginBps,
   pnlContableCents,
   resolveColumn,
+  resolveDestination,
   resolveEffectiveAnalyticType,
   resolveLevel,
 } from "@/lib/analytics/margins"
@@ -239,6 +240,83 @@ describe("aporte, PyG contable y márgenes", () => {
 
   it("classifyLine devuelve celda e importe sin sumar nada", () => {
     expect(classifyLine(lineOf(), configOf())).toEqual({ level: "INGRESOS", column: "PROJ:P-01", amountCents: 100000 })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E4-UI-1.b — el motor no lanza por una línea con el tipo sin poblar
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("resolveDestination: tipo NULL o desconocido (E4-UI-1.b)", () => {
+  const config = configOf()
+
+  it("línea 6/7 con CECO y `analyticType` NULL: default de la cuenta, sin excepción", () => {
+    const line = lineOf({ accountCode: "621", analyticType: null, projectId: null, businessLineId: null, costCenterId: "cc-ops", debitCents: 50000, creditCents: 0 })
+    expect(() => resolveLevel(line, config)).not.toThrow()
+    const dest = resolveDestination(line, config)
+    expect(dest.analyticType).toBe("INDIRECTO_CECO")
+    expect(dest.level).toBe("MC3")
+    expect(dest.column).toBe("CECO:OPERACIONES_INDIRECTAS")
+    expect(dest.fallback).toBeNull()
+  })
+
+  it("R-A4: cuenta de tipo directo con CECO y `analyticType` NULL cae en el CECO", () => {
+    const line = lineOf({ accountCode: "705", analyticType: null, projectId: null, businessLineId: null, costCenterId: "cc-ga" })
+    const dest = resolveDestination(line, config)
+    expect(dest.analyticType).toBe("INDIRECTO_CECO")
+    expect(dest.level).toBe("EBITDA")
+    expect(dest.column).toBe("CECO:G_A")
+  })
+
+  it("línea con proyecto y `analyticType` NULL: default de la cuenta (R-A2)", () => {
+    const line = lineOf({ accountCode: "705", analyticType: null })
+    const dest = resolveDestination(line, config)
+    expect(dest.analyticType).toBe("INGRESO_DIRECTO")
+    expect(dest.level).toBe("INGRESOS")
+    expect(dest.column).toBe("PROJ:P-01")
+    expect(dest.fallback).toBeNull()
+  })
+
+  it("un `AnalyticType` desconocido se rehace por el default de la cuenta, no lanza", () => {
+    const line = lineOf({ accountCode: "621", analyticType: "BASURA" as AnalyticType, projectId: null, businessLineId: null, costCenterId: "cc-ops" })
+    expect(() => resolveColumn(line, config)).not.toThrow()
+    expect(resolveDestination(line, config).analyticType).toBe("INDIRECTO_CECO")
+    expect(resolveDestination(line, config).column).toBe("CECO:OPERACIONES_INDIRECTAS")
+  })
+
+  it("sin tipo y sin default de cuenta: columna NO_ANALITICO con motivo, nunca excepción", () => {
+    const sinPlan = configOf({ analyticTypeByAccount: new Map() })
+    const line = lineOf({ accountCode: "621", analyticType: null, projectId: null, businessLineId: null, costCenterId: "cc-ops", debitCents: 50000, creditCents: 0 })
+    const dest = resolveDestination(line, sinPlan)
+    expect(dest.analyticType).toBeNull()
+    expect(dest.column).toBe("NO_ANALITICO")
+    expect(dest.level).toBe("EBITDA")
+    expect(dest.fallback?.code).toBe("TYPE_UNKNOWN")
+  })
+
+  it("la matriz se construye igual: I4 en PASS e I-E4-1 en FAIL/WARN, no una excepción", () => {
+    const sinPlan = configOf({ analyticTypeByAccount: new Map() })
+    const lines = [lineOf(), lineOf({ lineNo: 2, accountCode: "621", analyticType: null, projectId: null, businessLineId: null, costCenterId: "cc-ops", debitCents: 50000, creditCents: 0 })]
+    const pnl = buildAnalyticPnl(lines, sinPlan, PERIOD, PROV)
+    expect(pnl.levelTotalsCents.RESULTADO).toBe(pnlContableCents(lines))
+    expect(pnl.checks.find((c) => c.id === "I4")?.status).toBe("PASS")
+    expect(pnl.checks.find((c) => c.id === "I-E4-1")?.status).toBe("FAIL")
+    expect(pnl.unresolved).toHaveLength(1)
+    expect(pnl.unresolved[0].code).toBe("TYPE_UNKNOWN")
+    expect(pnl.matrixCents.EBITDA.NO_ANALITICO).toBe(-50000)
+
+    const noRequerido = buildAnalyticPnl(lines, configOf({ analyticTypeByAccount: new Map(), analyticsRequired: false }), PERIOD, PROV)
+    expect(noRequerido.checks.find((c) => c.id === "I-E4-1")?.status).toBe("WARN")
+  })
+
+  it("CECO o proyecto inexistente: NO_ANALITICO con motivo, sin tumbar la matriz", () => {
+    const cecoFantasma = lineOf({ accountCode: "621", analyticType: "INDIRECTO_CECO", projectId: null, businessLineId: null, costCenterId: "cc-zzz", debitCents: 1000, creditCents: 0 })
+    expect(resolveDestination(cecoFantasma, config).column).toBe("NO_ANALITICO")
+    expect(resolveDestination(cecoFantasma, config).fallback?.code).toBe("CECO_UNKNOWN")
+
+    const proyectoFantasma = lineOf({ projectId: "p-zzz" })
+    expect(resolveDestination(proyectoFantasma, config).column).toBe("NO_ANALITICO")
+    expect(resolveDestination(proyectoFantasma, config).fallback?.code).toBe("PROJECT_UNKNOWN")
   })
 })
 

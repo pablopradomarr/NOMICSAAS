@@ -95,6 +95,43 @@ export async function writeAuditLog(tx: AuditWriter, input: AuditLogInput): Prom
   })
 }
 
+/** Longitud de `audit_logs.entity_id` (VARCHAR(64) en el esquema). */
+export const AUDIT_ENTITY_ID_MAX = 64
+
+/**
+ * E4-UI-1.c — Escritura de VARIAS filas de auditoría en un solo `createMany`.
+ *
+ * Existe porque una mutación masiva (la reclasificación analítica de N líneas)
+ * no cabe en una sola fila: `entity_id` es `VARCHAR(64)`, así que concatenar los
+ * ids de las líneas revienta con «value too long» a partir de la segunda. El
+ * patrón correcto es **una fila por entidad tocada** (más una de resumen), no
+ * una fila con una lista dentro.
+ */
+export async function writeAuditLogs(tx: AuditWriter, inputs: readonly AuditLogInput[]): Promise<number> {
+  if (inputs.length === 0) return 0
+  for (const input of inputs) {
+    if (input.entityId.length > AUDIT_ENTITY_ID_MAX) {
+      throw new Error(
+        `AuditLog.entityId de ${input.entityId.length} caracteres para ${input.entity}: el máximo es ${AUDIT_ENTITY_ID_MAX}. ` +
+          "Escribe una fila por entidad, no una lista concatenada."
+      )
+    }
+  }
+  const result = await tx.auditLog.createMany({
+    data: inputs.map((input) => ({
+      organizationId: tx.$organizationId,
+      entity: input.entity,
+      entityId: input.entityId,
+      action: input.action,
+      before: toAuditJson(input.before),
+      after: toAuditJson(input.after),
+      reason: input.reason ?? null,
+      userId: input.userId ?? null,
+    })),
+  })
+  return result.count
+}
+
 /**
  * E2 · T11 — Escritura de un asiento de auditoría SUELTO, en su propia
  * transacción de tenant.
