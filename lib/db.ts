@@ -113,6 +113,11 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   // E6 — informes financieros (docs/design/E6-informes.md §2.2)
   "ReportRun",
   "ManualReviewFlag",
+  // E5 — liquidación de CECOs (docs/design/E5-liquidacion.md §2.2)
+  "AllocationRule",
+  "AllocationRuleTarget",
+  "AllocationRun",
+  "AllocationLine",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */

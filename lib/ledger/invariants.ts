@@ -8,7 +8,12 @@
  * Módulo PURO: recibe los datos ya leídos y una `refDate` por parámetro.
  */
 
-import { type AnalyticsInvariantInput, runAnalyticInvariants } from "@/lib/analytics/invariants"
+import {
+  checkAllocationInvariants,
+  runAnalyticInvariants,
+  type AllocationInvariantInput,
+  type AnalyticsInvariantInput,
+} from "@/lib/analytics/invariants"
 import { type ReportsInvariantInput, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HashableLine } from "@/lib/ledger/hash"
@@ -53,6 +58,14 @@ export type InvariantInput = {
    * opcional a propósito: E5/E6 tampoco lo aportan siempre).
    */
   analytics?: Omit<AnalyticsInvariantInput, "entries">
+  /**
+   * E5: bloque de liquidación. Cuando viene, `runInvariants` añade **I5** y los
+   * doce `I-E5-*`. Sin él se OMITEN sin fallar: una organización que no liquida
+   * no tiene por qué ver un FAIL por no tener imputaciones.
+   */
+  allocations?: Omit<AllocationInvariantInput, "entries" | "lines" | "config" | "period"> & {
+    allocationDeltaCents?: Record<string, Record<string, number>>
+  }
   /**
    * E6: bloque de informes (I2, I3, I6 y los `I-E6-*`). Opcional por el mismo
    * motivo que el analítico: quien pide el diario no necesita construir el
@@ -468,6 +481,11 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
       checkIE37(input.entries),
       // E4: I4 + I-E4-1…12, solo si el llamante aporta el bloque analítico.
       ...(input.analytics ? runAnalyticInvariants({ ...input.analytics, entries: input.entries }) : []),
+      // E5: I5 + I-E5-1…12, sólo con el bloque de liquidación Y el analítico
+      // (los invariantes de imputación se juzgan sobre la MISMA matriz).
+      ...(input.allocations && input.analytics
+        ? checkAllocationInvariants({ ...input.analytics, ...input.allocations })
+        : []),
       // E6: I2, I3, I6 y los I-E6-*, sólo si el llamante aporta el bloque.
       ...(input.reports ? runReportInvariants(input.reports) : []),
     ],
@@ -589,8 +607,24 @@ export {
   checkIE411,
   checkIE412,
   runAnalyticInvariants,
+  // E5 — liquidación de CECOs.
+  checkAllocationInvariants,
+  checkI5,
+  checkIE51,
+  checkIE52,
+  checkIE53,
+  checkIE54,
+  checkIE55,
+  checkIE56,
+  checkIE57,
+  checkIE58,
+  checkIE59,
+  checkIE510,
+  checkIE511,
+  checkIE512,
 } from "@/lib/analytics/invariants"
 export type { AnalyticsInvariantInput } from "@/lib/analytics/invariants"
+export type { AllocationInvariantInput } from "@/lib/analytics/invariants"
 
 /** E6 — invariantes de los estados financieros, desde el mismo módulo. */
 export { checkI2, checkI3, checkIE613, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"

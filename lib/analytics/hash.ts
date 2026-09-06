@@ -85,17 +85,43 @@ export function marginConfigHash(
 }
 
 /**
- * `(entryId, lineNo, projectId, costCenterId, businessLineId, analyticType)`
- * **+** `marginConfigHash` **+** `allocationRunId` vigente (E5).
+ * E5 · T6 (O-E5-7) — sello del CONJUNTO de runs vigentes contenidos en el
+ * periodo del informe.
+ *
+ * `sha256(join("\n", sorted(ids)))`, y `sha256("")` con el conjunto vacío. En
+ * singular (`allocationRunId`, lo que dejó escrito E4-D2) la caché serviría un
+ * informe anual apoyado en 11 runs como si tuviera los 12: el hash del conjunto
+ * ordenado es la corrección mínima.
+ */
+export function allocationRunSetHash(runIds: readonly string[]): string {
+  return sha256([...runIds].sort().join("\n"))
+}
+
+/** El sello del conjunto VACÍO. La PyG analítica «sin imputaciones» (E4). */
+export const EMPTY_RUN_SET_HASH: string = allocationRunSetHash([])
+
+/**
+ * **Lo que sella un `AllocationRun`**: sólo dimensiones y configuración.
+ *
+ * Se calcula con `allocationRunSetHash = ∅` a propósito: un run no puede
+ * sellarse con un hash que lo incluya a sí mismo (§3.5, no circularidad). Por
+ * eso son DOS funciones y no un parámetro opcional que se pueda olvidar.
+ */
+export function dimensionsHash(lines: readonly AnalyticHashableLine[], configHash: string): string {
+  return sha256([canonicalAnalyticsForm(lines), `marginConfigHash\t${configHash}`].join("\n"))
+}
+
+/**
+ * **Lo que sella un informe**: `(entryId, lineNo, projectId, costCenterId,
+ * businessLineId, analyticType)` ‖ `marginConfigHash` ‖ `allocationRunSetHash`.
+ *
+ * El tercer componente es OBLIGATORIO: con imputaciones y sin imputaciones son
+ * dos informes distintos y la caché no debe servir el uno por el otro.
  */
 export function analyticsHash(
   lines: readonly AnalyticHashableLine[],
   configHash: string,
-  allocationRunId?: string | null
+  runSetHash: string
 ): string {
-  return sha256(
-    [canonicalAnalyticsForm(lines), `marginConfigHash\t${configHash}`, `allocationRunId\t${nullable(allocationRunId)}`].join(
-      "\n"
-    )
-  )
+  return sha256([dimensionsHash(lines, configHash), `allocationRunSetHash\t${nullable(runSetHash)}`].join("\n"))
 }

@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest"
 
-import { analyticsHash, marginConfigHash } from "@/lib/analytics/hash"
+import { EMPTY_RUN_SET_HASH, analyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import {
   checkI4,
   checkIE41,
@@ -247,15 +247,15 @@ describe("hashes analíticos (E4-D2)", () => {
   })
 
   it("`analyticsHash` cambia al reclasificar una línea y no cambia sin tocar nada", () => {
-    const base = analyticsHash(hashable, marginConfigHash(CONFIG))
-    expect(analyticsHash(hashable, marginConfigHash(CONFIG))).toBe(base)
+    const base = analyticsHash(hashable, marginConfigHash(CONFIG), EMPTY_RUN_SET_HASH)
+    expect(analyticsHash(hashable, marginConfigHash(CONFIG), EMPTY_RUN_SET_HASH)).toBe(base)
     const moved = hashable.map((l, i) => (i === 0 ? { ...l, projectId: "otro" } : l))
-    expect(analyticsHash(moved, marginConfigHash(CONFIG))).not.toBe(base)
+    expect(analyticsHash(moved, marginConfigHash(CONFIG), EMPTY_RUN_SET_HASH)).not.toBe(base)
   })
 
-  it("`analyticsHash` cambia con la configuración y con el `allocationRunId`", () => {
-    const base = analyticsHash(hashable, marginConfigHash(CONFIG))
-    expect(analyticsHash(hashable, marginConfigHash({ ...CONFIG, nonAnalyticLevel: "EBIT" }))).not.toBe(base)
+  it("`analyticsHash` cambia con la configuración y con el `allocationRunSetHash` (O-E5-7)", () => {
+    const base = analyticsHash(hashable, marginConfigHash(CONFIG), EMPTY_RUN_SET_HASH)
+    expect(analyticsHash(hashable, marginConfigHash({ ...CONFIG, nonAnalyticLevel: "EBIT" }), EMPTY_RUN_SET_HASH)).not.toBe(base)
     expect(analyticsHash(hashable, marginConfigHash(CONFIG), "run-1")).not.toBe(base)
   })
 })

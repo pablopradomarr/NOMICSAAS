@@ -89,6 +89,23 @@ export type LedgerModelErrorCode =
   | "DB_REJECTED"
   | "PERMISSION_DENIED"
   | "POSTED_BY_REQUIRED"
+  // E5 — liquidación de CECOs (docs/design/E5-liquidacion.md §3.1 y §4.1).
+  | "ALLOCATION_CYCLE"
+  | "ALLOCATION_PRIORITY_NOT_TOPOLOGICAL"
+  | "CASCADE_PERIOD_MISMATCH"
+  | "ALLOCATION_TARGET_NOT_ALLOCATABLE"
+  | "SOURCE_SHARE_NOT_100"
+  | "FIXED_PERCENT_NOT_100"
+  | "MANUAL_AMOUNT_MISMATCH"
+  | "DRIVER_UNAVAILABLE"
+  | "PERIOD_CROSSES_FISCAL_YEAR"
+  | "SOURCE_NOT_ALLOCATABLE"
+  | "ALLOCATION_RULE_NOT_FOUND"
+  | "ALLOCATION_RUN_NOT_FOUND"
+  | "ALLOCATION_RULE_IN_USE"
+  | "ALLOCATION_RUN_NOT_SEALED"
+  | "LIQUIDACION_DESFASADA"
+  | "REASON_TOO_SHORT"
 
 export type LedgerModelError = {
   code: LedgerModelErrorCode
@@ -1512,6 +1529,32 @@ export async function runLedgerInvariants(
       const analyticsConfig = await getAnalyticsConfig(tx, { periodEnd: analyticPeriod.to })
       const analyticLines = await getAnalyticLines(tx, analyticPeriod)
 
+      // E5 · T8: las imputaciones VIGENTES del mismo periodo y las reglas con
+      // las que se emitieron. En SERIE, como todo lo demás dentro de la
+      // transacción (una sola conexión).
+      //
+      // Importación DINÁMICA a propósito: `models/allocations.ts` importa de
+      // este módulo (`LedgerAbort`, `modelErr`, `computeLedgerHash`), y una
+      // importación estática cerraría un ciclo cuyo orden de inicialización
+      // depende de quién cargue primero. Con el `import()` dentro de la función
+      // el ciclo no existe en tiempo de carga.
+      const { getAllocationRuleSpecs, getAppliedAllocations, listAllocationRuns } = await import("@/models/allocations")
+      const applied = await getAppliedAllocations(tx, { from: analyticPeriod.from, to: analyticPeriod.to })
+      const allocationRules =
+        applied.lines.length === 0 ? [] : await getAllocationRuleSpecs(tx, { periodEnd: analyticPeriod.to })
+      const allocationRuns =
+        applied.runIds.length === 0
+          ? []
+          : (await listAllocationRuns(tx, {})).map((r) => ({
+              id: r.id,
+              status: r.status as string,
+              totalAllocatedCents: r.totalAllocatedCents,
+            }))
+      const allocationContext =
+        applied.lines.length === 0
+          ? null
+          : { allocations: applied.lines, rules: allocationRules, runs: allocationRuns }
+
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),
         gitSha,
@@ -1533,6 +1576,10 @@ export async function runLedgerInvariants(
           ? { requiredTemplateCoverage: opts.requiredTemplateCoverage }
           : {}),
         analytics: { lines: analyticLines, config: analyticsConfig, period: analyticPeriod },
+        // E5 · T8: I5 y los doce `I-E5-*`. Se OMITEN sin fallar cuando la
+        // organización no ha liquidado nada: no tener imputaciones no es un
+        // descuadre, y devolver FAIL por ello sería ruido permanente.
+        ...(allocationContext ? { allocations: allocationContext } : {}),
       }
       validacion = runInvariantsPure(input, opts.refDate)
 

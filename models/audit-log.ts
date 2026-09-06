@@ -31,6 +31,9 @@ export type AuditEntity =
   // E6 · T14 — informes financieros (docs/design/E6-informes.md §4).
   | "ReportRun"
   | "ManualReviewFlag"
+  // E5 · T10 — liquidación de CECOs (docs/design/E5-liquidacion.md §7).
+  | "AllocationRule"
+  | "AllocationRun"
 
 export type AuditAction =
   | "create"
@@ -59,6 +62,10 @@ export type AuditAction =
   | "FORCE_REVIEW"
   | "CLEAR_REVIEW"
   | "SET_THRESHOLDS"
+  // E5 · T10 — política de liquidación y ciclo del run.
+  | "supersede"
+  | "seal"
+  | "reverse"
 
 export type AuditLogInput = {
   entity: AuditEntity

@@ -120,6 +120,12 @@ model Organization {
   reportRuns        ReportRun[]
   manualReviewFlags ManualReviewFlag[]
 
+  // E5 — liquidación de CECOs
+  allocationRules       AllocationRule[]
+  allocationRuleTargets AllocationRuleTarget[]
+  allocationRuns        AllocationRun[]
+  allocationLines       AllocationLine[]
+
   @@map("organizations")
 }
 
@@ -787,10 +793,13 @@ model FiscalYear {
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
 
-  periodLocks PeriodLock[]
-  entries     JournalEntry[]
+  periodLocks    PeriodLock[]
+  entries        JournalEntry[]
+  /// E5 · O-E5-6: un run pertenece a UN ejercicio.
+  allocationRuns AllocationRun[]
 
   @@unique([organizationId, code])
+  @@unique([organizationId, id])
   @@index([organizationId, startDate, endDate])
   @@map("fiscal_years")
 }
@@ -1039,6 +1048,12 @@ model CostCenter {
 
   lines JournalLine[]
 
+  // E5 — el CECO es fuente de reglas y de líneas de liquidación (nunca destino
+  // por relación: el destino viaja por `target_cost_center_id`, sin relación
+  // inversa para no obligar a dos back-refs sobre la misma tabla).
+  allocationRulesAsSource AllocationRule[] @relation("AllocationRuleSource")
+  allocationLinesAsSource AllocationLine[] @relation("AllocationLineSource")
+
   @@unique([organizationId, code])
   @@unique([organizationId, id])
   @@index([organizationId, isActive, sortOrder])
@@ -1136,14 +1151,18 @@ model ReportRun {
   /// sha256 de la forma canónica de `params` (§3.6). NOT NULL: es clave de caché.
   paramsHash String @map("params_hash") @db.Char(64)
 
-  ledgerHash       String  @map("ledger_hash") @db.Char(64)
-  analyticsHash    String? @map("analytics_hash") @db.Char(64)
-  marginConfigHash String? @map("margin_config_hash") @db.Char(64)
-  allocationRunId  String? @map("allocation_run_id") @db.Uuid
+  ledgerHash           String  @map("ledger_hash") @db.Char(64)
+  analyticsHash        String? @map("analytics_hash") @db.Char(64)
+  marginConfigHash     String? @map("margin_config_hash") @db.Char(64)
+  /// **O-E5-7** — sustituye a `allocationRunId` (singular). Un informe anual con
+  /// reglas mensuales se apoya en 12 runs, no en uno: el hash del CONJUNTO
+  /// ordenado de runs vigentes contenidos en el periodo es la única clave de
+  /// caché que distingue «informe con 11 runs» de «informe con 12».
+  allocationRunSetHash String? @map("allocation_run_set_hash") @db.Char(64)
   /// Los tres anteriores en forma canónica, o "∅". Existe SÓLO para indexar la
   /// clave: en PostgreSQL NULL <> NULL y un `@@unique` con columnas nullables no
   /// impide duplicados (lección O-A6 de E4). Lo escribe un trigger.
-  analyticsKey     String  @default("∅") @map("analytics_key") @db.VarChar(210)
+  analyticsKey         String  @default("∅") @map("analytics_key") @db.VarChar(210)
 
   gitSha String @map("git_sha") @db.VarChar(64)
 
@@ -1191,4 +1210,247 @@ model ManualReviewFlag {
 
   @@index([organizationId, periodStart, periodEnd])
   @@map("manual_review_flags")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E5 — Liquidación de CECOs (docs/design/E5-liquidacion.md, ADR-0004 + ADR-0013)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum TargetKind {
+  PROJECTS
+  BUSINESS_LINES
+  COST_CENTERS
+  /// Contrato; DESACONSEJADO (§2.4 del experto). Con `sourceShareBps` toda
+  /// mezcla se expresa como N reglas de un solo `targetKind` y un solo driver.
+  MIXED
+
+  @@map("target_kind")
+}
+
+enum Driver {
+  FIXED_PERCENT
+  REVENUE_SHARE
+  DIRECT_COST_SHARE
+  /// E10. Hasta entonces: `DRIVER_UNAVAILABLE` al guardar (CHECK en BD).
+  HOURS
+  /// E10. Ídem.
+  HEADCOUNT
+  EQUAL
+  MANUAL
+
+  @@map("allocation_driver")
+}
+
+enum AllocPeriod {
+  MONTH
+  QUARTER
+  YEAR
+
+  @@map("alloc_period")
+}
+
+/// O-E5-4. El tratamiento de la base cero es CONFIGURACIÓN de la regla, visible
+/// en su ficha, nunca una decisión enterrada en el código.
+enum ZeroBaseFallback {
+  SKIP_WARN
+  EQUAL
+  YTD
+  PRIOR_PERIOD
+
+  @@map("zero_base_fallback")
+}
+
+/// O-E5-6. **`STALE` NO es un estado almacenado**: se DERIVA comparando los tres
+/// sellos del run con los del periodo (§3.5). `DRAFT` es contrato y E5 nunca lo
+/// persiste: la simulación es un dry-run en memoria (`previewAllocation`).
+enum AllocationRunStatus {
+  DRAFT
+  SEALED
+  SUPERSEDED
+  REVERSED
+
+  @@map("allocation_run_status")
+}
+
+/// Regla de liquidación, VERSIONADA. Nunca se edita una regla con líneas
+/// emitidas: se cierra con `validTo` y se crea otra.
+model AllocationRule {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// O-E5-10: `code` es el DESEMPATE del orden de ejecución (P7) y el
+  /// identificador que el usuario ve. Único por organización y NOT NULL.
+  code String @db.VarChar(24)
+  name String @db.VarChar(120)
+
+  sourceCostCenterId String     @map("source_cost_center_id") @db.Uuid
+  sourceCostCenter   CostCenter @relation("AllocationRuleSource", fields: [organizationId, sourceCostCenterId], references: [organizationId, id])
+
+  targetKind TargetKind  @map("target_kind")
+  driver     Driver
+  period     AllocPeriod
+  /// Orden de ejecución. **Debe ser un orden topológico del grafo de cascada**
+  /// (I-E5-8), no una preferencia. `(priority, code)` es un orden TOTAL.
+  priority   Int
+
+  /// **O-E5-2 / E5-D2** — fracción del saldo del CECO fuente que ESTA regla
+  /// liquida. Σ = 10000 por `(sourceCostCenterId, period)` vigente (I-E5-3).
+  sourceShareBps Int @default(10000) @map("source_share_bps")
+
+  /// O-E5-4. Se PERSISTE también en cada línea el fallback realmente aplicado.
+  zeroBaseFallback ZeroBaseFallback @default(SKIP_WARN) @map("zero_base_fallback")
+
+  /// `{ projectStatus?; businessLineCodes?; costCenterCodes?; excludeProjectCodes? }`
+  targetFilter Json? @map("target_filter")
+
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+  isActive  Boolean   @default(true) @map("is_active")
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  closedById  String?  @map("closed_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  targets AllocationRuleTarget[]
+  lines   AllocationLine[]
+
+  @@unique([organizationId, code, validFrom], map: "allocation_rules_org_code_valid_from_key")
+  @@unique([organizationId, id])
+  @@index([organizationId, sourceCostCenterId, period, priority])
+  @@index([organizationId, isActive, validFrom, validTo])
+  @@map("allocation_rules")
+}
+
+/// Destino explícito. Sólo lo usan `FIXED_PERCENT` (percentBps, Σ = 10000) y
+/// `MANUAL` (amountCents). Los drivers calculados no tienen targets.
+model AllocationRuleTarget {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ruleId         String         @map("rule_id") @db.Uuid
+  rule           AllocationRule @relation(fields: [organizationId, ruleId], references: [organizationId, id], onDelete: Cascade)
+
+  /// Exactamente UNO de los tres, por CHECK. FK compuestas por tenant (O-A1).
+  projectId      String? @map("project_id") @db.Uuid
+  businessLineId String? @map("business_line_id") @db.Uuid
+  costCenterId   String? @map("cost_center_id") @db.Uuid
+
+  /// **O-E5-3** — puntos básicos, NO milésimas. Σ = 10000 (I-E5-2). Un target a
+  /// 0 bps es admisible: documenta una exclusión deliberada.
+  percentBps  Int? @map("percent_bps")
+  /// **O-E5-5** — importes de `MANUAL`. Excluyente con `percentBps` (CHECK).
+  amountCents Int? @map("amount_cents")
+
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([ruleId, projectId, businessLineId, costCenterId], map: "allocation_rule_targets_unique_dest")
+  @@index([organizationId, ruleId, sortOrder])
+  @@map("allocation_rule_targets")
+}
+
+/// Liquidación sellada de UN periodo. **Inmutable y append-only**: sin DELETE y
+/// con `UPDATE` acotado por GRANT de columna a las cinco de sustitución/reversión.
+model AllocationRun {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// O-E5-6: un run pertenece a UN ejercicio. Un periodo a caballo está prohibido.
+  fiscalYearId String      @map("fiscal_year_id") @db.Uuid
+  fiscalYear   FiscalYear  @relation(fields: [organizationId, fiscalYearId], references: [organizationId, id])
+  periodKind   AllocPeriod @map("period_kind")
+  periodStart  DateTime    @map("period_start") @db.Date
+  periodEnd    DateTime    @map("period_end") @db.Date
+
+  status AllocationRunStatus @default(SEALED)
+
+  /// Los TRES sellos + el del código. `analyticsHash` aquí es el de DIMENSIONES
+  /// (§3.5): se calcula con `allocationRunSetHash = ∅` para no ser circular.
+  ledgerHash    String @map("ledger_hash") @db.Char(64)
+  analyticsHash String @map("analytics_hash") @db.Char(64)
+  rulesHash     String @map("rules_hash") @db.Char(64)
+  gitSha        String @map("git_sha") @db.VarChar(64)
+
+  /// Resumen denormalizado. `lineCount = 0` es legítimo: un run vacío es la
+  /// PRUEBA de que el periodo se liquidó y no había nada que repartir.
+  lineCount           Int  @default(0) @map("line_count")
+  totalAllocatedCents Int  @default(0) @map("total_allocated_cents")
+  /// `[{code, rule, period, targets?, detail}]` — W-E5-ZERO-BASE, W-E5-NEG-BASE,
+  /// W-E5-ARCHIVED-TARGET. Es la memoria de por qué el reparto salió así.
+  warnings            Json @default("[]")
+
+  runById String?  @map("run_by_id") @db.Uuid
+  runAt   DateTime @default(now()) @map("run_at")
+
+  supersededById String?         @map("superseded_by_id") @db.Uuid
+  supersededBy   AllocationRun?  @relation("AllocationRunSupersedes", fields: [supersededById], references: [id])
+  supersedes     AllocationRun[] @relation("AllocationRunSupersedes")
+  reversedAt     DateTime?       @map("reversed_at")
+  reversedById   String?         @map("reversed_by_id") @db.Uuid
+  reversalReason String?         @map("reversal_reason") @db.VarChar(1000)
+
+  lines AllocationLine[]
+
+  /// UN solo run vigente por periodo: índice único PARCIAL
+  /// `allocation_runs_one_sealed_per_period` (`WHERE status = 'SEALED'`), en la
+  /// migración: un `@@unique` con `status` dentro permitiría dos SEALED.
+  @@unique([organizationId, id])
+  @@index([organizationId, periodStart, periodEnd, status])
+  @@index([organizationId, fiscalYearId, periodKind, periodStart])
+  @@map("allocation_runs")
+}
+
+/// Una celda de reparto. Append-only puro: sin UPDATE y sin DELETE.
+model AllocationLine {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  runId          String         @map("run_id") @db.Uuid
+  run            AllocationRun  @relation(fields: [organizationId, runId], references: [organizationId, id], onDelete: Cascade)
+  ruleId         String         @map("rule_id") @db.Uuid
+  rule           AllocationRule @relation(fields: [organizationId, ruleId], references: [organizationId, id])
+
+  sourceCostCenterId String     @map("source_cost_center_id") @db.Uuid
+  sourceCostCenter   CostCenter @relation("AllocationLineSource", fields: [organizationId, sourceCostCenterId], references: [organizationId, id])
+
+  /// Exactamente UNO de los tres (CHECK). FK compuestas por tenant.
+  targetProjectId      String? @map("target_project_id") @db.Uuid
+  targetBusinessLineId String? @map("target_business_line_id") @db.Uuid
+  targetCostCenterId   String? @map("target_cost_center_id") @db.Uuid
+
+  /// **O-E5-1 / E5-D1 — el nivel VIAJA CON EL IMPORTE.** Es el
+  /// `CostCenter.marginLevel` del CECO **donde nació el gasto**, no el del
+  /// receptor ni el del emisor inmediato. CHECK ∈ {MC3, EBITDA}. Sin esto, una
+  /// cascada EBITDA → CECO MC3 movería importe entre niveles y **I4.a fallaría**.
+  marginLevel MarginLevel @map("margin_level")
+
+  /// Convención de COSTE: positivo = coste que sale del CECO fuente y se carga
+  /// al receptor. Hamilton siempre trabaja sobre |importe| y el signo se
+  /// restituye al final (§3.3).
+  amountCents Int @map("amount_cents")
+
+  /// Peso del receptor y total de pesos: la celda es auditable SIN recomputar el
+  /// driver, que es lo que exige el drill-down.
+  driverBase      Int @map("driver_base")
+  driverBaseTotal Int @map("driver_base_total")
+  /// **O-E5-3** — bps, no milésimas. Informativo (el importe manda).
+  driverShareBps  Int @map("driver_share_bps")
+
+  /// O-E5-4: el fallback REALMENTE aplicado a esta línea, no el declarado.
+  fallbackApplied   ZeroBaseFallback? @map("fallback_applied")
+  /// §1.3: `"ACTIVITY_IN_PERIOD"` cuando el receptor entró pese a estar CLOSED
+  /// al `periodEnd` porque tuvo base en el periodo. `null` en el caso normal.
+  eligibilityReason String?           @map("eligibility_reason") @db.VarChar(40)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, runId])
+  @@index([organizationId, sourceCostCenterId, marginLevel])
+  @@index([organizationId, targetProjectId])
+  @@index([organizationId, targetCostCenterId])
+  @@index([organizationId, targetBusinessLineId])
+  @@map("allocation_lines")
 }

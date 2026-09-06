@@ -8,7 +8,7 @@
  * reclasificación, que es exactamente lo que `analyticsHash` existe para evitar.
  */
 
-import { analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
+import { EMPTY_RUN_SET_HASH, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { runAnalyticInvariants } from "@/lib/analytics/invariants"
 import { buildAnalyticPnl, buildMatrixView, cellQuery, type AnalyticPnl, type MatrixView } from "@/lib/analytics/margins"
 import type { AnalyticLine, AnalyticPeriod, AnalyticsConfig, ColumnKey, LocalDate, MarginLevel } from "@/lib/analytics/types"
@@ -17,6 +17,8 @@ import type { ProvenanceContext } from "@/lib/ledger/provenance"
 import type { TenantTransactionClient } from "@/lib/db"
 import { computeLedgerHash } from "@/models/ledger"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
+import { getAppliedAllocations } from "@/models/allocations"
+import type { AppliedAllocation } from "@/lib/analytics/allocate"
 import { cache } from "react"
 
 export type AnalyticPnlReport = {
@@ -25,6 +27,12 @@ export type AnalyticPnlReport = {
   ledgerHash: string
   analyticsHash: string
   marginConfigHash: string
+  /** E5 · O-E5-7 — el CUARTO sello. `sha256("")` sin imputaciones. */
+  allocationRunSetHash: string
+  /** Los `AllocationRun` vigentes que la matriz ha sumado. */
+  allocationRunIds: string[]
+  /** `true` con el toggle «con imputaciones» activado. */
+  withAllocations: boolean
   /** I4 + los doce `I-E4-*` sobre el mismo conjunto de líneas. */
   checks: CheckResult[]
 }
@@ -35,6 +43,13 @@ export type AnalyticPnlRequest = {
   fiscalYearId?: string
   /** Contexto de provenance del informe: `run_id`, git-sha y moneda base. */
   provenance: Omit<ProvenanceContext, "ledgerHash" | "module">
+  /**
+   * E5 — con `true` la matriz suma las imputaciones vigentes del periodo y
+   * compone el `analyticsHash` con el `allocationRunSetHash` real; con `false`
+   * (default) reproduce EXACTAMENTE el comportamiento de E4. Son dos informes
+   * distintos a propósito: la caché no debe servir el uno por el otro.
+   */
+  withAllocations?: boolean
 }
 
 /**
@@ -71,6 +86,7 @@ export function analyticPnlCacheKey(input: {
   ledgerHash: string
   analyticsHash: string
   marginConfigHash: string
+  allocationRunSetHash: string
   config: Pick<AnalyticsConfig, "businessLines" | "projects" | "costCenters">
 }): string {
   const dimensions = [
@@ -86,6 +102,7 @@ export function analyticPnlCacheKey(input: {
     input.ledgerHash,
     input.analyticsHash,
     input.marginConfigHash,
+    input.allocationRunSetHash,
     dimensions,
   ].join("|")
 }
@@ -122,6 +139,12 @@ export async function getAnalyticPnl(
     ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
   })
 
+  // E5: la tercera lectura, también EN SERIE. Sin imputaciones no toca la base.
+  const withAllocations = request.withAllocations === true
+  const applied = withAllocations
+    ? await getAppliedAllocations(tx, { from: request.from, to: request.to })
+    : { lines: [] as AppliedAllocation[], runIds: [] as string[], runSetHash: EMPTY_RUN_SET_HASH }
+
   const configHash = marginConfigHash(config)
   const analyticsHash = computeAnalyticsHash(
     lines.map((l: AnalyticLine) => ({
@@ -133,7 +156,7 @@ export async function getAnalyticPnl(
       analyticType: l.analyticType,
     })),
     configHash,
-    null
+    applied.runSetHash
   )
 
   const key = analyticPnlCacheKey({
@@ -144,6 +167,7 @@ export async function getAnalyticPnl(
     ledgerHash,
     analyticsHash,
     marginConfigHash: configHash,
+    allocationRunSetHash: applied.runSetHash,
     config,
   })
   const memo = requestCache()
@@ -155,10 +179,29 @@ export async function getAnalyticPnl(
     ledgerHash,
     module: "lib/analytics/margins.ts",
   }
-  const pnl = buildAnalyticPnl(lines, config, period, provCtx, { analyticsHash, marginConfigHash: configHash })
-  const checks = runAnalyticInvariants({ lines, config, period })
+  const pnl = buildAnalyticPnl(lines, config, period, provCtx, {
+    analyticsHash,
+    marginConfigHash: configHash,
+    ...(withAllocations ? { allocations: applied.lines } : {}),
+  })
+  const checks = runAnalyticInvariants({
+    lines,
+    config,
+    period,
+    ...(withAllocations ? { allocations: applied.lines } : {}),
+  })
 
-  const report: AnalyticPnlReport = { pnl, config, ledgerHash, analyticsHash, marginConfigHash: configHash, checks }
+  const report: AnalyticPnlReport = {
+    pnl,
+    config,
+    ledgerHash,
+    analyticsHash,
+    marginConfigHash: configHash,
+    allocationRunSetHash: applied.runSetHash,
+    allocationRunIds: applied.runIds,
+    withAllocations,
+    checks,
+  }
   // Acotada: FIFO sobre la entrada más antigua. Una pantalla pide dos o tres
   // periodos; lo que no puede es crecer sin techo dentro de una petición.
   while (memo.size >= MAX_CACHE_ENTRIES) {

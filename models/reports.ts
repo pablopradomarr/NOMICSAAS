@@ -55,7 +55,7 @@ import { buildMayor } from "@/lib/ledger/reports/mayor"
 import { buildSumasSaldos } from "@/lib/ledger/reports/sumas-saldos"
 import { getAnalyticPnl } from "@/models/margins"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
-import { analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
+import { EMPTY_RUN_SET_HASH, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { getEntries, getLinesForPeriod, computeLedgerHash } from "@/models/ledger"
 import { ComparativeBasis, PgcVariant, Prisma, ReportType, ResultKind, Seal } from "@/prisma/client"
 
@@ -260,7 +260,7 @@ async function attemptReportRun(
           analyticType: l.analyticType,
         })),
         marginHash,
-        null
+        EMPTY_RUN_SET_HASH
       )
     }
     const activeFlag = await activeManualReviewFlag(tx, request)
@@ -270,6 +270,9 @@ async function attemptReportRun(
       reviewFlagId: activeFlag?.id ?? null,
     })
     const paramsHash = paramsHashOf(hashed)
+    // E5 · O-E5-7: sin imputaciones, el tercer componente es el centinela. Un
+    // informe analítico CON imputaciones lo compone `models/margins.ts` con el
+    // `allocationRunSetHash` real, y por eso los dos no comparten caché.
     const analyticsKey = analyticsKeyOf({ analyticsHash, marginConfigHash: marginHash })
 
     const cached =

@@ -140,8 +140,15 @@ export type AnalyticsConfig = {
  * propia van sueltos. Las columnas de línea de negocio son agregados de
  * presentación y NO pertenecen a este conjunto: sumarlas duplicaría proyectos.
  */
+/**
+ * **E5 · E5-D3** — `BL:<código>` es una columna REAL del total: lo imputado a
+ * una línea de negocio y no bajado a proyecto. Es distinta de
+ * `businessLineMatrixCents`, que es PRESENTACIÓN (agregado de proyectos) y no
+ * suma. Sólo aparece cuando la matriz se construye CON imputaciones.
+ */
 export type ColumnKey =
   | `PROJ:${string}`
+  | `BL:${string}`
   | `CECO:${CostCenterKind}`
   | "AMORTIZACION_DETERIORO"
   | "FINANCIERO"
@@ -149,6 +156,7 @@ export type ColumnKey =
   | "NO_ANALITICO"
 
 export const projectColumn = (code: string): ColumnKey => `PROJ:${code}`
+export const businessLineColumn = (code: string): ColumnKey => `BL:${code}`
 export const cecoColumn = (kind: CostCenterKind): ColumnKey => `CECO:${kind}`
 
 export type AnalyticPeriod = {

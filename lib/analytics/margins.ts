@@ -11,6 +11,9 @@
  */
 
 import { cellProvenance, type Confidence, type Provenance, type ProvenanceContext } from "@/lib/ledger/provenance"
+// Sólo el TIPO: `allocate.ts` importa funciones de este módulo, así que una
+// importación de valor cerraría un ciclo. `import type` se borra al compilar.
+import type { AppliedAllocation } from "@/lib/analytics/allocate"
 import {
   AnalyticLine,
   AnalyticPeriod,
@@ -19,10 +22,12 @@ import {
   AnalyticsErrorCode,
   AnalyticType,
   Cents,
+  businessLineColumn,
   cecoColumn,
   ColumnKey,
   COST_CENTER_KINDS,
   CostCenterKind,
+  CostCenterMarginLevel,
   EXCLUDED_ENTRY_KINDS,
   MARGIN_LEVELS,
   MarginLevel,
@@ -401,10 +406,55 @@ export type AnalyticPnl = {
   /** Provenance por celda, clave `${level}|${column}`. No entra en el canónico. */
   provenance: ReadonlyMap<string, Provenance>
   period: AnalyticPeriod
+  /**
+   * E5 · I-E5-6 — Δ por nivel y columna. `Σ_c Δ[ℓ][c] = 0` en TODO nivel: la
+   * imputación es un traspaso interno de suma cero, y por eso **I4 no se
+   * «vuelve a comprobar» tras imputar, se cumple por construcción**. Vacío
+   * (todo a cero) cuando la matriz se construye sin imputaciones.
+   */
+  allocationDeltaCents: Record<string, Record<string, Cents>>
+  /** Por CECO: propio, recibido, imputado y pendiente de liquidar (§3.3). */
+  costCenterSettlement: readonly CostCenterSettlement[]
+  /** `true` si la matriz lleva imputaciones (el toggle de la UI). */
+  withAllocations: boolean
 }
 
 /** Referencia estable de una línea para I4.c cuando no trae `id`. */
 const lineKey = (line: AnalyticLine): string => line.id ?? `${line.entryId}#${line.lineNo}`
+
+/**
+ * E5 · §3.3 — saldo de estructura que las reglas del periodo NO liquidan. Se
+ * MUESTRA, no se reparte: prorratear una regla anual entre los meses del
+ * informe inventaría un devengo que la regla no declara.
+ */
+export type PendingSettlement = {
+  costCenterId: string
+  costCenterCode: string
+  costCenterKind: CostCenterKind
+  marginLevel: CostCenterMarginLevel
+  pendingCents: Cents
+  /** `ANNUAL_RULE_NOT_DUE` · `ZERO_BASE_SKIP` · `NO_RULE`. */
+  reason: string
+  /** Fecha en la que se liquidará, cuando se sabe. */
+  nextSettlementDate?: LocalDateLike | null
+}
+
+type LocalDateLike = string
+
+/** Las tres cifras por CECO que toda vista analítica debe enseñar (§3.3). */
+export type CostCenterSettlement = {
+  costCenterId: string
+  costCenterCode: string
+  costCenterKind: CostCenterKind
+  marginLevel: CostCenterMarginLevel
+  /** `Σ −aporte` de sus líneas `INDIRECTO_CECO` en el periodo. */
+  ownCents: Cents
+  receivedCents: Cents
+  allocatedCents: Cents
+  /** `own + recibido − imputado`. ≠ 0 ⇒ la columna se marca en la cabecera. */
+  pendingCents: Cents
+  reason: string | null
+}
 
 export type BuildOptions = {
   /** Etiqueta de asiento del detalle (`entryRef`). Default: `entryId`. */
@@ -414,6 +464,14 @@ export type BuildOptions = {
   marginConfigHash?: string
   /** `confianza` de la provenance: "comprobado" con I4 en PASS. */
   confidence?: Confidence
+  /**
+   * E5 — imputaciones VIGENTES del periodo. **Ausente = matriz SIN imputar**,
+   * es decir el comportamiento exacto de E4, columnas `BL:` incluidas (no
+   * aparecen). Es lo que sostiene el toggle «con / sin imputaciones».
+   */
+  allocations?: readonly AppliedAllocation[]
+  /** Saldo que las reglas del periodo no liquidan (§3.3). Se muestra, no se reparte. */
+  pendingSettlement?: readonly PendingSettlement[]
 }
 
 /**
@@ -429,8 +487,12 @@ export function buildAnalyticPnl(
   provCtx: ProvenanceContext,
   opts: BuildOptions = {}
 ): AnalyticPnl {
+  const withAllocations = opts.allocations !== undefined
   const columns: ColumnKey[] = [
     ...config.projects.map((p) => projectColumn(p.code)),
+    // E5-D3: las columnas `BL:` sólo existen en la matriz IMPUTADA. Sin ellas,
+    // la matriz de E4 es byte a byte la misma que antes de esta épica.
+    ...(withAllocations ? config.businessLines.map((b) => businessLineColumn(b.code)) : []),
     ...COST_CENTER_KINDS.map((k) => cecoColumn(k as CostCenterKind)),
     "AMORTIZACION_DETERIORO",
     "FINANCIERO",
@@ -486,6 +548,51 @@ export function buildAnalyticPnl(
     })
   }
 
+  // ── E5 · §3.2 — Δ de imputación, sobre el APORTE del nivel ℓ ───────────────
+  //
+  // `contrib[ℓ][col(fuente)] += +importe` (alivio) y
+  // `contrib[ℓ][col(receptor)] += −importe` (cargo), con el MISMO ℓ en las dos
+  // (E5-D1). La acumulación posterior lo propaga sola a los niveles inferiores.
+  // Se aplica al aporte, NO a la matriz cumulativa ya construida: por eso las
+  // cuatro filas superiores (INGRESOS…MC2) salen IDÉNTICAS a las de E4, y por
+  // eso `Σ_c Δ[ℓ][c] = 0` en cada nivel (I-E5-6).
+  const cecoKindById = new Map(config.costCenters.map((c) => [c.id, c.kind]))
+  const allocationDeltaCents: Record<string, Record<string, Cents>> = {}
+  for (const level of MARGIN_LEVELS) allocationDeltaCents[level] = {}
+  const received = new Map<string, Cents>()
+  const allocatedOut = new Map<string, Cents>()
+  for (const allocation of opts.allocations ?? []) {
+    const level = allocation.marginLevel
+    const sourceKind = cecoKindById.get(allocation.sourceCostCenterId)
+    if (!sourceKind) continue
+    const sourceColumn = cecoColumn(sourceKind)
+    const targetColumn: ColumnKey | null =
+      allocation.target.kind === "PROJECT"
+        ? projectColumn(allocation.target.code)
+        : allocation.target.kind === "BUSINESS_LINE"
+          ? businessLineColumn(allocation.target.code)
+          : (() => {
+              const kind = cecoKindById.get(allocation.target.id)
+              return kind ? cecoColumn(kind) : null
+            })()
+    if (!targetColumn) continue
+    const delta = allocationDeltaCents[level]
+    delta[sourceColumn] = (delta[sourceColumn] ?? 0) + allocation.amountCents
+    delta[targetColumn] = (delta[targetColumn] ?? 0) - allocation.amountCents
+    contrib[level].set(sourceColumn, (contrib[level].get(sourceColumn) ?? 0) + allocation.amountCents)
+    contrib[level].set(targetColumn, (contrib[level].get(targetColumn) ?? 0) - allocation.amountCents)
+
+    const outKey = `${allocation.sourceCostCenterId}|${level}`
+    allocatedOut.set(outKey, (allocatedOut.get(outKey) ?? 0) + allocation.amountCents)
+    if (allocation.target.kind === "COST_CENTER") {
+      const inKey = `${allocation.target.id}|${level}`
+      received.set(inKey, (received.get(inKey) ?? 0) + allocation.amountCents)
+    }
+  }
+  for (const level of MARGIN_LEVELS) {
+    allocationDeltaCents[level] = Object.fromEntries(Object.entries(allocationDeltaCents[level]).sort())
+  }
+
   // Matriz CUMULATIVA.
   const matrixCents: Record<string, Record<string, Cents>> = {}
   const running = new Map<string, Cents>(columns.map((c) => [c, 0]))
@@ -501,9 +608,13 @@ export function buildAnalyticPnl(
   for (const level of MARGIN_LEVELS) {
     const row: Record<string, Cents> = {}
     for (const code of businessLineCodes) {
-      row[code] = config.projects
-        .filter((p) => blCodeOfProject.get(p.code) === code)
-        .reduce((acc, p) => acc + (matrixCents[level][projectColumn(p.code)] ?? 0), 0)
+      // E5-D3: la fila de presentación de una LN = Σ sus proyectos **+** su
+      // columna `BL:` propia (que sólo existe en la matriz imputada).
+      row[code] =
+        config.projects
+          .filter((p) => blCodeOfProject.get(p.code) === code)
+          .reduce((acc, p) => acc + (matrixCents[level][projectColumn(p.code)] ?? 0), 0) +
+        (matrixCents[level][businessLineColumn(code)] ?? 0)
     }
     businessLineMatrixCents[level] = row
   }
@@ -526,6 +637,43 @@ export function buildAnalyticPnl(
     const row: Record<string, Cents> = {}
     for (const column of [...contrib[level].keys()].sort()) row[column] = contrib[level].get(column) ?? 0
     contributionByLevelCents[level] = row
+  }
+
+  // ── E5 · §3.3 — las tres cifras por CECO ──────────────────────────────────
+  //
+  // Nunca se muestra un «MC3 imputado» sin decir qué parte de la estructura
+  // falta por absorber: `pendiente = propio + recibido − imputado`.
+  const ownByCeco = new Map<string, Cents>()
+  for (const line of lines) {
+    if (!isPnlLine(line)) continue
+    const dest = resolveDestination(line, config)
+    if (dest.analyticType !== "INDIRECTO_CECO" || !line.costCenterId) continue
+    ownByCeco.set(line.costCenterId, (ownByCeco.get(line.costCenterId) ?? 0) - contribution(line))
+  }
+  const pendingByKey = new Map(
+    (opts.pendingSettlement ?? []).map((p) => [`${p.costCenterId}|${p.marginLevel}`, p] as const)
+  )
+  const costCenterSettlement: CostCenterSettlement[] = []
+  for (const ceco of [...config.costCenters].sort((a, b) => (a.code < b.code ? -1 : 1))) {
+    for (const level of ["EBITDA", "MC3"] as const) {
+      const own = ceco.marginLevel === level ? (ownByCeco.get(ceco.id) ?? 0) : 0
+      const inCents = received.get(`${ceco.id}|${level}`) ?? 0
+      const outCents = allocatedOut.get(`${ceco.id}|${level}`) ?? 0
+      if (own === 0 && inCents === 0 && outCents === 0) continue
+      const pending = own + inCents - outCents
+      const declared = pendingByKey.get(`${ceco.id}|${level}`)
+      costCenterSettlement.push({
+        costCenterId: ceco.id,
+        costCenterCode: ceco.code,
+        costCenterKind: ceco.kind,
+        marginLevel: level,
+        ownCents: own,
+        receivedCents: inCents,
+        allocatedCents: outCents,
+        pendingCents: pending,
+        reason: pending === 0 ? null : (declared?.reason ?? (withAllocations ? "NO_RULE" : "NOT_SETTLED")),
+      })
+    }
   }
 
   const checks = buildChecks({
@@ -584,12 +732,16 @@ export function buildAnalyticPnl(
     coveredLineIds: covered,
     provenance,
     period,
+    allocationDeltaCents,
+    costCenterSettlement,
+    withAllocations,
   }
 }
 
 function metricOf(level: MarginLevel, column: ColumnKey): string {
   const lower = level.toLowerCase()
   if (column.startsWith("PROJ:")) return `${lower}.proyecto.${column.slice(5)}`
+  if (column.startsWith("BL:")) return `${lower}.linea.${column.slice(3)}`
   if (column.startsWith("CECO:")) return `${lower}.ceco.${column.slice(5)}`
   return `${lower}.${column.toLowerCase()}`
 }
@@ -669,6 +821,15 @@ export function cellQuery(
     }
   }
 
+  if (column.startsWith("BL:")) {
+    // **E5-D3** — a una columna `BL:` NO llega ninguna línea del diario: sólo
+    // recibe imputaciones. Devolver aquí una consulta sobre `journal_lines` que
+    // filtrara por `business_line_id` sería mentir: esas líneas ya están en la
+    // columna de su proyecto y se contarían dos veces. La consulta de la parte
+    // imputada es la de `allocationCellQuery`.
+    return { query: `${BASE_QUERY} AND false`, params: base }
+  }
+
   if (column.startsWith("CECO:")) {
     // A una columna de CECO sólo llega `INDIRECTO_CECO`, y su nivel es el
     // `marginLevel` del propio CECO (R-A6/R-A7): se filtra por los ids cuyo
@@ -718,6 +879,48 @@ export function cellQuery(
     }
   }
   return { query: `${BASE_QUERY} AND false`, params: base }
+}
+
+/**
+ * **E5 · §3.2 — la segunda consulta de la provenance de una celda imputada.**
+ *
+ * Una celda MC3 de proyecto con imputaciones NO se puede reproducir con una sola
+ * consulta a `journal_lines`: parte del importe viene de `allocation_lines`. Su
+ * `Provenance` lleva por tanto DOS consultas parametrizadas —la del diario y
+ * ésta— con el importe de cada una. Sin ella, el drill-down de un MC3 imputado
+ * mentiría por omisión.
+ *
+ * Los parámetros son `(organizationId, runIds, <destino>)`; el signo se invierte
+ * al presentar, porque la línea de reparto guarda el importe en convención de
+ * COSTE y la matriz en convención de aporte.
+ */
+export function allocationCellQuery(
+  level: MarginLevel,
+  column: ColumnKey,
+  config: AnalyticsConfig,
+  runIds: readonly string[]
+): CellQuery {
+  const base: (string | readonly string[])[] = [config.organizationId, runIds]
+  const head =
+    "SELECT id FROM allocation_lines WHERE organization_id = $1 AND run_id = ANY($2::uuid[]) " +
+    `AND margin_level = '${level}'`
+  if (column.startsWith("PROJ:")) {
+    const projectId = config.projects.find((p) => p.code === column.slice(5))?.id ?? ""
+    return { query: `${head} AND target_project_id = $3`, params: [...base, projectId] }
+  }
+  if (column.startsWith("BL:")) {
+    const blId = config.businessLines.find((b) => b.code === column.slice(3))?.id ?? ""
+    return { query: `${head} AND target_business_line_id = $3`, params: [...base, blId] }
+  }
+  if (column.startsWith("CECO:")) {
+    const ids = config.costCenters.filter((c) => c.kind === column.slice(5)).map((c) => c.id)
+    return {
+      // Alivio (fuente) y cargo (destino) de la MISMA columna de CECO.
+      query: `${head} AND (source_cost_center_id = ANY($3::uuid[]) OR target_cost_center_id = ANY($3::uuid[]))`,
+      params: [...base, ids],
+    }
+  }
+  return { query: `${head} AND false`, params: base }
 }
 
 function buildChecks(input: {
@@ -871,7 +1074,7 @@ export type MatrixCell = {
 
 export type MatrixColumn = {
   key: ColumnKey
-  kind: "PROJECT" | "COST_CENTER" | "TYPE"
+  kind: "PROJECT" | "BUSINESS_LINE" | "COST_CENTER" | "TYPE"
   /** Etiqueta corta ya resuelta: código de proyecto, `kind` de CECO o el tipo. */
   label: string
   /** Sólo en columnas de proyecto: bajo qué línea de negocio se agrupa. */
@@ -917,6 +1120,10 @@ export function buildMatrixView(pnl: AnalyticPnl, config: AnalyticsConfig): Matr
         label: code,
         businessLineCode: project ? (blCodeById.get(project.businessLineId) ?? null) : null,
       }
+    }
+    if (key.startsWith("BL:")) {
+      const code = key.slice(3)
+      return { key, kind: "BUSINESS_LINE" as const, label: code, businessLineCode: code }
     }
     if (key.startsWith("CECO:")) {
       return { key, kind: "COST_CENTER" as const, label: key.slice(5), businessLineCode: null }
