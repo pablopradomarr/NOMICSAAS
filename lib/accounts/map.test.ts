@@ -32,13 +32,20 @@ function account(code: string, extra: Partial<PlanAccount> = {}): PlanAccount {
   }
 }
 
-describe("AccountKey — 57 claves, 43 obligatorias (D2-7, E-4)", () => {
-  it("43 obligatorias + 14 declaradas, sin solapes ni duplicados", () => {
+// E8 · T2: `PROVEEDORES_INMOVILIZADO` (523) sube el enum de 57 a 58 claves. Es
+// OPCIONAL —una organización cuyo plan no tenga 523 postable no debe fallar la
+// migración—, así que las 43 obligatorias no se mueven.
+describe("AccountKey — 58 claves, 43 obligatorias (D2-7, E-4, E8·T2)", () => {
+  it("43 obligatorias + 15 declaradas, sin solapes ni duplicados", () => {
     expect(REQUIRED_ACCOUNT_KEYS).toHaveLength(43)
-    expect(OPTIONAL_ACCOUNT_KEYS).toHaveLength(14)
+    expect(OPTIONAL_ACCOUNT_KEYS).toHaveLength(15)
     const todas = [...REQUIRED_ACCOUNT_KEYS, ...OPTIONAL_ACCOUNT_KEYS]
-    expect(new Set(todas).size).toBe(57)
-    expect(Object.keys(ACCOUNT_KEY_DEFAULT_CODE)).toHaveLength(57)
+    expect(new Set(todas).size).toBe(58)
+    expect(Object.keys(ACCOUNT_KEY_DEFAULT_CODE)).toHaveLength(58)
+  })
+
+  it("E8 · ADR-0014 D6: `PROVEEDORES_INMOVILIZADO` resuelve a 523, no a 173", () => {
+    expect(ACCOUNT_KEY_DEFAULT_CODE.PROVEEDORES_INMOVILIZADO).toBe("523")
   })
 
   it("todo código por defecto es un código PGC válido de 3 a 5 dígitos", () => {
@@ -52,7 +59,7 @@ describe("defaultAccountMap — resolución a hoja postable", () => {
   it("plan vacío: ninguna clave resuelve", () => {
     const { entries, unresolved } = defaultAccountMap(buildPlan([]), { useSubaccounts: true })
     expect(entries).toEqual([])
-    expect(unresolved).toHaveLength(57)
+    expect(unresolved).toHaveLength(58)
   })
 
   it("un solo registro: la clave cae en su cuenta y el resto queda sin resolver", () => {

@@ -797,8 +797,18 @@ describe.skipIf(!TEST_DATABASE_URL)("QA E3 · pruebas adversariales", () => {
       // `Transaction` se quedaba en POSTED apuntando a un asiento anulado.
       const after = await tenantDb(ORG_A).transaction.findUniqueOrThrow({ where: { id: transactionId } })
       expect(after.status).toBe("VOID")
-      // El enlace al asiento NO se borra: es la traza de qué se anuló.
-      expect(after.journalEntryId).toBe(entryId)
+      // **E8 · ADR-0014 D1 (O-9).** El enlace al asiento sigue sin borrarse —es
+      // la traza de qué se anuló—, pero ahora se TRASLADA a `voidedEntryId` en
+      // vez de quedarse en `journalEntryId`. El motivo es que `POSTED ⟺ tiene
+      // asiento` (I-E8-4) tiene que ser cierto en la base, no sólo de palabra:
+      // con el asiento colgando de `journalEntryId`, una operación anulada era
+      // indistinguible de una contabilizada para cualquier consulta que mirara
+      // esa columna. El traslado lo hace un trigger, no la aplicación.
+      expect(after.journalEntryId).toBeNull()
+      expect(after.voidedEntryId).toBe(entryId)
+      // Y el histórico se apila: `VOID → PROPOSED → POSTED → VOID` conserva las
+      // vueltas anteriores en vez de pisarlas.
+      expect(after.voidedEntryIds).toEqual([entryId])
     }, 60_000)
   })
 

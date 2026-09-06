@@ -74,8 +74,10 @@ describe.skipIf(!TEST_DATABASE_URL)("models de negocio acotados por organizació
       createdById: USER_B,
     })
 
-    await createFile(dbA, { organizationId: ORG_A, uploadedById: USER_A, filename: "a.pdf", path: "a.pdf", mimetype: "application/pdf" })
-    await createFile(dbB, { organizationId: ORG_B, uploadedById: USER_B, filename: "b.pdf", path: "b.pdf", mimetype: "application/pdf" })
+    // E8 · T4: `sha256` es NOT NULL (G-11, I-E8-9): un fichero sin el sha de sus
+    // bytes no se analiza ni se contabiliza, así que tampoco se da de alta.
+    await createFile(dbA, { organizationId: ORG_A, uploadedById: USER_A, filename: "a.pdf", path: "a.pdf", mimetype: "application/pdf", sha256: "a".repeat(64) })
+    await createFile(dbB, { organizationId: ORG_B, uploadedById: USER_B, filename: "b.pdf", path: "b.pdf", mimetype: "application/pdf", sha256: "b".repeat(64) })
   })
 
   afterAll(cleanup)

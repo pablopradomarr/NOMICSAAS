@@ -34,6 +34,8 @@ export type AuditEntity =
   // E5 · T10 — liquidación de CECOs (docs/design/E5-liquidacion.md §7).
   | "AllocationRule"
   | "AllocationRun"
+  // E8 · T23 — calificación fiscal de la contraparte (ADR-0014 D11).
+  | "Counterparty"
 
 export type AuditAction =
   | "create"
@@ -66,6 +68,9 @@ export type AuditAction =
   | "supersede"
   | "seal"
   | "reverse"
+  // E8 · T23 — la comprobación en VIES se REGISTRA con su fecha: es la
+  // precondición (1) del ISP, y una comprobación sin fecha no acredita nada.
+  | "vies_check"
 
 export type AuditLogInput = {
   entity: AuditEntity

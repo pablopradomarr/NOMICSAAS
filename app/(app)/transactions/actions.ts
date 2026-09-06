@@ -10,7 +10,7 @@ import {
   isEnoughStorageToUploadFile,
   safePathJoin,
 } from "@/lib/files"
-import { UploadValidationError, assertAcceptableUpload, syncOrganizationStorage } from "@/lib/uploads"
+import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
 import { updateField } from "@/models/fields"
 import { createFile, deleteFile } from "@/models/files"
 import {
@@ -198,6 +198,9 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
             filename: file.name,
             path: relativeFilePath,
             mimetype,
+            // E8 · T4 (G-11): el sha se calcula AL INGERIR, siempre.
+            sha256: sha256OfBuffer(buffer),
+            sizeBytes: buffer.length,
             isReviewed: true,
             metadata: {
               size: buffer.length,

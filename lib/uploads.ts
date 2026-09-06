@@ -1,7 +1,7 @@
 import { File as PrismaFile, Organization, User } from "@/prisma/client"
 import { TenantClient } from "@/lib/db"
 import { createFile } from "@/models/files"
-import { randomUUID } from "crypto"
+import { createHash, randomUUID } from "crypto"
 import { mkdir, writeFile } from "fs/promises"
 import path from "path"
 import sharp from "sharp"
@@ -211,6 +211,23 @@ export async function uploadStaticImage(
   return uploadFilePath
 }
 
+/**
+ * **E8 · T4 (G-11).** sha256 de los BYTES del fichero, en hexadecimal minúscula.
+ *
+ * Se calcula **al ingerir**, no después: es el eslabón que ata el asiento al
+ * documento (I-E8-2), la clave con la que se detecta el duplicado antes de
+ * pagarlo dos veces (I-E8-13) y lo que RC-10 contrasta contra el sha que vio la
+ * extracción. Un fichero sin `sha256` no se analiza ni se contabiliza (I-E8-9),
+ * y por eso la columna es `NOT NULL`: la alternativa —calcularlo «cuando haga
+ * falta»— deja huecos que sólo se descubren auditando.
+ *
+ * Es IO por naturaleza (opera sobre los bytes), así que vive aquí y no en
+ * `lib/extraction/hash.ts`, que es puro.
+ */
+export function sha256OfBuffer(buffer: Buffer | Uint8Array): string {
+  return createHash("sha256").update(buffer).digest("hex")
+}
+
 export type UploadContext = {
   db: TenantClient
   organization: Organization
@@ -243,6 +260,8 @@ export async function ingestUnsortedFile(
     filename: input.filename,
     path: relativeFilePath,
     mimetype,
+    sha256: sha256OfBuffer(input.buffer),
+    sizeBytes: input.buffer.length,
     metadata: { size: input.buffer.length, ...input.metadata },
   })
 }

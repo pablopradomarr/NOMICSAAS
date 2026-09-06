@@ -105,6 +105,26 @@ export const DEFAULT_CATEGORIES = [
   { code: "other", name: "Other", color: "#121216", llm_prompt: "other, miscellaneous," },
 ]
 
+/**
+ * **E8 · T23 (O-17, ADR-0014 D4).** Categorías que nacen con la deducibilidad
+ * de su IVA **por decidir**, no deducida por defecto.
+ *
+ * Son las del art. 96 LIVA y del art. 95.Tres.2ª: hostelería y restauración,
+ * atenciones a clientes, espectáculos, desplazamientos y combustible de
+ * turismos. En ellas la cuota sólo es deducible si el gasto lo es en IRPF/IS, y
+ * eso es criterio del usuario. Sin este tercer valor, el camino silencioso
+ * —confirmar en lote sin mirar— deducía por defecto todo lo que cayera aquí.
+ *
+ * `REQUIERE_DECISION` deja el campo en `no verificado` (RC-15) y **bloquea la
+ * confirmación por lote** hasta que alguien decide. La detección automática de
+ * los gastos no deducibles por naturaleza NO se hace: es criterio humano, y así
+ * se declara en pantalla.
+ *
+ * La migración `20260913100000_e8_documentos` aplica lo mismo a las
+ * organizaciones que ya existían.
+ */
+export const CATEGORIES_REQUIERE_DECISION: readonly string[] = ["food", "events", "travel", "transport"]
+
 export const DEFAULT_PROJECTS = [{ code: "personal", name: "Personal", llm_prompt: "personal", color: "#1e202b" }]
 
 export const DEFAULT_CURRENCIES = [

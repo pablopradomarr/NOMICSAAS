@@ -118,10 +118,34 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "AllocationRuleTarget",
   "AllocationRun",
   "AllocationLine",
+  // E8 — documentos → asientos (docs/design/E8-documentos-asientos.md §2.2)
+  "ExtractionRun",
+  "PromptVersion",
+  "InvoiceSeries",
+  "Counterparty",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */
 export const TENANT_MODELS_WITH_GLOBAL: ReadonlySet<string> = new Set(["Currency"])
+
+/**
+ * **E8 — tablas de REFERENCIA global** (ADR-0014 D7). No tienen
+ * `organization_id`, así que la barrera 1 no las puede acotar y **no deben**
+ * estar en `TENANT_MODELS`: si estuvieran, `tenantDb` les inyectaría un filtro
+ * por una columna que no existe y toda lectura fallaría.
+ *
+ * No son un agujero: `exchange_rates` lleva `ENABLE` + `FORCE ROW LEVEL
+ * SECURITY` con lectura e inserción abiertas y `RESTRICTIVE … USING (false)` en
+ * `UPDATE`/`DELETE`, de modo que es **append-only** y el test de «ninguna tabla
+ * en `NO FORCE`» sigue cubriéndola. Una tasa del BCE es un dato público y el
+ * mismo para todos; tenerla por organización sería multiplicar la misma fila y
+ * abrir la puerta a que dos empresas conviertan el mismo día a tipos distintos.
+ *
+ * Regla: **una tabla nueva o está en `TENANT_MODELS` o está aquí**, y para
+ * entrar aquí tiene que ser un catálogo público, inmutable y sin datos de
+ * negocio de nadie. Cualquier otra cosa es multi-tenant.
+ */
+export const GLOBAL_REFERENCE_MODELS: ReadonlySet<string> = new Set(["ExchangeRate"])
 
 /**
  * #16 — modelos sin `organization_id` que, aun así, se identifican POR la

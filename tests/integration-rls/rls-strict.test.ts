@@ -49,8 +49,29 @@ const TABLAS_ESTRICTAS = [
   "margin_level_configs",
 ] as const
 
-/** Todas las que deben llevar RLS + FORCE (las de arriba, más las cuatro sueltas). */
-const TABLAS_CON_FORCE = [...TABLAS_ESTRICTAS, "currencies", "organizations", "memberships"]
+/**
+ * Todas las que deben llevar RLS + FORCE (las de arriba, más las sueltas).
+ *
+ * `exchange_rates` entra aquí aunque **no** sea de tenant: es referencia global
+ * (ADR-0014 D7) y no tiene `organization_id`, así que su política no puede ser
+ * la estricta —pero sí lleva `ENABLE` + `FORCE`, de modo que la regla «ninguna
+ * tabla en NO FORCE» la cubre igual. Un backfill que la dejara en `NO FORCE`
+ * dejaría sus políticas append-only sin efecto para el propietario.
+ */
+const TABLAS_CON_FORCE = [
+  ...TABLAS_ESTRICTAS,
+  "currencies",
+  "organizations",
+  "memberships",
+  // E8 · T3: las cuatro de tenant (su aislamiento se ejerce fila a fila en
+  // `e8-tenant.test.ts`; aquí sólo se vigila que ningún backfill las deje en
+  // `NO FORCE`) y la de referencia global.
+  "extraction_runs",
+  "prompt_versions",
+  "invoice_series",
+  "counterparties",
+  "exchange_rates",
+]
 
 async function withClient<T>(url: string, fn: (client: Client) => Promise<T>): Promise<T> {
   const client = new Client({ connectionString: url })
@@ -153,8 +174,10 @@ function insertCompleto(tabla: (typeof TABLAS_ESTRICTAS)[number], organizationId
       ]
     case "files":
       return [
-        `INSERT INTO "files" (id, organization_id, filename, path, mimetype)
-         VALUES (gen_random_uuid(), $1, 'f.pdf', 'e3/${sufijo}/f.pdf', 'application/pdf')`,
+        // E8 · T4: `sha256` es NOT NULL — sin el sha de los bytes no hay eslabón
+        // entre el asiento y el documento (I-E8-2, I-E8-9).
+        `INSERT INTO "files" (id, organization_id, filename, path, mimetype, sha256)
+         VALUES (gen_random_uuid(), $1, 'f.pdf', 'e3/${sufijo}/f.pdf', 'application/pdf', repeat('a', 64))`,
         [organizationId],
       ]
     case "transactions":

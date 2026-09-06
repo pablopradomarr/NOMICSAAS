@@ -50,7 +50,7 @@ import {
   runLedgerTransaction,
   type LedgerResult,
 } from "@/models/ledger"
-import { entryHash, type HashableLine } from "@/lib/ledger/hash"
+import { entryHash, HASH_VERSION, type HashableLine, isHashVersion } from "@/lib/ledger/hash"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import type { CostCenterKind, MarginLevel, ProjectStatus, Role } from "@/prisma/client"
@@ -904,8 +904,17 @@ export async function reclassifyLines(
         projectId: l.projectId,
         costCenterId: l.costCenterId,
         businessLineId: l.businessLineId,
+        originalCurrency: l.originalCurrency,
+        originalAmountCents: l.originalAmountCents,
+        exchangeRateId: l.exchangeRateId,
       }))
-      const after = entryHash(hashable)
+      // E8 · T2b: se REHACE con LA MISMA forma canónica con la que se selló. Una
+      // reclasificación analítica no cambia la versión del sello —no toca ni la
+      // divisa ni una cifra—, y "actualizar" a v3 aquí sería reescribir el
+      // histórico por la puerta de atrás, que es justo lo que la convivencia
+      // de ADR-0011 prohíbe.
+      const version = isHashVersion(entry.hashVersion) ? entry.hashVersion : HASH_VERSION
+      const after = entryHash(hashable, version)
       entryHashes.push({ entryId, before: entry.entryHash, after })
       await tx.journalEntry.update({ where: { id: entryId }, data: { entryHash: after } })
     }

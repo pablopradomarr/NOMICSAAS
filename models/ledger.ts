@@ -32,7 +32,7 @@ import type { AccountKey } from "@/lib/accounts/types"
 // camino independiente del que emitió las líneas. Módulo PURO.
 import { reconstructBalances } from "@/lib/analytics/allocate"
 import { fromUtcDate, resolveReversalDate, toUtcDate } from "@/lib/ledger/dates"
-import { entryHash, HashableLine, ledgerHash } from "@/lib/ledger/hash"
+import { entryHash, HASH_VERSION_CURRENT, HashableLine, ledgerHash } from "@/lib/ledger/hash"
 import {
   runInvariants as runInvariantsPure,
   seal as sealPure,
@@ -481,6 +481,9 @@ export function toPostedEntry(row: EntryWithLines): PostedEntry {
       projectId: l.projectId,
       costCenterId: l.costCenterId,
       businessLineId: l.businessLineId,
+      originalCurrency: l.originalCurrency,
+      originalAmountCents: l.originalAmountCents,
+      exchangeRateId: l.exchangeRateId,
       entryDate: fromUtcDate(l.entryDate),
       fiscalYearId: l.fiscalYearId,
       entryKind: l.entryKind,
@@ -503,6 +506,10 @@ export function toPostedEntry(row: EntryWithLines): PostedEntry {
     reversesEntryId: row.reversesEntryId,
     voidedAt: row.voidedAt ? row.voidedAt.toISOString() : null,
     entryHash: row.entryHash,
+    // E8 · T2b: la fila DECLARA con qué forma canónica se selló. I-E3-7 la lee.
+    hashVersion: row.hashVersion,
+    receptionDate: row.receptionDate ? fromUtcDate(row.receptionDate) : null,
+    operationDate: row.operationDate ? fromUtcDate(row.operationDate) : null,
     lines,
   }
 }
@@ -911,6 +918,10 @@ function hashableOf(draft: EntryDraft, entryNumber: number, entryId: string | nu
     projectId: l.projectId ?? null,
     costCenterId: l.costCenterId ?? null,
     businessLineId: l.businessLineId ?? null,
+    // E8 · T2b: sólo pesan en `canonicalEntryFormV3`; en v2 se ignoran.
+    originalCurrency: l.originalCurrency ?? null,
+    originalAmountCents: l.originalAmountCents ?? null,
+    exchangeRateId: l.exchangeRateId ?? null,
   }))
 }
 
@@ -970,7 +981,9 @@ export async function postEntryTx(
   // El id se genera AQUÍ para que entre en la forma canónica v2 del sello: el
   // hash se calcula ANTES del INSERT y describe exactamente lo que se inserta.
   const entryId = randomUUID()
-  const hash = entryHash(hashableOf(draft, entryNumber, entryId))
+  // E8 · T2b: lo que nace hoy nace en v3, y la fila DECLARA su versión para que
+  // I-E3-7 la verifique con la suya. Las filas v2 ya escritas no se tocan.
+  const hash = entryHash(hashableOf(draft, entryNumber, entryId), HASH_VERSION_CURRENT)
 
   {
     const entry = await tx.journalEntry.create({
@@ -982,6 +995,10 @@ export async function postEntryTx(
         documentDate: draft.documentDate ? toUtcDate(draft.documentDate) : null,
         accrualDate: draft.accrualDate ? toUtcDate(draft.accrualDate) : null,
         entryDate: toUtcDate(draft.entryDate),
+        // E8 · ADR-0014 D8: la cuarta fecha y el devengo del IVA. Ninguna de las
+        // dos toca ejercicio, mes ni `ledgerHash`.
+        receptionDate: draft.receptionDate ? toUtcDate(draft.receptionDate) : null,
+        operationDate: draft.operationDate ? toUtcDate(draft.operationDate) : null,
         description: draft.description,
         kind: draft.kind,
         taxRoundingMode: draft.taxRoundingMode,
@@ -989,11 +1006,14 @@ export async function postEntryTx(
         sourceId: draft.sourceId ?? null,
         transactionId: draft.transactionId ?? null,
         fileId: draft.fileId ?? null,
+        extractionRunId: draft.extractionRunId ?? null,
         templateCode: draft.templateCode ?? null,
+        templateVersion: draft.templateVersion ?? 1,
         reversesEntryId: draft.reversesEntryId ?? null,
         postedById: actor.userId,
         idempotencyKey,
         entryHash: hash,
+        hashVersion: HASH_VERSION_CURRENT,
       },
     })
 
@@ -1016,6 +1036,11 @@ export async function postEntryTx(
         projectId: l.projectId ?? null,
         costCenterId: l.costCenterId ?? null,
         businessLineId: l.businessLineId ?? null,
+        // E8 · T2b (ADR-0014 D2): columnas INMUTABLES; se escriben aquí y nunca
+        // se actualizan (no entran en el GRANT UPDATE acotado de ADR-0010).
+        originalCurrency: l.originalCurrency ?? null,
+        originalAmountCents: l.originalAmountCents ?? null,
+        exchangeRateId: l.exchangeRateId ?? null,
         entryDate: toUtcDate(draft.entryDate),
         fiscalYearId: draft.fiscalYearId,
         entryKind: draft.kind,

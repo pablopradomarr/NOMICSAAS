@@ -25,7 +25,7 @@ import { defaultAccountMap } from "@/lib/accounts/map"
 import type { AccountKey, AnalyticType, Plan } from "@/lib/accounts/types"
 import { resolveEffectiveAnalyticType } from "@/lib/analytics/margins"
 import type { BusinessLineRef, CostCenterMarginLevel, CostCenterRef, ProjectRef } from "@/lib/analytics/types"
-import { entryHash, HashableLine } from "@/lib/ledger/hash"
+import { entryHash, HASH_VERSION_CURRENT, HashableLine } from "@/lib/ledger/hash"
 import type {
   Cents,
   EntryDraft,
@@ -395,7 +395,12 @@ export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {
       templateCode: draft.templateCode ?? null,
       reversesEntryId: draft.reversesEntryId ?? null,
       voidedAt: null,
-      entryHash: entryHash(hashable),
+      // E8 · T2b: un asiento que nace HOY nace en v3 y lo DECLARA, igual que
+      // hace `postEntryTx`. Sin declararlo, I-E3-7 lo verificaría con v2 y daría
+      // un FAIL que no existe. Los ficheros JSON del fixture no cambian ni un
+      // byte, y `ledgerHash` tampoco: la forma canónica financiera es la misma.
+      entryHash: entryHash(hashable, HASH_VERSION_CURRENT),
+      hashVersion: HASH_VERSION_CURRENT,
       lines,
     }
   })

@@ -59,6 +59,13 @@ const BUSINESS_DELEGATES = [
   "businessLine",
   "costCenter",
   "marginLevelConfig",
+  // E8: las cuatro tablas de tenant de documentos → asientos. `exchangeRate`
+  // NO entra: es referencia GLOBAL (ADR-0014 D7, `GLOBAL_REFERENCE_MODELS` en
+  // lib/db.ts), no tiene `organization_id` y su acceso sin acotar es correcto.
+  "extractionRun",
+  "promptVersion",
+  "invoiceSeries",
+  "counterparty",
 ];
 
 const NO_BARE_PRISMA_DELEGATE = {

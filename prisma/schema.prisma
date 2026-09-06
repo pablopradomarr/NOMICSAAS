@@ -82,7 +82,15 @@ model Organization {
   /// R-IVA-1 canónica: una cuota por tipo impositivo.
   taxRoundingMode         TaxRoundingMode @default(PER_TIPO) @map("tax_rounding_mode")
   /// R-IVA-7: diferencia residual admitida contra 669/769. Por encima, bloquea.
+  /// **E8 · O-16**: TECHO DURO de 5 c en el CHECK. Es tolerancia de TESORERÍA;
+  /// la de la cuota de IVA es `TOLERANCIA_CUOTA_IVA_CENTS = 1`, constante del
+  /// motor y NO configurable.
   redondeoToleranciaCents Int             @default(1) @map("redondeo_tolerancia_cents")
+
+  // E8 — calificación fiscal de la organización (ADR-0014 D11, O-4 y O-21)
+  /// Registro de Operadores Intracomunitarios: precondición (4) del ISP.
+  roiRegistered Boolean   @default(false) @map("roi_registered")
+  ivaRegime     IvaRegime @default(GENERAL) @map("iva_regime")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -125,6 +133,12 @@ model Organization {
   allocationRuleTargets AllocationRuleTarget[]
   allocationRuns        AllocationRun[]
   allocationLines       AllocationLine[]
+
+  // E8 — documentos → asientos
+  extractionRuns ExtractionRun[]
+  promptVersions PromptVersion[]
+  invoiceSeries  InvoiceSeries[]
+  counterparties Counterparty[]
 
   @@map("organizations")
 }
@@ -266,8 +280,95 @@ model Category {
   transactions   Transaction[]
   createdAt      DateTime      @default(now()) @map("created_at")
 
+  /// **E8 · T23 — ADR-0014 D11 (O-10).** Origen LEGÍTIMO de la cuenta: `catalogo`,
+  /// nunca `llm`. Un modelo que elige entre 607 y 623 decide MC1 y MC2.
+  /// CHECK en BD: no puede apuntar al subgrupo 64 — las nóminas entran por T-10
+  /// (O-13), jamás por una plantilla de compra.
+  defaultAccountCode   String?              @map("default_account_code") @db.VarChar(12)
+  /// **O-17.** Tercer valor para los gastos del art. 96 LIVA y del art. 95.Tres.2ª:
+  /// con `REQUIERE_DECISION` el campo nace `no_verificado` y bloquea el lote.
+  defaultDeductibility DefaultDeductibility @default(FULL) @map("default_deductibility")
+
   @@unique([organizationId, code])
   @@map("categories")
+}
+
+/// **E8 · T23 — ADR-0014 D11.** La calificación fiscal vive en el maestro de
+/// terceros, NO en el documento: la retención es obligación del pagador (arts.
+/// 99, 101 y 107 LIRPF) y la calificación ISP exige precondiciones verificables,
+/// no el silencio de un PDF.
+///
+/// `JournalLine.counterpartyId` sigue SIN FK (los fixtures de E3–E6 llevan uuids
+/// libres y no se tocan); el enganche duro es de la épica que los materialice.
+model Counterparty {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code String @db.VarChar(24)
+  name String @db.VarChar(255)
+  /// NIF/CIF nacional. RC-11 rama ES: módulo 23 / letra de CIF, FAIL si es inválido.
+  taxId String? @map("tax_id") @db.VarChar(20)
+
+  /// ISO-3166-1 alfa-2. Decide la rama de RC-11 (ES / UE / tercer país).
+  countryCode   String?   @map("country_code") @db.VarChar(2)
+  /// NIF-IVA para operaciones intracomunitarias.
+  vatNumber     String?   @map("vat_number") @db.VarChar(20)
+  viesValid     Boolean?  @map("vies_valid")
+  viesCheckedAt DateTime? @map("vies_checked_at")
+
+  /// La retención la fija ESTE registro (O-11); lo leído del PDF sólo contrasta.
+  withholdingRegime   WithholdingRegime @default(NINGUNO) @map("withholding_regime")
+  withholdingRateCode String?           @map("withholding_rate_code") @db.VarChar(24)
+  /// Recargo de equivalencia: se aplica por el régimen del cliente registrado,
+  /// no por lo que diga el documento.
+  surchargeRegime     Boolean           @default(false) @map("surcharge_regime")
+  /// Notas de gasto (O-13): contra 465 o tesorería, nunca 400/410.
+  isEmployee          Boolean           @default(false) @map("is_employee")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  notes     String?  @db.VarChar(512)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, name])
+  @@index([organizationId, taxId])
+  @@map("counterparties")
+}
+
+/// O-17. El default global es `FULL`; `PRORRATA` sale de la organización.
+enum DefaultDeductibility {
+  FULL
+  NONE
+  REQUIERE_DECISION
+
+  @@map("default_deductibility")
+}
+
+/// D11 (O-11). Determina el `TaxRate` de retención y el modelo (111 / 115).
+enum WithholdingRegime {
+  NINGUNO
+  PROFESIONAL
+  PROFESIONAL_INICIO
+  ARRENDADOR
+  AGRICOLA
+  MODULOS
+
+  @@map("withholding_regime")
+}
+
+/// D11 (O-21). Con RECC/REDEME/OTRO la contabilización automática se BLOQUEA
+/// (RC-24) y se declara en pantalla: el devengo sigue al cobro y al pago, y todo
+/// el circuito de E8 sería incorrecto. Soporte → E9.
+enum IvaRegime {
+  GENERAL
+  RECC
+  REDEME
+  OTRO
+
+  @@map("iva_regime")
 }
 
 /// **D-E4-1.** NO es una tabla nueva: es el `Project` heredado de TaxHacker al
@@ -341,12 +442,24 @@ model File {
   metadata          Json?
   isReviewed        Boolean      @default(false) @map("is_reviewed")
   isSplitted        Boolean      @default(false) @map("is_splitted")
-  cachedParseResult Json?        @map("cached_parse_result")
   createdAt         DateTime     @default(now()) @map("created_at")
 
+  /// E8 · G-11 — sha256 de los BYTES del fichero. Es el eslabón que ata el
+  /// asiento al documento (I-E8-2) y la clave de deduplicación (I-E8-13).
+  /// Nullable hasta que `scripts/backfill-file-sha256.ts` reporta 0 pendientes;
+  /// entonces `20260914090000_e8_file_sha256_not_null` lo endurece.
+  /// `cachedParseResult` DESAPARECE (G-03): la evidencia vive en `ExtractionRun`.
+  sha256    String  @db.Char(64)
+  sizeBytes Int?    @map("size_bytes")
+
+  extractionRuns ExtractionRun[]
+  journalEntries JournalEntry[]
+
+  @@unique([organizationId, id])
   @@index([organizationId, createdAt])
   @@index([organizationId, isReviewed])
   @@index([organizationId, uploadedById])
+  @@index([organizationId, sha256])
   @@map("files")
 }
 
@@ -382,6 +495,24 @@ model Transaction {
   journalEntryId String?           @map("journal_entry_id") @db.Uuid
   journalEntry   JournalEntry?     @relation("TransactionPosted", fields: [journalEntryId], references: [id], onDelete: SetNull)
   entries        JournalEntry[]    @relation("TransactionEntry")
+
+  // ── E8 (ADR-0014 D1/D2) ────────────────────────────────────────────────────
+  /// Tasa COPIADA al confirmar: un cambio retroactivo en `exchange_rates` no
+  /// puede mover una cifra ya contabilizada (D2).
+  exchangeRateMicro BigInt?   @map("exchange_rate_micro")
+  rateDate          DateTime? @map("rate_date") @db.Date
+  rateSource        String?   @map("rate_source") @db.VarChar(32)
+  /// `convertedTotal` forzado: motivo ≥ 10 caracteres (CHECK), campo a
+  /// `no_verificado` y sello `TASA_FORZADA`.
+  convertedTotalOverrideReason String? @map("converted_total_override_reason") @db.VarChar(512)
+  extractionRunId              String? @map("extraction_run_id") @db.Uuid
+  /// D1 (O-9): al anular, `journalEntryId` se TRASLADA aquí y el estado pasa a
+  /// VOID. Permite `VOID → PROPOSED → POSTED` sin volver a subir el fichero.
+  voidedEntryId  String?  @map("voided_entry_id") @db.Uuid
+  /// Histórico completo de vueltas. Append-only por trigger.
+  voidedEntryIds String[] @map("voided_entry_ids") @db.Uuid
+  /// O-9.iii: el split crea N Transaction, una por asiento, sobre el mismo File.
+  splitParentTransactionId String? @map("split_parent_transaction_id") @db.Uuid
 
   @@unique([organizationId, id])
   @@index([organizationId, status])
@@ -550,6 +681,9 @@ enum AccountKey {
   COMISIONES_BANCARIAS
   REMANENTE
   RESULTADOS_NEGATIVOS_ANTERIORES
+  // ── E8 (ADR-0014 D6): 523 SIEMPRE en el alta de inmovilizado; la separación
+  //    523 → 173 se mide desde el CIERRE y es un asiento de E9.
+  PROVEEDORES_INMOVILIZADO
 
   @@map("account_key")
 }
@@ -754,6 +888,8 @@ enum SourceType {
   MANUAL
   DOCUMENT
   INVOICE_OUT
+  /// E8: compra que entra por el flujo documental (`postFromProposal`).
+  INVOICE_IN
   BANK_IMPORT
   CSV_IMPORT
   RECURRING
@@ -843,6 +979,14 @@ model JournalEntry {
   accrualDate  DateTime? @map("accrual_date") @db.Date
   entryDate    DateTime  @map("entry_date") @db.Date
 
+  /// **E8 · ADR-0014 D8 (O-6). La CUARTA fecha.** Gobierna el periodo de IVA
+  /// soportado junto con `documentDate` (`max(receptionDate, documentDate)`);
+  /// NO interviene en ejercicio, mes, informes ni `ledgerHash`.
+  receptionDate DateTime? @map("reception_date") @db.Date
+  /// Devengo del IVA (art. 75 LIVA) cuando difiere de la expedición. Es la que
+  /// selecciona el `TaxRate` (O-14, art. 90.Dos).
+  operationDate DateTime? @map("operation_date") @db.Date
+
   description String    @db.VarChar(512)
   kind        EntryKind @default(NORMAL)
 
@@ -858,8 +1002,13 @@ model JournalEntry {
   transactionId   String?      @map("transaction_id") @db.Uuid
   transaction     Transaction? @relation("TransactionEntry", fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
   fileId          String?      @map("file_id") @db.Uuid
-  extractionRunId String?      @map("extraction_run_id") @db.Uuid
-  templateCode    String?      @map("template_code") @db.VarChar(32)
+  /// E8: FK COMPUESTA por tenant (patrón de E4), `ON DELETE RESTRICT`.
+  file            File?          @relation(fields: [organizationId, fileId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
+  extractionRunId String?        @map("extraction_run_id") @db.Uuid
+  extractionRun   ExtractionRun? @relation("EntryExtractionRun", fields: [organizationId, extractionRunId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
+  templateCode    String?        @map("template_code") @db.VarChar(32)
+  /// O-3 de E3: versión de la plantilla con la que se construyó el asiento.
+  templateVersion Int            @default(1) @map("template_version")
 
   /// Asiento que ESTE anula. El anulado guarda además `voided_*`.
   reversesEntryId String?        @map("reverses_entry_id") @db.Uuid
@@ -884,7 +1033,10 @@ model JournalEntry {
 
   /// sha256 canónico de las líneas del asiento (lib/ledger/hash.ts), I-E3-7.
   /// E4-D2: cubre TODAS las columnas de la línea, dimensiones incluidas, y se
-  /// recalcula al reclasificar. `hashVersion` documenta la forma: 1 = E3, 2 = E4.
+  /// recalcula al reclasificar. `hashVersion` documenta la forma:
+  /// 1 = E3, 2 = E4, **3 = E8** (`+ originalCurrency + originalAmountCents +
+  /// exchangeRateId`, ADR-0014 D2). CONVIVENCIA ESTRICTA: las filas v2 se
+  /// verifican con v2 y no se recalculan jamás.
   entryHash   String @map("entry_hash") @db.VarChar(64)
   hashVersion Int    @default(2) @map("hash_version")
 
@@ -938,6 +1090,18 @@ model JournalLine {
   taxBaseCents   Int?      @map("tax_base_cents")
   counterpartyId String?   @map("counterparty_id") @db.Uuid
   dueDate        DateTime? @map("due_date") @db.Date
+
+  /// **E8 · T2b — ADR-0014 D2 (O-8).** Divisa ORIGINAL de la partida monetaria
+  /// (43x, 40x, 41x, 523, 57x). Sin ellas, la valoración al tipo de cierre de la
+  /// NRV 11ª.2.1 no es computable desde el diario, que es la fuente única
+  /// (ADR-0003). El motor que las consume (668/768) es de E9; las columnas
+  /// entran en E8, que es quien crea la deuda en divisa.
+  /// **INMUTABLES**: no entran en el `GRANT UPDATE` acotado de ADR-0010, y
+  /// forman parte de `canonicalEntryFormV3` (`hashVersion = 3`).
+  originalCurrency    String?       @map("original_currency") @db.VarChar(3)
+  originalAmountCents Int?          @map("original_amount_cents")
+  exchangeRateId      String?       @map("exchange_rate_id") @db.Uuid
+  exchangeRate        ExchangeRate? @relation(fields: [exchangeRateId], references: [id], onDelete: Restrict)
 
   // Denormalizado desde el asiento (FK compuesta en §2.4).
   entryDate    DateTime  @map("entry_date") @db.Date
@@ -1462,4 +1626,175 @@ model AllocationLine {
   @@index([organizationId, targetCostCenterId])
   @@index([organizationId, targetBusinessLineId])
   @@map("allocation_lines")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// E8 — Documentos → asientos (docs/design/E8-documentos-asientos.md §2.2,
+// ADR-0014 APROBADO). Convenciones: snake_case físico, uuid, dinero Int en
+// céntimos (BigInt sólo en `rateMicro` y `costMicros`), fechas de operación
+// `@db.Date`, `organizationId` en toda tabla de negocio.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Evidencia de una extracción. **INMUTABLE** (append-only en RLS: UPDATE y
+/// DELETE dan 42501 como `app_runtime`, I-E8-3). Nunca es fuente de cifras: es
+/// la prueba de de dónde salió una propuesta (P4, G-01/G-02/G-09/G-12).
+model ExtractionRun {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  fileId String @map("file_id") @db.Uuid
+  file   File   @relation(fields: [organizationId, fileId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
+  /// sha256 de los bytes que VIO esta extracción. RC-10 lo contrasta con
+  /// `files.sha256`: si difieren, el documento se alteró (`DOCUMENTO_ALTERADO`).
+  fileSha256 String @map("file_sha256") @db.Char(64)
+
+  kind ExtractionKind
+  /// ADR-0014 D5: la revisión humana es un run NUEVO colgado del run del LLM.
+  parentRunId String?         @map("parent_run_id") @db.Uuid
+  parent      ExtractionRun?  @relation("RunRevision", fields: [parentRunId], references: [id], onDelete: Restrict)
+  revisions   ExtractionRun[] @relation("RunRevision")
+
+  provider       String @db.VarChar(64)
+  model          String @db.VarChar(128)
+  temperatureBps Int    @default(0) @map("temperature_bps")
+  /// G-09: cadena de intentos, `[{provider, model, ok, errorCode?, ms}]`.
+  attempts Json @default("[]")
+
+  promptCode      String       @map("prompt_code") @db.VarChar(64)
+  promptSource    PromptSource @map("prompt_source")
+  promptVersionId String?      @map("prompt_version_id") @db.Uuid
+  /// sha del prompt EFECTIVO, ya sustituido (I-E8-11).
+  promptSha       String       @map("prompt_sha") @db.Char(64)
+  schemaVersion   String       @map("schema_version") @db.VarChar(16)
+  schemaSha       String       @map("schema_sha") @db.Char(64)
+
+  pagesSent  Int     @map("pages_sent")
+  pagesTotal Int     @map("pages_total")
+  /// G-02 / O-20.3. Lo escribe un TRIGGER, no quien inserta: un run parcial no
+  /// tiene campos `calculado` ni `verificado` y, si es `LLM`, no respalda ningún
+  /// asiento (I-E8-1, I-E8-10).
+  partial    Boolean @default(false)
+
+  rawOutput    Json    @map("raw_output")
+  proposal     Json?
+  proposalSha  String? @map("proposal_sha") @db.Char(64)
+  fieldOrigins Json    @default("{}") @map("field_origins")
+
+  reconcile       Json?
+  reconcileStatus ReconcileStatus? @map("reconcile_status")
+
+  tokensIn   Int?    @map("tokens_in")
+  tokensOut  Int?    @map("tokens_out")
+  costMicros BigInt? @map("cost_micros")
+  durationMs Int     @map("duration_ms")
+  gitSha     String  @map("git_sha") @db.VarChar(64)
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  entries JournalEntry[] @relation("EntryExtractionRun")
+
+  @@unique([organizationId, id])
+  @@index([organizationId, fileId, createdAt(sort: Desc)])
+  @@index([organizationId, reconcileStatus])
+  @@map("extraction_runs")
+}
+
+enum ExtractionKind {
+  LLM
+  MANUAL
+  IMPORTED
+
+  @@map("extraction_kind")
+}
+
+enum PromptSource {
+  GIT
+  ORG
+
+  @@map("prompt_source")
+}
+
+enum ReconcileStatus {
+  PASS
+  WARN
+  FAIL
+
+  @@map("reconcile_status")
+}
+
+/// Override de prompt por organización. **APPEND-ONLY**: «editar» es insertar
+/// version+1. La versión VIGENTE vive en `Setting("prompt_active_version:<code>")`,
+/// que sí es mutable y auditado (patrón de G-10).
+model PromptVersion {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code    String  @db.VarChar(64)
+  version Int
+  content String  @db.Text
+  sha256  String  @db.Char(64)
+  notes   String? @db.VarChar(512)
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, code, version])
+  @@map("prompt_versions")
+}
+
+/// Referencia diaria del BCE (Frankfurter, fuente ÚNICA). **GLOBAL**: sin
+/// `organization_id` (ADR-0014 D7). Fuera de `TENANT_MODELS`, dentro de
+/// `GLOBAL_REFERENCE_MODELS`, con `ENABLE` + `FORCE`, lectura e inserción
+/// abiertas y RESTRICTIVE `USING (false)` en UPDATE/DELETE (I-E8-14).
+model ExchangeRate {
+  id        String   @id @default(uuid()) @db.Uuid
+  date      DateTime @db.Date
+  from      String   @db.VarChar(3)
+  to        String   @db.VarChar(3)
+  rateMicro BigInt   @map("rate_micro")
+  source    String   @db.VarChar(32)
+  fetchedAt DateTime @default(now()) @map("fetched_at")
+
+  lines JournalLine[]
+
+  @@unique([date, from, to, source])
+  @@index([from, to, date(sort: Desc)])
+  @@map("exchange_rates")
+}
+
+/// O-18: serie por TIPO. El art. 15.4 RD 1619/2012 obliga a serie especial y
+/// numeración propia para las rectificativas. Numeración sin huecos y fecha no
+/// decreciente dentro de la serie (trigger + I-E8-20). **Una factura emitida no
+/// se borra ni se renumera: se rectifica.**
+model InvoiceSeries {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code       String            @db.VarChar(24)
+  kind       InvoiceSeriesKind @default(ORDINARIA)
+  prefix     String            @db.VarChar(16)
+  nextNumber Int               @default(1) @map("next_number")
+  year       Int?
+  /// v1.1 Verifactu: se declara y se deja a NULL. SII/Verifactu están fuera de E8.
+  lastHash   String?           @map("last_hash") @db.Char(64)
+  isActive   Boolean           @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, code, year])
+  @@index([organizationId, kind, isActive])
+  @@map("invoice_series")
+}
+
+enum InvoiceSeriesKind {
+  ORDINARIA
+  RECTIFICATIVA
+  SIMPLIFICADA
+
+  @@map("invoice_series_kind")
 }

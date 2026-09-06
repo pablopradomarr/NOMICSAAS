@@ -83,6 +83,10 @@ export const OPTIONAL_ACCOUNT_KEYS: readonly AccountKey[] = [
   "COMISIONES_BANCARIAS",
   "REMANENTE",
   "RESULTADOS_NEGATIVOS_ANTERIORES",
+  // E8 (ADR-0014 D6): la siembra la hace `20260913100000_e8_documentos` en toda
+  // organización cuyo plan tenga 523 postable. No es obligatoria porque una
+  // organización sin 523 no debe fallar la migración: queda como WARN.
+  "PROVEEDORES_INMOVILIZADO",
 ] as const
 
 /** Código PGC "de libro" de cada clave (§3.1 y §3.2 de la validación contable). */
@@ -147,6 +151,10 @@ export const ACCOUNT_KEY_DEFAULT_CODE: Readonly<Record<AccountKey, string>> = {
   COMISIONES_BANCARIAS: "626",
   REMANENTE: "120",
   RESULTADOS_NEGATIVOS_ANTERIORES: "121",
+  // E8 · ADR-0014 D6: **523 SIEMPRE en el alta** del inmovilizado. La separación
+  // corriente / no corriente (523 → 173) se mide desde el CIERRE, no desde la
+  // fecha del documento, y es un asiento de reclasificación de E9.
+  PROVEEDORES_INMOVILIZADO: "523",
 }
 
 /**

@@ -16,7 +16,7 @@ import {
 } from "@/lib/analytics/invariants"
 import { type ReportsInvariantInput, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
-import { entryHash, HashableLine } from "@/lib/ledger/hash"
+import { entryHash, HASH_VERSION, HashableLine, isHashVersion } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
 import type { Cents, FiscalYearRef, LocalDate, PeriodLockRef, PostedEntry } from "@/lib/ledger/types"
 
@@ -415,13 +415,27 @@ export function checkIE36(input: Pick<InvariantInput, "entries" | "fiscalYears">
     : fail("I-E3-6", failures.join(" · "))
 }
 
-/** I-E3-7 — `entryHash` almacenado = `entryHash(líneas leídas)`. */
+/**
+ * I-E3-7 — `entryHash` almacenado = `entryHash(líneas leídas)`.
+ *
+ * **E8 · T2b — despacho POR VERSIÓN.** Desde ADR-0014 D2 conviven dos formas
+ * canónicas de fila: las filas anteriores llevan `hash_version = 2` y las que
+ * nacen con divisa, 3. Recomponer una fila v2 con la forma v3 —o al revés— da
+ * un FAIL que no existe: no hay mutación ninguna, sólo se ha usado la regla
+ * equivocada. Por eso se lee la versión que la propia fila declara y, si es una
+ * que este módulo no sabe verificar, se dice en vez de callar.
+ */
 export function checkIE37(entries: readonly PostedEntry[]): CheckResult {
   const failures: string[] = []
   let checked = 0
   for (const e of entries) {
     if (!e.entryHash) continue
     checked++
+    const version = e.hashVersion ?? HASH_VERSION
+    if (!isHashVersion(version)) {
+      failures.push(`asiento ${e.entryNumber}: forma canónica desconocida (hash_version = ${version})`)
+      continue
+    }
     // E4-D2: `entryHash` cubre TODAS las columnas de la línea. Recomponerlo con
     // menos daría un falso FAIL en cuanto una línea llevara impuesto o destino.
     const hashable: HashableLine[] = e.lines.map((l) => ({
@@ -443,8 +457,11 @@ export function checkIE37(entries: readonly PostedEntry[]): CheckResult {
       projectId: l.projectId ?? null,
       costCenterId: l.costCenterId ?? null,
       businessLineId: l.businessLineId ?? null,
+      originalCurrency: l.originalCurrency ?? null,
+      originalAmountCents: l.originalAmountCents ?? null,
+      exchangeRateId: l.exchangeRateId ?? null,
     }))
-    const recomputed = entryHash(hashable)
+    const recomputed = entryHash(hashable, version)
     if (recomputed !== e.entryHash) {
       failures.push(`asiento ${e.entryNumber}: el hash almacenado no coincide con el de sus líneas`)
     }

@@ -73,6 +73,8 @@ describe.skipIf(!TEST_DATABASE_URL)("QA adversarial — fuga de tenant en count/
         filename: "b-only.pdf",
         path: "b-only.pdf",
         mimetype: "application/pdf",
+        // E8 · T4: `sha256` es NOT NULL (G-11, I-E8-9).
+        sha256: "b".repeat(64),
       },
     })
     await prisma.appData.create({

@@ -66,9 +66,10 @@ export default function AnalyzeForm({
 }) {
   const { showNotification } = useNotification()
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [hasAnalyzed, setHasAnalyzed] = useState(
-    Object.keys(file.cachedParseResult || {}).length > 0
-  )
+  // E8 · T3 (G-03): sin `cachedParseResult` no hay estado «ya analizado»
+  // persistido. Lo devuelve el `ExtractionRun` más reciente del fichero, que
+  // pinta **T15**; hasta entonces el formulario arranca limpio en cada carga.
+  const [hasAnalyzed, setHasAnalyzed] = useState(false)
   const [analyzeStep, setAnalyzeStep] = useState<string>("")
   const [analyzeError, setAnalyzeError] = useState<string>("")
   const [deleteState, deleteAction, isDeleting] = useActionState(deleteUnsortedFileAction, null)
@@ -124,21 +125,14 @@ export default function AnalyzeForm({
       {} as Record<string, string>
     )
 
-    // Load cached results if they exist
-    const cachedResults = file.cachedParseResult
-      ? Object.fromEntries(
-          Object.entries(file.cachedParseResult as Record<string, string>).filter(
-            ([, value]) => value !== null && value !== undefined && value !== ""
-          )
-        )
-      : {}
-
+    // La propuesta con la que se prerellena el formulario sale del
+    // `ExtractionRun` y de su `reconcile`, campo a campo y con su badge de
+    // confianza (T15). No de una columna que se sobrescribe sola.
     return {
       ...baseState,
       ...extraFieldsState,
-      ...cachedResults,
     }
-  }, [file.filename, settings, extraFields, file.cachedParseResult])
+  }, [file.filename, settings, extraFields])
   const [formData, setFormData] = useState(initialFormState)
 
   async function saveAsTransaction(formData: FormData) {

@@ -593,9 +593,14 @@ describe.skipIf(!TEST_DATABASE_URL)("E4 · analítica en base de datos", () => {
     300_000
   )
 
-  it("criterio 11 · tras la migración, todas las filas llevan `hash_version = 2`", async () => {
+  it("criterio 11 · ninguna fila lleva una forma canónica que no sepamos verificar", async () => {
+    // E4 dejó TODO el histórico en `hash_version = 2` y este criterio lo
+    // comprobaba con un `<> 2`. Desde E8 · T2b conviven la v2 (lo ya escrito) y
+    // la v3 (lo que nace con divisa, ADR-0014 D2), así que lo que hay que
+    // defender ya no es «todas son 2» —eso sería negar la convivencia— sino que
+    // no aparezca una versión que ni el código ni el SQL saben recomponer.
     const rows = await owner(async (client) =>
-      client.query<{ n: number }>(`SELECT count(*)::int AS n FROM journal_entries WHERE hash_version <> 2`)
+      client.query<{ n: number }>(`SELECT count(*)::int AS n FROM journal_entries WHERE hash_version NOT IN (2, 3)`)
     )
     expect(rows.rows[0].n).toBe(0)
   })
@@ -735,14 +740,23 @@ describe.skipIf(!TEST_DATABASE_URL)("E4 · analítica en base de datos", () => {
           projectId: l.projectId,
           costCenterId: l.costCenterId,
           businessLineId: l.businessLineId,
-        }))
+          // E8 · T2b: las tres columnas de divisa entran en la forma v3.
+          originalCurrency: l.originalCurrency,
+          originalAmountCents: l.originalAmountCents,
+          exchangeRateId: l.exchangeRateId,
+        })),
+        // Cada fila se verifica con SU forma canónica: v2 para el histórico,
+        // v3 para lo que nace desde E8. Mezclarlas daría un falso FAIL de
+        // I-E3-7 sin que nadie haya tocado un céntimo (riesgo R5).
+        e.hashVersion === 2 ? 2 : 3
       )
       const row = sqlById.get(e.id)
       expect(row, `asiento ${e.entryNumber}`).toBeDefined()
       // Los tres caminos coinciden: TypeScript, SQL y lo almacenado (I-E3-7).
       expect(row?.hash, `SQL vs TS en el asiento ${e.entryNumber}`).toBe(ts)
       expect(row?.stored, `almacenado vs TS en el asiento ${e.entryNumber}`).toBe(ts)
-      expect(row?.version).toBe(2)
+      // E8 · T2b: `postEntryTx` sella en v3 y la fila lo DECLARA.
+      expect(row?.version).toBe(3)
     }
   })
 

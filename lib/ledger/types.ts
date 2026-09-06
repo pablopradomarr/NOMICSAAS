@@ -118,6 +118,18 @@ export type DraftLine = {
   projectId?: string | null
   costCenterId?: string | null
   businessLineId?: string | null
+  /**
+   * **E8 · T2b (ADR-0014 D2).** Divisa ORIGINAL de la partida monetaria (43x,
+   * 40x, 41x, 523, 57x). Sin ellas, la valoración al tipo de cierre de la NRV
+   * 11ª.2.1 no sería computable desde el diario (ADR-0003). Las rellena
+   * `postFromProposal` (T9); el motor de E3 las deja pasar sin mirarlas y las
+   * columnas son INMUTABLES en la base (sin `GRANT UPDATE`).
+   * Coherencia impuesta por CHECK: las dos primeras van juntas, y con divisa
+   * hay `exchangeRateId` sí o sí — sin tasa persistida no se inventa nada.
+   */
+  originalCurrency?: string | null
+  originalAmountCents?: Cents | null
+  exchangeRateId?: string | null
 }
 
 /** Línea ya normalizada por `buildEntry`: `accountCode` resuelto y obligatorio. */
@@ -140,6 +152,17 @@ export type EntryDraft = {
   /** Sellado en el asiento (O-2, R-IVA-4). */
   taxRoundingMode: TaxRoundingMode
   reversesEntryId?: string | null
+  /**
+   * **E8 · ADR-0014 D8 (O-6). La CUARTA fecha.** Gobierna el periodo de IVA
+   * soportado (`max(receptionDate, documentDate)`). NO interviene en ejercicio,
+   * mes, informes ni `ledgerHash`: `entryDate` sigue siendo la única que manda.
+   */
+  receptionDate?: LocalDate | null
+  /** Devengo del IVA (art. 75 LIVA). Selecciona el `TaxRate` (O-14, art. 90.Dos). */
+  operationDate?: LocalDate | null
+  /** O-3 de E3: versión de la plantilla con la que se construyó el asiento. */
+  templateVersion?: number | null
+  extractionRunId?: string | null
   lines: ResolvedLine[]
 }
 
@@ -237,6 +260,10 @@ export type PostedLine = {
   projectId?: string | null
   costCenterId?: string | null
   businessLineId?: string | null
+  /** E8 · T2b: divisa original de la partida monetaria (ADR-0014 D2). */
+  originalCurrency?: string | null
+  originalAmountCents?: Cents | null
+  exchangeRateId?: string | null
   entryDate: LocalDate
   fiscalYearId: string
   entryKind: EntryKind
@@ -259,5 +286,13 @@ export type PostedEntry = {
   reversesEntryId?: string | null
   voidedAt?: string | null
   entryHash?: string
+  /**
+   * **E8 · T2b.** Forma canónica con la que se selló `entryHash`: 2 = E4,
+   * 3 = E8 (con divisa). I-E3-7 verifica CADA fila con la suya; usar otra da un
+   * falso FAIL, que es el riesgo R5 de la épica.
+   */
+  hashVersion?: number
+  receptionDate?: LocalDate | null
+  operationDate?: LocalDate | null
   lines: PostedLine[]
 }

@@ -2,7 +2,9 @@ import { TenantClient, tenantTransaction } from "@/lib/db"
 import type { PgcVariant } from "@/prisma/client"
 import { importNpgc } from "@/models/accounts"
 import { defaultBusinessLineId, seedAnalyticsDefaults } from "@/models/analytics"
+import { DefaultDeductibility } from "@/prisma/client"
 import {
+  CATEGORIES_REQUIERE_DECISION,
   DEFAULT_CATEGORIES,
   DEFAULT_CURRENCIES,
   DEFAULT_FIELDS,
@@ -47,10 +49,15 @@ export async function createOrganizationDefaults(
   }
 
   for (const category of DEFAULT_CATEGORIES) {
+    // E8 · T23 (O-17): la deducibilidad se siembra en el ALTA y no se pisa en el
+    // `update` — si el usuario la ha cambiado, es una decisión suya.
+    const defaultDeductibility = CATEGORIES_REQUIERE_DECISION.includes(category.code)
+      ? DefaultDeductibility.REQUIERE_DECISION
+      : DefaultDeductibility.FULL
     await db.category.upsert({
       where: { organizationId_code: { organizationId, code: category.code } },
       update: { name: category.name, color: category.color, llm_prompt: category.llm_prompt },
-      create: { ...category, organizationId },
+      create: { ...category, organizationId, defaultDeductibility },
     })
   }
 

@@ -2,7 +2,6 @@
 
 import { ActionState } from "@/lib/actions"
 import { TenantClient } from "@/lib/db"
-import { updateFile } from "@/models/files"
 import { getLLMSettings, getSettings } from "@/models/settings"
 import { AnalyzeAttachment } from "./attachments"
 import { requestLLM } from "./providers/llmProvider"
@@ -17,7 +16,10 @@ export async function analyzeTransaction(
   prompt: string,
   schema: Record<string, unknown>,
   attachments: AnalyzeAttachment[],
-  fileId: string
+  // E8 · T11: hoy sin uso — desde que `cached_parse_result` desapareció (G-03),
+  // quien persiste la evidencia es `runExtraction` con un `ExtractionRun`. Se
+  // conserva en la firma porque es esa tarea la que lo consume.
+  _fileId: string
 ): Promise<ActionState<AnalysisResult>> {
   const settings = await getSettings(db)
   const llmSettings = getLLMSettings(settings)
@@ -39,8 +41,10 @@ export async function analyzeTransaction(
     console.log("LLM response:", result)
     console.log("LLM tokens used:", tokensUsed)
 
-    await updateFile(db, fileId, { cachedParseResult: result })
-
+    // E8 · T3 (G-03): `files.cached_parse_result` ha DESAPARECIDO. La salida de
+    // un modelo no se memoriza en una columna mutable sin proveedor, sin
+    // prompt-sha y sin páginas vistas: se persiste como `ExtractionRun`
+    // inmutable, que es evidencia y no atajo. Lo hace `runExtraction` en **T11**.
     return {
       success: true,
       data: {

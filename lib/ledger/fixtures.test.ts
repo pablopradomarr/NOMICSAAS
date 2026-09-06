@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest"
 
-import { ledgerHash } from "@/lib/ledger/hash"
+import { entryHash, type HashableLine, ledgerHash } from "@/lib/ledger/hash"
 import { buildDiario } from "@/lib/ledger/reports/diario"
 import { buildMayor } from "@/lib/ledger/reports/mayor"
 import { buildSumasSaldos } from "@/lib/ledger/reports/sumas-saldos"
@@ -178,6 +178,36 @@ describe.each(["ejercicio-minimo", "ejercicio-completo"] as const)("fixture %s",
     const again = loadFixture(name)
     expect(posted.map((e) => e.entryHash)).toEqual(again.posted.map((e) => e.entryHash))
   })
+
+  /**
+   * **E8 · T2b — el test explícito de que `hashVersion = 3` no mueve nada.**
+   *
+   * `entryHash` estrena forma canónica v3 (ADR-0014 D2) y esa es *toda* la
+   * novedad: el sello FINANCIERO no la conoce. Si este valor cambiara, todo
+   * informe sellado de E3–E6 dejaría de servirse de caché (I-E6-18) y el
+   * criterio 15 de E3 —dos organizaciones con el mismo diario, el mismo
+   * `ledgerHash`— dejaría de ser cierto sin que se haya movido un céntimo.
+   *
+   * Los literales se calcularon con el código ANTERIOR a T2b (34c9f85^).
+   */
+  it("E8 · T2b: el `ledgerHash` del fixture NO cambia con `hashVersion = 3` (byte a byte)", () => {
+    const congelado: Record<string, string> = {
+      "ejercicio-minimo": "a23576f7193ac0b29d6ad29d8cc78ff5cae102e9822b0e7dcd1a8a5afe22cccc",
+      "ejercicio-completo": "cb9c874479ffc2e7e7acc4e9cc49e0cea6dc49090c360cdd327e07d98660769e",
+    }
+    expect(ledgerHash(toReportLines(posted) as unknown as Parameters<typeof ledgerHash>[0])).toBe(congelado[name])
+  })
+
+  it("E8 · T2b: los asientos del fixture nacen en v3 y lo DECLARAN (convivencia)", () => {
+    // Sin la versión declarada, I-E3-7 verificaría con v2 y daría un FAIL que no
+    // existe. Es el riesgo R5 de la épica, y aquí está su red.
+    expect(posted.every((e) => e.hashVersion === 3)).toBe(true)
+    for (const e of posted) {
+      expect(entryHash(hashableOf(e), 3)).toBe(e.entryHash)
+      // …y con la forma equivocada, NO cuadra: la convivencia es real.
+      expect(entryHash(hashableOf(e), 2)).not.toBe(e.entryHash)
+    }
+  })
 })
 
 describe("ejercicio-completo — cifras concretas del §4.3 del experto", () => {
@@ -267,3 +297,36 @@ describe("auto-consistencia de los fixtures (saldos 6/7 incluidos)", () => {
     }
   )
 })
+
+/** Las líneas de un asiento en la forma que `entryHash` espera (E4-D2 + T2b). */
+function hashableOf(e: {
+  id: string
+  entryNumber: number
+  entryDate: string
+  kind: string
+  lines: readonly Record<string, unknown>[]
+}): HashableLine[] {
+  return e.lines.map((l) => ({
+    entryId: e.id,
+    entryNumber: e.entryNumber,
+    entryDate: e.entryDate,
+    entryKind: e.kind,
+    lineNo: l.lineNo,
+    accountCode: l.accountCode,
+    debitCents: l.debitCents,
+    creditCents: l.creditCents,
+    fiscalYearId: l.fiscalYearId,
+    taxRateId: l.taxRateId ?? null,
+    taxBaseCents: l.taxBaseCents ?? null,
+    counterpartyId: l.counterpartyId ?? null,
+    dueDate: l.dueDate ?? null,
+    description: l.description ?? null,
+    analyticType: l.analyticType ?? null,
+    projectId: l.projectId ?? null,
+    costCenterId: l.costCenterId ?? null,
+    businessLineId: l.businessLineId ?? null,
+    originalCurrency: l.originalCurrency ?? null,
+    originalAmountCents: l.originalAmountCents ?? null,
+    exchangeRateId: l.exchangeRateId ?? null,
+  })) as HashableLine[]
+}

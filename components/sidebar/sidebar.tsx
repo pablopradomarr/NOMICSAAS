@@ -26,6 +26,7 @@ import {
   CalendarRange,
   ClockArrowUp,
   Coins,
+  Contact,
   DatabaseBackup,
   FileText,
   FolderKanban,
@@ -83,6 +84,9 @@ const settingsItems = [
   { title: "Ejercicios", href: "/settings/fiscal-years", icon: CalendarRange, adminOnly: false },
   { title: "Mapa de cuentas", href: "/settings/account-map", icon: Waypoints, adminOnly: false },
   { title: "Impuestos", href: "/settings/taxes", icon: Percent, adminOnly: false },
+  // E8 · T23 — calificación fiscal de terceros y de la organización (ADR-0014
+  // D11). La LEE cualquier rol; escribir es de ADMIN y lo exige la acción.
+  { title: "Terceros y fiscalidad", href: "/settings/counterparties", icon: Contact, adminOnly: false },
   { title: "Auditoría de cambios", href: "/settings/audit", icon: ScrollText, adminOnly: true },
   { title: "LLM settings", href: "/settings/llm", icon: Sparkles, adminOnly: true },
   { title: "Fields", href: "/settings/fields", icon: FormInput, adminOnly: true },

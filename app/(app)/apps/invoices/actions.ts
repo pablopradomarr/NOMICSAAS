@@ -11,7 +11,7 @@ import {
 } from "@/lib/files"
 import { getAppData, setAppData } from "@/models/apps"
 import { createFile } from "@/models/files"
-import { syncOrganizationStorage } from "@/lib/uploads"
+import { sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
 import { Prisma } from "@/prisma/client"
 import {
   createTransaction,
@@ -149,6 +149,9 @@ export async function saveInvoiceAsTransactionAction(
       filename: fileName,
       path: relativeFilePath,
       mimetype: "application/pdf",
+      // E8 · T4 (G-11): también el PDF que emitimos nosotros tiene su sha.
+      sha256: sha256OfBuffer(pdfBuffer),
+      sizeBytes: pdfBuffer.length,
       isReviewed: true,
       metadata: {
         size: pdfBuffer.length,

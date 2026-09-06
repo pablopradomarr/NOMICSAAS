@@ -4,7 +4,7 @@ import { transactionFormSchema } from "@/forms/transactions"
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
 import { getOrganizationUploadsDirectory, getTransactionFileUploadPath, safePathJoin, unsortedFilePath } from "@/lib/files"
-import { UploadValidationError, assertAcceptableUpload, syncOrganizationStorage } from "@/lib/uploads"
+import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
 import { createFile, deleteFile, getFileById, updateFile } from "@/models/files"
 import {
   createTransaction,
@@ -148,7 +148,15 @@ export async function splitFileIntoItemsAction(
       // Copy the original file content
       await writeFile(fullFilePath, fileContent)
 
-      // Create file record in database with the item data cached
+      // E8 · T3 (G-03): `cachedParseResult` YA NO EXISTE. Era una memoria
+      // mutable sin proveedor, sin modelo, sin prompt y sin sha que se
+      // sobrescribía sola, y P4 no admite que una memoria sea fuente de cifras.
+      // Lo que el usuario teclea en el split pasa a ser un `ExtractionRun`
+      // `MANUAL`/`formulario` sobre UNA sola `File` con N `Transaction`
+      // (O-9.iii), y eso lo construye **T13** (`splitProposalAction`). Hasta
+      // entonces el split sigue partiendo el fichero pero no prerellena el
+      // formulario: `item` se conserva en la firma porque T13 lo consume.
+      void item
       await createFile(db, {
         id: fileUuid,
         organizationId: org.id,
@@ -156,21 +164,10 @@ export async function splitFileIntoItemsAction(
         filename: fileName,
         path: relativeFilePath,
         mimetype,
+        sha256: sha256OfBuffer(fileContent),
+        sizeBytes: fileContent.length,
         metadata: originalFile.metadata ?? undefined,
         isSplitted: true,
-        cachedParseResult: {
-          name: item.name,
-          merchant: item.merchant,
-          description: item.description,
-          total: item.total,
-          currencyCode: item.currencyCode,
-          categoryCode: item.categoryCode,
-          projectCode: item.projectCode,
-          type: item.type,
-          issuedAt: item.issuedAt,
-          note: item.note,
-          text: item.text,
-        },
       })
     }
 
