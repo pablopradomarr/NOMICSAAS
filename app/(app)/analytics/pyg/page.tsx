@@ -1,7 +1,6 @@
 import { analyticsHeader, buildMatrixView } from "@/app/(app)/analytics/shared"
 import { accountNames, defaultPeriod } from "@/app/(app)/ledger/shared"
 import { analyticPnlAction } from "@/app/(app)/analytics/actions"
-import { allocatedPnlAction } from "@/app/(app)/analytics/allocations/ui-actions"
 import { AmountPlain } from "@/components/ledger/amount"
 import { MarginMatrix } from "@/components/analytics/margin-matrix"
 import { ReportHeader } from "@/components/reports/report-header"
@@ -60,9 +59,14 @@ export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) =
   /** E5 · T13 — el toggle vive en la URL: es compartible y entra en el paramsHash. */
   const withAllocations = first("imputaciones") === "si"
 
-  const state = withAllocations
-    ? await allocatedPnlAction({ from, to, ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}) })
-    : await analyticPnlAction({ from, to, ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}) })
+  // Con y sin imputaciones son el MISMO informe con un parámetro más: una sola
+  // acción, un solo camino de composición del `analyticsHash`.
+  const state = await analyticPnlAction({
+    from,
+    to,
+    ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}),
+    withAllocations,
+  })
 
   const queryFor = (overrides: { vista?: string; imputaciones?: string }) => {
     const search = new URLSearchParams()

@@ -23,6 +23,7 @@
 import {
   accountAnalyticTypeSchema,
   analyticPnlSchema,
+  allocationCellDetailSchema,
   cellDetailSchema,
   analyticsPolicySchema,
   archiveDimensionSchema,
@@ -68,7 +69,13 @@ import {
   type ReclassifyResult,
 } from "@/models/analytics"
 import { formatLedgerErrors, runLedgerTransaction, todayLocalDate, type LedgerResult } from "@/models/ledger"
-import { getAnalyticPnl, getCellDetail, type CellDetail } from "@/models/margins"
+import {
+  getAllocationCellDetail,
+  getAnalyticPnl,
+  getCellDetail,
+  type AllocationCellDetail,
+  type CellDetail,
+} from "@/models/margins"
 import { Role } from "@/prisma/client"
 import { randomUUID } from "node:crypto"
 import { revalidatePath } from "next/cache"
@@ -122,6 +129,10 @@ export type AnalyticPnlPayload = {
   ledgerHash: string
   analyticsHash: string
   marginConfigHash: string
+  /** E5 · O-E5-7 — el CUARTO sello. `sha256("")` sin imputaciones. */
+  allocationRunSetHash: string
+  allocationRunIds: string[]
+  withAllocations: boolean
   checks: CheckResult[]
   runId: string
   gitSha: string
@@ -145,6 +156,12 @@ export const analyticPnlAction = withOrg(
           from: parsed.data.from,
           to: parsed.data.to,
           ...(parsed.data.fiscalYearId ? { fiscalYearId: parsed.data.fiscalYearId } : {}),
+          // E5 · T13: el toggle «con / sin imputaciones» es un parámetro MÁS del
+          // informe, no una acción paralela. Con `true` la matriz suma los runs
+          // vigentes del periodo y el `analyticsHash` lleva el
+          // `allocationRunSetHash` real, así que la caché nunca sirve el
+          // informe imputado por el que no lo está (ni al revés).
+          withAllocations: parsed.data.withAllocations,
           provenance: { runId, gitSha: sha, baseCurrency: org.baseCurrency },
         })
       )
@@ -187,6 +204,31 @@ export const analyticCellDetailAction = withOrg(
         from: parsed.data.from,
         to: parsed.data.to,
         ...(parsed.data.fiscalYearId ? { fiscalYearId: parsed.data.fiscalYearId } : {}),
+      })
+    )
+    return { success: true, data: detail }
+  }
+)
+
+/**
+ * E5 · §3.2 — la SEGUNDA mitad de la procedencia de una celda imputada.
+ *
+ * Una celda MC3 de proyecto con imputaciones no se reproduce con una sola
+ * consulta al diario: parte del importe viene de `allocation_lines`. Esta acción
+ * **ejecuta** la consulta parametrizada que viaja en la provenance, así que lo
+ * que lista es por construcción lo que suma la cifra pintada.
+ */
+export const allocationCellDetailAction = withOrg(
+  Role.VIEWER,
+  async ({ org }, input: unknown): Promise<ActionState<AllocationCellDetail>> => {
+    const parsed = allocationCellDetailSchema.safeParse(input)
+    if (!parsed.success) return invalid(parsed.error)
+    const detail = await tenantTransaction(org.id, async (tx) =>
+      getAllocationCellDetail(tx, {
+        level: parsed.data.level,
+        column: parsed.data.column as ColumnKey,
+        from: parsed.data.from,
+        to: parsed.data.to,
       })
     )
     return { success: true, data: detail }

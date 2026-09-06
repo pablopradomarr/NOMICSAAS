@@ -424,10 +424,38 @@ const lastDay = (y: number, m: number): number =>
 
 export type AllocationSeals = { ledgerHash: string; dimensionsHash: string; rulesHash: string }
 
+type FiscalYearContext = { config: Awaited<ReturnType<typeof getAnalyticsConfig>>; lines: AnalyticLine[] }
+
+const fiscalYearContextCache = new WeakMap<object, Map<string, FiscalYearContext>>()
+
+async function fiscalYearContext(
+  tx: TenantTransactionClient,
+  fiscalYearId: string,
+  from: LocalDate,
+  to: LocalDate,
+  configAt: LocalDate
+): Promise<FiscalYearContext> {
+  const perTx = fiscalYearContextCache.get(tx) ?? new Map<string, FiscalYearContext>()
+  fiscalYearContextCache.set(tx, perTx)
+  // La configuración depende de la fecha con la que se elige la vigencia, así
+  // que forma parte de la clave: dos periodos del mismo ejercicio con distinta
+  // `MarginLevelConfig` vigente no pueden compartir contexto.
+  const key = `${fiscalYearId}|${configAt}`
+  const cached = perTx.get(key)
+  if (cached) return cached
+  // En SERIE: una sola conexión dentro de la transacción.
+  const config = await getAnalyticsConfig(tx, { periodEnd: configAt })
+  const lines = await getAnalyticLines(tx, { from, to, fiscalYearId })
+  const value: FiscalYearContext = { config, lines }
+  perTx.set(key, value)
+  return value
+}
+
 export type AllocationPeriodRequest = { periodKind: AllocPeriod; periodStart: LocalDate; periodEnd: LocalDate }
 
 type RunContext = {
   period: AllocationPeriodRef
+  config: FiscalYearContext["config"]
   lines: AnalyticLine[]
   rules: AllocationRuleSpec[]
   priorAllocations: PriorAllocation[]
@@ -452,9 +480,13 @@ async function loadRunContext(tx: TenantTransactionClient, request: AllocationPe
   const fiscalYearStart = fromUtcDate(fiscalYear.startDate)
   const fiscalYearEnd = fromUtcDate(fiscalYear.endDate)
 
-  const config = await getAnalyticsConfig(tx, { periodEnd: request.periodEnd })
-  // Líneas del EJERCICIO entero: `YTD` y `PRIOR_PERIOD` las necesitan (§1.2).
-  const lines = await getAnalyticLines(tx, { from: fiscalYearStart, to: fiscalYearEnd, fiscalYearId: fiscalYear.id })
+  // Las líneas del EJERCICIO entero (`YTD` y `PRIOR_PERIOD` las necesitan, §1.2)
+  // y la configuración se memoizan POR TRANSACCIÓN: `/analytics/allocations/runs`
+  // deriva el `STALE` de cada run y con doce runs mensuales serían doce lecturas
+  // del mismo ejercicio. La clave es la identidad del cliente transaccional, así
+  // que la memoria muere con la transacción y nunca sirve datos de otra
+  // petición ni de otra organización.
+  const { config, lines } = await fiscalYearContext(tx, fiscalYear.id, fiscalYearStart, fiscalYearEnd, request.periodEnd)
   const ledgerHash = await computeLedgerHash(tx, {
     from: request.periodStart,
     to: request.periodEnd,
@@ -488,6 +520,7 @@ async function loadRunContext(tx: TenantTransactionClient, request: AllocationPe
   const configHash = marginConfigHash(config)
 
   return {
+    config,
     period: {
       kind: request.periodKind,
       label: periodLabel(request.periodKind, request.periodStart),
@@ -549,10 +582,9 @@ export async function previewAllocationRun(
   request: AllocationPeriodRequest
 ): Promise<AllocationPreview> {
   const ctx = await loadRunContext(tx, request)
-  const config = await getAnalyticsConfig(tx, { periodEnd: request.periodEnd })
   const computed = allocate({
     lines: ctx.lines,
-    config,
+    config: ctx.config,
     rules: ctx.rules,
     period: ctx.period,
     priorAllocations: ctx.priorAllocations,
@@ -626,10 +658,9 @@ export async function sealAllocationRunTx(
     }
   }
 
-  const config = await getAnalyticsConfig(tx, { periodEnd: input.periodEnd })
   const computed = allocate({
     lines: ctx.lines,
-    config,
+    config: ctx.config,
     rules: ctx.rules,
     period: ctx.period,
     priorAllocations: ctx.priorAllocations,

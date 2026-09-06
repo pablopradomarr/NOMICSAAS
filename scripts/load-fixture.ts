@@ -325,6 +325,14 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
   await client.connect()
   try {
     await client.query("BEGIN")
+    // E5 — la liquidación PRIMERO y en orden de FK: `allocation_lines` apunta a
+    // runs, reglas y dimensiones; los targets, a las reglas. Borrar los CECOs
+    // antes dejaría un `RESTRICT` colgando y el reset fallaría a medias. Va en
+    // la misma transacción que todo lo demás.
+    await client.query(`DELETE FROM allocation_lines WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM allocation_runs WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM allocation_rule_targets WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM allocation_rules WHERE organization_id = $1::uuid`, [organizationId])
     // Las líneas y los asientos, en la MISMA transacción: el constraint trigger
     // diferido de cuadre sólo se calla si el asiento tampoco existe al COMMIT.
     await client.query(`DELETE FROM journal_lines WHERE organization_id = $1::uuid`, [organizationId])
@@ -369,7 +377,8 @@ ni de parte de quién):
 Opcionales:
   --fixture <ruta>    tests/fixtures/ejercicio-minimo.json (por defecto) o
                       tests/fixtures/ejercicio-completo.json
-  --reset-org         Vacía el diario, los ejercicios y las dimensiones de esa
+  --reset-org         Vacía la liquidación, el diario, los ejercicios y las
+                      dimensiones de esa
                       organización ANTES de cargar. Sin esto, cargar dos veces
                       sobre la misma organización falla al chocar la numeración,
                       que es lo correcto: el script NO sobrescribe un diario.

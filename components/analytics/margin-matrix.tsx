@@ -1,10 +1,7 @@
 "use client"
 
-import { analyticCellDetailAction } from "@/app/(app)/analytics/actions"
-import {
-  allocationCellDetailAction,
-  type AllocationCellDetail,
-} from "@/app/(app)/analytics/allocations/ui-actions"
+import { allocationCellDetailAction, analyticCellDetailAction } from "@/app/(app)/analytics/actions"
+import type { AllocationCellDetail } from "@/models/margins"
 import { formatBps, type CellDetail, type CellLine, type MatrixView } from "@/components/analytics/types"
 import { AmountPlain } from "@/components/ledger/amount"
 import { shortHash } from "@/components/ledger/types"

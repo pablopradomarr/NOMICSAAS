@@ -47,6 +47,8 @@ const { getAnalyticPnl } = await import("@/models/margins")
 const { getDashboard } = await import("@/models/reports")
 const { countUnpostedTransactions } = await import("@/models/transactions")
 const { accountNames, entryExtras, postableAccounts } = await import("@/app/(app)/ledger/shared")
+const { listAllocationRules, listAllocationRuns, allocationRunStaleness, createAllocationRulesTx, sealAllocationRunTx, allocationPeriodBounds } =
+  await import("@/models/allocations")
 
 const ORG = "efff0000-0000-4000-8000-00000000000a"
 const USER = "efff0000-0000-4000-8000-0000000000a1"
@@ -228,6 +230,47 @@ const loaders: Loader[] = [
       }),
   },
   {
+    // E5 · T11 — las mismas lecturas que hace `/analytics/allocations`.
+    route: "/analytics/allocations",
+    run: async () =>
+      await runWithRequestTenant(
+        ORG,
+        USER,
+        async () => {
+          const db = tenantDb(ORG)
+          const rules = await listAllocationRules(db, { includeClosed: true })
+          const costCenters = await db.costCenter.findMany({ orderBy: { code: "asc" } })
+          const projects = await db.project.findMany({ where: { isActive: true }, orderBy: { code: "asc" } })
+          const businessLines = await db.businessLine.findMany({ where: { isActive: true }, orderBy: { code: "asc" } })
+          const fiscalYears = await db.fiscalYear.findMany({ where: { status: "OPEN" }, take: 1 })
+          return { rules, costCenters, projects, businessLines, fiscalYears }
+        },
+        { readOnly: true }
+      ),
+  },
+  {
+    // E5 · T12 — `/analytics/allocations/runs`, con el `STALE` DERIVADO de cada
+    // run: es la pantalla con más riesgo de N+1 de la épica, porque cada run
+    // exige recomponer sus tres sellos.
+    route: "/analytics/allocations/runs",
+    run: async () =>
+      await runWithRequestTenant(
+        ORG,
+        USER,
+        async (tx) => {
+          const fiscalYears = await listFiscalYears(tx)
+          const runs = await listAllocationRuns(tx, {})
+          const stale: unknown[] = []
+          for (const run of runs) {
+            if (run.status !== "SEALED") continue
+            stale.push(await allocationRunStaleness(tx, run))
+          }
+          return { fiscalYears, runs, stale }
+        },
+        { readOnly: true }
+      ),
+  },
+  {
     // El panel EMITE un `ReportRun`: la transacción de la petición no es READ ONLY.
     route: "/dashboard",
     run: async (fiscalYearId) =>
@@ -268,6 +311,45 @@ describe.skipIf(!TEST_DATABASE_URL)("E6-perf · una transacción por petición",
       USER,
       async (tx) => (await tx.fiscalYear.findFirstOrThrow({ where: { code: "2026" } })).id
     )
+    // E5: la pantalla de runs sólo es representativa con runs de verdad. Una
+    // regla mensual y los doce runs de 2026 ejercen el `STALE` DERIVADO, que es
+    // donde una regresión de N+1 dolería (tres sellos por run).
+    await tenantTransaction(ORG, USER, async (tx) => {
+      const source = await tx.costCenter.findFirstOrThrow({ where: { code: "CC-OPS" } })
+      await createAllocationRulesTx(
+        tx,
+        [
+          {
+            code: "AL-PERF-M",
+            name: "Operaciones indirectas a proyectos (mensual)",
+            sourceCostCenterId: source.id,
+            targetKind: "PROJECTS",
+            driver: "DIRECT_COST_SHARE",
+            period: "MONTH",
+            priority: 10,
+            sourceShareBps: 10000,
+            zeroBaseFallback: "YTD",
+            targetFilter: { projectStatus: ["ACTIVE"] },
+            validFrom: "2026-01-01",
+            validTo: null,
+            targets: [],
+          },
+        ],
+        { userId: USER }
+      )
+    })
+    for (let month = 1; month <= 12; month++) {
+      const label = `2026-${String(month).padStart(2, "0")}`
+      const bounds = allocationPeriodBounds(label)
+      await tenantTransaction(ORG, USER, async (tx) =>
+        sealAllocationRunTx(
+          tx,
+          { periodKind: "MONTH", periodStart: bounds.from, periodEnd: bounds.to, gitSha: "test" },
+          { userId: USER }
+        )
+      )
+    }
+
     await watcher.start()
     // Precalienta: la primera conexión del pool y el primer `ReportRun` pagan un
     // arranque que no es representativo de una petición en caliente.

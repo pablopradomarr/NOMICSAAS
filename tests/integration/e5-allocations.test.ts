@@ -29,7 +29,7 @@ const { openFiscalYear } = await import("@/models/fiscal-years")
 const { computeLedgerHash, getLedgerContext, postEntry, runLedgerInvariants } = await import("@/models/ledger")
 const { buildEntry } = await import("@/lib/ledger/post")
 const { seedAnalyticsDefaults } = await import("@/models/analytics")
-const { getAnalyticPnl } = await import("@/models/margins")
+const { getAllocationCellDetail, getAnalyticPnl } = await import("@/models/margins")
 const {
   closeAllocationRuleTx,
   createAllocationRuleTx,
@@ -46,6 +46,7 @@ const {
 } = await import("@/models/allocations")
 const { EMPTY_RUN_SET_HASH } = await import("@/lib/analytics/hash")
 const { analyticsKeyOf } = await import("@/lib/ledger/report-run")
+const { resetOrganizationLedger } = await import("@/scripts/load-fixture")
 
 const ORG = "e5000000-0000-4000-8000-00000000000a"
 const ORG_OTHER = "e5000000-0000-4000-8000-00000000000b"
@@ -614,6 +615,40 @@ describe.skipIf(!TEST_DATABASE_URL)("E5 · liquidación de CECOs en base de dato
     expect(failed.map((c) => `${c.id}: ${c.evidencia}`)).toEqual([])
   })
 
+  it("§3.2 · el drill-down de una celda imputada EJECUTA su consulta y reproduce el Δ de la celda", async () => {
+    const report = await tenantTransaction(ORG, async (tx) =>
+      getAnalyticPnl(tx, {
+        from: "2026-01-01",
+        to: "2026-12-31",
+        withAllocations: true,
+        provenance: { runId: "e5", gitSha: "test", baseCurrency: "EUR" },
+      })
+    )
+    const detail = await tenantTransaction(ORG, async (tx) =>
+      getAllocationCellDetail(tx, { level: "EBITDA", column: "PROJ:P-01", from: "2026-01-01", to: "2026-12-31" })
+    )
+    // La consulta que se ejecuta es EXACTAMENTE la que viaja en la provenance.
+    expect(detail.query).toContain("FROM allocation_lines")
+    expect(detail.query).toContain("target_project_id = $3")
+    expect(detail.lines.length).toBeGreaterThan(0)
+    // Y su suma es, al céntimo, el Δ que la matriz aplicó a esa celda.
+    expect(detail.amountCents).toBe(report.pnl.allocationDeltaCents.EBITDA["PROJ:P-01"])
+    // En una columna de CECO la misma línea aparece con los DOS efectos, y el
+    // neto de la columna es cero porque el CECO queda liquidado.
+    const ga = await tenantTransaction(ORG, async (tx) =>
+      getAllocationCellDetail(tx, { level: "EBITDA", column: "CECO:G_A", from: "2026-01-01", to: "2026-12-31" })
+    )
+    expect(ga.amountCents).toBe(report.pnl.allocationDeltaCents.EBITDA["CECO:G_A"])
+    // Sin runs vigentes en el periodo no se ejecuta ninguna consulta ni se
+    // devuelve ninguna línea: la mitad imputada de la celda vale cero.
+    const empty = await tenantTransaction(ORG, async (tx) =>
+      getAllocationCellDetail(tx, { level: "EBITDA", column: "PROJ:P-01", from: "2026-02-01", to: "2026-02-28" })
+    )
+    expect(empty.runIds).toEqual([])
+    expect(empty.lines).toEqual([])
+    expect(empty.amountCents).toBe(0)
+  })
+
   it("los cambios de política y el ciclo del run quedan en `AuditLog`, en la misma transacción", async () => {
     const logs = await tenantDb(ORG).auditLog.findMany({
       where: { entity: { in: ["AllocationRule", "AllocationRun"] } },
@@ -627,6 +662,42 @@ describe.skipIf(!TEST_DATABASE_URL)("E5 · liquidación de CECOs en base de dato
     expect(logs.every((l) => l.userId === USER)).toBe(true)
     // Toda reversión lleva su motivo escrito.
     expect(logs.filter((l) => l.action === "reverse").every((l) => (l.reason ?? "").length >= 10)).toBe(true)
+  })
+
+  it("`--reset-org` purga también la liquidación, en orden de FK", async () => {
+    const before = await owner((client) =>
+      client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM allocation_lines WHERE organization_id = $1`,
+        [ORG]
+      )
+    )
+    expect(before.rows[0].n).toBeGreaterThan(0)
+
+    // El reset es una operación de OPERADOR (ADR-0009 §6) y exige una conexión
+    // que no esté sujeta al tenant; en esta suite la del propietario lo es.
+    const previous = process.env.DATABASE_URL_MAINTENANCE
+    process.env.DATABASE_URL_MAINTENANCE = TEST_DATABASE_URL
+    try {
+      // Sin la purga de `allocation_*`, el `DELETE FROM cost_centers` chocaría
+      // con el `RESTRICT` de `allocation_lines_source_cost_center_fkey` y el
+      // reset dejaría la organización a medias.
+      await resetOrganizationLedger(ORG, USER)
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL_MAINTENANCE
+      else process.env.DATABASE_URL_MAINTENANCE = previous
+    }
+
+    for (const table of ["allocation_lines", "allocation_runs", "allocation_rule_targets", "allocation_rules"]) {
+      const after = await owner((client) =>
+        client.query<{ n: number }>(`SELECT count(*)::int AS n FROM "${table}" WHERE organization_id = $1`, [ORG])
+      )
+      expect(after.rows[0].n, table).toBe(0)
+    }
+    // Y las dimensiones, que es lo que el RESTRICT protegía, también se van.
+    const cecos = await owner((client) =>
+      client.query<{ n: number }>(`SELECT count(*)::int AS n FROM cost_centers WHERE organization_id = $1`, [ORG])
+    )
+    expect(cecos.rows[0].n).toBe(0)
   })
 
   void blGeneral

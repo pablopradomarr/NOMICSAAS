@@ -10,7 +10,14 @@
 
 import { EMPTY_RUN_SET_HASH, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { runAnalyticInvariants } from "@/lib/analytics/invariants"
-import { buildAnalyticPnl, buildMatrixView, cellQuery, type AnalyticPnl, type MatrixView } from "@/lib/analytics/margins"
+import {
+  allocationCellQuery,
+  buildAnalyticPnl,
+  buildMatrixView,
+  cellQuery,
+  type AnalyticPnl,
+  type MatrixView,
+} from "@/lib/analytics/margins"
 import type { AnalyticLine, AnalyticPeriod, AnalyticsConfig, ColumnKey, LocalDate, MarginLevel } from "@/lib/analytics/types"
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 import type { ProvenanceContext } from "@/lib/ledger/provenance"
@@ -335,3 +342,148 @@ export async function getCellDetail(
 
 /** La matriz lista para pintar, sin líneas dentro (hallazgo #5). */
 export const matrixViewOf = (report: AnalyticPnlReport): MatrixView => buildMatrixView(report.pnl, report.config)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E5 · §3.2 — la SEGUNDA mitad de la provenance de una celda imputada
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AllocationCellLine = {
+  lineId: string
+  runId: string
+  ruleCode: string
+  sourceCostCenterCode: string
+  targetKind: "PROJECT" | "BUSINESS_LINE" | "COST_CENTER"
+  targetCode: string
+  marginLevel: string
+  /** Convención de la MATRIZ (aporte): el coste que llega al receptor resta. */
+  amountCents: number
+  driverBase: number
+  driverBaseTotal: number
+  driverShareBps: number
+  fallbackApplied: string | null
+  eligibilityReason: string | null
+}
+
+export type AllocationCellDetail = {
+  level: MarginLevel
+  column: ColumnKey
+  /** La consulta parametrizada que ha producido estas filas (provenance, §7). */
+  query: string
+  runIds: string[]
+  /** Suma de los aportes devueltos: coincide con el Δ de la celda pintada. */
+  amountCents: number
+  lines: AllocationCellLine[]
+  truncated: boolean
+}
+
+/**
+ * Ejecuta la consulta de provenance de la parte IMPUTADA de una celda.
+ *
+ * Una celda MC3 de proyecto con imputaciones no se reproduce con una sola
+ * consulta a `journal_lines`: parte del importe viene de `allocation_lines`. Su
+ * `Provenance` lleva por eso DOS consultas —la del diario (`getCellDetail`) y
+ * ésta— y el importe de cada una. Sin ella, el drill-down de un MC3 imputado
+ * mentiría por omisión.
+ *
+ * La consulta que se ejecuta es **exactamente** la que viaja en la provenance
+ * (`allocationCellQuery`), envuelta para traer las columnas que el drill-down
+ * enseña sin tocar el filtro: el número que devuelve es por construcción el que
+ * se muestra.
+ */
+export async function getAllocationCellDetail(
+  tx: TenantTransactionClient,
+  request: { level: MarginLevel; column: ColumnKey; from: LocalDate; to: LocalDate }
+): Promise<AllocationCellDetail> {
+  // En SERIE: dentro de la transacción se comparte una sola conexión y el
+  // adaptador `pg` avisa de «client is already executing a query».
+  const config = await getAnalyticsConfig(tx, { periodEnd: request.to })
+  const applied = await getAppliedAllocations(tx, { from: request.from, to: request.to })
+  const { query, params } = allocationCellQuery(request.level, request.column, config, applied.runIds)
+
+  const rows =
+    applied.runIds.length === 0
+      ? []
+      : await tx.$queryRawUnsafe<
+          {
+            id: string
+            run_id: string
+            rule_code: string
+            source_code: string
+            project_code: string | null
+            business_line_code: string | null
+            cost_center_code: string | null
+            margin_level: string
+            amount_cents: number
+            driver_base: number
+            driver_base_total: number
+            driver_share_bps: number
+            fallback_applied: string | null
+            eligibility_reason: string | null
+          }[]
+        >(
+          `SELECT al.id, al.run_id, r.code AS rule_code, sc.code AS source_code,
+                  p.code AS project_code, bl.code AS business_line_code, tc.code AS cost_center_code,
+                  al.margin_level::text AS margin_level, al.amount_cents,
+                  al.driver_base, al.driver_base_total, al.driver_share_bps,
+                  al.fallback_applied::text AS fallback_applied, al.eligibility_reason
+             FROM allocation_lines al
+             JOIN allocation_rules r ON r.organization_id = al.organization_id AND r.id = al.rule_id
+             JOIN cost_centers sc ON sc.organization_id = al.organization_id AND sc.id = al.source_cost_center_id
+             LEFT JOIN projects p ON p.organization_id = al.organization_id AND p.id = al.target_project_id
+             LEFT JOIN business_lines bl ON bl.organization_id = al.organization_id AND bl.id = al.target_business_line_id
+             LEFT JOIN cost_centers tc ON tc.organization_id = al.organization_id AND tc.id = al.target_cost_center_id
+            WHERE al.id IN (${query})
+            ORDER BY al.run_id, r.code, al.margin_level, al.created_at, al.id
+            LIMIT ${ALLOCATION_DETAIL_LIMIT + 1}`,
+          ...params
+        )
+
+  const truncated = rows.length > ALLOCATION_DETAIL_LIMIT
+  const kept = rows.slice(0, ALLOCATION_DETAIL_LIMIT)
+  const isCecoColumn = request.column.startsWith("CECO:")
+  const lines: AllocationCellLine[] = kept.map((r) => {
+    const targetKind: AllocationCellLine["targetKind"] = r.project_code
+      ? "PROJECT"
+      : r.business_line_code
+        ? "BUSINESS_LINE"
+        : "COST_CENTER"
+    // Una columna de CECO recibe DOS efectos de la misma línea: el alivio de la
+    // fuente (+) y, si el destino es otro CECO del mismo `kind`, el cargo (−).
+    // El resto de columnas sólo reciben el cargo.
+    const isSource = isCecoColumn && r.source_code !== null && matchesCecoColumn(request.column, r.source_code, config)
+    const sign = isSource ? 1 : -1
+    return {
+      lineId: r.id,
+      runId: r.run_id,
+      ruleCode: r.rule_code,
+      sourceCostCenterCode: r.source_code,
+      targetKind,
+      targetCode: r.project_code ?? r.business_line_code ?? r.cost_center_code ?? "",
+      marginLevel: r.margin_level,
+      amountCents: sign * r.amount_cents,
+      driverBase: r.driver_base,
+      driverBaseTotal: r.driver_base_total,
+      driverShareBps: r.driver_share_bps,
+      fallbackApplied: r.fallback_applied,
+      eligibilityReason: r.eligibility_reason,
+    }
+  })
+
+  return {
+    level: request.level,
+    column: request.column,
+    query,
+    runIds: applied.runIds,
+    amountCents: lines.reduce((acc, l) => acc + l.amountCents, 0),
+    lines,
+    truncated,
+  }
+}
+
+const ALLOCATION_DETAIL_LIMIT = 500
+
+const matchesCecoColumn = (
+  column: ColumnKey,
+  code: string,
+  config: Pick<AnalyticsConfig, "costCenters">
+): boolean => config.costCenters.some((c) => c.code === code && `CECO:${c.kind}` === column)

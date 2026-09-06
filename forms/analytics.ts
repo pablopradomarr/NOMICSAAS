@@ -192,10 +192,31 @@ export const analyticPnlSchema = z
     from: localDateSchema,
     to: localDateSchema,
     fiscalYearId: uuidSchema.optional(),
+    /**
+     * E5 · T13 — el toggle «con / sin imputaciones». Viaja en la URL, así que
+     * entra por el schema como cualquier otro parámetro del informe y no por
+     * una acción paralela: con imputaciones y sin ellas son dos `ReportRun`
+     * distintos, y quien pide uno tiene que decirlo explícitamente.
+     */
+    withAllocations: z.boolean().optional().default(false),
   })
   .refine((p) => p.to >= p.from, { message: "El periodo termina antes de empezar", path: ["to"] })
 
 export const dimensionListSchema = z.object({ includeArchived: z.boolean().optional() })
+
+/**
+ * E5 · §3.2 — drill-down de la mitad IMPUTADA de una celda. No lleva
+ * `fiscalYearId`: el conjunto de runs vigentes se determina por contención de
+ * periodo, nunca por ejercicio.
+ */
+export const allocationCellDetailSchema = z
+  .object({
+    level: marginLevelSchema,
+    column: z.string().trim().min(1).max(64),
+    from: localDateSchema,
+    to: localDateSchema,
+  })
+  .refine((p) => p.to >= p.from, { message: "El periodo termina antes de empezar", path: ["to"] })
 
 /** Drill-down de UNA celda de la matriz (hallazgo #5: bajo demanda). */
 export const cellDetailSchema = z
