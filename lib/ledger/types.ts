@@ -65,6 +65,11 @@ export type LedgerErrorCode =
   | "REVERSAL_TARGET_KIND"
   | "TEMPLATE_INPUT"
   | "TENANT_MISMATCH"
+  // E8 · T9 (§3.4): la puerta de `postFromProposal`. Son códigos de la propuesta
+  // documental, no del asiento: llegan ANTES de que haya borrador que validar.
+  | "PROPOSAL_NOT_RECONCILED"
+  | "PARTIAL_RUN_CANNOT_POST"
+  | "TEMPLATE_UNRESOLVED"
 
 export type LedgerError = {
   code: LedgerErrorCode
@@ -294,5 +299,13 @@ export type PostedEntry = {
   hashVersion?: number
   receptionDate?: LocalDate | null
   operationDate?: LocalDate | null
+  /**
+   * **E8 · T14.** Trazabilidad del asiento hasta el documento y su extracción
+   * (P6). Los invariantes I-E8-1, 2 y 9 se apoyan exactamente en estas dos
+   * columnas: sin ellas no se puede afirmar que un asiento se sostiene sobre un
+   * run reconciliado ni que sus bytes son los que el modelo vio.
+   */
+  fileId?: string | null
+  extractionRunId?: string | null
   lines: PostedLine[]
 }

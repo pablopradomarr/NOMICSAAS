@@ -124,6 +124,15 @@ export type ProposalLine = {
   // ── O-10 / D11: NO están en el esquema que se le pide al modelo ────────────
   /** Origen `catalogo` (`Category.defaultAccountCode`) o `usuario`. Jamás `llm`. */
   accountCode?: string
+  /**
+   * **Quién eligió la cuenta.** No es adorno: O-10 dice que una cuenta que sale
+   * del catálogo por coincidencia es, como mucho, `interpretacion_ia` —decide el
+   * epígrafe de la PyG y con él MC1 y MC2—, mientras que la que teclea una
+   * persona es `verificado`. `reconcile()` no puede adivinarlo, así que viaja
+   * con la línea. `llm` no es un valor admisible aquí.
+   */
+  accountCodeOrigin?: Extract<FieldOrigin, "usuario" | "catalogo" | "importado">
+
   /** Origen `usuario`. */
   projectId?: string
   /** Origen `usuario`. */

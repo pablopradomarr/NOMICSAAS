@@ -20,7 +20,25 @@ import {
   checkIE35,
   checkIE36,
   checkIE37,
+  checkIE81,
+  checkIE82,
+  checkIE84,
+  checkIE89,
+  checkIE810,
+  checkIE815a,
+  checkIE815b,
+  checkIE815c,
+  checkIE816,
+  checkIE817,
+  checkIE820,
+  checkIE87b,
   checkN5,
+  dataQualityWarnings,
+  runDocumentInvariants,
+  vatBookRowFromProposal,
+  E8_INVARIANT_IDS,
+  E8_SEAL_REASONS,
+  type DocumentsInvariantInput,
   hasFailures,
   InvariantInput,
   runInvariants,
@@ -409,5 +427,342 @@ describe("sello (§5)", () => {
 
   it("un git-sha real no añade ese motivo", () => {
     expect(seal(clean, { gitSha: "c0e828f" }).motivos).toEqual([])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E8 · T14 — I-E8-1…20, los tres puentes al 303 y el puente al 111/115
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("E8 · bloque documental", () => {
+  const RUN_ID = "run-e8-1"
+  const FILE_ID = "file-e8-1"
+  const ENTRY_ID = "entry-e8-1"
+  const SHA = "a".repeat(64)
+
+  /**
+   * Un documento correcto: factura recibida de 1 000 + 210 de IVA deducible,
+   * recibida en el trimestre siguiente al de expedición (el caso C01 del
+   * fixture sellado). Cada test lo corrompe por un sitio distinto — que es lo
+   * que hace por SQL quien edita la base a mano.
+   */
+  const baseDocuments = (): DocumentsInvariantInput => ({
+    runs: [
+      {
+        id: RUN_ID,
+        fileId: FILE_ID,
+        fileSha256: SHA,
+        kind: "LLM",
+        partial: false,
+        reconcileStatus: "PASS",
+        promptSha: "b".repeat(64),
+        provider: "openai",
+        quotaDeviationsCents: {},
+        fieldConfidences: ["verificado", "interpretacion_ia"],
+      },
+    ],
+    transactions: [
+      {
+        id: "tx-e8-1",
+        status: "POSTED",
+        journalEntryId: ENTRY_ID,
+        voidedEntryId: null,
+        fileId: FILE_ID,
+        splitParentTransactionId: null,
+        currency: "EUR",
+        totalCents: 121000,
+        convertedTotalCents: null,
+        exchangeRateMicro: null,
+        rateDate: null,
+        rateSource: null,
+        extractionRunId: RUN_ID,
+      },
+    ],
+    files: [{ id: FILE_ID, sha256: SHA, diskSha256: SHA }],
+    vatBook: [
+      {
+        entryId: ENTRY_ID,
+        ivaPeriod: "2026-Q2",
+        tipo: "RECIBIDAS",
+        baseCents: 100000,
+        cuotaTotalCents: 21000,
+        cuotaDeducibleCents: 21000,
+        cuotaNoDeducibleAlCosteCents: 0,
+        cuotaRepercutidaCents: 0,
+        cuotaDevengadaIspAibCents: 0,
+        documentDate: "2026-03-28",
+        deductionDate: "2026-05-04",
+      },
+    ],
+    vatBalances: [{ ivaPeriod: "2026-Q2", saldo472Cents: 21000, saldo477Cents: 0 }],
+    withholdings: [{ period: "2026-Q1", model: "111", practicadoCents: 15000, abonado4751Cents: 15000 }],
+    exchangeRates: [
+      { id: "rate-1", date: "2026-11-20", from: "USD", to: "EUR", rateMicro: BigInt(925926), source: "ECB_FRANKFURTER" },
+    ],
+    invoiceSeries: [{ code: "FV", kind: "ORDINARIA", numbers: [{ number: 1, date: "2026-01-10" }, { number: 2, date: "2026-02-10" }] }],
+    duplicates: [],
+    accounts: { inputVat: "472", outputVat: "477", withholding: "4751" },
+  })
+
+  const documentEntry = (): PostedEntry => ({
+    id: ENTRY_ID,
+    organizationId: "org-test",
+    fiscalYearId: "fy-2026",
+    entryNumber: 1,
+    documentDate: "2026-03-28",
+    accrualDate: null,
+    entryDate: "2026-03-28",
+    receptionDate: "2026-05-04",
+    description: "Factura recibida F-2026-0001",
+    kind: "NORMAL",
+    taxRoundingMode: "PER_TIPO",
+    sourceType: "INVOICE_IN",
+    fileId: FILE_ID,
+    extractionRunId: RUN_ID,
+    lines: [
+      lineOf(1, "607", 100000, 0),
+      lineOf(2, "472", 21000, 0),
+      lineOf(3, "400", 0, 121000),
+    ],
+  })
+
+  function lineOf(lineNo: number, accountCode: string, debitCents: number, creditCents: number) {
+    return {
+      lineNo,
+      accountCode,
+      debitCents,
+      creditCents,
+      entryDate: "2026-03-28",
+      fiscalYearId: "fy-2026",
+      entryKind: "NORMAL" as const,
+    }
+  }
+
+  const statusOf = (checks: readonly { id: string; status: string }[], id: string): string | undefined =>
+    checks.find((c) => c.id === id)?.status
+
+  it("el documento correcto pasa los veintitrés checks del bloque", () => {
+    const checks = runDocumentInvariants(baseDocuments(), [documentEntry()], "EUR")
+    expect(checks.map((c) => c.id)).toEqual(E8_INVARIANT_IDS)
+    expect(checks.filter((c) => c.status === "FAIL")).toEqual([])
+    expect(statusOf(checks, "I-E8-15a")).toBe("PASS")
+    expect(statusOf(checks, "I-E8-15b")).toBe("PASS")
+    expect(statusOf(checks, "I-E8-15c")).toBe("PASS")
+  })
+
+  it("run editado por SQL a FAIL: el asiento deja de estar respaldado (I-E8-1)", () => {
+    const docs = baseDocuments()
+    const runs = docs.runs.map((r) => ({ ...r, reconcileStatus: "FAIL" as const }))
+    const result = checkIE81([documentEntry()], runs)
+    expect(result.status).toBe("FAIL")
+    expect(result.evidencia).toContain("FAIL")
+  })
+
+  it("run editado por SQL a IMPORTED o a parcial: tampoco respalda un asiento", () => {
+    for (const patch of [{ kind: "IMPORTED" as const }, { partial: true }]) {
+      const runs = baseDocuments().runs.map((r) => ({ ...r, ...patch }))
+      expect(checkIE81([documentEntry()], runs).status).toBe("FAIL")
+    }
+  })
+
+  it("sha256 alterado por SQL: el documento ya no es el que se analizó (I-E8-2)", () => {
+    const docs = baseDocuments()
+    docs.files[0] = { id: FILE_ID, sha256: "c".repeat(64), diskSha256: "c".repeat(64) }
+    const result = checkIE82(docs, [documentEntry()])
+    expect(result.status).toBe("FAIL")
+    expect(result.evidencia).toContain("documento alterado")
+  })
+
+  it("bytes en disco distintos de los registrados: también FAIL", () => {
+    const docs = baseDocuments()
+    docs.files[0] = { id: FILE_ID, sha256: SHA, diskSha256: "d".repeat(64) }
+    expect(checkIE82(docs, [documentEntry()]).status).toBe("FAIL")
+  })
+
+  it("sin sha en disco no se miente con un PASS: es WARN", () => {
+    const docs = baseDocuments()
+    docs.files[0] = { id: FILE_ID, sha256: SHA }
+    expect(checkIE82(docs, [documentEntry()]).status).toBe("WARN")
+  })
+
+  it("POSTED sin asiento, VOID sin anulado y PROPOSED con asiento (I-E8-4)", () => {
+    const docs = baseDocuments()
+    const t = docs.transactions[0]
+    expect(checkIE84({ ...docs, transactions: [{ ...t, journalEntryId: null }] }).status).toBe("FAIL")
+    expect(
+      checkIE84({ ...docs, transactions: [{ ...t, status: "VOID", journalEntryId: null, voidedEntryId: null }] }).status
+    ).toBe("FAIL")
+    expect(checkIE84({ ...docs, transactions: [{ ...t, status: "PROPOSED" }] }).status).toBe("FAIL")
+    expect(
+      checkIE84({ ...docs, transactions: [t, { ...t, id: "tx-e8-2" }] }).evidencia
+    ).toContain("vivo en dos transacciones")
+  })
+
+  it("un fichero sin sha256 no puede tener run LLM ni asiento (I-E8-9)", () => {
+    const docs = baseDocuments()
+    docs.files[0] = { id: FILE_ID, sha256: null }
+    const result = checkIE89(docs, [documentEntry()])
+    expect(result.status).toBe("FAIL")
+    expect(result.evidencia).toContain("sin sha256")
+  })
+
+  it("un run parcial no tiene ni un campo calculado ni verificado (I-E8-10)", () => {
+    const docs = baseDocuments()
+    const runs = docs.runs.map((r) => ({ ...r, partial: true }))
+    const result = checkIE810({ ...docs, runs }, [documentEntry()])
+    expect(result.status).toBe("FAIL")
+    expect(result.evidencia).toContain("campo(s) calculado/verificado")
+  })
+
+  it("I-E8-15a · una cuota deducible que no llega a 472 rompe el puente al 303", () => {
+    const docs = baseDocuments()
+    docs.vatBalances = [{ ivaPeriod: "2026-Q2", saldo472Cents: 20999, saldo477Cents: 0 }]
+    const result = checkIE815a(docs)
+    expect(result.status).toBe("FAIL")
+    expect(result.evidencia).toContain("2026-Q2")
+  })
+
+  it("I-E8-15b · un ticket no deducible NO rompe el puente: engorda el coste", () => {
+    const docs = baseDocuments()
+    docs.vatBook = [
+      {
+        ...docs.vatBook[0],
+        cuotaTotalCents: 112,
+        cuotaDeducibleCents: 0,
+        cuotaNoDeducibleAlCosteCents: 112,
+      },
+    ]
+    docs.vatBalances = [{ ivaPeriod: "2026-Q2", saldo472Cents: 0, saldo477Cents: 0 }]
+    expect(checkIE815a(docs).status).toBe("PASS")
+    expect(checkIE815b(docs).status).toBe("PASS")
+  })
+
+  it("I-E8-15b · una cuota no deducible que se PIERDE sí lo rompe", () => {
+    const docs = baseDocuments()
+    docs.vatBook = [{ ...docs.vatBook[0], cuotaTotalCents: 112, cuotaDeducibleCents: 0, cuotaNoDeducibleAlCosteCents: 0 }]
+    docs.vatBalances = [{ ivaPeriod: "2026-Q2", saldo472Cents: 0, saldo477Cents: 0 }]
+    expect(checkIE815b(docs).status).toBe("FAIL")
+  })
+
+  it("I-E8-15c · el 477 de una autorrepercusión viene del libro de RECIBIDAS (OBS-F1)", () => {
+    const docs = baseDocuments()
+    docs.vatBook = [
+      {
+        ...docs.vatBook[0],
+        ivaPeriod: "2026-Q4",
+        cuotaTotalCents: 63000,
+        cuotaDeducibleCents: 63000,
+        cuotaDevengadaIspAibCents: 63000,
+      },
+    ]
+    docs.vatBalances = [{ ivaPeriod: "2026-Q4", saldo472Cents: 63000, saldo477Cents: 63000 }]
+    expect(checkIE815c(docs).status).toBe("PASS")
+    // Sin el término de ISP, el mismo asiento correcto daría FAIL.
+    const sinIsp = { ...docs, vatBook: [{ ...docs.vatBook[0], cuotaDevengadaIspAibCents: 0 }] }
+    expect(checkIE815c(sinIsp).status).toBe("FAIL")
+  })
+
+  it("I-E8-16 · nada se deduce pasados cuatro años (art. 99.Cinco LIVA)", () => {
+    const docs = baseDocuments()
+    docs.vatBook = [{ ...docs.vatBook[0], documentDate: "2021-03-28", deductionDate: "2026-05-04" }]
+    expect(checkIE816(docs).status).toBe("FAIL")
+  })
+
+  it("I-E8-17 · la retención practicada es la abonada a 4751", () => {
+    const docs = baseDocuments()
+    expect(checkIE817(docs).status).toBe("PASS")
+    docs.withholdings = [{ period: "2026-Q1", model: "111", practicadoCents: 15000, abonado4751Cents: 0 }]
+    expect(checkIE817(docs).status).toBe("FAIL")
+  })
+
+  it("I-E8-20 · un hueco en la serie es FAIL; una serie sin emitir todavía, INFO", () => {
+    const docs = baseDocuments()
+    docs.invoiceSeries = [{ code: "FV", kind: "ORDINARIA", numbers: [{ number: 1, date: "2026-01-10" }, { number: 3, date: "2026-02-10" }] }]
+    expect(checkIE820(docs).status).toBe("FAIL")
+    expect(checkIE820({ ...docs, invoiceSeries: [{ code: "FV", kind: "ORDINARIA", numbers: [] }] }).status).toBe("INFO")
+  })
+
+  it("I-E8-7b es una MÉTRICA: un céntimo de desviación nunca es FAIL", () => {
+    const docs = baseDocuments()
+    docs.runs = docs.runs.map((r) => ({ ...r, quotaDeviationsCents: { IVA_21: 1, IVA_10: -1 } }))
+    const result = checkIE87b(docs)
+    expect(result.status).toBe("WARN")
+    expect(result.evidencia).toContain("openai")
+  })
+
+  it("los WARN de calidad que E7 pinta salen del mismo bloque", () => {
+    const docs = baseDocuments()
+    docs.runs = [
+      { ...docs.runs[0], partial: true, warnings: ["DEDUCIBILIDAD_PENDIENTE"] },
+      { ...docs.runs[0], id: "run-2", reconcileStatus: "FAIL", warnings: ["TICKET_CUALIFICADO"] },
+    ]
+    const codes = dataQualityWarnings(docs).map((w) => w.code)
+    expect(codes).toContain("EXTRACCION_PARCIAL")
+    expect(codes).toContain("RUN_FAIL_SIN_RESOLVER")
+    expect(codes).toContain("DEDUCIBILIDAD_PENDIENTE")
+    expect(codes).toContain("TICKET_CUALIFICADO")
+  })
+
+  it("el libro registro derivado del DOCUMENTO reproduce el del asiento", () => {
+    const row = vatBookRowFromProposal(
+      {
+        docKind: "TICKET",
+        lines: [{ kind: "OPERACION", baseCents: 1122, taxRateCode: "IVA_10", deductibility: "NONE" }],
+        taxes: [{ taxRateCode: "IVA_10", baseCents: 1122, quotaCents: 112 }],
+      },
+      { entryId: "e", ivaPeriod: "2026-Q2", documentDate: "2026-05-06", deductionDate: "2026-05-06", prorrataBps: null }
+    )
+    expect(row).toMatchObject({
+      tipo: "RECIBIDAS",
+      baseCents: 1122,
+      cuotaTotalCents: 112,
+      cuotaDeducibleCents: 0,
+      cuotaNoDeducibleAlCosteCents: 112,
+    })
+  })
+
+  it("el anticipo de cliente sin cobro no anota cuota devengada (OBS-F2)", () => {
+    const row = vatBookRowFromProposal(
+      {
+        docKind: "FACTURA_ANTICIPO_CLIENTE",
+        lines: [{ kind: "OPERACION", baseCents: 1000000, taxRateCode: "IVA_21" }],
+        taxes: [{ taxRateCode: "IVA_21", baseCents: 1000000, quotaCents: 210000 }],
+      },
+      {
+        entryId: "e",
+        ivaPeriod: "2026-Q4",
+        documentDate: "2026-12-10",
+        deductionDate: "2026-12-10",
+        prorrataBps: null,
+        deferredByRc25: true,
+      }
+    )
+    expect(row.cuotaRepercutidaCents).toBe(0)
+    expect(row.baseCents).toBe(0)
+  })
+
+  it("los seis motivos de sello de E8 viajan en el sello del periodo (ADR-0014 D7)", () => {
+    const validacion = runInvariants(inputFor(minimo), "2027-12-31")
+    const result = seal(validacion, {
+      gitSha: "abc1234",
+      lastGitSha: "abc1234",
+      documentReasons: ["RETENCION_NO_PRACTICADA", "DOCUMENTO_ALTERADO"],
+    })
+    expect(result.sello).toBe("REQUIERE REVISIÓN")
+    expect(result.razones.filter((r) => r.kind === "DOCUMENTO").map((r) => r.code)).toEqual([
+      "DOCUMENTO_ALTERADO",
+      "RETENCION_NO_PRACTICADA",
+    ])
+    expect(E8_SEAL_REASONS).toHaveLength(6)
+  })
+
+  it("`runInvariants` cablea el bloque sólo cuando el llamante lo aporta", () => {
+    const sinDocumentos = runInvariants(inputFor(minimo), "2027-12-31")
+    expect(sinDocumentos.checks.some((c) => c.id.startsWith("I-E8-"))).toBe(false)
+    const conDocumentos = runInvariants(
+      inputFor(minimo, { documents: baseDocuments(), baseCurrency: "EUR", entries: [documentEntry()] }),
+      "2027-12-31"
+    )
+    expect(conDocumentos.checks.filter((c) => c.id.startsWith("I-E8-")).map((c) => c.id)).toEqual(E8_INVARIANT_IDS)
   })
 })

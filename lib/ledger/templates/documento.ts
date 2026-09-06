@@ -582,6 +582,8 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
   const tax = purchaseTax(input.lines, groups, ctx, errors)
   const baseTotal = sumCents(input.lines.map((l) => l.baseCents))
 
+  // O-12: la base de la retención puede NO ser la del documento (suplidos).
+  const withholdingBase = input.withholdingBaseCents ?? baseTotal
   let withholdingCents = 0
   let withholdingRateId: string | null = null
   if (input.withholdingRateCode) {
@@ -589,7 +591,7 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
     if ("error" in selected) errors.push(selected.error)
     else {
       withholdingRateId = selected.rate.id
-      withholdingCents = retencion(baseTotal, selected.rate.rateBps)
+      withholdingCents = retencion(withholdingBase, selected.rate.rateBps)
     }
   }
   const withholdingCode = input.withholdingRateCode
@@ -652,7 +654,7 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
     ...(advanceCode ? [credit(advanceCents, { accountCode: advanceCode })] : []),
     ...payableLines,
     ...(withholdingCode
-      ? [credit(withholdingCents, { accountCode: withholdingCode, taxRateId: withholdingRateId, taxBaseCents: baseTotal })]
+      ? [credit(withholdingCents, { accountCode: withholdingCode, taxRateId: withholdingRateId, taxBaseCents: withholdingBase })]
       : []),
     // ISP: la autorrepercusión, con el MISMO taxRateId y el importe íntegro.
     ...(isp

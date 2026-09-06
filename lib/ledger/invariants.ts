@@ -15,6 +15,7 @@ import {
   type AnalyticsInvariantInput,
 } from "@/lib/analytics/invariants"
 import { type ReportsInvariantInput, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
+import { runDocumentInvariants, type DocumentsInvariantInput } from "@/lib/ledger/invariants-e8"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HASH_VERSION, HashableLine, isHashVersion } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
@@ -72,6 +73,15 @@ export type InvariantInput = {
    * balance, y devolver un PASS sin haberlo comprobado sería mentir.
    */
   reports?: ReportsInvariantInput
+  /**
+   * E8: bloque documental (I-E8-1…20, con 15a/b/c y la métrica 7b). Opcional
+   * por el mismo motivo que los anteriores: una organización que todavía no ha
+   * subido un documento no tiene por qué ver un FAIL por no tenerlo, y un PASS
+   * sobre un conjunto vacío no diría nada.
+   */
+  documents?: DocumentsInvariantInput
+  /** Moneda base, que I-E8-19 necesita para saber qué es «divisa». */
+  baseCurrency?: string
 }
 
 const pass = (id: string, evidencia: string, query?: string): CheckResult =>
@@ -505,6 +515,8 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
         : []),
       // E6: I2, I3, I6 y los I-E6-*, sólo si el llamante aporta el bloque.
       ...(input.reports ? runReportInvariants(input.reports) : []),
+      // E8: I-E8-1…20, los tres puentes al 303 y el puente al 111/115.
+      ...(input.documents ? runDocumentInvariants(input.documents, input.entries, input.baseCurrency ?? "EUR") : []),
     ],
   }
 }
@@ -515,10 +527,35 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
  * una carencia de entorno: es un cambio que un humano debería mirar. Meterlo en
  * `AVISO` lo habría enterrado entre los WARN de calidad de datos.
  */
-export type SealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION" | "VARIACION"
+export type SealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION" | "VARIACION" | "DOCUMENTO"
+
+/**
+ * E8 · ADR-0014 D7 — los **seis motivos de sello** que aporta el camino
+ * documental, con código cerrado. Un motivo de sello es un dato de auditoría,
+ * no una frase: se filtra, se cuenta y se compara entre periodos.
+ */
+export const E8_SEAL_REASONS = [
+  "PROPUESTA_NO_RECONCILIADA",
+  "DOCUMENTO_ALTERADO",
+  "TASA_FORZADA",
+  "RETENCION_NO_PRACTICADA",
+  "IVA_PERIODO_DESPLAZADO",
+  "REGIMEN_NO_SOPORTADO",
+] as const
+export type E8SealReason = (typeof E8_SEAL_REASONS)[number]
+
+/** El texto que la pantalla muestra junto a cada código. */
+export const E8_SEAL_REASON_TEXT: Readonly<Record<E8SealReason, string>> = {
+  PROPUESTA_NO_RECONCILIADA: "hay documentos cuya propuesta no reconcilia: no pueden contabilizarse",
+  DOCUMENTO_ALTERADO: "los bytes de un documento no son los que vio su extracción",
+  TASA_FORZADA: "se ha forzado el importe convertido de al menos un documento en divisa",
+  RETENCION_NO_PRACTICADA: "hay facturas que deberían llevar retención y no la consignan",
+  IVA_PERIODO_DESPLAZADO: "hay cuotas cuyo devengo o cuya deducción caen en un periodo distinto al del asiento",
+  REGIMEN_NO_SOPORTADO: "la organización está en un régimen de IVA que E8 no contabiliza automáticamente (E9)",
+}
 
 /** Motivo del sello, ETIQUETADO por su naturaleza (hallazgo 5 del auditor). */
-export type SealReason = { kind: SealReasonKind; message: string }
+export type SealReason = { kind: SealReasonKind; message: string; code?: string }
 
 export type Seal = {
   sello: "VALIDADO AUTOMÁTICAMENTE" | "REQUIERE REVISIÓN"
@@ -543,6 +580,12 @@ export type SealOptions = {
   warnThreshold?: number
   /** Revisión forzada por configuración de la organización. */
   forceReview?: boolean
+  /**
+   * E8 (ADR-0014 D7): motivos que aportan los DOCUMENTOS del periodo. Llegan de
+   * `reconcile()` documento a documento y se agregan aquí: el sello es del
+   * periodo, no de la factura.
+   */
+  documentReasons?: readonly E8SealReason[]
 }
 
 /**
@@ -587,6 +630,9 @@ export function seal(validacion: Validacion, opts: SealOptions): Seal {
   }
   if (opts.forceReview) {
     razones.push({ kind: "CONFIGURACION", message: "revisión forzada por configuración de la organización" })
+  }
+  for (const code of [...new Set(opts.documentReasons ?? [])].sort()) {
+    razones.push({ kind: "DOCUMENTO", code, message: `${code} · ${E8_SEAL_REASON_TEXT[code]}` })
   }
 
   const motivos = razones.map((r) => r.message)
@@ -642,6 +688,53 @@ export {
 } from "@/lib/analytics/invariants"
 export type { AnalyticsInvariantInput } from "@/lib/analytics/invariants"
 export type { AllocationInvariantInput } from "@/lib/analytics/invariants"
+
+/** E8 — invariantes del camino documento → asiento, desde el mismo módulo. */
+export {
+  checkIE81,
+  checkIE82,
+  checkIE83,
+  checkIE84,
+  checkIE85,
+  checkIE86,
+  checkIE87a,
+  checkIE87b,
+  checkIE88,
+  checkIE89,
+  checkIE810,
+  checkIE811,
+  checkIE812,
+  checkIE813,
+  checkIE814,
+  checkIE815a,
+  checkIE815b,
+  checkIE815c,
+  checkIE816,
+  checkIE817,
+  checkIE818,
+  checkIE819,
+  checkIE820,
+  dataQualityWarnings,
+  ivaPeriodOf,
+  quarterOf,
+  runDocumentInvariants,
+  vatBookRowFromProposal,
+  E8_INVARIANT_IDS,
+} from "@/lib/ledger/invariants-e8"
+export type {
+  BookableProposal,
+  DataQualityWarning,
+  DocumentsInvariantInput,
+  DuplicateGroupRef,
+  ExchangeRateRef,
+  ExtractionRunRef,
+  FileDocRef,
+  InvoiceSeriesRef,
+  TransactionDocRef,
+  VatBalanceRow,
+  VatBookRow,
+  WithholdingRow,
+} from "@/lib/ledger/invariants-e8"
 
 /** E6 — invariantes de los estados financieros, desde el mismo módulo. */
 export { checkI2, checkI3, checkIE613, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"

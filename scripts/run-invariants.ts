@@ -3,10 +3,13 @@
  *
  * Dos mitades, cada una con el rol que le corresponde (revisión ronda 1, #5):
  *
- *  - **I1, I7–I9 e I-E3-1…7**: `models/ledger.runLedgerInvariants(--org)`, que
- *    corre acotado al tenant (`app_runtime` vía `DATABASE_URL`) y usa el motor
- *    puro de `lib/ledger/invariants.ts`. Ya no hay «PENDING»: si un invariante
- *    no se puede evaluar, lo dice él (INFO), no este script.
+ *  - **I1, I7–I9, I-E3-1…7, I4/I-E4-*, I5/I-E5-*, I2/I3/I6/I-E6-* y —desde E8—
+ *    I-E8-1…20** con los tres puentes al 303 (15a/b/c), el puente al 111/115
+ *    (I-E8-17) y la métrica de calidad I-E8-7b:
+ *    `models/ledger.runLedgerInvariants(--org)`, que corre acotado al tenant
+ *    (`app_runtime` vía `DATABASE_URL`) y usa el motor puro de
+ *    `lib/ledger/invariants.ts`. Ya no hay «PENDING»: si un invariante no se
+ *    puede evaluar, lo dice él (INFO), no este script.
  *  - **I10**: barrido cross-org como `app_maintenance`, más abajo.
  *
  * **Por qué `app_maintenance` y no `tenantDb`.** I10 dice que ninguna fila
@@ -27,9 +30,12 @@
  * siempre la suya (ronda 2, #4).
  *
  * Salida: `validacion.json` en el formato de `docs/design/E3-libro-diario.md` §5
- *   { run_id, ledgerHash, gitSha, checks: [{ id, status, evidencia, query }] }
- * Hoy sólo I10 tiene comprobación real; el resto se declara PENDING para que
- * nadie confunda «no implementado» con «PASS».
+ *   { run_id, ledgerHash, gitSha, sello, checks: [{ id, status, evidencia, query }] }
+ *
+ * El `sello` lleva desde E8 los **seis motivos documentales** de ADR-0014 D7
+ * (`PROPUESTA_NO_RECONCILIADA`, `DOCUMENTO_ALTERADO`, `TASA_FORZADA`,
+ * `RETENCION_NO_PRACTICADA`, `IVA_PERIODO_DESPLAZADO`, `REGIMEN_NO_SOPORTADO`)
+ * junto a los de entorno, invariante, aviso, configuración y variación.
  */
 import { withMaintenanceClient } from "@/lib/db-maintenance"
 import { randomUUID } from "node:crypto"

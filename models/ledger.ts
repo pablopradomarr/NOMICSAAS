@@ -40,7 +40,18 @@ import {
   type InvariantInput,
   type Seal,
   type Validacion,
+  E8_SEAL_REASONS,
+  type E8SealReason,
 } from "@/lib/ledger/invariants"
+import {
+  E8_INVARIANT_IDS,
+  ivaPeriodOf,
+  quarterOf,
+  vatBookRowFromProposal,
+  type BookableProposal,
+  type DocumentsInvariantInput,
+  type VatBookRow,
+} from "@/lib/ledger/invariants-e8"
 import { checkDraft, type CheckDraftOptions } from "@/lib/ledger/post"
 import { buildFromTemplate, isTemplateCode, TEMPLATES, type TemplateCode } from "@/lib/ledger/templates"
 import { buildReversal, type VoidOptions } from "@/lib/ledger/void"
@@ -510,6 +521,9 @@ export function toPostedEntry(row: EntryWithLines): PostedEntry {
     hashVersion: row.hashVersion,
     receptionDate: row.receptionDate ? fromUtcDate(row.receptionDate) : null,
     operationDate: row.operationDate ? fromUtcDate(row.operationDate) : null,
+    // E8 · T14: el asiento dice de qué documento y de qué extracción sale.
+    fileId: row.fileId,
+    extractionRunId: row.extractionRunId,
     lines,
   }
 }
@@ -1464,6 +1478,244 @@ async function readEntriesPaged(
 }
 
 /**
+ * E8 · T14 — El bloque documental de los invariantes, leído de la base.
+ *
+ * Las dos orillas del puente al 303 se construyen por caminos DISTINTOS a
+ * propósito: el **libro registro** sale de la propuesta sellada en cada
+ * `ExtractionRun` (el documento) y los **saldos de 472/477** salen del diario.
+ * Si los dos lados se calcularan con la misma función, I-E8-15 no comprobaría
+ * nada; con dos caminos, un asiento que pierde una cuota no deducible aparece.
+ *
+ * El periodo es el de IVA —`max(receptionDate, documentDate)` (ADR-0014 D8)—,
+ * que no tiene por qué ser el del `entryDate`.
+ */
+/**
+ * Los motivos de sello que los DOCUMENTOS del periodo aportan (ADR-0014 D7).
+ * Cada `reconcile` sellado los dejó escritos; aquí se agregan sin recalcular
+ * nada: recalcularlos exigiría reconstruir el contexto de cada documento, y el
+ * sello se emite sobre lo que se selló, no sobre lo que hoy daría.
+ */
+async function readDocumentSealReasons(tx: TenantTransactionClient): Promise<E8SealReason[]> {
+  const rows = await tx.extractionRun.findMany({ select: { reconcile: true } })
+  const found = new Set<E8SealReason>()
+  for (const row of rows) {
+    const reconcile = (row.reconcile ?? {}) as { sellos?: unknown }
+    for (const value of Array.isArray(reconcile.sellos) ? reconcile.sellos : []) {
+      if (typeof value === "string" && (E8_SEAL_REASONS as readonly string[]).includes(value)) {
+        found.add(value as E8SealReason)
+      }
+    }
+  }
+  return [...found].sort()
+}
+
+/**
+ * `Transaction.files` es el array heredado de TaxHacker: puede llevar ids o
+ * fichas. La detección de duplicados y I-E8-4 sólo necesitan **el primero**,
+ * que es el documento de la operación; el resto son adjuntos.
+ */
+function firstFileIdOf(files: unknown): string | null {
+  if (!Array.isArray(files) || files.length === 0) return null
+  const first = files[0]
+  if (typeof first === "string") return first
+  if (first !== null && typeof first === "object" && "id" in first) {
+    const id = (first as { id?: unknown }).id
+    return typeof id === "string" ? id : null
+  }
+  return null
+}
+
+async function readDocumentsInvariantInput(
+  tx: TenantTransactionClient,
+  organizationId: string,
+  entries: readonly PostedEntry[],
+  accountMap: Map<AccountKey, string>,
+  prorrataBps: number | null
+): Promise<DocumentsInvariantInput | null> {
+  const runRows = await tx.extractionRun.findMany({
+    select: {
+      id: true,
+      fileId: true,
+      fileSha256: true,
+      kind: true,
+      partial: true,
+      reconcileStatus: true,
+      promptSha: true,
+      provider: true,
+      proposal: true,
+      reconcile: true,
+      fieldOrigins: true,
+    },
+  })
+  const transactionRows = await tx.transaction.findMany({
+    select: {
+      id: true,
+      status: true,
+      journalEntryId: true,
+      voidedEntryId: true,
+      files: true,
+      splitParentTransactionId: true,
+      currencyCode: true,
+      total: true,
+      convertedTotal: true,
+      exchangeRateMicro: true,
+      rateDate: true,
+      rateSource: true,
+      extractionRunId: true,
+    },
+  })
+  const fileRows = await tx.file.findMany({ select: { id: true, sha256: true } })
+  if (runRows.length === 0 && transactionRows.length === 0 && fileRows.length === 0) return null
+
+  const seriesRows = await tx.invoiceSeries.findMany({ select: { code: true, kind: true } })
+  const rateRows = await tx.exchangeRate.findMany({ select: { id: true, date: true, from: true, to: true, rateMicro: true, source: true } })
+  const forcedLogs = await tx.auditLog.findMany({
+    where: { action: "FORCE_DUPLICATE" },
+    select: { entityId: true },
+  })
+
+  const inputVat = accountMap.get("IVA_SOPORTADO") ?? "472"
+  const outputVat = accountMap.get("IVA_REPERCUTIDO") ?? "477"
+  const withholdingAccount = accountMap.get("IRPF_PROFESIONALES_A_PAGAR") ?? "4751"
+
+  // ── Runs, con lo que `reconcile` selló en su día ────────────────────────────
+  const runs = runRows.map((r) => {
+    const reconcile = (r.reconcile ?? {}) as { quotaDeviationsCents?: Record<string, number> }
+    const origins = (r.fieldOrigins ?? {}) as Record<string, { confidence?: string }>
+    return {
+      id: r.id,
+      fileId: r.fileId,
+      fileSha256: r.fileSha256,
+      kind: r.kind,
+      partial: r.partial,
+      reconcileStatus: r.reconcileStatus,
+      promptSha: r.promptSha,
+      provider: r.provider,
+      quotaDeviationsCents: reconcile.quotaDeviationsCents ?? {},
+      fieldConfidences: Object.values(origins).map((o) => o?.confidence ?? "no_verificado"),
+    }
+  })
+
+  // ── Libro registro: una anotación por asiento con documento ─────────────────
+  const proposalByRun = new Map(runRows.map((r) => [r.id, r.proposal]))
+  const deferredByRun = new Map(
+    runRows.map((r) => {
+      const reconcile = (r.reconcile ?? {}) as { checks?: { id: string; status: string }[] }
+      const rc25 = (reconcile.checks ?? []).find((c) => c.id === "RC-25")
+      return [r.id, rc25?.status === "WARN"]
+    })
+  )
+  const vatBook: VatBookRow[] = []
+  for (const entry of entries) {
+    if (!entry.extractionRunId) continue
+    const proposal = proposalByRun.get(entry.extractionRunId)
+    if (!proposal || typeof proposal !== "object") continue
+    const documentDate = entry.documentDate ?? entry.entryDate
+    vatBook.push(
+      vatBookRowFromProposal(proposal as unknown as BookableProposal, {
+        entryId: entry.id,
+        ivaPeriod: ivaPeriodOf(entry.receptionDate ?? null, documentDate),
+        documentDate,
+        deductionDate: entry.receptionDate && entry.receptionDate > documentDate ? entry.receptionDate : documentDate,
+        prorrataBps,
+        deferredByRc25: deferredByRun.get(entry.extractionRunId) === true,
+      })
+    )
+  }
+
+  // ── Saldos del DIARIO por periodo de IVA y retenciones abonadas a 4751 ──────
+  const balances = new Map<string, { saldo472Cents: number; saldo477Cents: number }>()
+  const withheld = new Map<string, number>()
+  const practiced = new Map<string, number>()
+  for (const entry of entries) {
+    const documentDate = entry.documentDate ?? entry.entryDate
+    const period = ivaPeriodOf(entry.receptionDate ?? null, documentDate)
+    const acc = balances.get(period) ?? { saldo472Cents: 0, saldo477Cents: 0 }
+    for (const line of entry.lines) {
+      if (line.accountCode === inputVat) acc.saldo472Cents += line.debitCents - line.creditCents
+      if (line.accountCode === outputVat) acc.saldo477Cents += line.creditCents - line.debitCents
+      if (line.accountCode === withholdingAccount) {
+        const key = `${quarterOf(entry.entryDate)}|111`
+        withheld.set(key, (withheld.get(key) ?? 0) + line.creditCents - line.debitCents)
+      }
+    }
+    balances.set(period, acc)
+    const proposal = entry.extractionRunId ? proposalByRun.get(entry.extractionRunId) : null
+    const withholding = (proposal as { withholding?: { quotaCents?: number } } | null)?.withholding
+    if (withholding?.quotaCents) {
+      const key = `${quarterOf(entry.entryDate)}|111`
+      practiced.set(key, (practiced.get(key) ?? 0) + withholding.quotaCents)
+    }
+  }
+  const withholdings = [...new Set([...withheld.keys(), ...practiced.keys()])].sort().map((key) => {
+    const [period, model] = key.split("|")
+    return {
+      period,
+      model: model as "111" | "115",
+      practicadoCents: practiced.get(key) ?? 0,
+      abonado4751Cents: withheld.get(key) ?? 0,
+    }
+  })
+
+  // ── Duplicados por sha256, y si alguien los forzó con motivo ────────────────
+  const forcedIds = new Set(forcedLogs.map((l) => l.entityId))
+  const bySha = new Map<string, string[]>()
+  const transactionsByFile = new Map<string, string[]>()
+  for (const t of transactionRows) {
+    const fileId = firstFileIdOf(t.files)
+    if (!fileId) continue
+    const list = transactionsByFile.get(fileId) ?? []
+    list.push(t.id)
+    transactionsByFile.set(fileId, list)
+  }
+  for (const f of fileRows) {
+    if (!f.sha256) continue
+    const list = bySha.get(f.sha256) ?? []
+    list.push(...(transactionsByFile.get(f.id) ?? []))
+    bySha.set(f.sha256, list)
+  }
+  const duplicates = [...bySha.entries()]
+    .filter(([, ids]) => ids.length > 1)
+    .map(([sha, ids]) => ({ key: `sha256:${sha}`, transactionIds: ids, forced: ids.some((id) => forcedIds.has(id)) }))
+
+  return {
+    runs,
+    transactions: transactionRows.map((t) => ({
+      id: t.id,
+      status: t.status,
+      journalEntryId: t.journalEntryId,
+      voidedEntryId: t.voidedEntryId,
+      fileId: firstFileIdOf(t.files),
+      splitParentTransactionId: t.splitParentTransactionId,
+      currency: t.currencyCode ?? "EUR",
+      totalCents: t.total ?? 0,
+      convertedTotalCents: t.convertedTotal,
+      exchangeRateMicro: t.exchangeRateMicro,
+      rateDate: t.rateDate ? fromUtcDate(t.rateDate) : null,
+      rateSource: t.rateSource,
+      extractionRunId: t.extractionRunId,
+    })),
+    files: fileRows.map((f) => ({ id: f.id, sha256: f.sha256 })),
+    vatBook,
+    vatBalances: [...balances.entries()].sort().map(([ivaPeriod, b]) => ({ ivaPeriod, ...b })),
+    withholdings,
+    exchangeRates: rateRows.map((r) => ({
+      id: r.id,
+      date: fromUtcDate(r.date),
+      from: r.from,
+      to: r.to,
+      rateMicro: r.rateMicro,
+      source: r.source,
+    })),
+    // T18 aporta la numeración emitida; hasta entonces I-E8-20 lo dice (INFO)
+    // en vez de dar un PASS que no ha comprobado nada.
+    invoiceSeries: seriesRows.map((x) => ({ code: x.code, kind: x.kind, numbers: [] })),
+    duplicates,
+    accounts: { inputVat, outputVat, withholding: withholdingAccount },
+  }
+}
+
+/**
  * Ejecuta I1, I7–I10 e I-E3-1…7 sobre los datos REALES de la organización y
  * devuelve `validacion.json` + su sello.
  *
@@ -1539,6 +1791,8 @@ export async function runLedgerInvariants(
             // E4: el barrido analítico también materializa las líneas.
             "I4", "I-E4-1", "I-E4-2", "I-E4-3", "I-E4-4", "I-E4-5", "I-E4-6",
             "I-E4-7", "I-E4-8", "I-E4-9", "I-E4-10", "I-E4-11", "I-E4-12",
+            // E8 · T14: el bloque documental también materializa las líneas.
+            ...E8_INVARIANT_IDS,
           ].map(skipped),
         ],
       }
@@ -1560,6 +1814,19 @@ export async function runLedgerInvariants(
       }
       const analyticsConfig = await getAnalyticsConfig(tx, { periodEnd: analyticPeriod.to })
       const analyticLines = await getAnalyticLines(tx, analyticPeriod)
+
+      // E8 · T14: el bloque documental necesita el mapa de cuentas (para saber
+      // qué código es el 472 y cuál el 477 en ESTA organización) y la prorrata.
+      const accountMapByKey = await getAccountMapByKey(tx)
+      const organization = await tx.organization.findFirst({ select: { baseCurrency: true, prorrataBps: true } })
+      const baseCurrency = organization?.baseCurrency ?? "EUR"
+      const documents = await readDocumentsInvariantInput(
+        tx,
+        organizationId,
+        entries,
+        accountMapByKey,
+        organization?.prorrataBps ?? null
+      )
 
       // E5 · T8: las imputaciones VIGENTES del mismo periodo y las reglas con
       // las que se emitieron. En SERIE, como todo lo demás dentro de la
@@ -1628,6 +1895,10 @@ export async function runLedgerInvariants(
           ? { requiredTemplateCoverage: opts.requiredTemplateCoverage }
           : {}),
         analytics: { lines: analyticLines, config: analyticsConfig, period: analyticPeriod },
+        // E8 · T14: bloque documental (I-E8-1…20). Se OMITE cuando la
+        // organización no tiene todavía ni ficheros ni transacciones: un PASS
+        // sobre un conjunto vacío no diría nada.
+        ...(documents ? { documents, baseCurrency } : {}),
         // E5 · T8: I5 y los doce `I-E5-*`. Se OMITEN sin fallar cuando la
         // organización no ha liquidado nada: no tener imputaciones no es un
         // descuadre, y devolver FAIL por ello sería ruido permanente.
@@ -1640,9 +1911,14 @@ export async function runLedgerInvariants(
       validacion.checks = validacion.checks.map((c) => (c.id === "I1" ? i1 : c.id === "I7" ? i7 : c))
     }
 
+    // ADR-0014 D7: los seis motivos de sello del camino documental. Los aporta
+    // `reconcile()` documento a documento y se agregan aquí, porque el sello es
+    // del PERIODO y no de la factura.
+    const documentReasons = await readDocumentSealReasons(tx)
     const sello = sealPure(validacion, {
       gitSha,
       ...(opts.lastGitSha !== undefined ? { lastGitSha: opts.lastGitSha } : {}),
+      ...(documentReasons.length > 0 ? { documentReasons } : {}),
     })
     const run: InvariantRun = { validacion, sello, origen }
     if (!opts.noCache) cachePut(cacheKey, run)

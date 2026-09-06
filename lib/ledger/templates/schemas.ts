@@ -192,6 +192,15 @@ export const facturaRecibidaSchema = z.object({
     )
     .min(1),
   withholdingRateCode: taxRateCodeSchema.optional(),
+  /**
+   * E8 · ADR-0014 D10 (O-12/RC-20) — base de la retención cuando **no** es la
+   * base total del documento. Los suplidos (art. 78.Tres.3º LIVA) viajan en
+   * `lines` porque son líneas del asiento y suman al total, pero quedan fuera
+   * de la base de retención: sin este campo, una factura de abogado con tasa
+   * judicial retendría 19 500 donde el art. 75 RIRPF dice 15 000. Ausente —todo
+   * E3 hasta hoy—, la base es la suma de las bases de línea, sin cambio alguno.
+   */
+  withholdingBaseCents: centsSchema.optional(),
   /** Clave de la cuenta de retención según el modelo (111 vs 115). */
   withholdingKey: z
     .enum(["IRPF_PROFESIONALES_A_PAGAR", "IRPF_ALQUILERES_A_PAGAR", "IRPF_TRABAJO_A_PAGAR", "IRPF_A_PAGAR"])
