@@ -167,3 +167,88 @@ de periodicidades mixtas que el diseño declara legítimo (R2-1). Un invariante 
 falla cuando no debe se aprende a ignorar, y eso vale menos que no tenerlo. Con
 R2-1 corregido y un test del caso mixto, **APROBADO**; R2-2 y R2-3 son de un minuto y
 pueden ir en el mismo commit.
+
+---
+
+# Ronda 3 (final) — verificación del commit 53f5818
+
+> Diff revisado: `git diff 62ded40...53f5818` (17 ficheros, +530 / −66).
+> **Veredicto: APROBADO.**
+
+## R3.0 Suites
+
+| Suite | Resultado |
+|---|---|
+| `npm run lint` | **0 errores** (14 warnings preexistentes de `hooks/**` y `components/ui/**`) |
+| `npm run test` | **838 ✓** / 11 skipped (44 ficheros; +5 tests sobre la ronda 2) |
+| `npm run test:integration` | **1163 ✓** (67 ficheros; +7) |
+| `npm run test:integration:rls` | **127 ✓** (9 ficheros) |
+
+## R3.1 Hallazgos de la ronda 2
+
+| # | Estado | Evidencia |
+|---|---|---|
+| **R2-1** | **CERRADO** | `lib/analytics/allocate.ts:319-346` — `settlementPeriodFitsIn(kind, from, to)`, función pura y de calendario: responde «¿cabe al menos un periodo completo de esa periodicidad dentro de la ventana del informe?». `lib/analytics/invariants.ts:483-512` la usa para partir las fuentes en dos: las que ya tenían que haber liquidado (se les exige cierre a 0, tolerancia 0) y las que no (`notDueYet`). El corte es **por fuente**, no por regla, y está argumentado en el código: si a un CECO le queda alguna regla sin vencer, parte de su saldo es legítimamente pendiente y exigirle 0 sería el mismo FAIL falso; la parte que **sí** se liquidó la sigue vigilando I5.a run a run contra la base reconstruida del diario. Y lo que no es descuadre **se dice**: `:551-565` añade al `evidencia` el importe pendiente y la regla que lo liquidará (criterio 18), tanto en PASS como en FAIL. `models/margins.ts:157-162` carga ya las reglas **siempre** que el informe sea imputado, no sólo cuando hay líneas — sin eso, un run revertido dejaba el periodo sin reglas y el residuo real pasaba inadvertido |
+| **R2-2** | **CERRADO** | `components/analytics/allocation-rules-table.tsx:30,208`: `parseCents` en lugar de `Math.round(Number(texto.replace(",", ".")) * 100)`. Ya no queda ninguna conversión a bps con coma flotante en el cliente |
+| **R2-3** | **CERRADO** | `docs/ESTADO.md:145-146`: el punto 15 refleja las dos rondas y el punto 16 dice «cierre de E5 → **E8** → E7 → E9 → E10 → E11 → E12». Desaparece la contradicción |
+
+## R3.2 Verificación independiente de R2-1
+
+Re-ejecutada **la misma reproducción** con la que la ronda 2 abrió el hallazgo
+—informe mensual 2026-03, run mensual de `CC-OPS` sellado, regla **anual** vigente
+sobre `CC-GA` con 100 000 c de saldo propio— contra el árbol de 53f5818:
+
+```
+antes (62ded40): FAIL :: I5.b CC-GA/EBITDA: quedan 100000 c sin liquidar al cierre
+ahora (53f5818): PASS :: … · pendiente de liquidar: CC-GA/EBITDA: 100000 c
+                        pendientes de liquidar por AL-GA-Y (YEAR)
+```
+
+El invariante deja de mentir **y además informa**, que es mejor de lo que pedía el
+hallazgo: el importe pendiente y su regla quedan en la evidencia del check, así que
+el sello de la PyG imputada explica por qué un CECO no está a cero en vez de callarlo.
+
+**Cobertura de los casos límite** — cinco unitarios (`lib/analytics/allocate-fixes.test.ts:431-515`)
+y dos de integración sobre base real (`tests/integration/e5-fixes.test.ts:533-624`):
+
+| Caso | Esperado | Test |
+|---|---|---|
+| Tabla de `settlementPeriodFitsIn` por periodicidad y ventana | — | `allocate-fixes.test.ts:432` |
+| Informe **mensual** + regla **anual** vigente | **PASS** con el pendiente informado | `:454` · integración `e5-fixes.test.ts:536` |
+| Informe **anual** con la misma regla y sin run | **FAIL** (el año ya venció) | `:469` |
+| Run **revertido**: residuo real en su propio periodo | **FAIL** | `:482` · integración `e5-fixes.test.ts:605` |
+| Fuente con regla mensual **y** anual, informe mensual | no se le exige cierre (parte pendiente) | `:497` |
+
+Es exactamente la matriz que hacía falta: el arreglo no se limita a silenciar el
+FAIL, sino que se demuestra que **sigue fallando cuando debe** —el año vencido y el
+run revertido— que es la mitad que un «arreglo» de invariante suele perder.
+
+## R3.3 Observación menor (no bloquea, no exige cambio)
+
+El corte por fuente exime a un CECO **entero** mientras le quede una regla sin vencer.
+Un residuo dejado por su regla ya vencida no lo vería I5.b en ese informe; lo cubre
+I5.a, que compara run a run contra la base reconstruida del diario, y a fin de
+ejercicio todas las periodicidades han vencido y I5.b vuelve a exigir el cierre. El
+razonamiento está escrito en `invariants.ts:487-496`, que es donde tiene que estar.
+
+## R3.4 Veredicto final de E5
+
+**APROBADO.** Tres rondas: 3 BLOQUEA · 7 DEBE · 7 PUEDE en la primera, 1 DEBE · 2
+PUEDE en la segunda, **cero** en la tercera. No queda ningún hallazgo abierto.
+
+Lo que sostiene la aprobación, más allá del recuento: el motor es puro, entero y
+determinista, y su salida es **byte a byte** la del fixture aprobado; la liquidación
+no toca el libro diario y las cuatro tablas nuevas son append-only con RLS `FORCE`,
+DAG diferido y versionado sin agujeros; los cuatro sellos —incluido el `linesHash` de
+la **salida**, que nació de un hallazgo del auditor— viajan hasta el `ReportRun`, así
+que la caché no puede servir un informe imputado por uno que no lo está; I5 y los
+doce `I-E5-*` se ejecutan en el camino de producción, sobre la misma matriz que se
+pinta y se sella, y un FAIL pasa el sello a `REQUIERE REVISIÓN`. La deuda que E5 no
+cierra está anotada con épica y fecha en `ESTADO.md`, y la única deuda heredada que
+se dio por cerrada sin estarlo (O-A6) se **reabrió y se fechó** en los tres documentos
+que la mencionaban en vez de taparse.
+
+Queda fuera de esta revisión, por no ser código: los e2e de Playwright, que exigen
+`npm run dev`. El commit ajusta su arnés (`caret: "initial"` en las capturas,
+`tests/support/ensure-self-hosted.ts`); conviene ejecutarlos una vez antes del cierre
+formal de la épica.
