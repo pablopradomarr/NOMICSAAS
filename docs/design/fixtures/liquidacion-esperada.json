@@ -1,0 +1,1251 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "docs/design/fixtures/build_liquidacion_esperada.py",
+  "note": "Liquidacion de CECOs esperada (E5) del fixture tests/fixtures/ejercicio-completo.json. Centimos enteros. AllocationLine.amountCents en convencion de COSTE (positivo = coste que sale del CECO fuente). La matriz mantiene el signo de E4 (positivo suma al margen). El nivel de margen VIAJA con el importe: por eso la imputacion es un traspaso de suma 0 en cada nivel y I4 sigue cuadrando al centimo.",
+  "source": {
+    "fixture": "tests/fixtures/ejercicio-completo.json",
+    "e4Expected": "docs/design/fixtures/pyg-analitica-esperada.json",
+    "fiscalYear": "2026",
+    "excludedKinds": [
+      "CLOSING",
+      "OPENING",
+      "REGULARIZATION"
+    ]
+  },
+  "rules": [
+    {
+      "code": "AL-OPS-M",
+      "name": "Operaciones indirectas a proyectos por coste directo (mensual)",
+      "sourceCostCenterCode": "CC-OPS",
+      "period": "MONTH",
+      "priority": 10,
+      "sourceShareBps": 10000,
+      "targetKind": "PROJECTS",
+      "driver": "DIRECT_COST_SHARE",
+      "targetFilter": {
+        "projectStatus": [
+          "ACTIVE"
+        ]
+      },
+      "zeroBaseFallback": "YTD",
+      "targets": []
+    },
+    {
+      "code": "AL-DEV-Q",
+      "name": "Desarrollo de producto a lineas de negocio 60/40 (trimestral)",
+      "sourceCostCenterCode": "CC-DEV",
+      "period": "QUARTER",
+      "priority": 10,
+      "sourceShareBps": 10000,
+      "targetKind": "BUSINESS_LINES",
+      "driver": "FIXED_PERCENT",
+      "targetFilter": null,
+      "zeroBaseFallback": "SKIP_WARN",
+      "targets": [
+        {
+          "businessLineCode": "BL-CONS",
+          "percentBps": 6000
+        },
+        {
+          "businessLineCode": "BL-DEV",
+          "percentBps": 4000
+        }
+      ]
+    },
+    {
+      "code": "AL-MKT-Q",
+      "name": "Marketing y ventas a proyectos por ingresos (trimestral)",
+      "sourceCostCenterCode": "CC-MKT",
+      "period": "QUARTER",
+      "priority": 20,
+      "sourceShareBps": 10000,
+      "targetKind": "PROJECTS",
+      "driver": "REVENUE_SHARE",
+      "targetFilter": {
+        "projectStatus": [
+          "ACTIVE"
+        ]
+      },
+      "zeroBaseFallback": "SKIP_WARN",
+      "targets": []
+    },
+    {
+      "code": "AL-GA-OPS-Y",
+      "name": "G&A: 30 % a Operaciones indirectas (cascada, anual)",
+      "sourceCostCenterCode": "CC-GA",
+      "period": "YEAR",
+      "priority": 10,
+      "sourceShareBps": 3000,
+      "targetKind": "COST_CENTERS",
+      "driver": "FIXED_PERCENT",
+      "targetFilter": null,
+      "zeroBaseFallback": "SKIP_WARN",
+      "targets": [
+        {
+          "costCenterCode": "CC-OPS",
+          "percentBps": 10000
+        }
+      ]
+    },
+    {
+      "code": "AL-GA-PRY-Y",
+      "name": "G&A: 70 % a proyectos a partes iguales (anual)",
+      "sourceCostCenterCode": "CC-GA",
+      "period": "YEAR",
+      "priority": 20,
+      "sourceShareBps": 7000,
+      "targetKind": "PROJECTS",
+      "driver": "EQUAL",
+      "targetFilter": {
+        "projectStatus": [
+          "ACTIVE"
+        ]
+      },
+      "zeroBaseFallback": "SKIP_WARN",
+      "targets": []
+    },
+    {
+      "code": "AL-OPS-Y",
+      "name": "Operaciones indirectas: redistribuye lo recibido en cascada (anual)",
+      "sourceCostCenterCode": "CC-OPS",
+      "period": "YEAR",
+      "priority": 30,
+      "sourceShareBps": 10000,
+      "targetKind": "PROJECTS",
+      "driver": "DIRECT_COST_SHARE",
+      "targetFilter": {
+        "projectStatus": [
+          "ACTIVE"
+        ]
+      },
+      "zeroBaseFallback": "SKIP_WARN",
+      "targets": []
+    }
+  ],
+  "driverBases": {
+    "revenueShareCents": {
+      "2026-01": {
+        "P-01": 620000,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-02": {
+        "P-01": 0,
+        "P-02": 800000,
+        "P-03": 0
+      },
+      "2026-03": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 600000
+      },
+      "2026-04": {
+        "P-01": 300000,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-05": {
+        "P-01": 300000,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-06": {
+        "P-01": 0,
+        "P-02": 450000,
+        "P-03": -90000
+      },
+      "2026-07": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 500000
+      },
+      "2026-08": {
+        "P-01": 350000,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-09": {
+        "P-01": 0,
+        "P-02": 600000,
+        "P-03": 0
+      },
+      "2026-10": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 640000
+      },
+      "2026-11": {
+        "P-01": 480000,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-12": {
+        "P-01": 0,
+        "P-02": 700000,
+        "P-03": 0
+      }
+    },
+    "directCostShareCents": {
+      "2026-01": {
+        "P-01": 596000,
+        "P-02": 165000,
+        "P-03": 0
+      },
+      "2026-02": {
+        "P-01": 0,
+        "P-02": 150000,
+        "P-03": 0
+      },
+      "2026-03": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-04": {
+        "P-01": 396000,
+        "P-02": 165000,
+        "P-03": 0
+      },
+      "2026-05": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-06": {
+        "P-01": -50000,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-07": {
+        "P-01": 396000,
+        "P-02": 165000,
+        "P-03": 250000
+      },
+      "2026-08": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-09": {
+        "P-01": 0,
+        "P-02": 180000,
+        "P-03": 0
+      },
+      "2026-10": {
+        "P-01": 396000,
+        "P-02": 165000,
+        "P-03": 0
+      },
+      "2026-11": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 0
+      },
+      "2026-12": {
+        "P-01": 0,
+        "P-02": 0,
+        "P-03": 0
+      }
+    },
+    "costCenterOwnCents": {
+      "2026-01": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 219000,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-02": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 35000,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-03": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 81680,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-04": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 99500,
+        "CC-MKT": 60500,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-05": {
+        "CC-DEV": 100000,
+        "CC-FIN": 0,
+        "CC-GA": 0,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-06": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": -60000,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-07": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 99000,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-08": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 0,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-09": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 60000,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-10": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 99000,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      },
+      "2026-11": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 0,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 91890
+      },
+      "2026-12": {
+        "CC-DEV": 0,
+        "CC-FIN": 0,
+        "CC-GA": 0,
+        "CC-MKT": 0,
+        "CC-NA": 0,
+        "CC-OPS": 0
+      }
+    },
+    "syntheticHoursMinutesPerMonth": {
+      "P-01": 19200,
+      "P-02": 10800,
+      "P-03": 6000
+    }
+  },
+  "runs": [
+    {
+      "runId": "RUN-2026-01",
+      "period": "2026-01",
+      "periodKind": "MONTH",
+      "periodStart": "2026-01-01",
+      "periodEnd": "2026-01-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-02",
+      "period": "2026-02",
+      "periodKind": "MONTH",
+      "periodStart": "2026-02-01",
+      "periodEnd": "2026-02-28",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-03",
+      "period": "2026-03",
+      "periodKind": "MONTH",
+      "periodStart": "2026-03-01",
+      "periodEnd": "2026-03-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-04",
+      "period": "2026-04",
+      "periodKind": "MONTH",
+      "periodStart": "2026-04-01",
+      "periodEnd": "2026-04-30",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-05",
+      "period": "2026-05",
+      "periodKind": "MONTH",
+      "periodStart": "2026-05-01",
+      "periodEnd": "2026-05-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-06",
+      "period": "2026-06",
+      "periodKind": "MONTH",
+      "periodStart": "2026-06-01",
+      "periodEnd": "2026-06-30",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-07",
+      "period": "2026-07",
+      "periodKind": "MONTH",
+      "periodStart": "2026-07-01",
+      "periodEnd": "2026-07-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-08",
+      "period": "2026-08",
+      "periodKind": "MONTH",
+      "periodStart": "2026-08-01",
+      "periodEnd": "2026-08-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-09",
+      "period": "2026-09",
+      "periodKind": "MONTH",
+      "periodStart": "2026-09-01",
+      "periodEnd": "2026-09-30",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-10",
+      "period": "2026-10",
+      "periodKind": "MONTH",
+      "periodStart": "2026-10-01",
+      "periodEnd": "2026-10-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-11",
+      "period": "2026-11",
+      "periodKind": "MONTH",
+      "periodStart": "2026-11-01",
+      "periodEnd": "2026-11-30",
+      "rulesApplied": [
+        "AL-OPS-M"
+      ],
+      "lineCount": 3,
+      "totalAllocatedCents": 91890,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-12",
+      "period": "2026-12",
+      "periodKind": "MONTH",
+      "periodStart": "2026-12-01",
+      "periodEnd": "2026-12-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-Q1",
+      "period": "2026-Q1",
+      "periodKind": "QUARTER",
+      "periodStart": "2026-01-01",
+      "periodEnd": "2026-03-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-Q2",
+      "period": "2026-Q2",
+      "periodKind": "QUARTER",
+      "periodStart": "2026-04-01",
+      "periodEnd": "2026-06-30",
+      "rulesApplied": [
+        "AL-DEV-Q",
+        "AL-MKT-Q"
+      ],
+      "lineCount": 4,
+      "totalAllocatedCents": 160500,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-Q3",
+      "period": "2026-Q3",
+      "periodKind": "QUARTER",
+      "periodStart": "2026-07-01",
+      "periodEnd": "2026-09-30",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026-Q4",
+      "period": "2026-Q4",
+      "periodKind": "QUARTER",
+      "periodStart": "2026-10-01",
+      "periodEnd": "2026-12-31",
+      "rulesApplied": [],
+      "lineCount": 0,
+      "totalAllocatedCents": 0,
+      "supersededById": null,
+      "reversedAt": null
+    },
+    {
+      "runId": "RUN-2026",
+      "period": "2026",
+      "periodKind": "YEAR",
+      "periodStart": "2026-01-01",
+      "periodEnd": "2026-12-31",
+      "rulesApplied": [
+        "AL-GA-OPS-Y",
+        "AL-GA-PRY-Y",
+        "AL-OPS-Y"
+      ],
+      "lineCount": 7,
+      "totalAllocatedCents": 823134,
+      "supersededById": null,
+      "reversedAt": null
+    }
+  ],
+  "allocationLines": [
+    {
+      "runId": "RUN-2026-11",
+      "ruleCode": "AL-OPS-M",
+      "sourceCostCenterCode": "CC-OPS",
+      "targetKind": "PROJECTS",
+      "target": "P-01",
+      "marginLevel": "MC3",
+      "amountCents": 53577,
+      "driverBase": 1734000,
+      "driverBaseTotal": 2974000,
+      "driverShareBps": 5830,
+      "fallback": "YTD"
+    },
+    {
+      "runId": "RUN-2026-11",
+      "ruleCode": "AL-OPS-M",
+      "sourceCostCenterCode": "CC-OPS",
+      "targetKind": "PROJECTS",
+      "target": "P-02",
+      "marginLevel": "MC3",
+      "amountCents": 30589,
+      "driverBase": 990000,
+      "driverBaseTotal": 2974000,
+      "driverShareBps": 3328,
+      "fallback": "YTD"
+    },
+    {
+      "runId": "RUN-2026-11",
+      "ruleCode": "AL-OPS-M",
+      "sourceCostCenterCode": "CC-OPS",
+      "targetKind": "PROJECTS",
+      "target": "P-03",
+      "marginLevel": "MC3",
+      "amountCents": 7724,
+      "driverBase": 250000,
+      "driverBaseTotal": 2974000,
+      "driverShareBps": 840,
+      "fallback": "YTD"
+    },
+    {
+      "runId": "RUN-2026-Q2",
+      "ruleCode": "AL-DEV-Q",
+      "sourceCostCenterCode": "CC-DEV",
+      "targetKind": "BUSINESS_LINES",
+      "target": "BL-CONS",
+      "marginLevel": "MC3",
+      "amountCents": 60000,
+      "driverBase": 6000,
+      "driverBaseTotal": 10000,
+      "driverShareBps": 6000,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026-Q2",
+      "ruleCode": "AL-DEV-Q",
+      "sourceCostCenterCode": "CC-DEV",
+      "targetKind": "BUSINESS_LINES",
+      "target": "BL-DEV",
+      "marginLevel": "MC3",
+      "amountCents": 40000,
+      "driverBase": 4000,
+      "driverBaseTotal": 10000,
+      "driverShareBps": 4000,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026-Q2",
+      "ruleCode": "AL-MKT-Q",
+      "sourceCostCenterCode": "CC-MKT",
+      "targetKind": "PROJECTS",
+      "target": "P-01",
+      "marginLevel": "EBITDA",
+      "amountCents": 34571,
+      "driverBase": 600000,
+      "driverBaseTotal": 1050000,
+      "driverShareBps": 5714,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026-Q2",
+      "ruleCode": "AL-MKT-Q",
+      "sourceCostCenterCode": "CC-MKT",
+      "targetKind": "PROJECTS",
+      "target": "P-02",
+      "marginLevel": "EBITDA",
+      "amountCents": 25929,
+      "driverBase": 450000,
+      "driverBaseTotal": 1050000,
+      "driverShareBps": 4285,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026",
+      "ruleCode": "AL-GA-OPS-Y",
+      "sourceCostCenterCode": "CC-GA",
+      "targetKind": "COST_CENTERS",
+      "target": "CC-OPS",
+      "marginLevel": "EBITDA",
+      "amountCents": 189954,
+      "driverBase": 10000,
+      "driverBaseTotal": 10000,
+      "driverShareBps": 10000,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026",
+      "ruleCode": "AL-GA-PRY-Y",
+      "sourceCostCenterCode": "CC-GA",
+      "targetKind": "PROJECTS",
+      "target": "P-01",
+      "marginLevel": "EBITDA",
+      "amountCents": 147742,
+      "driverBase": 1,
+      "driverBaseTotal": 3,
+      "driverShareBps": 3333,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026",
+      "ruleCode": "AL-GA-PRY-Y",
+      "sourceCostCenterCode": "CC-GA",
+      "targetKind": "PROJECTS",
+      "target": "P-02",
+      "marginLevel": "EBITDA",
+      "amountCents": 147742,
+      "driverBase": 1,
+      "driverBaseTotal": 3,
+      "driverShareBps": 3333,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026",
+      "ruleCode": "AL-GA-PRY-Y",
+      "sourceCostCenterCode": "CC-GA",
+      "targetKind": "PROJECTS",
+      "target": "P-03",
+      "marginLevel": "EBITDA",
+      "amountCents": 147742,
+      "driverBase": 1,
+      "driverBaseTotal": 3,
+      "driverShareBps": 3333,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026",
+      "ruleCode": "AL-OPS-Y",
+      "sourceCostCenterCode": "CC-OPS",
+      "targetKind": "PROJECTS",
+      "target": "P-01",
+      "marginLevel": "EBITDA",
+      "amountCents": 110753,
+      "driverBase": 1734000,
+      "driverBaseTotal": 2974000,
+      "driverShareBps": 5830,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026",
+      "ruleCode": "AL-OPS-Y",
+      "sourceCostCenterCode": "CC-OPS",
+      "targetKind": "PROJECTS",
+      "target": "P-02",
+      "marginLevel": "EBITDA",
+      "amountCents": 63233,
+      "driverBase": 990000,
+      "driverBaseTotal": 2974000,
+      "driverShareBps": 3328,
+      "fallback": null
+    },
+    {
+      "runId": "RUN-2026",
+      "ruleCode": "AL-OPS-Y",
+      "sourceCostCenterCode": "CC-OPS",
+      "targetKind": "PROJECTS",
+      "target": "P-03",
+      "marginLevel": "EBITDA",
+      "amountCents": 15968,
+      "driverBase": 250000,
+      "driverBaseTotal": 2974000,
+      "driverShareBps": 840,
+      "fallback": null
+    }
+  ],
+  "warnings": [
+    {
+      "code": "W-E5-ZERO-BASE",
+      "rule": "AL-OPS-M",
+      "period": "2026-11",
+      "fallback": "YTD",
+      "detail": "base del driver = 0 en el periodo"
+    },
+    {
+      "code": "W-E5-NEG-BASE",
+      "rule": "AL-MKT-Q",
+      "period": "2026-Q2",
+      "targets": [
+        "P-03"
+      ],
+      "detail": "base negativa en el periodo: peso 0, excluido del reparto"
+    }
+  ],
+  "levels": [
+    "INGRESOS",
+    "MC1",
+    "MC2",
+    "MC3",
+    "EBITDA",
+    "EBIT",
+    "BAI",
+    "RESULTADO"
+  ],
+  "columns": [
+    "PROJ:P-01",
+    "PROJ:P-02",
+    "PROJ:P-03",
+    "BL:BL-CONS",
+    "BL:BL-DEV",
+    "CECO:OPERACIONES_INDIRECTAS",
+    "CECO:DESARROLLO_PRODUCTO",
+    "CECO:MARKETING_VENTAS",
+    "CECO:G_A",
+    "CECO:FINANCIERO",
+    "CECO:EXTRAORDINARIO",
+    "CECO:OTROS",
+    "CECO:SIN_ASIGNAR",
+    "AMORTIZACION_DETERIORO",
+    "FINANCIERO",
+    "EXTRAORDINARIO",
+    "NO_ANALITICO"
+  ],
+  "allocationDeltaCents": {
+    "INGRESOS": {},
+    "MC1": {},
+    "MC2": {},
+    "MC3": {
+      "BL:BL-CONS": -60000,
+      "BL:BL-DEV": -40000,
+      "CECO:DESARROLLO_PRODUCTO": 100000,
+      "CECO:OPERACIONES_INDIRECTAS": 91890,
+      "PROJ:P-01": -53577,
+      "PROJ:P-02": -30589,
+      "PROJ:P-03": -7724
+    },
+    "EBITDA": {
+      "CECO:G_A": 633180,
+      "CECO:MARKETING_VENTAS": 60500,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "PROJ:P-01": -293066,
+      "PROJ:P-02": -236904,
+      "PROJ:P-03": -163710
+    },
+    "EBIT": {},
+    "BAI": {},
+    "RESULTADO": {}
+  },
+  "matrixCents": {
+    "INGRESOS": {
+      "PROJ:P-01": 2050000,
+      "PROJ:P-02": 2550000,
+      "PROJ:P-03": 1650000,
+      "BL:BL-CONS": 0,
+      "BL:BL-DEV": 0,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "MC1": {
+      "PROJ:P-01": 1900000,
+      "PROJ:P-02": 2370000,
+      "PROJ:P-03": 1400000,
+      "BL:BL-CONS": 0,
+      "BL:BL-DEV": 0,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "MC2": {
+      "PROJ:P-01": 316000,
+      "PROJ:P-02": 1560000,
+      "PROJ:P-03": 1400000,
+      "BL:BL-CONS": 0,
+      "BL:BL-DEV": 0,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "MC3": {
+      "PROJ:P-01": 262423,
+      "PROJ:P-02": 1529411,
+      "PROJ:P-03": 1392276,
+      "BL:BL-CONS": -60000,
+      "BL:BL-DEV": -40000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "EBITDA": {
+      "PROJ:P-01": -30643,
+      "PROJ:P-02": 1292507,
+      "PROJ:P-03": 1228566,
+      "BL:BL-CONS": -60000,
+      "BL:BL-DEV": -40000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": 0,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "EBIT": {
+      "PROJ:P-01": -30643,
+      "PROJ:P-02": 1292507,
+      "PROJ:P-03": 1228566,
+      "BL:BL-CONS": -60000,
+      "BL:BL-DEV": -40000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": -395000,
+      "FINANCIERO": 0,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "BAI": {
+      "PROJ:P-01": -30643,
+      "PROJ:P-02": 1292507,
+      "PROJ:P-03": 1228566,
+      "BL:BL-CONS": -60000,
+      "BL:BL-DEV": -40000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": -395000,
+      "FINANCIERO": 1000,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": 0
+    },
+    "RESULTADO": {
+      "PROJ:P-01": -30643,
+      "PROJ:P-02": 1292507,
+      "PROJ:P-03": 1228566,
+      "BL:BL-CONS": -60000,
+      "BL:BL-DEV": -40000,
+      "CECO:OPERACIONES_INDIRECTAS": 0,
+      "CECO:DESARROLLO_PRODUCTO": 0,
+      "CECO:MARKETING_VENTAS": 0,
+      "CECO:G_A": 0,
+      "CECO:FINANCIERO": 0,
+      "CECO:EXTRAORDINARIO": 0,
+      "CECO:OTROS": 0,
+      "CECO:SIN_ASIGNAR": 0,
+      "AMORTIZACION_DETERIORO": -395000,
+      "FINANCIERO": 1000,
+      "EXTRAORDINARIO": 0,
+      "NO_ANALITICO": -499108
+    }
+  },
+  "businessLineMatrixCents": {
+    "INGRESOS": {
+      "BL-CONS": 4600000,
+      "BL-DEV": 1650000
+    },
+    "MC1": {
+      "BL-CONS": 4270000,
+      "BL-DEV": 1400000
+    },
+    "MC2": {
+      "BL-CONS": 1876000,
+      "BL-DEV": 1400000
+    },
+    "MC3": {
+      "BL-CONS": 1731834,
+      "BL-DEV": 1352276
+    },
+    "EBITDA": {
+      "BL-CONS": 1201864,
+      "BL-DEV": 1188566
+    },
+    "EBIT": {
+      "BL-CONS": 1201864,
+      "BL-DEV": 1188566
+    },
+    "BAI": {
+      "BL-CONS": 1201864,
+      "BL-DEV": 1188566
+    },
+    "RESULTADO": {
+      "BL-CONS": 1201864,
+      "BL-DEV": 1188566
+    }
+  },
+  "levelTotalsCents": {
+    "INGRESOS": 6250000,
+    "MC1": 5670000,
+    "MC2": 3276000,
+    "MC3": 3084110,
+    "EBITDA": 2390430,
+    "EBIT": 1995430,
+    "BAI": 1996430,
+    "RESULTADO": 1497322
+  },
+  "levelTotalsE4Cents": {
+    "INGRESOS": 6250000,
+    "MC1": 5670000,
+    "MC2": 3276000,
+    "MC3": 3084110,
+    "EBITDA": 2390430,
+    "EBIT": 1995430,
+    "BAI": 1996430,
+    "RESULTADO": 1497322
+  },
+  "pygContableCents": 1497322,
+  "lineCount67": 85,
+  "annexHoursIllustrative": {
+    "note": "Ilustrativo, NO forma parte de la matriz: E10 crea `TimeEntry`. Reparto anual de CC-OPS por driver HOURS sobre la base sintetica de arriba.",
+    "sourceCents": 91890,
+    "lines": [
+      {
+        "target": "P-01",
+        "amountCents": 49008,
+        "driverShareBps": 5333
+      },
+      {
+        "target": "P-02",
+        "amountCents": 27567,
+        "driverShareBps": 3000
+      },
+      {
+        "target": "P-03",
+        "amountCents": 15315,
+        "driverShareBps": 1666
+      }
+    ]
+  },
+  "checks": [
+    {
+      "id": "I4.INGRESOS",
+      "status": "PASS",
+      "expected": 6250000,
+      "actual": 6250000,
+      "evidencia": "Sigma columnas nivel INGRESOS tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.MC1",
+      "status": "PASS",
+      "expected": 5670000,
+      "actual": 5670000,
+      "evidencia": "Sigma columnas nivel MC1 tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.MC2",
+      "status": "PASS",
+      "expected": 3276000,
+      "actual": 3276000,
+      "evidencia": "Sigma columnas nivel MC2 tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.MC3",
+      "status": "PASS",
+      "expected": 3084110,
+      "actual": 3084110,
+      "evidencia": "Sigma columnas nivel MC3 tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.EBITDA",
+      "status": "PASS",
+      "expected": 2390430,
+      "actual": 2390430,
+      "evidencia": "Sigma columnas nivel EBITDA tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.EBIT",
+      "status": "PASS",
+      "expected": 1995430,
+      "actual": 1995430,
+      "evidencia": "Sigma columnas nivel EBIT tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.BAI",
+      "status": "PASS",
+      "expected": 1996430,
+      "actual": 1996430,
+      "evidencia": "Sigma columnas nivel BAI tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.RESULTADO",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "Sigma columnas nivel RESULTADO tras imputar = total de E4 (traspaso de suma 0)"
+    },
+    {
+      "id": "I4.b",
+      "status": "PASS",
+      "expected": 1497322,
+      "actual": 1497322,
+      "evidencia": "Sigma columnas (RESULTADO) = PyG contable I3"
+    },
+    {
+      "id": "I5.a",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Sigma AllocationLine por (run, CECO fuente, nivel) = base liquidada (Hamilton, tolerancia 0)",
+      "detail": [
+        {
+          "runId": "RUN-2026",
+          "sourceCostCenterCode": "CC-GA",
+          "marginLevel": "EBITDA",
+          "baseCents": 633180,
+          "allocatedCents": 633180,
+          "diffCents": 0
+        },
+        {
+          "runId": "RUN-2026",
+          "sourceCostCenterCode": "CC-OPS",
+          "marginLevel": "EBITDA",
+          "baseCents": 189954,
+          "allocatedCents": 189954,
+          "diffCents": 0
+        },
+        {
+          "runId": "RUN-2026-11",
+          "sourceCostCenterCode": "CC-OPS",
+          "marginLevel": "MC3",
+          "baseCents": 91890,
+          "allocatedCents": 91890,
+          "diffCents": 0
+        },
+        {
+          "runId": "RUN-2026-Q2",
+          "sourceCostCenterCode": "CC-DEV",
+          "marginLevel": "MC3",
+          "baseCents": 100000,
+          "allocatedCents": 100000,
+          "diffCents": 0
+        },
+        {
+          "runId": "RUN-2026-Q2",
+          "sourceCostCenterCode": "CC-MKT",
+          "marginLevel": "EBITDA",
+          "baseCents": 60500,
+          "allocatedCents": 60500,
+          "diffCents": 0
+        }
+      ]
+    },
+    {
+      "id": "I5.b",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "cierre anual: todo CECO imputable queda liquidado a 0 en su columna",
+      "residual": {}
+    },
+    {
+      "id": "I-E5-1",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "grafo CECO->CECO es un DAG",
+      "edges": [
+        [
+          "CC-GA",
+          "CC-OPS"
+        ]
+      ]
+    },
+    {
+      "id": "I-E5-2",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Sigma percentBps = 10000 en toda regla FIXED_PERCENT",
+      "offenders": []
+    },
+    {
+      "id": "I-E5-3",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "Sigma sourceShareBps = 10000 por (CECO fuente, periodo)",
+      "offenders": []
+    },
+    {
+      "id": "I-E5-4",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "reparto por mayor resto: Sigma centimos = importe, remanente < n receptores"
+    },
+    {
+      "id": "I-E5-5",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "CC-FIN / CC-EXT / CC-NA nunca son fuente ni destino de imputacion"
+    },
+    {
+      "id": "I-E5-6",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "la imputacion es un traspaso interno de suma 0 en CADA nivel de margen",
+      "offenders": []
+    },
+    {
+      "id": "I-E5-7",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "ningun AllocationLine apunta a proyecto CLOSED ni a dimension archivada"
+    },
+    {
+      "id": "I-E5-8",
+      "status": "PASS",
+      "expected": 0,
+      "actual": 0,
+      "evidencia": "cascada resuelta: el receptor reparte con prioridad posterior al donante",
+      "offenders": []
+    },
+    {
+      "id": "I-E5-9",
+      "status": "PASS",
+      "expected": 1075524,
+      "actual": 1075524,
+      "evidencia": "solo los runs vigentes (no supersededById, no reversedAt) aportan importe"
+    }
+  ]
+}

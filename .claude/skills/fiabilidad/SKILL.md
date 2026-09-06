@@ -27,7 +27,7 @@ Spec completa: `docs/spec/SPEC-FIABILIDAD.md` (prevalece sobre cualquier prompt)
 | I2 | Balance: Σ saldos activo = Σ saldos pasivo + PN (incluyendo resultado del periodo) | 0 |
 | I3 | **Definición única.** PyG del periodo = Σ(haber−debe) de líneas de grupos 6/7 cuyo asiento tiene `kind ∉ {REGULARIZATION, CLOSING, OPENING}`. Si el ejercicio está regularizado, además PyG = saldo acreedor de 129 tras la regularización | 0 |
 | I4 | **Definición única.** Por cada nivel de margen, Σ de todas las columnas de la matriz analítica (proyectos + imputaciones a líneas de negocio sin proyecto + CECOs no imputados + amortización/deterioro + financiero/extraordinario + NO_ANALITICO) = PyG contable (I3) del mismo periodo. Ninguna línea 6/7 queda fuera de la matriz | 0 |
-| I5 | Liquidación de CECO: Σ importes imputados = saldo del CECO en el periodo; remanente ≤ 1 céntimo asignado al mayor receptor | 1 céntimo |
+| I5 | Liquidación de CECO: Σ importes imputados (por run, fuente y nivel de margen) = saldo neto del CECO fuente en el periodo. Reparto por mayor resto (Hamilton): tolerancia **0**; los restos se asignan por mayor fracción y, en empate, al receptor de **menor código** (determinismo P7). Tras la liquidación completa, todo CECO imputable queda a 0 (E5) | 0 |
 | I6 | Cashflow: saldo inicial 57x + Σ flujos del periodo = saldo final 57x | 0 |
 | I7 | Sin duplicados: (`organizationId`, `code`) único en cuentas, proyectos, CECOs, LN; (`organizationId`, `entryNumber`) único en asientos | — |
 | I8 | Fechas: asiento dentro de un ejercicio `OPEN`; sin fechas futuras respecto a `refDate` salvo previsión marcada | — |
