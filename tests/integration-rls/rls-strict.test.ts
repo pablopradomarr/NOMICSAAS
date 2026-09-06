@@ -374,6 +374,26 @@ describe.skipIf(!OWNER_URL)("RLS estricta: sin GUC no se lee ni se escribe nada 
 })
 
 describe.skipIf(!MAINTENANCE_URL)("rol app_maintenance (ADR-0009 §6)", () => {
+  // El test SIEMBRA su propia organización en vez de depender de que otra suite
+  // haya dejado alguna: el `afterAll` del bloque anterior las borra, así que
+  // ejecutado solo (o el último) veía cero y fallaba por el estado, no por la
+  // política (revisión E5 ronda 1: fallo «ajeno a E5» de `rls-strict.test.ts:389`).
+  const ORG_MAINT = "e3c00000-0000-4000-8000-00000000000c"
+
+  beforeAll(async () => {
+    await owner((client) => client.query(`DELETE FROM "organizations" WHERE id = $1`, [ORG_MAINT]))
+    await owner((client) =>
+      client.query(`INSERT INTO "organizations" (id, slug, name, updated_at) VALUES ($1, $2, $2, now())`, [
+        ORG_MAINT,
+        "e3-rls-maintenance",
+      ])
+    )
+  })
+
+  afterAll(async () => {
+    await owner((client) => client.query(`DELETE FROM "organizations" WHERE id = $1`, [ORG_MAINT]))
+  })
+
   it("tiene BYPASSRLS y ve más de una organización; `app_runtime` no", async () => {
     const maintenance = await withClient(MAINTENANCE_URL, async (client) => ({
       bypass: (

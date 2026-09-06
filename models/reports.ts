@@ -54,8 +54,10 @@ import { buildDiario } from "@/lib/ledger/reports/diario"
 import { buildMayor } from "@/lib/ledger/reports/mayor"
 import { buildSumasSaldos } from "@/lib/ledger/reports/sumas-saldos"
 import { getAnalyticPnl } from "@/models/margins"
+import type { AnalyticPnl } from "@/lib/analytics/margins"
+import { getSealedRunRefs } from "@/models/allocations"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
-import { EMPTY_RUN_SET_HASH, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
+import { EMPTY_RUN_SET_HASH, allocationRunSetHash, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { getEntries, getLinesForPeriod, computeLedgerHash } from "@/models/ledger"
 import { ComparativeBasis, PgcVariant, Prisma, ReportType, ResultKind, Seal } from "@/prisma/client"
 
@@ -242,6 +244,15 @@ async function attemptReportRun(
     // reimputación (E5) devolvería el informe viejo.
     let analyticsHash: string | null = null
     let marginHash: string | null = null
+    // BLOQUEA #2 — el CUARTO sello llega al `ReportRun`. Antes se creaba
+    // siempre sin imputaciones y la columna `allocation_run_set_hash` no la
+    // escribía ningún camino de producción: liquidar NO caducaba el
+    // `PYG_ANALITICA` sellado y el informe persistido del periodo seguía siendo
+    // el NO imputado mientras la pantalla mostraba el imputado. Dos verdades
+    // para el mismo periodo, que es lo que la capa de fiabilidad existe para
+    // impedir (ADR-0013 D3, criterio 17).
+    const withAllocations = ANALYTICS_TYPES.has(request.type) && request.params.withAllocations === true
+    let allocationSetHash: string | null = null
     if (ANALYTICS_TYPES.has(request.type)) {
       const config = await getAnalyticsConfig(tx, { periodEnd: request.periodEnd })
       const analyticLines = await getAnalyticLines(tx, {
@@ -250,6 +261,15 @@ async function attemptReportRun(
         ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
       })
       marginHash = marginConfigHash(config)
+      // Sin imputaciones el tercer componente es `sha256("")` y la columna queda
+      // NULL (el trigger compone «∅»); con imputaciones es el hash del CONJUNTO
+      // de runs vigentes, el mismo que calcula `models/margins.ts`. Basta con
+      // sellar una liquidación nueva para que la clave cambie y el informe
+      // anterior deje de servirse de caché.
+      const runSetHash = withAllocations
+        ? allocationRunSetHash((await getSealedRunRefs(tx, { from: request.periodStart, to: request.periodEnd })).map((r) => r.id))
+        : EMPTY_RUN_SET_HASH
+      allocationSetHash = withAllocations ? runSetHash : null
       analyticsHash = computeAnalyticsHash(
         analyticLines.map((l) => ({
           entryId: l.entryId,
@@ -260,7 +280,7 @@ async function attemptReportRun(
           analyticType: l.analyticType,
         })),
         marginHash,
-        EMPTY_RUN_SET_HASH
+        runSetHash
       )
     }
     const activeFlag = await activeManualReviewFlag(tx, request)
@@ -270,10 +290,15 @@ async function attemptReportRun(
       reviewFlagId: activeFlag?.id ?? null,
     })
     const paramsHash = paramsHashOf(hashed)
-    // E5 · O-E5-7: sin imputaciones, el tercer componente es el centinela. Un
-    // informe analítico CON imputaciones lo compone `models/margins.ts` con el
-    // `allocationRunSetHash` real, y por eso los dos no comparten caché.
-    const analyticsKey = analyticsKeyOf({ analyticsHash, marginConfigHash: marginHash })
+    // E5 · O-E5-7: sin imputaciones, el tercer componente es el centinela; con
+    // ellas, el `allocationRunSetHash` real. Es EXACTAMENTE lo que compone el
+    // trigger `app.report_runs_analytics_key`, y hay un test de integración que
+    // comprueba que los dos coinciden.
+    const analyticsKey = analyticsKeyOf({
+      analyticsHash,
+      marginConfigHash: marginHash,
+      allocationRunSetHash: allocationSetHash,
+    })
 
     const cached =
       request.noCache === true
@@ -298,6 +323,8 @@ async function attemptReportRun(
       accountMapHash,
       analyticsHash,
       marginHash,
+      allocationSetHash,
+      withAllocations,
       analyticsKey,
       hashed,
       context,
@@ -430,6 +457,8 @@ async function attemptReportRun(
               from: request.periodStart,
               to: request.periodEnd,
               ...(request.fiscalYearId ? { fiscalYearId: request.fiscalYearId } : {}),
+              // BLOQUEA #2: el informe SELLADO es el mismo que la pantalla.
+              withAllocations: key.withAllocations,
               provenance: { runId: randomUUID(), gitSha, baseCurrency: key.organization.baseCurrency },
             })
           : null
@@ -483,7 +512,14 @@ async function attemptReportRun(
     ? ({
         kind: "SUMMARY" as const,
         module: "lib/analytics/margins.ts",
-        result: inputs.analyticReport.pnl as unknown as Record<string, unknown>,
+        // El `result` que se PERSISTE es una proyección serializable de la
+        // matriz: fuera `levelTotalsBig` (los mismos totales en `BigInt`, que
+        // `canonicalResultJson` no sabe serializar y que duplican
+        // `levelTotalsCents`), fuera `coveredLineIds` (un `Set`, que se
+        // serializaría como `{}` sin decir nada) y fuera `lineDetail`, que
+        // crece con el diario y revienta la cota de 1 MB del `result` — el
+        // drill-down lo recalcula bajo demanda, como en el cashflow (#6 de E6).
+        result: analyticResultOf(inputs.analyticReport.pnl),
       })
     : buildReport(
         request.type,
@@ -513,6 +549,10 @@ async function attemptReportRun(
       ? { dashboard: built.dashboard, aging: [built.dashboard.aging.clientes, built.dashboard.aging.proveedores] }
       : {}),
   })
+  // BLOQUEA #3 — I4, los doce `I-E4-*` y, con imputaciones, I5 y los doce
+  // `I-E5-*` entran en la VALIDACIÓN del run: son los que acreditan la cifra que
+  // el informe sella, y un FAIL lo pasa a `REQUIERE REVISIÓN` por `EV-9`.
+  if (inputs.analyticReport) checks.push(...inputs.analyticReport.checks)
   if (inputs.journal?.truncated) {
     checks.push({
       id: "I-E6-DIARIO-TRUNCADO",
@@ -581,7 +621,7 @@ async function attemptReportRun(
     await tx.$executeRaw`
       INSERT INTO report_runs (
         id, organization_id, type, period_start, period_end, fiscal_year_id,
-        params, params_hash, ledger_hash, analytics_hash, margin_config_hash, git_sha,
+        params, params_hash, ledger_hash, analytics_hash, margin_config_hash, allocation_run_set_hash, git_sha,
         result, result_kind, provenance, validation, seal, seal_reasons, duration_ms,
         comparative_run_id, comparative_basis, created_by_id
       ) VALUES (
@@ -589,7 +629,7 @@ async function attemptReportRun(
         ${toUtcDate(request.periodStart)}::date, ${toUtcDate(request.periodEnd)}::date,
         ${request.fiscalYearId ?? null}::uuid,
         ${JSON.stringify(storedParams)}::jsonb, ${key.paramsHash}, ${key.ledgerHash},
-        ${key.analyticsHash}, ${key.marginHash}, ${gitSha},
+        ${key.analyticsHash}, ${key.marginHash}, ${key.allocationSetHash}, ${gitSha},
         ${canonicalResultJson(built.result)}::jsonb,
         ${resultKindOf(request.type)}::result_kind,
         ${JSON.stringify(provenance)}::jsonb,
@@ -621,6 +661,19 @@ async function attemptReportRun(
     })
     return toView(stored, stored.id === runId ? "fresh" : "cache")
   })
+}
+
+/**
+ * Proyección serializable de la PyG analítica para el `result` del `ReportRun`.
+ * Todo lo que la pantalla pinta y la exportación necesita; nada que no sepa
+ * pasar por `canonicalResultJson`.
+ */
+function analyticResultOf(pnl: AnalyticPnl): Record<string, unknown> {
+  const { levelTotalsBig, coveredLineIds, lineDetail, ...rest } = pnl
+  void levelTotalsBig
+  void coveredLineIds
+  void lineDetail
+  return { ...rest, lineCountDetail: lineDetail.length } as unknown as Record<string, unknown>
 }
 
 /**

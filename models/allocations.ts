@@ -16,6 +16,7 @@ import {
   allocate,
   canonicalRun,
   effectiveRules,
+  linesHash as computeLinesHash,
   periodBounds,
   periodLabel,
   rulesHash as computeRulesHash,
@@ -29,6 +30,7 @@ import {
 } from "@/lib/analytics/allocate"
 import type { AnalyticLine, Cents, CostCenterMarginLevel, LocalDate } from "@/lib/analytics/types"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
+import { formatBps } from "@/lib/money"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import { getAnalyticLines, getAnalyticsConfig, type Actor } from "@/models/analytics"
 import { writeAuditLog } from "@/models/audit-log"
@@ -395,13 +397,50 @@ async function assertRuleSetCoherent(
     entry.codes.push(rule.code)
     bySource.set(rule.sourceCostCenterId, entry)
   }
+  // BUG-E5-1 (QA) — I-E5-2 «CHECK diferido + validación al guardar». `Σ
+  // percentBps = 10000` se comprobaba en el zod y en el motor, pero NO aquí: una
+  // regla `FIXED_PERCENT` al 60 % creada por un camino que no pasa por el
+  // formulario se guardaba, se listaba y sólo reventaba al simular. Es la misma
+  // «regla inerte» que ADR-0013 D4 prohíbe, con fallo diferido. Ahora se rechaza
+  // al guardar (aquí) y la base lo repite con un constraint trigger diferido
+  // (`allocation_rules_fixed_percent_100`, migración 20260910110000_e5_fixes).
+  for (const rule of specs) {
+    if (rule.driver !== "FIXED_PERCENT") continue
+    const sum = rule.targets.reduce((a, t) => a + (t.percentBps ?? 0), 0)
+    if (sum === 10000) continue
+    abortAllocation({
+      code: "FIXED_PERCENT_NOT_100",
+      message: `la regla ${rule.code} reparte ${formatBps(sum)} % entre sus destinos: Σ de porcentajes debe ser exactamente 100 %`,
+      ruleCodes: [rule.code],
+    })
+  }
+  // BLOQUEA #1 — el contrato `targetKind` × `driver`, también al guardar: los
+  // drivers calculados ponderan POR PROYECTO leyendo el diario.
+  for (const rule of specs) {
+    const needsTargets = rule.targetKind === "COST_CENTERS" || rule.targetKind === "BUSINESS_LINES"
+    if (needsTargets && rule.driver !== "FIXED_PERCENT" && rule.driver !== "MANUAL") {
+      abortAllocation({
+        code: "TARGETS_REQUIRED",
+        message: `la regla ${rule.code} reparte a ${rule.targetKind === "COST_CENTERS" ? "centros de coste" : "líneas de negocio"} con el driver ${rule.driver}, que calcula sus pesos por proyecto desde el diario: declara los destinos con porcentaje fijo (FIXED_PERCENT) o con importes (MANUAL)`,
+        ruleCodes: [rule.code],
+      })
+    }
+    if ((needsTargets || rule.driver === "FIXED_PERCENT" || rule.driver === "MANUAL") && rule.targets.length === 0) {
+      abortAllocation({
+        code: "TARGETS_REQUIRED",
+        message: `la regla ${rule.code} reparte entre destinos explícitos y no declara ninguno: no repartiría un céntimo`,
+        ruleCodes: [rule.code],
+      })
+    }
+  }
+
   const cecos = await tx.costCenter.findMany({ select: { id: true, code: true } })
   const codeById = new Map(cecos.map((c) => [c.id, c.code]))
   for (const [cecoId, entry] of bySource) {
     if (entry.sum === 10000) continue
     abortAllocation({
       code: "SOURCE_SHARE_NOT_100",
-      message: `las reglas de ${codeById.get(cecoId) ?? cecoId} (${period}) reparten el ${(entry.sum / 100).toFixed(2)} % de su saldo: falta declarar qué pasa con el ${((10000 - entry.sum) / 100).toFixed(2)} % restante`,
+      message: `las reglas de ${codeById.get(cecoId) ?? cecoId} (${period}) reparten el ${formatBps(entry.sum)} % de su saldo: falta declarar qué pasa con el ${formatBps(10000 - entry.sum)} % restante`,
       ruleCodes: entry.codes,
     })
   }
@@ -427,6 +466,44 @@ export type AllocationSeals = { ledgerHash: string; dimensionsHash: string; rule
 type FiscalYearContext = { config: Awaited<ReturnType<typeof getAnalyticsConfig>>; lines: AnalyticLine[] }
 
 const fiscalYearContextCache = new WeakMap<object, Map<string, FiscalYearContext>>()
+
+/**
+ * Revisión ronda 1, #9 — memoización POR TRANSACCIÓN de lo que `loadRunContext`
+ * relee por cada run al derivar el `STALE` de `/analytics/allocations/runs`.
+ *
+ * Con los 17 runs del fixture eran ~68 consultas por render: un `computeLedgerHash`
+ * y un `getAllocationRuleSpecs` por run, más el ejercicio. Ahora hay **un
+ * `ledgerHash` por (periodo, ejercicio)** y **un juego de reglas por
+ * (periodicidad, fin de periodo)**, que es exactamente la granularidad con la
+ * que esos dos valores pueden cambiar. La clave es la identidad del cliente
+ * transaccional, así que la memoria muere con la transacción y nunca sirve datos
+ * de otra petición ni de otra organización.
+ */
+const perTxCache = <T>(store: WeakMap<object, Map<string, T>>, tx: object): Map<string, T> => {
+  const found = store.get(tx)
+  if (found) return found
+  const fresh = new Map<string, T>()
+  store.set(tx, fresh)
+  return fresh
+}
+
+async function memoized<T>(
+  store: WeakMap<object, Map<string, T>>,
+  tx: object,
+  key: string,
+  load: () => Promise<T>
+): Promise<T> {
+  const map = perTxCache(store, tx)
+  const hit = map.get(key)
+  if (hit !== undefined) return hit
+  const value = await load()
+  map.set(key, value)
+  return value
+}
+
+const ledgerHashCache = new WeakMap<object, Map<string, string>>()
+const rulesCache = new WeakMap<object, Map<string, AllocationRuleSpec[]>>()
+const fiscalYearCache = new WeakMap<object, Map<string, { id: string; startDate: Date; endDate: Date } | null>>()
 
 async function fiscalYearContext(
   tx: TenantTransactionClient,
@@ -468,9 +545,12 @@ type RunContext = {
  * already executing a query» (hallazgo #6 de E4).
  */
 async function loadRunContext(tx: TenantTransactionClient, request: AllocationPeriodRequest): Promise<RunContext> {
-  const fiscalYear = await tx.fiscalYear.findFirst({
-    where: { startDate: { lte: toUtcDate(request.periodStart) }, endDate: { gte: toUtcDate(request.periodEnd) } },
-  })
+  const fiscalYear = await memoized(fiscalYearCache, tx, `${request.periodStart}|${request.periodEnd}`, async () =>
+    tx.fiscalYear.findFirst({
+      where: { startDate: { lte: toUtcDate(request.periodStart) }, endDate: { gte: toUtcDate(request.periodEnd) } },
+      select: { id: true, startDate: true, endDate: true },
+    })
+  )
   if (!fiscalYear) {
     abortAllocation({
       code: "PERIOD_CROSSES_FISCAL_YEAR",
@@ -487,12 +567,20 @@ async function loadRunContext(tx: TenantTransactionClient, request: AllocationPe
   // que la memoria muere con la transacción y nunca sirve datos de otra
   // petición ni de otra organización.
   const { config, lines } = await fiscalYearContext(tx, fiscalYear.id, fiscalYearStart, fiscalYearEnd, request.periodEnd)
-  const ledgerHash = await computeLedgerHash(tx, {
-    from: request.periodStart,
-    to: request.periodEnd,
-    fiscalYearId: fiscalYear.id,
-  })
-  const rules = await getAllocationRuleSpecs(tx, { periodEnd: request.periodEnd, period: request.periodKind })
+  const ledgerHash = await memoized(
+    ledgerHashCache,
+    tx,
+    `${fiscalYear.id}|${request.periodStart}|${request.periodEnd}`,
+    async () =>
+      computeLedgerHash(tx, {
+        from: request.periodStart,
+        to: request.periodEnd,
+        fiscalYearId: fiscalYear.id,
+      })
+  )
+  const rules = await memoized(rulesCache, tx, `${request.periodKind}|${request.periodEnd}`, async () =>
+    getAllocationRuleSpecs(tx, { periodEnd: request.periodEnd, period: request.periodKind })
+  )
 
   // `yaRepartido`: runs VIGENTES de periodo ESTRICTAMENTE más fino contenidos en
   // P. El `NOT` del mismo periodo no es cosmético: sin él, un rerun del mismo
@@ -537,7 +625,7 @@ async function loadRunContext(tx: TenantTransactionClient, request: AllocationPe
       runPeriodEnd: fromUtcDate(r.run.periodEnd),
       sourceCostCenterId: r.sourceCostCenterId,
       marginLevel: r.marginLevel as CostCenterMarginLevel,
-      amountCents: r.amountCents,
+      amountCents: Number(r.amountCents),
     })),
     seals: {
       ledgerHash,
@@ -617,6 +705,8 @@ export type AllocationRunDetail = {
   ledgerHash: string
   analyticsHash: string
   rulesHash: string
+  /** Auditoría E5, hallazgo 1: sha256 de las líneas del run en forma canónica. */
+  linesHash: string | null
   gitSha: string
   lineCount: number
   totalAllocatedCents: Cents
@@ -710,7 +800,11 @@ export async function sealAllocationRunTx(
       rulesHash: ctx.seals.rulesHash,
       gitSha: input.gitSha,
       lineCount: result.lines.length,
-      totalAllocatedCents: result.totalAllocatedCents,
+      totalAllocatedCents: BigInt(result.totalAllocatedCents),
+      // Auditoría E5, hallazgo 1: el sello de la SALIDA. Sin él, mover el
+      // céntimo de remanente entre dos receptores por `UPDATE` directo mantenía
+      // Σ, cierre, cota de I-E5-4 y total, y todos los invariantes daban PASS.
+      linesHash: computeLinesHash(result.lines),
       warnings: result.warnings as unknown as Prisma.InputJsonValue,
       runById: actor.userId,
     },
@@ -727,9 +821,11 @@ export async function sealAllocationRunTx(
         targetBusinessLineId: line.target.kind === "BUSINESS_LINE" ? line.target.id : null,
         targetCostCenterId: line.target.kind === "COST_CENTER" ? line.target.id : null,
         marginLevel: line.marginLevel,
-        amountCents: line.amountCents,
-        driverBase: line.driverBase,
-        driverBaseTotal: line.driverBaseTotal,
+        // `bigint` en BD (hallazgo 4): la conversión vive AQUÍ, en el borde;
+        // el motor y la UI siguen en `number` (2^53 c = 90 000 M€).
+        amountCents: BigInt(line.amountCents),
+        driverBase: BigInt(line.driverBase),
+        driverBaseTotal: BigInt(line.driverBaseTotal),
         driverShareBps: line.driverShareBps,
         fallbackApplied: line.fallbackApplied,
         eligibilityReason: line.eligibilityReason,
@@ -775,9 +871,10 @@ export async function sealAllocationRunTx(
     ledgerHash: run.ledgerHash,
     analyticsHash: run.analyticsHash,
     rulesHash: run.rulesHash,
+    linesHash: run.linesHash,
     gitSha: run.gitSha,
     lineCount: run.lineCount,
-    totalAllocatedCents: run.totalAllocatedCents,
+    totalAllocatedCents: Number(run.totalAllocatedCents),
     warnings: result.warnings,
     runAt: run.runAt.toISOString(),
     supersededById: null,
@@ -869,7 +966,7 @@ export async function listAllocationRuns(
     periodEnd: fromUtcDate(r.periodEnd),
     status: r.status,
     lineCount: r.lineCount,
-    totalAllocatedCents: r.totalAllocatedCents,
+    totalAllocatedCents: Number(r.totalAllocatedCents),
     ledgerHash: r.ledgerHash,
     analyticsHash: r.analyticsHash,
     rulesHash: r.rulesHash,
@@ -922,9 +1019,10 @@ export async function getAllocationRun(
     ledgerHash: run.ledgerHash,
     analyticsHash: run.analyticsHash,
     rulesHash: run.rulesHash,
+    linesHash: run.linesHash,
     gitSha: run.gitSha,
     lineCount: run.lineCount,
-    totalAllocatedCents: run.totalAllocatedCents,
+    totalAllocatedCents: Number(run.totalAllocatedCents),
     warnings: run.warnings,
     runAt: run.runAt.toISOString(),
     supersededById: run.supersededById,
@@ -994,9 +1092,18 @@ async function readAllocationLines(
     },
     orderBy: [{ runId: "asc" }, { createdAt: "asc" }, { id: "asc" }],
   })
-  const projects = await db.project.findMany({ select: { id: true, code: true } })
-  const bls = await db.businessLine.findMany({ select: { id: true, code: true } })
-  const cecos = await db.costCenter.findMany({ select: { id: true, code: true } })
+  // Revisión ronda 1, #8 — sólo las dimensiones REFERENCIADAS. Antes se traían
+  // las tres tablas enteras (proyectos, líneas de negocio y centros de coste) en
+  // cada llamada para traducir tres ids a tres códigos.
+  const idsOf = (pick: (r: (typeof rows)[number]) => string | null): string[] => [
+    ...new Set(rows.map(pick).filter((v): v is string => v !== null)),
+  ]
+  const projectIds = idsOf((r) => r.targetProjectId)
+  const blIds = idsOf((r) => r.targetBusinessLineId)
+  const cecoIds = idsOf((r) => r.targetCostCenterId)
+  const projects = projectIds.length === 0 ? [] : await db.project.findMany({ where: { id: { in: projectIds } }, select: { id: true, code: true } })
+  const bls = blIds.length === 0 ? [] : await db.businessLine.findMany({ where: { id: { in: blIds } }, select: { id: true, code: true } })
+  const cecos = cecoIds.length === 0 ? [] : await db.costCenter.findMany({ where: { id: { in: cecoIds } }, select: { id: true, code: true } })
   const projectCode = new Map(projects.map((p) => [p.id, p.code]))
   const blCode = new Map(bls.map((b) => [b.id, b.code]))
   const cecoCode = new Map(cecos.map((c) => [c.id, c.code]))
@@ -1018,9 +1125,9 @@ async function readAllocationLines(
             code: cecoCode.get(r.targetCostCenterId as string) ?? (r.targetCostCenterId as string),
           },
     marginLevel: r.marginLevel as CostCenterMarginLevel,
-    amountCents: r.amountCents,
-    driverBase: r.driverBase,
-    driverBaseTotal: r.driverBaseTotal,
+    amountCents: Number(r.amountCents),
+    driverBase: Number(r.driverBase),
+    driverBaseTotal: Number(r.driverBaseTotal),
     driverShareBps: r.driverShareBps,
     fallbackApplied: r.fallbackApplied,
     eligibilityReason: r.eligibilityReason as "ACTIVITY_IN_PERIOD" | null,
@@ -1032,6 +1139,96 @@ export type AppliedAllocations = {
   runIds: string[]
   /** O-E5-7: el sello del CONJUNTO, no de un run. `sha256("")` si está vacío. */
   runSetHash: string
+  /**
+   * Los runs vigentes con su periodo, su total y su `linesHash`. Es lo que I5.a
+   * (base reconstruida por run), I-E5-9 e I-E5-12 necesitan y lo que evitaba que
+   * el barrido tuviera que releer `allocation_runs` por su cuenta.
+   */
+  runs: AppliedRunRef[]
+}
+
+export type AppliedRunRef = {
+  id: string
+  periodStart: LocalDate
+  periodEnd: LocalDate
+  status: AllocationRunStatus
+  totalAllocatedCents: Cents
+  linesHash: string | null
+}
+
+/**
+ * Revisión ronda 1, #8 — **Σ por (fuente, columna, nivel) EN SQL**.
+ *
+ * `GROUP BY source_cost_center_id, target_project_id, target_business_line_id,
+ * target_cost_center_id, margin_level` con `SUM(amount_cents)`: la base devuelve
+ * una fila por celda del reparto en vez de las 40 000 líneas que el diseño
+ * contempla. Lo usan el total exacto del drill-down —que se pinta truncado a 500
+ * filas y antes sumaba sólo las que cabían— y el test de rendimiento.
+ */
+export async function getAllocationTotals(
+  db: TenantClient | TenantTransactionClient,
+  filter: { runIds: readonly string[] }
+): Promise<
+  {
+    sourceCostCenterId: string
+    targetProjectId: string | null
+    targetBusinessLineId: string | null
+    targetCostCenterId: string | null
+    marginLevel: CostCenterMarginLevel
+    amountCents: Cents
+  }[]
+> {
+  if (filter.runIds.length === 0) return []
+  const rows = await db.allocationLine.groupBy({
+    by: ["sourceCostCenterId", "targetProjectId", "targetBusinessLineId", "targetCostCenterId", "marginLevel"],
+    where: { runId: { in: [...filter.runIds] } },
+    _sum: { amountCents: true },
+  })
+  return rows
+    .map((r) => ({
+      sourceCostCenterId: r.sourceCostCenterId,
+      targetProjectId: r.targetProjectId,
+      targetBusinessLineId: r.targetBusinessLineId,
+      targetCostCenterId: r.targetCostCenterId,
+      marginLevel: r.marginLevel as CostCenterMarginLevel,
+      amountCents: Number(r._sum.amountCents ?? 0),
+    }))
+    .sort((a, b) =>
+      `${a.sourceCostCenterId}|${a.targetProjectId}|${a.targetBusinessLineId}|${a.targetCostCenterId}|${a.marginLevel}` <
+      `${b.sourceCostCenterId}|${b.targetProjectId}|${b.targetBusinessLineId}|${b.targetCostCenterId}|${b.marginLevel}`
+        ? -1
+        : 1
+    )
+}
+
+/**
+ * Los runs VIGENTES de un periodo de informe, sin leer una sola línea.
+ *
+ * Revisión ronda 1, #8: `getAllocationCellDetail` llamaba a
+ * `getAppliedAllocations` —lectura completa del reparto— **sólo para obtener los
+ * `runIds`** con los que filtrar su propia consulta.
+ */
+export async function getSealedRunRefs(
+  db: TenantClient | TenantTransactionClient,
+  request: { from: LocalDate; to: LocalDate }
+): Promise<AppliedRunRef[]> {
+  const runs = await db.allocationRun.findMany({
+    where: {
+      status: "SEALED",
+      periodStart: { gte: toUtcDate(request.from) },
+      periodEnd: { lte: toUtcDate(request.to) },
+    },
+    select: { id: true, periodStart: true, periodEnd: true, status: true, totalAllocatedCents: true, linesHash: true },
+    orderBy: { id: "asc" },
+  })
+  return runs.map((r) => ({
+    id: r.id,
+    periodStart: fromUtcDate(r.periodStart),
+    periodEnd: fromUtcDate(r.periodEnd),
+    status: r.status,
+    totalAllocatedCents: Number(r.totalAllocatedCents),
+    linesHash: r.linesHash,
+  }))
 }
 
 /**
@@ -1046,18 +1243,10 @@ export async function getAppliedAllocations(
   db: TenantClient | TenantTransactionClient,
   request: { from: LocalDate; to: LocalDate }
 ): Promise<AppliedAllocations> {
-  const runs = await db.allocationRun.findMany({
-    where: {
-      status: "SEALED",
-      periodStart: { gte: toUtcDate(request.from) },
-      periodEnd: { lte: toUtcDate(request.to) },
-    },
-    select: { id: true },
-    orderBy: { id: "asc" },
-  })
+  const runs = await getSealedRunRefs(db, request)
   const runIds = runs.map((r) => r.id)
   const lines = await readAllocationLines(db, { runIds })
-  return { lines, runIds, runSetHash: allocationRunSetHash(runIds) }
+  return { lines, runIds, runSetHash: allocationRunSetHash(runIds), runs }
 }
 
 /** Utilidad de la UI y de los seeds: los límites canónicos de un periodo. */

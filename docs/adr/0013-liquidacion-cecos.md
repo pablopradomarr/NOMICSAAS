@@ -81,3 +81,14 @@ La liquidación queda **cuadrada por construcción**: I4 se cumple nivel a nivel
 A cambio: **cinco campos nuevos** en el esquema del motor (`marginLevel`, `sourceShareBps`, `zeroBaseFallback`, `amountCents`, `fallbackApplied`), un **renombrado** de escala (`percentPermille`/`driverSharePermille` → `percentBps`/`driverShareBps`, gratis hoy porque no hay datos y caro después), una **columna sustituida** en `ReportRun`, y la obligación permanente de que toda futura arista de cascada respete el nivel de origen — un cambio que lo viole tumba el test byte a byte contra `liquidacion-esperada.json` antes de llegar a revisión.
 
 `docs/MODELO-DATOS.md` §Analítica queda actualizado con las cuatro tablas en su forma final. La deuda **O-A6** (uniques parciales de `Budget`), anotada en E4 «para E5/E7», se cierra en la migración de E5.
+
+> **Nota al pie (2026-09-06, ronda 1 de corrección de E5 — hallazgo #6 del revisor).**
+> El párrafo anterior se conserva tal y como se aprobó: la decisión no cambia. Lo que
+> cambia es el hecho. La migración de E5 (`20260910100000_e5_allocations`) **no** contiene
+> el bloque de `budgets`, porque la tabla `Budget` **no existe todavía** —la crea E10 junto
+> con `TimeEntry`—, así que no había nada sobre lo que crear índices. **O-A6 sigue ABIERTA
+> y su épica de cierre es E10**, en la misma migración que cree `budgets`: cuatro índices
+> únicos PARCIALES por combinación (proyecto+cuenta, proyecto sin cuenta, CECO+cuenta, CECO
+> sin cuenta) o `NULLS NOT DISTINCT`, más `CHECK ((project_id IS NULL) <> (cost_center_id IS
+> NULL))`. Una deuda sólo se marca cerrada cuando hay SQL que la cierra. Anotada en
+> `docs/ESTADO.md` §E5.

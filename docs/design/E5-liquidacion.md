@@ -127,7 +127,12 @@ model AllocationRule {
   targets            AllocationRuleTarget[]
   lines              AllocationLine[]
 
-  @@unique([organizationId, code])
+  // CORRECCIÓN 2026-09-06 (ronda 1, #17): era `@@unique([organizationId, code])`,
+  // que habría IMPEDIDO versionar — la sucesora lleva el mismo `code`. La
+  // implementación es la correcta y este documento la refleja: unicidad por
+  // `(organización, código, inicio de vigencia)` más un `EXCLUDE` de vigencias
+  // solapadas del mismo código (migración `20260910100000_e5_allocations`).
+  @@unique([organizationId, code, validFrom])
   @@unique([organizationId, id])
   @@index([organizationId, sourceCostCenterId, period, priority])
   @@index([organizationId, isActive, validFrom, validTo])
@@ -274,7 +279,7 @@ model AllocationLine {
 |---|---|---|
 | `ReportRun` | `allocationRunId` **se sustituye** por `allocationRunSetHash String? @map("allocation_run_set_hash") @db.Char(64)`; el trigger `report_runs_analytics_key` y `analyticsKeyOf` pasan a componer `analyticsHash \| marginConfigHash \| allocationRunSetHash` | **O-E5-7**: un informe anual con reglas mensuales se apoya en 12 runs, no en uno. Con el singular, la caché serviría el informe de 11 runs cuando hay 12 (§3.5) |
 | `CostCenter` | dos relaciones inversas (`allocationRulesAsSource`, `allocationLinesAsSource`) y **ninguna columna nueva**: `allocatable` y `marginLevel` ya existen desde E4 | El nivel del CECO fuente es el que se copia a `AllocationLine.marginLevel` |
-| `Budget` | **deuda O-A6 cerrada aquí** (T17): se retira el `@@unique` con tres nullables y se ponen cuatro índices únicos **parciales** por combinación + `CHECK ((project_id IS NULL) <> (cost_center_id IS NULL))` | Estaba anotada en `MODELO-DATOS.md` para «E5/E7» y el estándar de calidad prohíbe acumular deuda sin épica de cierre |
+| `Budget` | ~~deuda O-A6 cerrada aquí (T17)~~ → **corregido 2026-09-06 (ronda 1, #6): sigue ABIERTA, cierre en E10**. La tabla `budgets` no existe todavía (la crea E10), así que no había nada sobre lo que crear los índices parciales ni el `CHECK ((project_id IS NULL) <> (cost_center_id IS NULL))` | Una deuda sólo se marca cerrada cuando hay SQL que la cierra. Anotada con épica de cierre en `docs/ESTADO.md` §E5 |
 
 ### 2.3 Migración `20260910100000_e5_allocations` (bloques)
 
@@ -380,7 +385,7 @@ Sin backfill: las cuatro tablas nacen vacías, así que **no hace falta el patr�
 
 8. **`report_runs`**: `ALTER TABLE "report_runs" DROP COLUMN "allocation_run_id", ADD COLUMN "allocation_run_set_hash" char(64);` y `CREATE OR REPLACE FUNCTION app.report_runs_analytics_key()` con el nuevo tercer componente. La tabla tiene filas en preview y es append-only: el `DROP COLUMN` lo ejecuta el **propietario** en el DDL de la migración (no `app_runtime`), y como las políticas RESTRICTIVE sólo afectan a DML, no hace falta `NO FORCE`. El `analytics_key` de las filas existentes se **recalcula en el mismo bloque**, bajo `NO FORCE → UPDATE → FORCE`, porque ese sí es DML.
 
-9. **`budgets`** (deuda O-A6): índices únicos parciales por combinación + `CHECK` de exclusividad proyecto/CECO.
+9. ~~**`budgets`** (deuda O-A6): índices únicos parciales por combinación + `CHECK` de exclusividad proyecto/CECO.~~ **No entra en E5** (corregido 2026-09-06): `budgets` la crea E10 y allí se cierra O-A6.
 
 10. **Guarda final**: ninguna tabla en `NO FORCE` (el mismo `DO $$` de las migraciones de E4/E6, ampliado con las cuatro nuevas y `budgets`).
 

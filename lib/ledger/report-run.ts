@@ -72,9 +72,21 @@ export const canonicalResultJson = (result: unknown): string => canonicalJson(re
 export function analyticsKeyOf(input: {
   analyticsHash?: string | null
   marginConfigHash?: string | null
-  allocationRunId?: string | null
+  /**
+   * E5 · O-E5-7 (auditoría, hallazgo 3) — el sello del CONJUNTO de runs, NO el
+   * id de un run. Se llamaba `allocationRunId`, que es la columna que la
+   * migración de E5 **eliminó**: mientras nadie lo informaba la clave coincidía
+   * por casualidad (∅ contra columna NULL), y el día que un informe se sellara
+   * con imputaciones la clave de la aplicación y la del trigger
+   * `app.report_runs_analytics_key` habrían divergido en silencio.
+   */
+  allocationRunSetHash?: string | null
 }): string {
-  return [input.analyticsHash ?? SENTINEL, input.marginConfigHash ?? SENTINEL, input.allocationRunId ?? SENTINEL].join("|")
+  return [
+    input.analyticsHash ?? SENTINEL,
+    input.marginConfigHash ?? SENTINEL,
+    input.allocationRunSetHash ?? SENTINEL,
+  ].join("|")
 }
 
 export type ReportRunKeyInput = {

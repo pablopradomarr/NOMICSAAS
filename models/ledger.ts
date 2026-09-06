@@ -28,6 +28,9 @@ import {
   tenantTransaction,
 } from "@/lib/db"
 import type { AccountKey } from "@/lib/accounts/types"
+// E5 · auditoría hallazgo 2: la base liquidable de I5.a, reconstruida por un
+// camino independiente del que emitió las líneas. Módulo PURO.
+import { reconstructBalances } from "@/lib/analytics/allocate"
 import { fromUtcDate, resolveReversalDate, toUtcDate } from "@/lib/ledger/dates"
 import { entryHash, HashableLine, ledgerHash } from "@/lib/ledger/hash"
 import {
@@ -100,6 +103,10 @@ export type LedgerModelErrorCode =
   | "DRIVER_UNAVAILABLE"
   | "PERIOD_CROSSES_FISCAL_YEAR"
   | "SOURCE_NOT_ALLOCATABLE"
+  // Ronda 1 de corrección (BLOQUEA #1, ADR-0013 D4): el destino exige destinos
+  // explícitos, o la regla no puede repartir un céntimo.
+  | "TARGETS_REQUIRED"
+  | "RULE_INERT"
   | "ALLOCATION_RULE_NOT_FOUND"
   | "ALLOCATION_RUN_NOT_FOUND"
   | "ALLOCATION_RULE_IN_USE"
@@ -1550,10 +1557,28 @@ export async function runLedgerInvariants(
               status: r.status as string,
               totalAllocatedCents: r.totalAllocatedCents,
             }))
+      // Auditoría E5, hallazgo 2: sin `balances`, `checkI5` recorría un array
+      // vacío y la evidencia del PASS lo declaraba («0 combinación(es)»): I5.a
+      // no se evaluaba NUNCA en producción. La base liquidable se reconstruye
+      // desde el diario y las líneas persistidas —camino independiente del que
+      // las produjo—, así que un `UPDATE` sobre `allocation_lines` mueve el
+      // repartido y no la base, y la diferencia aparece.
       const allocationContext =
         applied.lines.length === 0
           ? null
-          : { allocations: applied.lines, rules: allocationRules, runs: allocationRuns }
+          : {
+              allocations: applied.lines,
+              rules: allocationRules,
+              runs: allocationRuns,
+              balances: reconstructBalances({
+                lines: analyticLines,
+                config: analyticsConfig,
+                runs: applied.runs,
+                allocations: applied.lines,
+              }),
+              // Auditoría E5, hallazgo 1: I-E5-12 verificable sobre datos.
+              runLinesHashes: applied.runs.map((r) => ({ id: r.id, linesHash: r.linesHash })),
+            }
 
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),

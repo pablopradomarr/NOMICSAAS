@@ -10,6 +10,7 @@ import {
   buildAllocationGraph,
   checkTopologicalOrder,
   findCycle,
+  linesHash as computeLinesHash,
   type AllocationRuleSpec,
   type AppliedAllocation,
   type SourceBalance,
@@ -380,8 +381,18 @@ function safely(id: string, run: () => CheckResult): CheckResult {
   }
 }
 
+/**
+ * Entrada del barrido analítico. Cuando trae `allocations`, arrastra además el
+ * contexto de liquidación: BLOQUEA #3 de la revisión — `models/margins.ts` ya
+ * pasaba `allocations` y esta función la IGNORABA, así que I5 y los doce
+ * `I-E5-*` no se ejecutaban en ningún camino de producción y el sello
+ * «comprobado» de la PyG imputada no acreditaba la liquidación que mostraba.
+ */
+export type AnalyticInvariantsInput = AnalyticsInvariantInput &
+  Partial<Omit<AllocationInvariantInput, keyof AnalyticsInvariantInput>>
+
 /** Los trece checks de la épica, en orden de presentación en Auditoría. */
-export function runAnalyticInvariants(input: AnalyticsInvariantInput): CheckResult[] {
+export function runAnalyticInvariants(input: AnalyticInvariantsInput): CheckResult[] {
   const checks = [
     safely("I4", () => checkI4(input)),
     safely("I-E4-1", () => checkIE41(input)),
@@ -401,6 +412,12 @@ export function runAnalyticInvariants(input: AnalyticsInvariantInput): CheckResu
       safely("I-E4-11", () => checkIE411(entries)),
       safely("I-E4-12", () => checkIE412(entries))
     )
+  }
+  // E5 · BLOQUEA #3 — con imputaciones en la matriz, I5 y los doce `I-E5-*`
+  // viajan con ella: la pantalla, el `ReportRun` sellado y el barrido de
+  // `scripts/run-invariants.ts` enseñan exactamente los mismos checks.
+  if (input.allocations !== undefined) {
+    checks.push(...checkAllocationInvariants({ ...input, allocations: input.allocations }))
   }
   return checks
 }
@@ -423,6 +440,14 @@ export type AllocationInvariantInput = AnalyticsInvariantInput & {
   balances?: readonly SourceBalance[]
   /** Runs que han aportado, con su estado, para I-E5-9. */
   runs?: readonly { id: string; status: string; totalAllocatedCents: Cents }[]
+  /**
+   * Auditoría E5, hallazgo 1 — el `linesHash` SELLADO de cada run. Con él,
+   * I-E5-12 deja de ser INFO y se comprueba sobre datos: se recalcula el hash de
+   * las líneas persistidas y se compara con el que el run guardó.
+   */
+  runLinesHashes?: readonly { id: string; linesHash: string | null }[]
+  /** Δ por nivel y columna, cuando el llamante ya lo tiene calculado. */
+  allocationDeltaCents?: Record<string, Record<string, Cents>>
 }
 
 /**
@@ -678,10 +703,51 @@ export function checkIE511(): CheckResult {
   }
 }
 
-/** I-E5-12 — reproducibilidad byte a byte con los mismos tres sellos (P7). */
+/**
+ * I-E5-12 — reproducibilidad byte a byte con los mismos sellos (P7).
+ *
+ * **Verificable sobre datos** desde la ronda 1 (auditoría, hallazgo 1): se
+ * recalcula el `linesHash` de las líneas persistidas de cada run y se compara
+ * con el que el run selló. Es lo único que detecta el caso B del auditor —mover
+ * el céntimo de remanente de Hamilton entre dos receptores del mismo (run,
+ * regla, nivel) por `UPDATE` directo—, que mantiene Σ por fuente, cierre a 0,
+ * la cota de I-E5-4 y el total del run, y por tanto pasaba TODOS los demás.
+ */
 export function checkIE512(input: AllocationInvariantInput & { reproduce?: () => string }): CheckResult {
+  const query =
+    "SELECT run_id, lines_hash FROM allocation_runs WHERE organization_id = $1 AND status = 'SEALED'"
+  const sealed = (input.runLinesHashes ?? []).filter((r) => r.linesHash !== null)
+  if (sealed.length > 0) {
+    const byRun = new Map<string, AppliedAllocation[]>()
+    for (const a of input.allocations) byRun.set(a.runId, [...(byRun.get(a.runId) ?? []), a])
+    const failures: string[] = []
+    for (const run of sealed) {
+      const recomputed = computeLinesHash(byRun.get(run.id) ?? [])
+      if (recomputed !== run.linesHash) {
+        failures.push(
+          `run ${run.id}: las líneas de hoy hashean ${recomputed.slice(0, 12)}… y el run selló ${(run.linesHash ?? "").slice(0, 12)}…`
+        )
+      }
+    }
+    const unsealed = (input.runLinesHashes ?? []).length - sealed.length
+    return failures.length === 0
+      ? pass(
+          "I-E5-12",
+          `las líneas de ${sealed.length} run(s) reproducen su linesHash sellado, desempates incluidos` +
+            (unsealed > 0 ? ` · ${unsealed} run(s) anteriores a 20260910110000 sin sello de líneas` : ""),
+          query
+        )
+      : fail("I-E5-12", failures.slice(0, 10).join(" · "), query)
+  }
   if (!input.reproduce) {
-    return { id: "I-E5-12", status: "INFO", evidencia: "reproducibilidad comprobada en lib/analytics/allocate.test.ts" }
+    return {
+      id: "I-E5-12",
+      status: "INFO",
+      evidencia:
+        (input.runLinesHashes ?? []).length > 0
+          ? "los runs del periodo son anteriores a 20260910110000 y no tienen linesHash: reproducibilidad comprobada en lib/analytics/allocate.test.ts"
+          : "reproducibilidad comprobada en lib/analytics/allocate.test.ts",
+    }
   }
   return input.reproduce() === input.reproduce()
     ? pass("I-E5-12", "dos ejecuciones con los mismos sellos producen el mismo reparto, desempates incluidos")
@@ -689,9 +755,7 @@ export function checkIE512(input: AllocationInvariantInput & { reproduce?: () =>
 }
 
 /** Los trece de E5, en orden de presentación en Auditoría. */
-export function checkAllocationInvariants(
-  input: AllocationInvariantInput & { allocationDeltaCents?: Record<string, Record<string, Cents>> }
-): CheckResult[] {
+export function checkAllocationInvariants(input: AllocationInvariantInput): CheckResult[] {
   const rules = input.rules ?? []
   return [
     safely("I5", () => checkI5(input)),

@@ -24,8 +24,8 @@ import type { ProvenanceContext } from "@/lib/ledger/provenance"
 import type { TenantTransactionClient } from "@/lib/db"
 import { computeLedgerHash } from "@/models/ledger"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
-import { getAppliedAllocations } from "@/models/allocations"
-import type { AppliedAllocation } from "@/lib/analytics/allocate"
+import { getAllocationRuleSpecs, getAppliedAllocations, getSealedRunRefs, type AppliedRunRef } from "@/models/allocations"
+import { reconstructBalances, type AppliedAllocation } from "@/lib/analytics/allocate"
 import { cache } from "react"
 
 export type AnalyticPnlReport = {
@@ -150,7 +150,14 @@ export async function getAnalyticPnl(
   const withAllocations = request.withAllocations === true
   const applied = withAllocations
     ? await getAppliedAllocations(tx, { from: request.from, to: request.to })
-    : { lines: [] as AppliedAllocation[], runIds: [] as string[], runSetHash: EMPTY_RUN_SET_HASH }
+    : { lines: [] as AppliedAllocation[], runIds: [] as string[], runSetHash: EMPTY_RUN_SET_HASH, runs: [] as AppliedRunRef[] }
+  // BLOQUEA #3 — las reglas con las que se emitieron esas líneas. Sin ellas,
+  // I-E5-1, I-E5-2, I-E5-3, I-E5-8 e I-E5-10 no tienen nada que juzgar y el
+  // sello de la PyG imputada no acreditaría la liquidación que muestra.
+  const allocationRules =
+    withAllocations && applied.lines.length > 0
+      ? await getAllocationRuleSpecs(tx, { periodEnd: request.to })
+      : []
 
   const configHash = marginConfigHash(config)
   const analyticsHash = computeAnalyticsHash(
@@ -191,11 +198,36 @@ export async function getAnalyticPnl(
     marginConfigHash: configHash,
     ...(withAllocations ? { allocations: applied.lines } : {}),
   })
+  // BLOQUEA #3 — I5 y los doce `I-E5-*` se evalúan AQUÍ, en el camino de
+  // producción, sobre la MISMA matriz que se pinta y se sella. Antes sólo se
+  // ejecutaban en los tests: `runAnalyticInvariants` ignoraba la propiedad
+  // `allocations` que este módulo ya le pasaba.
+  //
+  // `balances` (auditoría, hallazgo 2) se RECONSTRUYE desde el diario y las
+  // líneas persistidas, no desde lo que el motor dijo en su día: es lo que hace
+  // que I5.a detecte un `UPDATE` sobre `allocation_lines`.
   const checks = runAnalyticInvariants({
     lines,
     config,
     period,
-    ...(withAllocations ? { allocations: applied.lines } : {}),
+    ...(withAllocations
+      ? {
+          allocations: applied.lines,
+          rules: allocationRules,
+          runs: applied.runs.map((r) => ({
+            id: r.id,
+            status: r.status as string,
+            totalAllocatedCents: r.totalAllocatedCents,
+          })),
+          balances: reconstructBalances({
+            lines,
+            config,
+            runs: applied.runs,
+            allocations: applied.lines,
+          }),
+          runLinesHashes: applied.runs.map((r) => ({ id: r.id, linesHash: r.linesHash })),
+        }
+      : {}),
   })
 
   const report: AnalyticPnlReport = {
@@ -397,11 +429,16 @@ export async function getAllocationCellDetail(
   // En SERIE: dentro de la transacción se comparte una sola conexión y el
   // adaptador `pg` avisa de «client is already executing a query».
   const config = await getAnalyticsConfig(tx, { periodEnd: request.to })
-  const applied = await getAppliedAllocations(tx, { from: request.from, to: request.to })
-  const { query, params } = allocationCellQuery(request.level, request.column, config, applied.runIds)
+  // Revisión ronda 1, #8: SÓLO los `runIds`. Antes se llamaba a
+  // `getAppliedAllocations` —lectura completa de todas las líneas del conjunto,
+  // con sus dimensiones— para quedarse con los identificadores de los runs y
+  // tirarlo todo lo demás.
+  const runRefs = await getSealedRunRefs(tx, { from: request.from, to: request.to })
+  const runIds = runRefs.map((r) => r.id)
+  const { query, params } = allocationCellQuery(request.level, request.column, config, runIds)
 
   const rows =
-    applied.runIds.length === 0
+    runIds.length === 0
       ? []
       : await tx.$queryRawUnsafe<
           {
@@ -413,9 +450,9 @@ export async function getAllocationCellDetail(
             business_line_code: string | null
             cost_center_code: string | null
             margin_level: string
-            amount_cents: number
-            driver_base: number
-            driver_base_total: number
+            amount_cents: bigint
+            driver_base: bigint
+            driver_base_total: bigint
             driver_share_bps: number
             fallback_applied: string | null
             eligibility_reason: string | null
@@ -460,9 +497,10 @@ export async function getAllocationCellDetail(
       targetKind,
       targetCode: r.project_code ?? r.business_line_code ?? r.cost_center_code ?? "",
       marginLevel: r.margin_level,
-      amountCents: sign * r.amount_cents,
-      driverBase: r.driver_base,
-      driverBaseTotal: r.driver_base_total,
+      // `bigint` en BD (hallazgo 4): Prisma devuelve `BigInt` en SQL crudo.
+      amountCents: sign * Number(r.amount_cents),
+      driverBase: Number(r.driver_base),
+      driverBaseTotal: Number(r.driver_base_total),
       driverShareBps: r.driver_share_bps,
       fallbackApplied: r.fallback_applied,
       eligibilityReason: r.eligibility_reason,
@@ -473,7 +511,7 @@ export async function getAllocationCellDetail(
     level: request.level,
     column: request.column,
     query,
-    runIds: applied.runIds,
+    runIds,
     amountCents: lines.reduce((acc, l) => acc + l.amountCents, 0),
     lines,
     truncated,

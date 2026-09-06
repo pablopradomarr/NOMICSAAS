@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { parseCents } from "@/lib/money"
 import { useRouter } from "next/navigation"
 import { useState, useTransition } from "react"
 
@@ -39,12 +40,17 @@ import { useState, useTransition } from "react"
  * una sola transacción, porque `Σ sourceShareBps = 10000` se juzga sobre el
  * conjunto y no sobre una regla suelta.
  *
- * Lo que este formulario **no** hace: no convierte importes ni cuotas. El
- * usuario teclea `"1.899,54"` y `"30"`; la conversión a céntimos enteros y a
- * puntos básicos ocurre en el servidor (`ui-actions.ts`, `lib/money.parseCents`).
- * La suma de cuotas que se ve mientras se escribe es un **aviso de formulario**,
- * marcado como tal: la validación de verdad está en `forms/allocations.ts`, en
- * la acción y en el trigger de la base.
+ * Lo que este formulario **no** hace: no persiste ninguna conversión. El usuario
+ * teclea `"1.899,54"` y `"30"`; lo que se guarda lo convierte el servidor
+ * (`ui-actions.ts`, `lib/money.parseCents`).
+ *
+ * La banda «Σ de cuotas» que se ve mientras se escribe SÍ convierte, para poder
+ * avisar: usa **el mismo `parseCents`** que el servidor (revisión ronda 1, #14 —
+ * antes hacía su propio `Math.round(Number(texto.replace(",", ".")) * 100)`, es
+ * decir coma flotante en el navegador sobre la cifra que mueve dinero entre
+ * columnas). Sigue siendo un aviso de formulario, marcado como `calculado` y sin
+ * bloquear el envío: la validación de verdad está en `forms/allocations.ts`, en
+ * la acción y en los triggers de la base.
  */
 
 const SELECT_CLASS =
@@ -137,7 +143,8 @@ export function AllocationRuleForm({
    */
   const shareByPeriod = new Map<string, number>()
   for (const rule of rules) {
-    const bps = Math.round(Number(rule.sourceSharePercentText.replace(",", ".")) * 100 || 0)
+    // El MISMO parser que el servidor (#14): `"30"` / `"30,5"` → bps enteros.
+    const bps = parseCents(rule.sourceSharePercentText) ?? 0
     shareByPeriod.set(rule.period, (shareByPeriod.get(rule.period) ?? 0) + bps)
   }
   const incompletePeriods = [...shareByPeriod.entries()].filter(([, bps]) => bps !== 10000)
@@ -285,7 +292,21 @@ export function AllocationRuleForm({
                         aria-label={`Driver de la regla ${index + 1}`}
                         className={SELECT_CLASS}
                         value={rule.driver}
-                        onChange={(event) => patch(rule.key, { driver: event.target.value, targets: [] })}
+                        onChange={(event) => {
+                          // BLOQUEA #1 / ADR-0013 D4 — un driver CALCULADO
+                          // pondera por proyecto leyendo el diario: si el
+                          // destino elegido eran centros de coste o líneas de
+                          // negocio, la regla quedaría inerte. Se vuelve a
+                          // «Proyectos» en el acto en vez de dejar que el
+                          // usuario guarde algo que la acción va a rechazar.
+                          const driver = event.target.value
+                          const explicit = driver === "FIXED_PERCENT" || driver === "MANUAL"
+                          patch(rule.key, {
+                            driver,
+                            targets: [],
+                            ...(explicit ? {} : { targetKind: "PROJECTS" }),
+                          })
+                        }}
                       >
                         {ALLOCATION_DRIVERS.map((driver) => (
                           <option key={driver} value={driver}>
@@ -304,12 +325,18 @@ export function AllocationRuleForm({
                         value={rule.targetKind}
                         onChange={(event) => patch(rule.key, { targetKind: event.target.value, targets: [] })}
                       >
-                        {["PROJECTS", "BUSINESS_LINES", "COST_CENTERS", "MIXED"].map((kind) => (
+                        {(showTargets ? ["PROJECTS", "BUSINESS_LINES", "COST_CENTERS"] : ["PROJECTS"]).map((kind) => (
                           <option key={kind} value={kind}>
                             {TARGET_KIND_LABELS[kind]}
                           </option>
                         ))}
                       </select>
+                      {!showTargets && (
+                        <span className="text-[11px] leading-snug text-muted-foreground">
+                          Este driver calcula los pesos por proyecto leyendo el diario. Para repartir a líneas de
+                          negocio o a otros centros de coste, elige porcentaje fijo o importes manuales.
+                        </span>
+                      )}
                     </label>
 
                     <label className="flex flex-col gap-1 text-sm">

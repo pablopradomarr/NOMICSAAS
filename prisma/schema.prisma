@@ -1372,12 +1372,18 @@ model AllocationRun {
   ledgerHash    String @map("ledger_hash") @db.Char(64)
   analyticsHash String @map("analytics_hash") @db.Char(64)
   rulesHash     String @map("rules_hash") @db.Char(64)
+  /// Auditoría E5, hallazgo 1 — sello de la SALIDA: sha256 de las líneas del run
+  /// en forma canónica. Sin él, un `UPDATE` que mueva el céntimo de remanente
+  /// entre dos receptores del mismo (run, regla, nivel) es indetectable: Σ,
+  /// cierre a 0, cota de I-E5-4 y total se mantienen. NULL en runs previos.
+  linesHash     String? @map("lines_hash") @db.Char(64)
   gitSha        String @map("git_sha") @db.VarChar(64)
 
   /// Resumen denormalizado. `lineCount = 0` es legítimo: un run vacío es la
   /// PRUEBA de que el periodo se liquidó y no había nada que repartir.
-  lineCount           Int  @default(0) @map("line_count")
-  totalAllocatedCents Int  @default(0) @map("total_allocated_cents")
+  lineCount           Int    @default(0) @map("line_count")
+  /// `bigint` (auditoría E5, hallazgo 4): con `integer` el techo eran 21.474.836,47 €.
+  totalAllocatedCents BigInt @default(0) @map("total_allocated_cents")
   /// `[{code, rule, period, targets?, detail}]` — W-E5-ZERO-BASE, W-E5-NEG-BASE,
   /// W-E5-ARCHIVED-TARGET. Es la memoria de por qué el reparto salió así.
   warnings            Json @default("[]")
@@ -1430,12 +1436,15 @@ model AllocationLine {
   /// Convención de COSTE: positivo = coste que sale del CECO fuente y se carga
   /// al receptor. Hamilton siempre trabaja sobre |importe| y el signo se
   /// restituye al final (§3.3).
-  amountCents Int @map("amount_cents")
+  /// `bigint` (auditoría E5, hallazgo 4 · revisión #11): con `integer` el techo
+  /// eran 21.474.836,47 €, por debajo del rango de producto de CLAUDE.md.
+  amountCents BigInt @map("amount_cents")
 
   /// Peso del receptor y total de pesos: la celda es auditable SIN recomputar el
-  /// driver, que es lo que exige el drill-down.
-  driverBase      Int @map("driver_base")
-  driverBaseTotal Int @map("driver_base_total")
+  /// driver, que es lo que exige el drill-down. `driverBaseTotal` agrega la base
+  /// de TODO un periodo, así que es el que antes desbordaba.
+  driverBase      BigInt @map("driver_base")
+  driverBaseTotal BigInt @map("driver_base_total")
   /// **O-E5-3** — bps, no milésimas. Informativo (el importe manda).
   driverShareBps  Int @map("driver_share_bps")
 

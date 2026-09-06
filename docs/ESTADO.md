@@ -142,10 +142,51 @@ DATABASE_URL_MAINTENANCE=… npx tsx scripts/load-fixture.ts --org <org> --user 
     c. auditor-fiabilidad contexto limpio: reconstruir balance (activo 13.673.820 / PN 8.307.322), PyG (A.4 1.497.322), cashflow (Δ −1.056.080, cash final 2.943.920) por SQL/Python; error inyectado.
     d. revisor-codigo contexto limpio sobre `git diff 97221fb...HEAD`; rondas hasta APROBADO.
     e. cierre E6 (ROADMAP, registro, ESTADO, push).
-15. **SIGUIENTE**: `/epica E5` (liquidación de CECOs: AllocationRule/Run/Line, drivers, Hamilton, I5, PyG analítica con MC3/EBITDA imputados) → `/sprint E5` → E8 (OCR → asientos) → E7 (Auditoría) → E9 → E10 → E11 → E12.
+15. ✅ **E5 implementada y en ronda 1 de corrección (2026-09-06).** Backend + UI (commits f57d6ee, 7d6d213, 17b8fe9). Revisor: CAMBIOS REQUERIDOS (3 BLOQUEA · 7 DEBE · 7 PUEDE, `docs/design/E5-revision.md`); auditor: CONFORME en cifras con 4 hallazgos de detección (`docs/design/E5-auditoria.md`); QA: BUG-E5-1. Ronda 1 cierra los tres BLOQUEA, los siete DEBE, BUG-E5-1 y los hallazgos 1–4 del auditor. Ver §«E5 — deuda y decisiones» más abajo.
+16. **SIGUIENTE**: `/epica E5` (liquidación de CECOs: AllocationRule/Run/Line, drivers, Hamilton, I5, PyG analítica con MC3/EBITDA imputados) → `/sprint E5` → E8 (OCR → asientos) → E7 (Auditoría) → E9 → E10 → E11 → E12.
 ~~13. `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
 ~~11. `/epica E4` (analítica base: BusinessLine, Project, CostCenter, AnalyticType en líneas, MarginLevelConfig, PyG analítica sin imputaciones, I4; retirar CHECK NULL de dimensiones + FKs; fixtures con projectCode/costCenterCode activados) → `/sprint E4` → E6 (informes: balance, PyG, cashflow, ReportRun) → E5 (liquidación CECOs).
 ~~10. `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.
+
+## E5 — deuda y decisiones (ronda 1 de corrección, 2026-09-06)
+
+Todo lo que E5 deja abierto, con **épica de cierre y fecha**, como exige el
+§Estándar de calidad de `CLAUDE.md`. Nada de esto bloquea el cierre de E5; lo que
+no puede pasar es que desaparezca del seguimiento.
+
+| Deuda | Estado | Épica de cierre | Nota |
+|---|---|---|---|
+| **O-A6** — `Budget` con `@@unique` de tres columnas nullables (NULL <> NULL, no impide duplicados) | **ABIERTA**. La migración de E5 la daba por cerrada y **no lo estaba**: `budgets` no existe todavía (hallazgo #6 del revisor) | **E10**, en la misma migración que cree `budgets` | Cuatro índices únicos PARCIALES por combinación (proyecto+cuenta, proyecto sin cuenta, CECO+cuenta, CECO sin cuenta) o `NULLS NOT DISTINCT` (PG 15+), más `CHECK ((project_id IS NULL) <> (cost_center_id IS NULL))`. Corregidos `MODELO-DATOS.md` y ADR-0013 con nota al pie fechada |
+| **`TargetKind.MIXED`** — valor de enum **sin uso**: ni el motor lo resuelve, ni el formulario lo ofrece ya (se retiró del selector en esta ronda), ni hay reglas con él | ABIERTA (contrato desaconsejado y documentado) | **E10** | Un reparto «mixto» se declara hoy con VARIAS reglas del mismo CECO y `sourceShareBps` complementarios, que es más explícito y cuadra por I-E5-3. Si en E10 sigue sin usarse, se retira del enum en la migración que toque `allocation_rules` |
+| **`AllocationRunStatus.DRAFT`** — valor de enum sin persistencia: la simulación **no escribe nada** (ADR-0013 D5) | ABIERTA (valor de enum sin uso) | **E10** | Se retira con `MIXED` en la misma migración, o se usa si aparece el caso de una simulación guardada para aprobación |
+| **Matriz imputada sin agregado SQL total** | **CERRADA en esta ronda (parcial y medida)**: `getAllocationTotals` agrega en SQL por `(fuente, destino, nivel)`, `readAllocationLines` pasó de cuatro consultas (con tres catálogos enteros) a una consulta más las dimensiones REFERENCIADAS, y `getAllocationCellDetail` ya no lee el reparto entero para sacar los `runIds` | — | Criterio 20 medido en `tests/integration/perf-pages.test.ts`: liquidación anual < 400 ms, PyG analítica imputada < 800 ms |
+| **N+1 en `/analytics/allocations/runs`** | **CERRADA en esta ronda**: memoización por transacción del `ledgerHash` por `(periodo, ejercicio)` y de las reglas por `(periodicidad, fin de periodo)` | — | Con 17 runs se pasa de ~68 consultas a una por periodo distinto |
+| **Grafo de cascada** (§6/T11 del diseño) | **ENTREGADO en esta ronda** como componente simple: `components/analytics/allocation-cascade-graph.tsx`, aristas `fuente → destino` numeradas por orden de ejecución y agrupadas por periodicidad | — | Se descarta el layout de grafo con librería: lo que hace falta saber es qué se reparte antes que qué (I-E5-8), no la geometría |
+| **`allocation_lines` en `bigint`** | **CERRADA en esta ronda**: `amount_cents`, `driver_base`, `driver_base_total` y `allocation_runs.total_allocated_cents` pasan a `bigint`; `hamilton()` opera en `BigInt` | — | Con `integer` el techo eran 21.474.836,47 €, por debajo del rango de producto («hasta 100 M€»). La conversión vive en el borde (`models/allocations.ts`); el motor y la UI siguen en `number` |
+| **`HOURS` / `HEADCOUNT`** | ABIERTA por diseño (ADR-0013 D4: se RECHAZAN, no quedan inertes) | **E10** | Con `TimeEntry` y el contrato del experto (minutos enteros, sólo entradas aprobadas, `fteMilli` a fin de periodo) |
+| **Un `ReportRun` sellado no caduca si alguien altera `allocation_lines` por SQL** | ABIERTA (limitación conocida) | **E7** (pestaña Auditoría) | La clave del run se compone del `ledgerHash` y del CONJUNTO de runs, no del contenido de las líneas. Lo detecta el barrido de invariantes (I5 e I-E5-12 con `linesHash`), que es donde se mira; incluirlo en la clave obligaría a hashear el reparto en cada petición de caché |
+
+## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
+
+`tests/e2e/session.ts` **siembra** lo que necesita en vez de darlo por hecho
+(`tests/support/ensure-self-hosted.ts`, idempotente y ejecutado una vez por
+proceso):
+
+- el usuario global de `SELF_HOSTED_MODE` (`taxhacker@localhost`), su
+  organización personal y su membresía ADMIN. Sin él la aplicación mandaba al
+  asistente «TaxHacker: Self-Hosted Edition» y la suite fallaba en el primer
+  `expect`, con un mensaje que no decía nada del problema real;
+- una SEGUNDA organización, `e2e-analitica`, con el plan **sin subcuentas** y el
+  fixture `ejercicio-completo` cargado. Son dos a propósito: la personal nace con
+  subcuentas (`5720`, que `plan-cuentas.spec` renombra) y los fixtures se postean
+  contra `572`, que en un plan con subcuentas no admite apuntes. Con una sola
+  organización, además, el `--reset-org` de una suite borraba el diario de otra.
+  La membresía de `e2e-analitica` se ancla en 2020 para que la organización
+  personal siga siendo la que la aplicación elige sin cookie de organización
+  activa; las suites analíticas plantan la cookie explícitamente.
+- `adminUserId()` ya no lanza cuando no hay ningún ADMIN: devuelve el usuario
+  sembrado. Las suites que degradan el rol para probar el VIEWER dejaban la base
+  sin ADMIN y su `finally` moría sin restaurar el rol.
 
 ## Preview desplegado (Pablo, 2026-09-05 20:45)
 Vercel `nomicsaas-preview` (team pablo-7579s-projects) desde `main` como preview protegido por login Vercel; Supabase `nomicsaas-preview` (ref ilzqlmjbbmunwhoeyhoy, eu-west-1, free) con las 31 migraciones registradas (dos adaptadas a mano por exigir SUPERUSER: 20260904150000 y 20260906090000 — ver runbook DESPLIEGUE-PREVIEW.md en el Project). `DATABASE_URL` con `sslmode=no-verify` (deuda: CA del pooler), session pooler 5432. Cada push a `main` redespliega. URL: https://nomicsaas-preview-git-main-pablo-7579s-projects.vercel.app

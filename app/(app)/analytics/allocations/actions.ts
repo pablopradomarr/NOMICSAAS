@@ -123,10 +123,18 @@ export const previewAllocationAction = withOrg(
   async ({ org }, input: unknown): Promise<ActionState<AllocationPreviewPayload>> => {
     const parsed = allocationPeriodSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
-    const result = await runLedgerTransaction(org.id, null, async (tx) => {
-      const preview = await previewAllocationRun(tx, parsed.data)
-      return { result: preview.result, seals: preview.seals, summary: preview.summary }
-    })
+    // #15: la simulación es un dry-run de rol VIEWER; la transacción es de
+    // SÓLO LECTURA, como el resto de las lecturas. Abrirla de escritura tomaba
+    // un slot de escritura del pool para no escribir nada.
+    const result = await runLedgerTransaction(
+      org.id,
+      null,
+      async (tx) => {
+        const preview = await previewAllocationRun(tx, parsed.data)
+        return { result: preview.result, seals: preview.seals, summary: preview.summary }
+      },
+      { readOnly: true }
+    )
     return toActionState(result)
   }
 )
@@ -333,7 +341,7 @@ export const sealAllocationRunAction = withOrg(
           periodStart: data.periodStart,
           periodEnd: data.periodEnd,
           gitSha: gitSha(),
-          expectedHashes: data.expectedHashes ?? null,
+          expectedHashes: data.expectedHashes,
           supersede: data.supersede,
           reason: data.reason ?? null,
         },

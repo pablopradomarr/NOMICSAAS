@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test"
 import { createHmac } from "node:crypto"
 import { mkdirSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { adminUserId, APP_ENV, DATABASE_URL as DATABASE_URL_OWNER, signIn, withDb } from "./session"
+import { adminUserId, analyticsOrganization, APP_ENV, DATABASE_URL as DATABASE_URL_OWNER, signIn, withDb } from "./session"
 
 /**
  * E5 · T15 — Extremo a extremo de la liquidación de centros de coste
@@ -74,26 +74,6 @@ test.beforeAll(async () => {
   )
 })
 
-async function analyticsOrganization(): Promise<{ id: string; name: string }> {
-  return await withDb(async (client) => {
-    const { rows } = await client.query<{ id: string; name: string }>(
-      `SELECT o.id, o.name
-         FROM organizations o
-         JOIN journal_lines l ON l.organization_id = o.id AND l.project_id IS NOT NULL
-        WHERE o.is_active
-        GROUP BY o.id, o.name
-        ORDER BY count(*) DESC
-        LIMIT 1`
-    )
-    if (rows.length === 0) {
-      throw new Error(
-        "Ninguna organización tiene analítica cargada: ejecuta " +
-          "`npx tsx scripts/load-fixture.ts --org <id> --fixture tests/fixtures/ejercicio-completo.json`"
-      )
-    }
-    return rows[0]
-  })
-}
 
 /** Deja la organización analítica activa plantando la cookie firmada. */
 async function useAnalyticsOrg(page: Page, baseURL: string, organizationId: string): Promise<void> {

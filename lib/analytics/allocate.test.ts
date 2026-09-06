@@ -750,15 +750,19 @@ describe("liquidación del fixture completo (2026)", () => {
       evidencia: "cierre anual: todo CECO imputable queda liquidado a 0 en su columna",
       residual: badResidual,
     })
+    // #12 de la revisión: el separador era un byte NUL literal, así que
+    // `grep`/`ripgrep` clasificaban este fichero como BINARIO y lo saltaban en
+    // silencio — 878 líneas de test invisibles para cualquier búsqueda.
+    const SEP = "|"
     const edges = [
       ...new Set(
         FIXTURE_RULES.filter((r) => r.targetKind === "COST_CENTERS").flatMap((r) =>
-          r.targets.map((t) => `${r.sourceCostCenterCode} ${(t as { costCenterCode: string }).costCenterCode}`)
+          r.targets.map((t) => `${r.sourceCostCenterCode}${SEP}${(t as { costCenterCode: string }).costCenterCode}`)
         )
       ),
     ]
       .sort()
-      .map((e) => e.split(" "))
+      .map((e) => e.split(SEP))
     checks.push({
       id: "I-E5-1",
       status: findCycle(buildAllocationGraph(rules)) === null ? "PASS" : "FAIL",

@@ -133,3 +133,17 @@ export function sumCents(values: Iterable<Cents>): Cents {
   }
   return acc
 }
+
+/**
+ * Puntos básicos como porcentaje con dos decimales, **sin coma flotante**
+ * (revisión E5 ronda 1, #13). `(bps / 100).toFixed(2)` repartido por el motor,
+ * los formularios y los modelos era el mismo patrón copiado cuatro veces y, aun
+ * siendo presentación y no dinero, el checklist es literal: la conversión vive
+ * aquí y es aritmética entera. Devuelve sólo el número (`"70.00"`); el signo `%`
+ * lo pone el mensaje, que decide si lleva espacio duro.
+ */
+export function formatBps(bps: number): string {
+  const n = Math.trunc(bps)
+  const abs = Math.abs(n)
+  return `${n < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`
+}

@@ -453,7 +453,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E5 · liquidación de CECOs en base de dato
       analyticsKeyOf({
         analyticsHash: withIn.analyticsHash,
         marginConfigHash: withIn.marginConfigHash,
-        allocationRunId: withIn.allocationRunSetHash,
+        allocationRunSetHash: withIn.allocationRunSetHash,
       })
     ).not.toBe(
       analyticsKeyOf({ analyticsHash: withOut.analyticsHash, marginConfigHash: withOut.marginConfigHash })
@@ -469,7 +469,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E5 · liquidación de CECOs en base de dato
       return rows[0].k as string
     })
     expect(key).toBe(
-      analyticsKeyOf({ analyticsHash: "a".repeat(64), marginConfigHash: "b".repeat(64), allocationRunId: "c".repeat(64) })
+      analyticsKeyOf({ analyticsHash: "a".repeat(64), marginConfigHash: "b".repeat(64), allocationRunSetHash: "c".repeat(64) })
     )
   })
 

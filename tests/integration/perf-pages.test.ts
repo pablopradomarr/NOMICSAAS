@@ -43,12 +43,19 @@ const { getAccountMap } = await import("@/models/account-map")
 const { listFiscalYears } = await import("@/models/fiscal-years")
 const { listPeriodLocks } = await import("@/models/period-locks")
 const { computeLedgerHash, getEntries, getLinesForPeriod } = await import("@/models/ledger")
-const { getAnalyticPnl } = await import("@/models/margins")
+const { clearMarginCache, getAnalyticPnl } = await import("@/models/margins")
 const { getDashboard } = await import("@/models/reports")
 const { countUnpostedTransactions } = await import("@/models/transactions")
 const { accountNames, entryExtras, postableAccounts } = await import("@/app/(app)/ledger/shared")
-const { listAllocationRules, listAllocationRuns, allocationRunStaleness, createAllocationRulesTx, sealAllocationRunTx, allocationPeriodBounds } =
-  await import("@/models/allocations")
+const {
+  listAllocationRules,
+  listAllocationRuns,
+  allocationRunStaleness,
+  createAllocationRulesTx,
+  reverseAllocationRunTx,
+  sealAllocationRunTx,
+  allocationPeriodBounds,
+} = await import("@/models/allocations")
 
 const ORG = "efff0000-0000-4000-8000-00000000000a"
 const USER = "efff0000-0000-4000-8000-0000000000a1"
@@ -56,6 +63,13 @@ const PERIOD = { from: "2026-01-01", to: "2026-12-31" } as const
 
 /** Techo por cargador en local. Holgado a propósito: vigila regresiones, no microsegundos. */
 const MAX_MS = 1500
+/**
+ * Criterio 20 de `docs/design/E5-liquidacion.md` §8.1 (revisión ronda 1, #7):
+ * los DOS umbrales del diseño, medidos con los cargadores reales sobre el
+ * fixture completo. No son techos genéricos: son el compromiso de la épica.
+ */
+const MAX_MS_LIQUIDACION_ANUAL = 400
+const MAX_MS_PYG_IMPUTADA = 800
 /** Objetivo del diseño: una petición no puede ocupar más de dos conexiones a la vez. */
 const MAX_CONNECTIONS = 2
 
@@ -271,6 +285,22 @@ const loaders: Loader[] = [
       ),
   },
   {
+    // E5 · criterio 20 — la PyG analítica IMPUTADA: el camino nuevo más caro
+    // (matriz + imputaciones + I5 y los doce `I-E5-*`). No se medía.
+    route: "/analytics/pyg?imputaciones=si",
+    run: async (fiscalYearId) =>
+      await runWithRequestTenant(ORG, USER, async (tx) => {
+        const report = await getAnalyticPnl(tx, {
+          ...PERIOD,
+          fiscalYearId,
+          withAllocations: true,
+          provenance: { runId: "00000000-0000-4000-8000-000000000002", gitSha: "test", baseCurrency: "EUR" },
+        })
+        const names = await accountNames(tenantDb(ORG))
+        return { report, names }
+      }),
+  },
+  {
     // El panel EMITE un `ReportRun`: la transacción de la petición no es READ ONLY.
     route: "/dashboard",
     run: async (fiscalYearId) =>
@@ -377,6 +407,57 @@ describe.skipIf(!TEST_DATABASE_URL)("E6-perf · una transacción por petición",
       expect(transactions, `${loader.route} abrió ${transactions} transacciones`).toBe(1)
     }, 120_000)
   }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // E5 · criterio 20 (revisión ronda 1, #7)
+  // ───────────────────────────────────────────────────────────────────────
+
+  it(`criterio 20 · la liquidación ANUAL del fixture se sella en < ${MAX_MS_LIQUIDACION_ANUAL} ms`, async () => {
+    // Se mide `sealAllocationRunTx` del ejercicio entero: leer el diario del
+    // año, componer los tres sellos, ejecutar el motor y persistir el run.
+    const started = performance.now()
+    const run = await tenantTransaction(ORG, USER, async (tx) =>
+      sealAllocationRunTx(
+        tx,
+        { periodKind: "YEAR", periodStart: PERIOD.from, periodEnd: PERIOD.to, gitSha: "test" },
+        { userId: USER }
+      )
+    )
+    const ms = performance.now() - started
+    expect(run.status).toBe("SEALED")
+    expect(ms, `la liquidación anual tardó ${Math.round(ms)} ms (máximo ${MAX_MS_LIQUIDACION_ANUAL} ms)`).toBeLessThan(
+      MAX_MS_LIQUIDACION_ANUAL
+    )
+    // Se revierte para no dejar el estado del resto de mediciones tocado.
+    await tenantTransaction(ORG, USER, async (tx) =>
+      reverseAllocationRunTx(
+        tx,
+        { runId: run.id, reason: "limpieza de la medición de rendimiento", reversedAt: new Date() },
+        { userId: USER }
+      )
+    )
+  }, 120_000)
+
+  it(`criterio 20 · la PyG analítica IMPUTADA del ejercicio se construye en < ${MAX_MS_PYG_IMPUTADA} ms`, async () => {
+    clearMarginCache()
+    const started = performance.now()
+    const report = await runWithRequestTenant(ORG, USER, async (tx) =>
+      getAnalyticPnl(tx, {
+        ...PERIOD,
+        fiscalYearId,
+        withAllocations: true,
+        provenance: { runId: "00000000-0000-4000-8000-000000000003", gitSha: "test", baseCurrency: "EUR" },
+      })
+    )
+    const ms = performance.now() - started
+    expect(report.withAllocations).toBe(true)
+    // La medición no vale nada si la matriz no lleva imputaciones de verdad.
+    expect(report.allocationRunIds.length).toBeGreaterThan(0)
+    expect(report.checks.map((c) => c.id)).toContain("I5")
+    expect(ms, `la PyG imputada tardó ${Math.round(ms)} ms (máximo ${MAX_MS_PYG_IMPUTADA} ms)`).toBeLessThan(
+      MAX_MS_PYG_IMPUTADA
+    )
+  }, 120_000)
 
   it("sin runWithRequestTenant, cada operación de tenantDb abre la suya (la deuda que se cierra)", async () => {
     const db = tenantDb(ORG)

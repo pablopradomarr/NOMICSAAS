@@ -8,6 +8,7 @@
  */
 
 import { localDateSchema, uuidSchema } from "@/forms/analytics"
+import { formatBps } from "@/lib/money"
 import { z } from "zod"
 
 /** Motivo de una reversión o de un cambio de política: ≥ 10 caracteres. */
@@ -124,7 +125,7 @@ const withRuleInvariants = <T extends z.ZodTypeAny>(schema: T): T =>
         ctx.addIssue({
           code: "custom",
           path: ["targets"],
-          message: `Los destinos suman el ${(sum / 100).toFixed(2)} %: una regla de porcentaje fijo tiene que repartir exactamente el 100 %`,
+          message: `Los destinos suman el ${formatBps(sum)} %: una regla de porcentaje fijo tiene que repartir exactamente el 100 %`,
         })
       }
     }
@@ -136,6 +137,32 @@ const withRuleInvariants = <T extends z.ZodTypeAny>(schema: T): T =>
         code: "custom",
         path: ["targets"],
         message: "Los drivers calculados no llevan destinos explícitos: el conjunto de receptores sale del filtro y la base, del diario",
+      })
+    }
+    // BLOQUEA #1 (revisión ronda 1) / ADR-0013 D4 — contrato `targetKind` ×
+    // `driver`. Un driver CALCULADO pondera por proyecto leyendo el diario: una
+    // línea de negocio o un centro de coste no tienen ingreso ni coste directo
+    // propios. La combinación se guardaba y repartía 0 € en silencio.
+    const targetKind = value.targetKind as string | undefined
+    if (
+      (targetKind === "COST_CENTERS" || targetKind === "BUSINESS_LINES") &&
+      driver !== "FIXED_PERCENT" &&
+      driver !== "MANUAL"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["driver"],
+        message:
+          targetKind === "COST_CENTERS"
+            ? "Repartir a centros de coste exige destinos explícitos: elige porcentaje fijo o importes manuales"
+            : "Repartir a líneas de negocio exige destinos explícitos: elige porcentaje fijo o importes manuales",
+      })
+    }
+    if ((driver === "FIXED_PERCENT" || driver === "MANUAL") && targets.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["targets"],
+        message: "Esta regla reparte entre destinos explícitos y no has declarado ninguno: no repartiría un céntimo",
       })
     }
     const validTo = value.validTo as string | null | undefined
@@ -192,15 +219,22 @@ export const allocationSealSchema = z
     periodKind: allocPeriodSchema,
     periodStart: localDateSchema,
     periodEnd: localDateSchema,
-    /** Los tres sellos que el usuario vio en la simulación (§4.1). */
+    /**
+     * Los tres sellos que el usuario vio en la simulación (§4.1).
+     *
+     * **Obligatorios** (revisión ronda 1, #4): con `.nullish()`, la garantía del
+     * criterio 14 —«no persiste lo aprobado, responde `LIQUIDACION_DESFASADA`»—
+     * dependía de que el navegador se acordara de mandarlos. La simulación es
+     * obligatoria por ADR-0013 D5, así que el sellado sin sellos no es un caso
+     * de uso: es un cliente que se salta la simulación.
+     */
     expectedHashes: z
       .object({
         ledgerHash: z.string().length(64),
         dimensionsHash: z.string().length(64),
         rulesHash: z.string().length(64),
       })
-      .strict()
-      .nullish(),
+      .strict(),
     /** Rerun: el run vigente del periodo pasa a `SUPERSEDED`. */
     supersede: z.boolean().default(false),
     reason: allocationReasonSchema.nullish(),

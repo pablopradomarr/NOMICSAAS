@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 import { createHmac } from "node:crypto"
 import { mkdirSync } from "node:fs"
-import { adminUserId, APP_ENV, signIn, withDb } from "./session"
+import { adminUserId, analyticsOrganization, APP_ENV, signIn, withDb } from "./session"
 
 /**
  * E4 · T16 — Extremo a extremo de la analítica (`docs/design/E4-analitica.md` §8.1).
@@ -37,26 +37,6 @@ test.beforeAll(() => {
  * imputadas a un proyecto. Es la que siembra
  * `npx tsx scripts/load-fixture.ts --fixture tests/fixtures/ejercicio-completo.json`.
  */
-async function analyticsOrganization(): Promise<{ id: string; name: string }> {
-  return await withDb(async (client) => {
-    const { rows } = await client.query<{ id: string; name: string }>(
-      `SELECT o.id, o.name
-         FROM organizations o
-         JOIN journal_lines l ON l.organization_id = o.id AND l.project_id IS NOT NULL
-        WHERE o.is_active
-        GROUP BY o.id, o.name
-        ORDER BY count(*) DESC
-        LIMIT 1`
-    )
-    if (rows.length === 0) {
-      throw new Error(
-        "Ninguna organización tiene analítica cargada: ejecuta " +
-          "`npx tsx scripts/load-fixture.ts --org <id> --fixture tests/fixtures/ejercicio-completo.json`"
-      )
-    }
-    return rows[0]
-  })
-}
 
 /**
  * Deja activa la organización con analítica plantando la cookie de organización

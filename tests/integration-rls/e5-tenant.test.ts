@@ -272,7 +272,8 @@ describe.skipIf(!OWNER_URL)("E5 · liquidación bajo RLS estricta", () => {
         idOf(ORG_A, "a5"),
       ])
     )
-    expect(intact.rows[0].amount_cents).toBe(12345)
+    // `bigint` en BD desde 20260910110000: `pg` lo devuelve como cadena.
+    expect(Number(intact.rows[0].amount_cents)).toBe(12345)
   })
 
   it("criterio 16 · en `allocation_runs` sólo se puede tocar el estado, nunca el importe", async () => {
@@ -300,7 +301,7 @@ describe.skipIf(!OWNER_URL)("E5 · liquidación bajo RLS estricta", () => {
       )
     )
     // El ROLLBACK del helper deja la fila como estaba: nada se ha persistido.
-    expect(intact.rows[0].total_allocated_cents).toBe(12345)
+    expect(Number(intact.rows[0].total_allocated_cents)).toBe(12345)
     expect(intact.rows[0].status).toBe("SEALED")
   })
 

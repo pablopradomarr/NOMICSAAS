@@ -22,6 +22,7 @@ import {
   MarginLevel,
 } from "@/lib/analytics/types"
 import { contribution, isPnlLine, resolveDestination } from "@/lib/analytics/margins"
+import { formatBps } from "@/lib/money"
 import type { AllocPeriod, Driver, TargetKind, ZeroBaseFallback } from "@/prisma/client"
 
 export type { AllocPeriod, Driver, TargetKind, ZeroBaseFallback }
@@ -154,6 +155,16 @@ export type AllocationErrorCode =
   | "DRIVER_UNAVAILABLE"
   | "PERIOD_CROSSES_FISCAL_YEAR"
   | "SOURCE_NOT_ALLOCATABLE"
+  /**
+   * Revisión ronda 1, BLOQUEA #1 — el destino elegido exige destinos explícitos
+   * y la regla no los trae (o los trae un driver que no los admite).
+   */
+  | "TARGETS_REQUIRED"
+  /**
+   * ADR-0013 D4 — la regla está vigente, tiene saldo que repartir y **no puede
+   * repartir un céntimo**. Se rechaza; nunca se reparte 0 € en silencio.
+   */
+  | "RULE_INERT"
 
 export type AllocationError = { code: AllocationErrorCode; message: string; ruleCodes?: readonly string[] }
 
@@ -225,20 +236,36 @@ export function hamilton(amountCents: Cents, weights: readonly HamiltonWeight[])
   const sign = amountCents >= 0 ? 1 : -1
   const abs = Math.abs(amountCents)
 
+  // Revisión ronda 1, #11 / auditoría hallazgo 4: el producto `A·wᵢ` y el resto
+  // se calculan en **BigInt**. Con importes y bases de una empresa de 10 M€ el
+  // producto supera 2^53 (25 M c × 700 M c = 1,75e16) y el resto, calculado por
+  // diferencia de dos dobles enormes, quedaba cuantizado a múltiplos de ~256: la
+  // suma seguía siendo exacta, pero el desempate dejaba de ser el real. En BigInt
+  // la exactitud es **por construcción**, que es lo que exige §1.4. El cociente
+  // cabe siempre en `Number` (qᵢ ≤ A ≤ 2^53).
+  const totalBig = BigInt(total)
+  const absBig = BigInt(abs)
+
   const quotient = new Map<string, number>()
-  const remainder = new Map<string, number>()
+  const remainder = new Map<string, bigint>()
   for (const w of positive) {
-    const q = Math.floor((abs * w.weight) / total)
-    quotient.set(w.code, q)
-    remainder.set(w.code, abs * w.weight - q * total)
+    const product = absBig * BigInt(w.weight)
+    const q = product / totalBig
+    quotient.set(w.code, Number(q))
+    remainder.set(w.code, product - q * totalBig)
   }
   let left = abs
   for (const q of quotient.values()) left -= q
 
   // Orden: mayor resto primero; a igual resto, MENOR código.
-  const order = [...positive].sort(
-    (a, b) => (remainder.get(b.code) ?? 0) - (remainder.get(a.code) ?? 0) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0)
-  )
+  const zero = BigInt(0)
+  const order = [...positive].sort((a, b) => {
+    const ra = remainder.get(a.code) ?? zero
+    const rb = remainder.get(b.code) ?? zero
+    if (rb > ra) return 1
+    if (rb < ra) return -1
+    return a.code < b.code ? -1 : a.code > b.code ? 1 : 0
+  })
   const bumped = new Set<string>()
   for (const w of order.slice(0, left)) {
     quotient.set(w.code, (quotient.get(w.code) ?? 0) + 1)
@@ -248,7 +275,7 @@ export function hamilton(amountCents: Cents, weights: readonly HamiltonWeight[])
   return weights.map((w) => ({
     code: w.code,
     amountCents: sign * (quotient.get(w.code) ?? 0),
-    shareBps: w.weight > 0 ? Math.floor((w.weight * 10000) / total) : 0,
+    shareBps: w.weight > 0 ? Number((BigInt(w.weight) * BigInt(10000)) / totalBig) : 0,
     remainderApplied: bumped.has(w.code),
   }))
 }
@@ -421,18 +448,20 @@ type Classified = {
   amountCents: Cents
 }
 
-function classify(input: AllocationInput): Classified[] {
+function classifyLines(lines: readonly AnalyticLine[], config: AnalyticsConfig): Classified[] {
   const out: Classified[] = []
-  for (const line of input.lines) {
+  for (const line of lines) {
     if (!isPnlLine(line)) continue
     out.push({
       line,
-      analyticType: resolveDestination(line, input.config).analyticType,
+      analyticType: resolveDestination(line, config).analyticType,
       amountCents: contribution(line),
     })
   }
   return out
 }
+
+const classify = (input: AllocationInput): Classified[] => classifyLines(input.lines, input.config)
 
 /** Ingresos directos por proyecto, `74x` EXCLUIDO (R-A12), en una ventana. */
 function revenueByProject(classified: readonly Classified[], window: DateWindow): Map<string, Cents> {
@@ -581,7 +610,10 @@ export function driverWeights(
   const window: DateWindow = { from: input.period.start, to: input.period.end }
 
   // Targets explícitos: la base es la propia tabla de targets, no el diario.
-  if (rule.targetKind === "BUSINESS_LINES" || rule.targetKind === "COST_CENTERS" || rule.driver === "FIXED_PERCENT" || rule.driver === "MANUAL") {
+  // **Sólo** `FIXED_PERCENT` y `MANUAL` (BLOQUEA #1): con cualquier otro driver
+  // los pesos salen del diario y del filtro, y `validate()` ya ha rechazado la
+  // combinación con `TARGETS_REQUIRED` antes de llegar aquí.
+  if (rule.driver === "FIXED_PERCENT" || rule.driver === "MANUAL") {
     const rows: WeightRow[] = []
     for (const target of [...rule.targets].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))) {
       const ref = targetRefOf(target, indexes)
@@ -711,6 +743,38 @@ function validate(
         ruleCodes: [rule.code],
       }
     }
+    // BLOQUEA #1 / ADR-0013 D4 — CONTRATO de `targetKind` × `driver`.
+    //
+    // Los pesos de un driver CALCULADO (`REVENUE_SHARE`, `DIRECT_COST_SHARE`,
+    // `EQUAL`) se leen del diario POR PROYECTO: una línea de negocio o un centro
+    // de coste no tienen «ingreso directo» ni «coste directo» propios con los que
+    // ponderar. Por eso un destino `COST_CENTERS` / `BUSINESS_LINES` sólo se
+    // declara con destinos EXPLÍCITOS (`FIXED_PERCENT`, `MANUAL`). Antes, la
+    // combinación se guardaba y repartía 0 € sin decir nada: exactamente la
+    // «regla inerte» que D4 prohíbe.
+    if (rule.targetKind === "COST_CENTERS" || rule.targetKind === "BUSINESS_LINES") {
+      if (rule.driver !== "FIXED_PERCENT" && rule.driver !== "MANUAL") {
+        return {
+          code: "TARGETS_REQUIRED",
+          message: `la regla ${rule.code} reparte a ${rule.targetKind === "COST_CENTERS" ? "centros de coste" : "líneas de negocio"} con el driver ${rule.driver}, que calcula sus pesos por proyecto desde el diario: declara los destinos con porcentaje fijo (FIXED_PERCENT) o con importes (MANUAL)`,
+          ruleCodes: [rule.code],
+        }
+      }
+      if (rule.targets.length === 0) {
+        return {
+          code: "TARGETS_REQUIRED",
+          message: `la regla ${rule.code} reparte a ${rule.targetKind === "COST_CENTERS" ? "centros de coste" : "líneas de negocio"} y no declara ningún destino: no repartiría un céntimo`,
+          ruleCodes: [rule.code],
+        }
+      }
+    }
+    if ((rule.driver === "FIXED_PERCENT" || rule.driver === "MANUAL") && rule.targets.length === 0) {
+      return {
+        code: "TARGETS_REQUIRED",
+        message: `la regla ${rule.code} usa el driver ${rule.driver} y no declara ningún destino: los destinos explícitos son su única base de reparto`,
+        ruleCodes: [rule.code],
+      }
+    }
     const source = indexes.cecoById.get(rule.sourceCostCenterId)
     if (!source || !source.allocatable || !source.isActive) {
       return {
@@ -735,7 +799,7 @@ function validate(
       if (sum !== 10000) {
         return {
           code: "FIXED_PERCENT_NOT_100",
-          message: `la regla ${rule.code} reparte ${(sum / 100).toFixed(2)} % entre sus destinos: Σ de porcentajes debe ser exactamente 100 %`,
+          message: `la regla ${rule.code} reparte ${formatBps(sum)} % entre sus destinos: Σ de porcentajes debe ser exactamente 100 %`,
           ruleCodes: [rule.code],
         }
       }
@@ -755,7 +819,7 @@ function validate(
     const code = indexes.cecoById.get(cecoId)?.code ?? cecoId
     return {
       code: "SOURCE_SHARE_NOT_100",
-      message: `las reglas de ${code} (${period.kind}) reparten el ${(entry.sum / 100).toFixed(2)} % de su saldo: falta declarar qué pasa con el ${((10000 - entry.sum) / 100).toFixed(2)} % restante`,
+      message: `las reglas de ${code} (${period.kind}) reparten el ${formatBps(entry.sum)} % de su saldo: falta declarar qué pasa con el ${formatBps(10000 - entry.sum)} % restante`,
       ruleCodes: entry.codes,
     }
   }
@@ -866,8 +930,12 @@ export function allocate(input: AllocationInput): Result<AllocationResult, Alloc
     if (!portion || portion.size === 0) continue
 
     const unallocated = [...portion.values()].reduce((a, b) => a + b, 0)
+    const warningsBefore = warnings.length
     const weights = driverWeights(rule, input, { classified, indexes, warnings, unallocatedCents: unallocated })
     const weightTotal = weights.rows.reduce((a, r) => a + r.weight, 0)
+    const declaredZeroBase = warnings
+      .slice(warningsBefore)
+      .some((w) => w.code === "W-E5-ZERO-BASE" && w.ruleCode === rule.code)
 
     if (rule.driver === "MANUAL") {
       // I-E5-10: Σ importes = base liquidable, comprobado ANTES de persistir.
@@ -917,7 +985,18 @@ export function allocate(input: AllocationInput): Result<AllocationResult, Alloc
       continue
     }
 
-    if (weights.rows.length === 0 || weightTotal === 0) continue
+    if (weights.rows.length === 0 || weightTotal === 0) {
+      // ADR-0013 D4 — la regla tiene saldo y no puede repartirlo. Que la base del
+      // driver sea 0 es un caso DECLARADO (`zeroBaseFallback`, con su aviso
+      // `W-E5-ZERO-BASE`); no tener receptores, o que ninguno pese, no lo es: es
+      // una regla inerte, y una regla inerte se rechaza, no se ignora.
+      if (declaredZeroBase) continue
+      return err(
+        "RULE_INERT",
+        `la regla ${rule.code} liquida ${unallocated} c de ${sourceCode} en ${input.period.label} y no tiene ningún receptor con peso: revisa el filtro de destinos, el driver o los destinos declarados`,
+        [rule.code]
+      )
+    }
 
     // Los niveles en orden alfabético: EBITDA antes que MC3. Es arbitrario pero
     // TOTAL, que es lo que la reproducibilidad byte a byte exige.
@@ -1010,6 +1089,99 @@ export function allocate(input: AllocationInput): Result<AllocationResult, Alloc
 export const previewAllocation = (input: AllocationInput): Result<AllocationResult, AllocationError> => allocate(input)
 
 // ─────────────────────────────────────────────────────────────────────────────
+// I5.a fuera del motor: base liquidable RECONSTRUIDA desde lo persistido
+// (auditoría E5, hallazgo 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Un run VIGENTE tal y como lo ve el barrido de invariantes. */
+export type SealedRunRef = { id: string; periodStart: LocalDate; periodEnd: LocalDate }
+
+export type ReconstructedBalance = SourceBalance & { runId: string }
+
+/**
+ * Base liquidable por `(run, CECO fuente, nivel)` reconstruida **desde el diario
+ * y las líneas persistidas**, sin volver a ejecutar el motor.
+ *
+ * `checkI5` comprueba I5.a recorriendo `input.balances`, y el único llamante de
+ * producción no las aportaba: el PASS declaraba «0 combinación(es)» y I5.a no se
+ * evaluaba nunca fuera de los tests unitarios (hallazgo 2 del auditor). Esto la
+ * repone por un camino INDEPENDIENTE del que produjo las líneas — la base sale
+ * del diario, no de lo que el motor dijo en su día—, que es lo que le da valor:
+ * un `UPDATE` sobre `allocation_lines` mueve el repartido y no la base, y la
+ * diferencia aparece.
+ *
+ *   base(R, s, ℓ) = own(s, periodo de R)|ℓ − yaRepartido(runs ⊊ R) + recibido(en R)
+ *
+ * Sólo se emiten las combinaciones que el run REPARTIÓ: un CECO con base y sin
+ * regla no es un descuadre de I5.a (lo cubre I5.b), es saldo pendiente.
+ */
+export function reconstructBalances(input: {
+  lines: readonly AnalyticLine[]
+  config: AnalyticsConfig
+  runs: readonly SealedRunRef[]
+  allocations: readonly AppliedAllocation[]
+}): ReconstructedBalance[] {
+  const classified = classifyLines(input.lines, input.config)
+  const cecoById = new Map(input.config.costCenters.map((c) => [c.id, c]))
+  const byRun = new Map<string, AppliedAllocation[]>()
+  for (const a of input.allocations) byRun.set(a.runId, [...(byRun.get(a.runId) ?? []), a])
+
+  const out: ReconstructedBalance[] = []
+  for (const run of [...input.runs].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    const mine = byRun.get(run.id) ?? []
+    if (mine.length === 0) continue
+    const window: DateWindow = { from: run.periodStart, to: run.periodEnd }
+    const own = costCenterOwnCents(classified, window)
+
+    // `yaRepartido`: runs vigentes de periodo ESTRICTAMENTE contenido en el de R
+    // (el mismo filtro que `loadRunContext`).
+    const prior = new Map<string, Cents>()
+    for (const other of input.runs) {
+      if (other.id === run.id) continue
+      if (other.periodStart < run.periodStart || other.periodEnd > run.periodEnd) continue
+      if (other.periodStart === run.periodStart && other.periodEnd === run.periodEnd) continue
+      for (const a of byRun.get(other.id) ?? []) {
+        const key = `${a.sourceCostCenterId}|${a.marginLevel}`
+        prior.set(key, (prior.get(key) ?? 0) + a.amountCents)
+      }
+    }
+
+    const received = new Map<string, Cents>()
+    const allocated = new Map<string, Cents>()
+    for (const a of mine) {
+      const outKey = `${a.sourceCostCenterId}|${a.marginLevel}`
+      allocated.set(outKey, (allocated.get(outKey) ?? 0) + a.amountCents)
+      if (a.target.kind === "COST_CENTER") {
+        const inKey = `${a.target.id}|${a.marginLevel}`
+        received.set(inKey, (received.get(inKey) ?? 0) + a.amountCents)
+      }
+    }
+
+    for (const key of [...allocated.keys()].sort()) {
+      const [sourceId, level] = key.split("|") as [string, CostCenterMarginLevel]
+      const ceco = cecoById.get(sourceId)
+      const ownCents = ceco && ceco.marginLevel === level ? (own.get(sourceId) ?? 0) : 0
+      const baseCents = ownCents - (prior.get(key) ?? 0) + (received.get(key) ?? 0)
+      const allocatedCents = allocated.get(key) ?? 0
+      out.push({
+        runId: run.id,
+        sourceCostCenterId: sourceId,
+        sourceCostCenterCode: ceco?.code ?? sourceId,
+        marginLevel: level,
+        baseCents,
+        // Σ sourceShareBps = 10000 por (fuente, periodicidad) vigente (I-E5-3),
+        // así que lo que las reglas del periodo declaran liquidar ES la base.
+        liquidatedCents: baseCents,
+        allocatedCents,
+        residualCents: allocatedCents - baseCents,
+        pendingCents: 0,
+      })
+    }
+  }
+  return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sellos y serialización canónica
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1053,6 +1225,44 @@ export function canonicalRulesForm(rules: readonly AllocationRuleSpec[]): string
 }
 
 export const rulesHash = (rules: readonly AllocationRuleSpec[]): string => sha256(canonicalRulesForm(rules))
+
+/**
+ * Forma canónica de las LÍNEAS de un run (auditoría E5, hallazgo 1).
+ *
+ * El run sellaba `ledgerHash`, `analyticsHash`, `rulesHash` y `gitSha` — es
+ * decir, sus ENTRADAS— pero ningún hash de su SALIDA. Consecuencia demostrada
+ * por el auditor: mover el céntimo de remanente de Hamilton entre dos receptores
+ * del mismo (run, regla, nivel) por `UPDATE` directo mantiene la Σ por fuente,
+ * el cierre a 0, la cota de I-E5-4 y el total del run, y **todos los invariantes
+ * daban PASS** pese a que el reparto ya no era el que dicta el desempate por
+ * menor código (P7). Con `linesHash`, esa alteración se ve.
+ *
+ * El orden es TOTAL y no depende del orden de lectura: `(regla, fuente, tipo de
+ * destino, destino, nivel)` identifica una línea dentro de un run, y el importe
+ * y las columnas del driver van dentro del hash.
+ */
+export function canonicalLinesForm(lines: readonly AppliedAllocation[]): string {
+  return [...lines]
+    .map((l) =>
+      [
+        l.ruleCode,
+        l.sourceCostCenterCode,
+        l.target.kind,
+        l.target.code,
+        l.marginLevel,
+        String(l.amountCents),
+        String(l.driverBase),
+        String(l.driverBaseTotal),
+        String(l.driverShareBps),
+        l.fallbackApplied ?? NULL_TOKEN,
+        l.eligibilityReason ?? NULL_TOKEN,
+      ].join("\t")
+    )
+    .sort()
+    .join("\n")
+}
+
+export const linesHash = (lines: readonly AppliedAllocation[]): string => sha256(canonicalLinesForm(lines))
 
 /** Fila serializable de `liquidacion-esperada.json` (`allocationLines`). */
 export type CanonicalAllocationLine = {

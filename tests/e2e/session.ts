@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
@@ -86,8 +87,40 @@ export async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> 
   }
 }
 
+/**
+ * SIEMBRA el entorno mínimo de la base de desarrollo, en vez de darlo por hecho
+ * (revisión E5 ronda 1): el usuario global de `SELF_HOSTED_MODE`
+ * (`taxhacker@localhost`), su organización personal, su membresía ADMIN y los
+ * valores por defecto.
+ *
+ * Sin esto, una base sin ese usuario mandaba la suite al asistente «TaxHacker:
+ * Self-Hosted Edition» y el primer `expect` fallaba con un mensaje que no decía
+ * nada del problema real. Es IDEMPOTENTE y se ejecuta una sola vez por proceso.
+ * Va por `npx tsx` porque necesita el código de la aplicación y el cargador ESM
+ * de Playwright no puede importarlo.
+ */
+type SelfHostedSeed = { userId: string; organizationId: string; analyticsOrganizationId: string }
+
+let selfHostedSeed: SelfHostedSeed | null = null
+
+export function ensureSelfHostedSeed(): SelfHostedSeed {
+  if (selfHostedSeed) return selfHostedSeed
+  const out = execFileSync("npx", ["tsx", "tests/support/ensure-self-hosted.ts"], {
+    // El script escribe con el rol PROPIETARIO: crea organización, membresía y
+    // catálogos, cosas que `app_runtime` no puede hacer sin organización activa.
+    env: { ...process.env, DATABASE_URL, DIRECT_URL: DATABASE_URL, PRISMA_LOG: "" },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  })
+  const line = out.trim().split("\n").filter((l) => l.trim().startsWith("{")).pop()
+  if (!line) throw new Error(`El arnés no ha podido sembrar el usuario self-hosted: ${out.slice(-500)}`)
+  selfHostedSeed = JSON.parse(line) as SelfHostedSeed
+  return selfHostedSeed
+}
+
 /** Correo del usuario con el que corre el smoke. ADMIN de la organización. */
 export async function adminUserId(): Promise<string> {
+  const seed = ensureSelfHostedSeed()
   return await withDb(async (client) => {
     const { rows } = await client.query<{ user_id: string }>(
       `SELECT m.user_id
@@ -97,8 +130,42 @@ export async function adminUserId(): Promise<string> {
         ORDER BY o.created_at ASC
         LIMIT 1`
     )
-    if (rows.length === 0) throw new Error("No hay ningún ADMIN sembrado en la base de desarrollo")
-    return rows[0].user_id
+    // Sin ADMIN no se lanza: se devuelve el usuario SEMBRADO. Las suites que
+    // degradan el rol para probar el VIEWER (`setRole`) dejan la base sin ningún
+    // ADMIN mientras dura el test, y el `finally` que restaura el rol volvía a
+    // pedir el ADMIN — que ya no existía— y moría sin restaurar nada.
+    return rows.length > 0 ? rows[0].user_id : seed.userId
+  })
+}
+
+/**
+ * La organización sobre la que corren los e2e que cargan fixtures: la que más
+ * líneas con proyecto tiene y, si todavía no hay ninguna (base recién sembrada),
+ * la organización `e2e-analitica` que siembra el arnés — que es donde el
+ * `beforeAll` de cada suite carga el fixture. Antes lanzaba «Ninguna
+ * organización tiene analítica cargada» y obligaba a preparar la base a mano.
+ */
+export async function analyticsOrganization(): Promise<{ id: string; name: string }> {
+  const seed = ensureSelfHostedSeed()
+  return await withDb(async (client) => {
+    const { rows } = await client.query<{ id: string; name: string }>(
+      `SELECT o.id, o.name
+         FROM organizations o
+         JOIN journal_lines l ON l.organization_id = o.id AND l.project_id IS NOT NULL
+        WHERE o.is_active
+        GROUP BY o.id, o.name
+        ORDER BY count(*) DESC
+        LIMIT 1`
+    )
+    if (rows.length > 0) return rows[0]
+    const personal = await client.query<{ id: string; name: string }>(
+      `SELECT id, name FROM organizations WHERE id = $1`,
+      [seed.analyticsOrganizationId]
+    )
+    if (personal.rows.length === 0) {
+      throw new Error("El arnés ha sembrado el entorno pero no encuentra la organización analítica")
+    }
+    return personal.rows[0]
   })
 }
 

@@ -1,5 +1,6 @@
 import { listAllocationRulesAction } from "@/app/(app)/analytics/allocations/actions"
 import { AllocationRuleForm } from "@/components/analytics/allocation-rule-form"
+import { AllocationCascadeGraph } from "@/components/analytics/allocation-cascade-graph"
 import { AllocationRulesTable } from "@/components/analytics/allocation-rules-table"
 import type {
   AllocationDimensions,
@@ -142,6 +143,8 @@ export default tenantPage(async ({ db, org, role }) => {
           No se han podido leer las reglas: {state.error ?? "error desconocido"}.
         </p>
       )}
+
+      <AllocationCascadeGraph rules={rules} />
 
       <AllocationRulesTable
         rules={rules}
