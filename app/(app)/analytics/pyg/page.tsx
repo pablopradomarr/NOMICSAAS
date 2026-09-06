@@ -1,6 +1,8 @@
 import { analyticsHeader, buildMatrixView } from "@/app/(app)/analytics/shared"
 import { accountNames, defaultPeriod } from "@/app/(app)/ledger/shared"
 import { analyticPnlAction } from "@/app/(app)/analytics/actions"
+import { allocatedPnlAction } from "@/app/(app)/analytics/allocations/ui-actions"
+import { AmountPlain } from "@/components/ledger/amount"
 import { MarginMatrix } from "@/components/analytics/margin-matrix"
 import { ReportHeader } from "@/components/reports/report-header"
 import { ReportPeriodPicker } from "@/components/reports/report-period-picker"
@@ -55,19 +57,22 @@ export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) =
   const from = first("from") ?? period.from
   const to = first("to") ?? period.to
   const transposed = first("vista") === "transpuesta"
+  /** E5 · T13 — el toggle vive en la URL: es compartible y entra en el paramsHash. */
+  const withAllocations = first("imputaciones") === "si"
 
-  const state = await analyticPnlAction({
-    from,
-    to,
-    ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}),
-  })
+  const state = withAllocations
+    ? await allocatedPnlAction({ from, to, ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}) })
+    : await analyticPnlAction({ from, to, ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}) })
 
-  const queryFor = (vista: string) => {
+  const queryFor = (overrides: { vista?: string; imputaciones?: string }) => {
     const search = new URLSearchParams()
     if (selectedFy) search.set("fiscalYearId", selectedFy.id)
     search.set("from", from)
     search.set("to", to)
+    const vista = overrides.vista ?? (transposed ? "transpuesta" : "")
     if (vista) search.set("vista", vista)
+    const imputaciones = overrides.imputaciones ?? (withAllocations ? "si" : "")
+    if (imputaciones) search.set("imputaciones", imputaciones)
     return `/analytics/pyg?${search.toString()}`
   }
 
@@ -106,6 +111,8 @@ export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) =
   }
 
   const { pnl, config, ledgerHash, analyticsHash, marginConfigHash, checks, runId, gitSha } = state.data
+  const allocationRunSetHash =
+    "allocationRunSetHash" in state.data ? (state.data.allocationRunSetHash as string) : null
 
   const header = analyticsHeader({
     from,
@@ -121,18 +128,27 @@ export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) =
     organizationId: org.id,
   })
 
-  const view = buildMatrixView({ pnl, config, accountNames: await accountNames(db), transposed })
+  const view = buildMatrixView({ pnl, config, accountNames: await accountNames(db), transposed, withAllocations })
   const hasProjects = config.projects.length > 0
+  const pending = pnl.costCenterSettlement.filter((row) => row.pendingCents !== 0)
+  const pendingTotal = pending.reduce((acc, row) => acc + row.pendingCents, 0)
 
   return (
     <div className="space-y-6">
       <ReportHeader
         title="Pérdidas y ganancias analítica"
-        description="Resultado del periodo abierto por proyecto, por línea de negocio y por centro de coste, sin imputaciones (la liquidación de CECOs llega en E5). La suma de las columnas iguala la PyG contable al céntimo: es el invariante I4."
+        description={
+          withAllocations
+            ? "Resultado del periodo con las liquidaciones de centros de coste vigentes ya imputadas: los centros imputables quedan a cero y su estructura baja al MC3 y al EBITDA de cada proyecto y línea de negocio. La suma de las columnas sigue igualando la PyG contable al céntimo (I4): imputar es un traspaso de suma cero en cada nivel."
+            : "Resultado del periodo abierto por proyecto, por línea de negocio y por centro de coste, sin imputaciones: el MC3 de un proyecto no incluye estructura. La suma de las columnas iguala la PyG contable al céntimo: es el invariante I4."
+        }
         header={header}
         extraHashes={[
           { label: "analyticsHash", value: analyticsHash },
           { label: "marginConfigHash", value: marginConfigHash },
+          ...(allocationRunSetHash
+            ? [{ label: "allocationRunSetHash", value: allocationRunSetHash }]
+            : []),
         ]}
         checksTitle="Validación de la PyG analítica"
         checksDescription={
@@ -143,11 +159,22 @@ export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) =
           </>
         }
         actions={
-          <Button asChild variant="outline" size="sm">
-            <Link href={queryFor(transposed ? "" : "transpuesta")} data-testid="toggle-transpose">
-              {transposed ? "Ver niveles en filas" : "Ver proyectos en filas"}
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant={withAllocations ? "default" : "outline"} size="sm">
+              <Link
+                href={queryFor({ imputaciones: withAllocations ? "" : "si" })}
+                data-testid="toggle-allocations"
+                data-allocations={withAllocations ? "si" : "no"}
+              >
+                {withAllocations ? "Ver sin imputaciones" : "Ver con imputaciones"}
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link href={queryFor({ vista: transposed ? "" : "transpuesta" })} data-testid="toggle-transpose">
+                {transposed ? "Ver niveles en filas" : "Ver proyectos en filas"}
+              </Link>
+            </Button>
+          </>
         }
       />
 
@@ -168,7 +195,45 @@ export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) =
         view={view}
         currency={org.baseCurrency}
         period={{ from, to, ...(selectedFy ? { fiscalYearId: selectedFy.id } : {}) }}
+        withAllocations={withAllocations}
       />
+
+      {withAllocations && (
+        <section className="space-y-2 rounded-md border p-3" data-testid="pending-settlement">
+          <h2 className="text-sm font-semibold tracking-tight">
+            Pendiente de liquidar: <AmountPlain cents={pendingTotal} zeroAsDash={false} /> {org.baseCurrency}
+          </h2>
+          {pending.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Todos los centros de coste imputables han absorbido su saldo en este periodo: sus columnas quedan a cero.
+            </p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {pending.map((row) => (
+                <li key={`${row.costCenterCode}|${row.marginLevel}`} data-pending-ceco={row.costCenterCode}>
+                  <span className="font-code text-xs">{row.costCenterCode}</span> · {row.marginLevel} ·{" "}
+                  <AmountPlain cents={row.pendingCents} zeroAsDash={false} /> ·{" "}
+                  <span className="text-muted-foreground">
+                    {row.reason === "ANNUAL_RULE_NOT_DUE"
+                      ? "la regla que lo reparte es de periodicidad mayor que este informe: se liquidará al cierre de su periodo"
+                      : row.reason === "ZERO_BASE_SKIP"
+                        ? "la base del driver fue cero y la regla está configurada para no repartir"
+                        : "ninguna regla vigente reparte este saldo"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Este importe <strong>no se prorratea</strong>: repartir una regla anual entre los meses del informe
+            inventaría un devengo que la regla no declara.{" "}
+            <Link href="/analytics/allocations/runs" className="underline underline-offset-2" data-testid="pending-runs-link">
+              Ver las liquidaciones del periodo
+            </Link>
+            .
+          </p>
+        </section>
+      )}
 
       <p className="text-xs text-muted-foreground">
         Las columnas de <strong>línea de negocio</strong> son agregados de presentación y no entran en el total. En una

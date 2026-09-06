@@ -110,7 +110,7 @@ type ColumnSpec = MatrixHeader & {
  * negocio (con el subtotal de la línea, marcado como agregado), CECOs por
  * `kind`, y las cuatro columnas sueltas. `TOTAL` cierra la tabla.
  */
-export function matrixColumns(pnl: AnalyticPnl, config: AnalyticsConfig): ColumnSpec[] {
+export function matrixColumns(pnl: AnalyticPnl, config: AnalyticsConfig, withAllocations = false): ColumnSpec[] {
   const out: ColumnSpec[] = []
   const projectsByLine = new Map<string, typeof config.projects>()
   for (const bl of config.businessLines) {
@@ -141,6 +141,28 @@ export function matrixColumns(pnl: AnalyticPnl, config: AnalyticsConfig): Column
       kind: "businessLine",
       aggregate: true,
     })
+  }
+
+  /**
+   * **E5 · E5-D3** — la columna `BL:<código>` REAL: lo imputado a una línea de
+   * negocio y no bajado a proyecto. Es una columna del total, no un agregado, y
+   * por eso es distinta de la anterior (que suma proyectos y no entra en I4).
+   * Sólo existe en la matriz IMPUTADA; sin ella la suma de columnas visibles no
+   * cuadraría con el TOTAL.
+   */
+  if (withAllocations) {
+    for (const bl of config.businessLines) {
+      const source = `BL:${bl.code}`
+      const hasAmount = MARGIN_LEVELS.some((level) => (pnl.matrixCents[level]?.[source] ?? 0) !== 0)
+      if (!hasAmount) continue
+      out.push({
+        key: `BLREAL:${bl.code}`,
+        source,
+        label: bl.name,
+        sub: `${source} · imputado a la línea`,
+        kind: "other",
+      })
+    }
   }
 
   const kindsWithCeco = new Set(config.costCenters.map((c) => c.kind))
@@ -182,12 +204,19 @@ export type MatrixBuildInput = {
   accountNames: Map<string, string>
   /** `true` ⇒ proyectos/columnas en filas y niveles en columnas. */
   transposed: boolean
+  /**
+   * E5 · T13 — la matriz lleva imputaciones: aparecen las columnas `BL:` reales
+   * y la fila «pendiente de liquidar» con lo que las reglas del periodo NO
+   * absorben.
+   */
+  withAllocations?: boolean
 }
 
 /** Construye la vista de la matriz en la orientación pedida. Sin sumar nada. */
 export function buildMatrixView(input: MatrixBuildInput): MatrixView {
   const { pnl, config, transposed } = input
-  const columns = matrixColumns(pnl, config)
+  const withAllocations = input.withAllocations === true
+  const columns = matrixColumns(pnl, config, withAllocations)
   const visibleLevels = MARGIN_LEVELS.filter((level) => {
     const row = config.levels.find((l) => l.level === level)
     return row ? row.isVisible : true
@@ -270,6 +299,10 @@ export function buildMatrixView(input: MatrixBuildInput): MatrixView {
         })
       }
     }
+    // Sólo en la matriz imputada: sin imputaciones, «pendiente» sería el saldo
+    // entero de todos los CECOs y la fila no diría nada que la matriz no diga.
+    const pendingRow = withAllocations ? pendingSettlementRow(pnl, columns) : null
+    if (pendingRow) rows.push(pendingRow)
     return { headers, rows, cornerLabel: "Nivel de margen", details, check }
   }
 
@@ -302,6 +335,37 @@ export function buildMatrixView(input: MatrixBuildInput): MatrixView {
   }))
 
   return { headers, rows, cornerLabel: "Proyecto / centro", details, check }
+}
+
+/**
+ * E5 · T13 — fila «pendiente de liquidar»: el saldo de estructura que las
+ * reglas del periodo **no** absorben, por columna de centro de coste.
+ *
+ * No es una cifra nueva: son los `pendingCents` que devuelve
+ * `buildAnalyticPnl` por CECO, agrupados por la columna (`kind`) en la que ya
+ * están pintados. Se MUESTRA y no se reparte: prorratear una regla anual entre
+ * los meses del informe inventaría un devengo que la regla no declara.
+ */
+function pendingSettlementRow(pnl: AnalyticPnl, columns: readonly ColumnSpec[]): MatrixRow | null {
+  const byColumn = new Map<string, number>()
+  for (const row of pnl.costCenterSettlement) {
+    if (row.pendingCents === 0) continue
+    const key = `CECO:${row.costCenterKind}`
+    byColumn.set(key, (byColumn.get(key) ?? 0) + row.pendingCents)
+  }
+  if (byColumn.size === 0) return null
+  const total = [...byColumn.values()].reduce((a, b) => a + b, 0)
+  return {
+    id: "PENDIENTE_LIQUIDAR",
+    label: "Pendiente de liquidar",
+    kind: "pending",
+    note: "estructura que ninguna regla del periodo reparte",
+    cells: columns.map((column) => {
+      if (column.kind === "total") return { cents: total }
+      if (column.source === null) return { cents: 0 }
+      return { cents: byColumn.get(column.source) ?? 0 }
+    }),
+  }
 }
 
 function levelCell(pnl: AnalyticPnl, column: ColumnSpec, level: string): MatrixCell {

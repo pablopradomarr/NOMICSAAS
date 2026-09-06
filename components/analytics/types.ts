@@ -53,8 +53,13 @@ export type MatrixCell = {
 export type MatrixRow = {
   id: string
   label: string
-  /** `level` = nivel de margen; `margin` = fila de porcentaje. */
-  kind: "level" | "margin"
+  /**
+   * `level` = nivel de margen; `margin` = fila de porcentaje;
+   * `pending` = E5, saldo de estructura que las reglas del periodo NO liquidan
+   * (se MUESTRA, no se reparte: prorratear una regla anual entre los meses del
+   * informe inventaría un devengo que la regla no declara).
+   */
+  kind: "level" | "margin" | "pending"
   note?: string
   cells: MatrixCell[]
 }

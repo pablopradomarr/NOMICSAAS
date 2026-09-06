@@ -43,6 +43,7 @@ import {
   ScrollText,
   SlidersHorizontal,
   Sparkles,
+  Split,
   Tags,
   Target,
   TrendingUp,
@@ -274,6 +275,10 @@ export function AppSidebar({
                   { title: "Proyectos", href: "/analytics/projects", icon: FolderKanban },
                   { title: "Centros de coste", href: "/analytics/cost-centers", icon: Target },
                   { title: "Líneas de negocio", href: "/analytics/business-lines", icon: Waypoints },
+                  // E5 · T11/T12 — Liquidaciones: la política (reglas) y su
+                  // aplicación (runs). Ambas se LEEN con cualquier rol.
+                  { title: "Reglas de liquidación", href: "/analytics/allocations", icon: Split },
+                  { title: "Liquidaciones", href: "/analytics/allocations/runs", icon: History },
                 ].map((item) => (
                   <SidebarMenuItemWithHighlight key={item.href} href={item.href}>
                     <SidebarMenuButton asChild>

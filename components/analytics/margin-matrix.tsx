@@ -1,6 +1,10 @@
 "use client"
 
 import { analyticCellDetailAction } from "@/app/(app)/analytics/actions"
+import {
+  allocationCellDetailAction,
+  type AllocationCellDetail,
+} from "@/app/(app)/analytics/allocations/ui-actions"
 import { formatBps, type CellDetail, type CellLine, type MatrixView } from "@/components/analytics/types"
 import { AmountPlain } from "@/components/ledger/amount"
 import { shortHash } from "@/components/ledger/types"
@@ -37,11 +41,18 @@ export function MarginMatrix({
   view,
   currency,
   period,
+  withAllocations = false,
 }: {
   view: MatrixView
   currency: string
   /** Periodo del informe: lo que el diálogo envía para pedir las líneas de una celda. */
   period: MatrixPeriod
+  /**
+   * E5 · T13 — con imputaciones, el drill-down de una celda pide TAMBIÉN las
+   * líneas de reparto: una celda MC3 imputada no se reproduce con una sola
+   * consulta al diario, y enseñar sólo esa mentiría por omisión.
+   */
+  withAllocations?: boolean
 }) {
   const [detail, setDetail] = useState<CellDetail | null>(null)
 
@@ -80,7 +91,7 @@ export function MarginMatrix({
                 key={row.id}
                 data-row-id={row.id}
                 data-row-kind={row.kind}
-                className={cn("h-8", row.kind === "margin" && "bg-muted/10")}
+                className={cn("h-8", row.kind === "margin" && "bg-muted/10", row.kind === "pending" && "border-t-2 bg-[#F5A623]/5")}
               >
                 <th
                   scope="row"
@@ -164,7 +175,13 @@ export function MarginMatrix({
       </div>
 
       {detail && (
-        <CellDialog detail={detail} currency={currency} period={period} onClose={() => setDetail(null)} />
+        <CellDialog
+          detail={detail}
+          currency={currency}
+          period={period}
+          withAllocations={withAllocations}
+          onClose={() => setDetail(null)}
+        />
       )}
     </>
   )
@@ -174,14 +191,34 @@ function CellDialog({
   detail,
   currency,
   period,
+  withAllocations,
   onClose,
 }: {
   detail: CellDetail
   currency: string
   period: MatrixPeriod
+  withAllocations: boolean
   onClose: () => void
 }) {
   const prov = detail.provenance
+  const [allocation, setAllocation] = useState<AllocationCellDetail | null>(null)
+
+  useEffect(() => {
+    if (!withAllocations) return
+    let cancelled = false
+    void allocationCellDetailAction({
+      level: detail.level,
+      column: detail.columnKey,
+      from: period.from,
+      to: period.to,
+    }).then((result) => {
+      if (cancelled) return
+      if (result.success && result.data) setAllocation(result.data)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [withAllocations, detail.level, detail.columnKey, period.from, period.to])
   /**
    * Hallazgo #5: las líneas del diario NO viajan con la matriz. Al abrir la
    * celda se piden al servidor, que ejecuta **la consulta de la provenance de
@@ -315,6 +352,45 @@ function CellDialog({
             </tbody>
           </table>
         </div>
+
+        {withAllocations && allocation && allocation.lines.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              <strong>Imputaciones que aportan a esta celda.</strong> Una celda imputada no se reproduce con una sola
+              consulta al diario: ésta es la segunda mitad de su procedencia, las líneas de reparto de las
+              liquidaciones vigentes del periodo.{" "}
+              <span className="font-code break-all">{allocation.query}</span>
+            </p>
+            <div className="max-h-[30vh] overflow-y-auto rounded-md border">
+              <table className="w-full text-sm" data-testid="cell-allocation-lines">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Regla</th>
+                    <th className="px-3 py-2 text-left font-medium">Centro de coste fuente</th>
+                    <th className="px-3 py-2 text-left font-medium">Nivel</th>
+                    <th className="px-3 py-2 text-right font-medium">Cuota</th>
+                    <th className="px-3 py-2 text-right font-medium">Aporte</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {allocation.lines.map((line, index) => (
+                    <tr key={`${line.runId}-${line.ruleCode}-${index}`} className="h-8">
+                      <td className="px-3 py-1 font-code text-xs">{line.ruleCode}</td>
+                      <td className="px-3 py-1 font-code text-xs">{line.sourceCostCenterCode}</td>
+                      <td className="px-3 py-1 font-code text-xs">{line.marginLevel}</td>
+                      <td className="px-3 py-1 text-right font-code text-xs tabular-nums">
+                        {(line.driverShareBps / 100).toFixed(2).replace(".", ",")} %
+                      </td>
+                      <td className="px-3 py-1 text-right">
+                        <AmountPlain cents={line.amountCents} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         <DialogFooter>
           <Button type="button" onClick={onClose}>
