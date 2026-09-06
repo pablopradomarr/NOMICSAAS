@@ -8,7 +8,9 @@ import { addCurrencyAction, deleteCurrencyAction, editCurrencyAction } from "@/a
 import { tenantPage } from "@/lib/page-tenant"
 
 export default tenantPage(async ({ db }) => {
-  const [currencies, settings] = await Promise.all([getCurrencies(db), getSettings(db)])
+  // En SERIE: la transacción de la petición tiene UNA conexión (lib/page-tenant.ts).
+  const currencies = await getCurrencies(db)
+  const settings = await getSettings(db)
   const currenciesWithActions = currencies.map((currency) => ({
     ...currency,
     isEditable: true,

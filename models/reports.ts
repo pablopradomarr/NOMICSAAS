@@ -625,7 +625,19 @@ async function attemptReportRun(
  * se quedan cortos con un ejercicio grande y abortan a mitad («Transaction
  * already closed») dejando al usuario sin informe.
  */
-const REPORT_READ_BUDGET = { timeout: 30_000, maxWait: 10_000 }
+const REPORT_READ_BUDGET = {
+  timeout: 30_000,
+  maxWait: 10_000,
+  /**
+   * N1 — `RepeatableRead`: el `ledgerHash` que se recalcula al entrar y las
+   * líneas que se leen después salen del MISMO snapshot, aunque alguien
+   * contabilice mientras dura la lectura. El recálculo del hash y el reintento
+   * siguen ahí como red (y son los que actúan si esta transacción resulta ser
+   * reentrante dentro de la de la petición, donde el nivel ya lo fijó el
+   * llamante).
+   */
+  isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+}
 
 /** Cota del diario que cabe en el `result` (#8). Por encima, se declara truncado. */
 export const MAX_JOURNAL_ENTRIES_IN_RUN = 5_000

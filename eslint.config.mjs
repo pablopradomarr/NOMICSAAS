@@ -68,6 +68,13 @@ const NO_BARE_PRISMA_DELEGATE = {
     "Usa tenantDb(orgId), tenantTransaction(orgId, …) o withTenantGucs(orgId|null, userId, …).",
 };
 
+const NO_PARALLEL_READS_MESSAGE =
+  "E6-perf: nada de `Promise.all` en una página envuelta por `tenantPage`/`withPageTenant`. " +
+  "Toda la petición corre en UNA transacción con UNA conexión: `pg` encola las consultas de todas " +
+  "formas (no hay paralelismo que ganar) y solaparlas emite el DeprecationWarning «client is already " +
+  "executing a query». Encadena los `await`. Si de verdad no consulta la base (ficheros, fetch), " +
+  "extráelo a un helper fuera de la página.";
+
 const eslintConfig = [
   ...nextConfig,
   {
@@ -137,6 +144,41 @@ const eslintConfig = [
     ignores: ["lib/db.ts", "lib/db.test.ts", "lib/email-sync/ingest.test.ts"],
     rules: {
       "no-restricted-syntax": ["error", NO_BARE_PRISMA_DELEGATE],
+    },
+  },
+  {
+    // E6-perf — dentro de la transacción ÚNICA de la petición (`tenantPage` /
+    // `withPageTenant`, `lib/page-tenant.ts`) hay UNA sola conexión: un
+    // `Promise.all` de lecturas no gana paralelismo —`pg` las encola igual— y
+    // sí dispara el DeprecationWarning «client is already executing a query».
+    // El selector se aplica sólo a los ficheros que importan el envoltorio.
+    files: ["app/**/*.tsx", "app/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        NO_BARE_PRISMA_DELEGATE,
+        {
+          selector:
+            'Program:has(ImportDeclaration[source.value="@/lib/page-tenant"]) CallExpression[callee.object.name="Promise"][callee.property.name="all"]',
+          message: NO_PARALLEL_READS_MESSAGE,
+        },
+      ],
+    },
+  },
+  {
+    // Mismo motivo, para el layout: abre su propia transacción con
+    // `runWithRequestTenant` y sus lecturas comparten conexión.
+    files: ["app/(app)/layout.tsx"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        NO_BARE_PRISMA_DELEGATE,
+        {
+          selector:
+            'Program:has(ImportDeclaration[source.value="@/lib/db"]) CallExpression[callee.object.name="Promise"][callee.property.name="all"]',
+          message: NO_PARALLEL_READS_MESSAGE,
+        },
+      ],
     },
   },
 ];

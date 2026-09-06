@@ -10,7 +10,9 @@ import { addCategoryAction, deleteCategoryAction, editCategoryAction } from "@/a
 import { tenantPage } from "@/lib/page-tenant"
 
 export default tenantPage(async ({ db }) => {
-  const [categories, settings] = await Promise.all([getCategories(db), getSettings(db)])
+  // En SERIE: la transacción de la petición tiene UNA conexión (lib/page-tenant.ts).
+  const categories = await getCategories(db)
+  const settings = await getSettings(db)
   const categoriesWithActions = categories.map((category) => ({
     ...category,
     isEditable: true,

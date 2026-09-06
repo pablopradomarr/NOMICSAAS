@@ -417,18 +417,34 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
     // lo único que la puede producir: la aplicación NO puede llegar a este
     // estado —el trigger de ADR-0010 y el cuadre diferido lo impiden—. Lo que se
     // comprueba es que, SI llega, el informe no se sirve como validado.
+    // La línea a corromper se elige DENTRO del ejercicio y del periodo del
+    // informe, y con un orden de negocio estable.
+    //
+    // Antes se escogía con `ORDER BY id LIMIT 1` sobre las líneas `4300` con
+    // debe > 0 de TODA la organización. `id` es un uuid v4: el orden es azar
+    // distinto en cada carga del fixture, y una de las trece candidatas es la
+    // de apertura del ejercicio **2027** (`2027-01-01`). Cuando la lotería caía
+    // en ésa —≈1 de cada 13 ejecuciones— el céntimo se sumaba FUERA del periodo
+    // del informe (2026), el `ledgerHash` y las líneas que alimentan I2 no
+    // cambiaban, e I2 salía en PASS: el test fallaba sin que nada estuviera mal.
+    // Ése era el flaky. La corrupción tiene que caer donde el informe mira.
     const corrupt = async (delta: number): Promise<void> => {
       await owner(async (client) => {
         await client.query("BEGIN")
         await client.query("SET LOCAL session_replication_role = replica")
-        await client.query(
+        const updated = await client.query(
           `UPDATE journal_lines SET debit_cents = debit_cents + $2
-            WHERE id = (SELECT id FROM journal_lines
-                         WHERE organization_id = $1::uuid AND account_code = '4300' AND debit_cents > 0
-                         ORDER BY id LIMIT 1)`,
-          [ORG_MUT, delta]
+            WHERE id = (SELECT l.id FROM journal_lines l
+                         WHERE l.organization_id = $1::uuid
+                           AND l.fiscal_year_id = $3::uuid
+                           AND l.entry_date BETWEEN $4::date AND $5::date
+                           AND l.account_code = '4300' AND l.debit_cents > 0
+                         ORDER BY l.entry_date, l.line_no, l.id LIMIT 1)`,
+          [ORG_MUT, delta, fiscalYearIdMut, PERIOD.periodStart, PERIOD.periodEnd]
         )
         await client.query("COMMIT")
+        // Si no toca ninguna fila, el test estaría comprobando el vacío.
+        expect(updated.rowCount).toBe(1)
       })
     }
 

@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-05 (E6 backend + UI implementados, pendiente verificación) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-06 (E6 cerrada) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
 ## Hecho
 | Épica | Estado | Commits |
@@ -52,6 +52,12 @@ Resuelve la organización destino por `files.uploaded_by_id` y, en su defecto, p
 | `readOnly` | `SET TRANSACTION READ ONLY`: la BASE rechaza con 25006 una escritura desde un Server Component. Se deja en `false` sólo donde el render emite un `ReportRun` (informes, panel, sumas y saldos, mayor, PyG analítica). |
 | Pool explícito | `PrismaPg` con `DB_POOL_MAX` (20 por defecto, era el `max: 10` de `pg`), `DB_POOL_IDLE_TIMEOUT_MS` y `DB_POOL_CONNECTION_TIMEOUT_MS`; `transactionOptions` por defecto `maxWait 5 s / timeout 15 s`. Documentado en `.env.example`. |
 
+**Red de seguridad (ESLint).** `no-restricted-syntax` prohíbe `Promise.all` en cualquier fichero que importe `@/lib/page-tenant` (y en el layout, que importa `@/lib/db`): dentro de la transacción de la petición hay UNA conexión, así que un `Promise.all` de lecturas no gana nada y dispara el aviso de `pg`. Verificado que la regla salta (se reintrodujo el `Promise.all` de `/settings/currencies` y falló el lint).
+
+**Flaky cerrado (`e6-reports.test.ts › criterio 15`).** Fallaba ≈1 de cada 13 ejecuciones. Causa: la corrupción de prueba elegía la línea con `ORDER BY id LIMIT 1` sobre las **trece** líneas `4300` con debe > 0 de la organización; `id` es un uuid v4, así que el orden cambiaba en cada carga del fixture, y **una** de esas trece es la de apertura del ejercicio **2027**. Cuando la lotería caía en ella, el céntimo se sumaba fuera del periodo del informe (2026) y ni el `ledgerHash` ni las líneas de I2 cambiaban: I2 salía en PASS y el test fallaba sin que nada estuviera roto. Corregido acotando la línea al ejercicio y al periodo del informe, con orden de negocio estable (`entry_date, line_no, id`) y `expect(rowCount).toBe(1)` para que un futuro «no toca ninguna fila» se vea. Verificado: **15 pasadas seguidas del fichero en verde**. (El test hermano de `LEDGER_DRIFT` no tenía el problema: sus cinco líneas `628` están todas en 2026.)
+
+**N1 reforzado.** La fase 2 de `getOrCreateReportRun` corre en `RepeatableRead`: el `ledgerHash` que se recalcula al entrar y las líneas que sella salen del MISMO snapshot. El recálculo + reintento sigue puesto y es lo que cubre el caso reentrante (dentro de la transacción de una petición el nivel lo fijó el llamante).
+
 Las escrituras siguen usando `tenantTransaction` explícito y **sigue prohibido anidar transacciones del diario** (`LedgerNestingError` en `models/ledger.ts`, intacto).
 
 **Medido** (`tests/integration/perf-pages.test.ts`, fixture `ejercicio-completo`, local):
@@ -61,6 +67,10 @@ Las escrituras siguen usando `tenantTransaction` explícito y **sigue prohibido 
 | `/settings/fiscal-years` | 3 → **1** | 27 → **8** |
 | `/ledger` | 9 → **1** | 76 → **37** |
 | `/settings/accounts` | 2 → **1** | 24 → **12** |
+
+`readOnly: true` también en `/reports/runs`: lista runs y avisos de revisión, no emite ninguno.
+
+`readOnly: true` también en `/reports/runs`: lista runs y avisos, no emite ninguno.
 
 Con cuatro peticiones simultáneas de `/ledger` (layout + página en paralelo) el pico de conexiones baja de 9 a 8 y la latencia de 331 ms a 159 ms. El test fija dos techos por cargador: **≤ 2 conexiones simultáneas por petición** (medidas en `pg_stat_activity`) y **< 1500 ms**, más «un render abre exactamente 1 transacción» y el rechazo de escrituras en `READ ONLY`.
 
@@ -125,13 +135,14 @@ DATABASE_URL_MAINTENANCE=… npx tsx scripts/load-fixture.ts --org <org> --user 
     d. revisor-codigo en contexto limpio sobre `git diff a6e4a14...HEAD`; rondas de fix hasta APROBADO.
     e. documentador: ROADMAP E4 = CERRADA, runs/registro.jsonl, ESTADO; push.
 13. ✅ E6 DISEÑADA y aprobada (docs/design/E6-informes.md, E6-validacion-estados.md, ADR-0012; estados esperados en docs/design/fixtures/estados-esperados.json). Backend implementado (commit 8d8055a: 766 unit / 995 integración / 105 RLS; balance/PyG/cashflow byte a byte con los esperados: activo 13.673.820, PN 8.307.322, resultado 1.497.322, cash 2.943.920). UI implementada por dev-frontend hasta corte por límite de uso (commit siguiente): rutas /reports/{balance,pyg,cashflow,aging,runs}, /settings/review-thresholds, dashboard reescrito, tests/e2e/informes.spec.ts escrito pero NO ejecutado; tsc y lint en verde.
-14. **SIGUIENTE (E6 pendiente de cierre)** — en este orden:
+14. ✅ E6 CERRADA 2026-09-06 (QA PASS, auditor CONFORME, revisor APROBADO; perf: tenantPage una transacción por petición, pool explícito; flaky criterio 15 corregido). Deuda aceptada E7/E9 en runs/registro.jsonl.
+14-bis. (histórico) E6 pendiente de cierre — en este orden:
     a. dev-frontend: retomar UI E6 — arrancar dev (`npm run dev` como app_runtime), `npm run build`, ejecutar `npm run test:e2e` (tests/e2e/informes.spec.ts) y corregir; capturas en /tmp/e6-screens; revisar que dashboard no usa models/stats.ts (eliminado) y que sidebar tiene sección Informes.
     b. qa-tester (criterios docs/design/E6-informes.md §8; adversarial: ReportRun inmutable como app_runtime, caché por paramsHash, umbral de variación EV-*, ManualReviewFlag, export válido, I2/I3/I6 sobre fixture, bidireccionales por signo, VIEWER).
     c. auditor-fiabilidad contexto limpio: reconstruir balance (activo 13.673.820 / PN 8.307.322), PyG (A.4 1.497.322), cashflow (Δ −1.056.080, cash final 2.943.920) por SQL/Python; error inyectado.
     d. revisor-codigo contexto limpio sobre `git diff 97221fb...HEAD`; rondas hasta APROBADO.
     e. cierre E6 (ROADMAP, registro, ESTADO, push).
-15. Después: `/epica E5` (liquidación de CECOs: AllocationRule/Run/Line, drivers, Hamilton, I5, PyG analítica con MC3/EBITDA imputados) → `/sprint E5` → E8 (OCR → asientos) → E7 (Auditoría) → E9 → E10 → E11 → E12.
+15. **SIGUIENTE**: `/epica E5` (liquidación de CECOs: AllocationRule/Run/Line, drivers, Hamilton, I5, PyG analítica con MC3/EBITDA imputados) → `/sprint E5` → E8 (OCR → asientos) → E7 (Auditoría) → E9 → E10 → E11 → E12.
 ~~13. `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
 ~~11. `/epica E4` (analítica base: BusinessLine, Project, CostCenter, AnalyticType en líneas, MarginLevelConfig, PyG analítica sin imputaciones, I4; retirar CHECK NULL de dimensiones + FKs; fixtures con projectCode/costCenterCode activados) → `/sprint E4` → E6 (informes: balance, PyG, cashflow, ReportRun) → E5 (liquidación CECOs).
 ~~10. `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.

@@ -593,13 +593,27 @@ export type TenantTransactionOptions = {
    * «un RSC no escribe» deja de depender de que nadie se despiste.
    */
   readOnly?: boolean
+  /**
+   * Nivel de aislamiento. `RepeatableRead` fija UN snapshot para toda la
+   * transacción: dos consultas seguidas ven exactamente el mismo diario aunque
+   * alguien contabilice en medio. Lo necesita la fase 2 de
+   * `getOrCreateReportRun` (N1), donde el `ledgerHash` y las líneas que sella
+   * TIENEN que salir de la misma foto.
+   *
+   * OJO con la reentrancia: si ya hay una transacción de tenant abierta, esta
+   * se reutiliza y el nivel lo fijó quien la abrió. La red de seguridad de N1
+   * —recalcular el hash y reintentar si cambió— sigue puesta y cubre ese caso.
+   */
+  isolationLevel?: Prisma.TransactionIsolationLevel
 }
 
 /** Presupuesto de las operaciones de siembra/importación masiva (E2, T7). */
 export const SEED_TRANSACTION_OPTIONS: TenantTransactionOptions = { timeout: 60_000, maxWait: 10_000 }
 
 /** Lo que entiende `prisma.$transaction`: `readOnly` es nuestro, no suyo. */
-function prismaTransactionOptions(options?: TenantTransactionOptions): { timeout?: number; maxWait?: number } | undefined {
+function prismaTransactionOptions(
+  options?: TenantTransactionOptions
+): { timeout?: number; maxWait?: number; isolationLevel?: Prisma.TransactionIsolationLevel } | undefined {
   if (!options) return undefined
   const { readOnly: _readOnly, ...rest } = options
   return Object.keys(rest).length > 0 ? rest : undefined

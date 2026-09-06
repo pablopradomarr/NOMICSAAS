@@ -44,16 +44,15 @@ export default tenantPage<SearchParamsProps>(async ({ role, searchParams }) => {
   const typeFilter = firstOf(params, "tipo")
   const sealFilter = firstOf(params, "sello")
 
-  const [runsState, flagsState] = await Promise.all([
-    listRunsAction({
-      ...(typeFilter && typeFilter in ReportType ? { type: typeFilter as ReportType } : {}),
-      ...(sealFilter === Seal.REQUIERE_REVISION || sealFilter === Seal.VALIDADO_AUTOMATICAMENTE
-        ? { seal: sealFilter as Seal }
-        : {}),
-      take: 100,
-    }),
-    listReviewFlagsAction(false),
-  ])
+  // En SERIE: la transacción de la petición tiene UNA conexión (lib/page-tenant.ts).
+  const runsState = await listRunsAction({
+    ...(typeFilter && typeFilter in ReportType ? { type: typeFilter as ReportType } : {}),
+    ...(sealFilter === Seal.REQUIERE_REVISION || sealFilter === Seal.VALIDADO_AUTOMATICAMENTE
+      ? { seal: sealFilter as Seal }
+      : {}),
+    take: 100,
+  })
+  const flagsState = await listReviewFlagsAction(false)
 
   const runs = runsState.success ? (runsState.data ?? []) : []
   const flags = flagsState.success ? (flagsState.data ?? []) : []
@@ -191,4 +190,4 @@ export default tenantPage<SearchParamsProps>(async ({ role, searchParams }) => {
       </section>
     </div>
   )
-}, { readOnly: false })
+})
