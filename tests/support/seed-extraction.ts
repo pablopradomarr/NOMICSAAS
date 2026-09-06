@@ -21,7 +21,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import { tenantDb } from "@/lib/db"
@@ -194,10 +194,30 @@ async function main(): Promise<void> {
   const bytes = Buffer.concat([PNG_1PX, Buffer.from(`\n%%e2e:${documentNumber}\n`, "utf8")])
   const sha256 = createHash("sha256").update(bytes).digest("hex")
 
-  // Idempotencia: si el documento del caso ya está sembrado, se reutiliza en vez
-  // de acumular ficheros en cada ejecución de la suite.
+  /**
+   * Idempotencia: si el documento del caso ya está sembrado, se reutiliza en vez
+   * de acumular ficheros en cada ejecución de la suite.
+   *
+   * **BUG-E8-2 (QA de E8).** «Ya está sembrado» se comprobaba MIRANDO SÓLO LA
+   * FILA. Los bytes viven en `UPLOAD_PATH`, que en el sandbox se pierde al
+   * reiniciar y que además no se borra al recargar la base: bastaba con que la
+   * fila sobreviviera y el fichero no para que el visor devolviera 404 y el
+   * e2e de documentos fallara en un `expect` que no explicaba nada. Ahora el
+   * arnés comprueba que los BYTES están donde la fila dice y, si no, los vuelve
+   * a escribir: el sha256 registrado es determinista por número de documento,
+   * así que regenerarlos reproduce exactamente el fichero que la fila declara.
+   */
   const existing = await db.file.findFirst({ where: { filename }, orderBy: { createdAt: "desc" } })
   let fileId = existing?.id ?? null
+
+  if (existing) {
+    const fullPath = safePathJoin(getOrganizationUploadsDirectory(organization), existing.path)
+    if (!(await onDiskWithSha(fullPath, existing.sha256 ?? sha256))) {
+      await mkdir(path.dirname(fullPath), { recursive: true })
+      await writeFile(fullPath, bytes)
+      process.stderr.write(`[seed-extraction] regenerado el documento ausente en disco: ${existing.path}\n`)
+    }
+  }
 
   if (!fileId) {
     const fileUuid = randomUUID()
@@ -271,6 +291,16 @@ async function main(): Promise<void> {
   process.stdout.write(
     `${JSON.stringify({ fileId: file.id, runId: run.id, status: result.status, documentNumber })}\n`
   )
+}
+
+/** ¿Están los bytes en disco y son los que la fila declara? (BUG-E8-2). */
+async function onDiskWithSha(fullPath: string, expectedSha256: string): Promise<boolean> {
+  try {
+    const bytes = await readFile(fullPath)
+    return createHash("sha256").update(bytes).digest("hex") === expectedSha256
+  } catch {
+    return false
+  }
 }
 
 /** Hoy en `YYYY-MM-DD`, hora local del proceso. El motor nunca lo hace por su cuenta. */

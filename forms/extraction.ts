@@ -117,6 +117,27 @@ export const extractionProposalSchema = z
 
 export type ExtractionProposalInput = z.infer<typeof extractionProposalSchema>
 
+/**
+ * **E8 ronda 1, revisor #2 — la propuesta tal y como puede llegar del navegador.**
+ *
+ * Idéntica a `extractionProposalSchema` **menos `simplifiedQualified`**, que se
+ * rechaza como clave desconocida (el esquema es `.strict()`).
+ *
+ * Por qué: marcar un ticket como **factura simplificada cualificada** (art. 7.2
+ * RD 1619/2012) es un acto humano con consecuencia fiscal —convierte una cuota
+ * NO deducible en deducible—, y el criterio 5 exige que quede en `AuditLog` con
+ * su motivo. Hasta esta ronda el campo viajaba dentro del `proposal` que acepta
+ * `confirmProposalAction` y `reconcile()` lo honraba tal cual
+ * (`deductibility: "FULL"`, origen `usuario`, confianza `verificado`): un EDITOR
+ * —o un POST directo— deducía el IVA de un ticket **sin pasar por**
+ * `markSimplifiedQualifiedAction` y sin registro. Ahora la marca sólo puede
+ * venir del run: el servidor la copia de la propuesta sellada, que es la que
+ * escribió esa acción con su `AuditLog`.
+ */
+export const submittedProposalSchema = extractionProposalSchema.omit({ simplifiedQualified: true })
+
+export type SubmittedProposalInput = z.infer<typeof submittedProposalSchema>
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Entradas de cada acción
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,7 +162,7 @@ export const previewProposalSchema = z
   .object({
     runId: uuid,
     /** Ediciones de la pantalla. Sin ellas se previsualiza la propuesta sellada. */
-    proposal: extractionProposalSchema.optional(),
+    proposal: submittedProposalSchema.optional(),
     templateCode: z.string().max(48).optional(),
     closedYearAdjustmentKind: z.enum(["MATERIAL", "NO_SIGNIFICATIVO"]).optional(),
   })
@@ -150,7 +171,8 @@ export const previewProposalSchema = z
 export const confirmProposalSchema = z
   .object({
     runId: uuid,
-    proposal: extractionProposalSchema,
+    /** Revisor #2: `simplifiedQualified` NO viaja aquí (`submittedProposalSchema`). */
+    proposal: submittedProposalSchema,
     templateCode: z.string().max(48).optional(),
     /** Sólo duplicado y `convertedTotal`: un FAIL aritmético NO se puede forzar (R6). */
     forceReason: reason.optional(),

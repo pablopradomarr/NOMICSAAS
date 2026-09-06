@@ -475,7 +475,8 @@ async function main() {
 
   if (args.out) {
     const refDate: LocalDate = args.refDate ?? fixtureRefDate(readFixture(fixture))
-    const run = await runLedgerInvariants(args.org, { refDate, noCache: true })
+    const { sha256OfStoredFile } = await import("@/lib/files-integrity")
+    const run = await runLedgerInvariants(args.org, { refDate, noCache: true, readStoredFile: sha256OfStoredFile })
     const target = await resolveOutPath(args.out, fixture)
     await writeFile(target, JSON.stringify({ ...run.validacion, sello: run.sello }, null, 2) + "\n", "utf8")
     say(`· ${run.sello.sello}${run.sello.motivos.length ? ` — ${run.sello.motivos.join("; ")}` : ""}`)

@@ -63,6 +63,14 @@ export type SealedReconcile = {
   fiscalYearClosed: boolean
   withholding: ReconcileResult["withholding"]
   conversion: { rateId: string; rateMicro: string; rateDate: string; source: string; convertedTotalCents: number } | null
+  /**
+   * **E8 ronda 1 (auditor H-2).** La diferencia que de verdad se contabiliza en
+   * una rectificativa por SUSTITUCIÓN (ADR-0014 D12). Sin ella sellada, el
+   * libro registro que la Auditoría deriva del documento anotaba la cuota
+   * ENTERA del documento sustituto frente a la diferencia del asiento, y
+   * I-E8-15c daba FAIL sobre un diario correcto. Es `null` en todo lo demás.
+   */
+  rectificationDelta: ReconcileResult["rectificationDelta"]
   warnings: readonly SealedWarningCode[]
 }
 
@@ -94,6 +102,7 @@ export function sealedReconcile(result: ReconcileResult, warnings: readonly Seal
           convertedTotalCents: result.conversion.convertedTotalCents,
         }
       : null,
+    rectificationDelta: result.rectificationDelta,
     warnings,
   }
 }

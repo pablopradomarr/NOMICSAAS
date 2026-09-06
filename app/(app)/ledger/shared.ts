@@ -249,10 +249,18 @@ export async function reportHeader(
 ): Promise<ReportHeaderView> {
   let run: Awaited<ReturnType<typeof runLedgerInvariants>>
   try {
+    /**
+     * `readStoredFile` (E8 ronda 1, auditor H-3): el lector de los BYTES del
+     * almacén con el que I-E8-2 detecta un documento alterado o desaparecido.
+     * Se inyecta AQUÍ y no dentro de `models/ledger` a propósito; el porqué
+     * está en `StoredFileReader`.
+     */
+    const { sha256OfStoredFile } = await import("@/lib/files-integrity")
     run = await runLedgerInvariants(organizationId, {
       refDate: params.refDate,
       ...(params.fiscalYearId ? { fiscalYearId: params.fiscalYearId } : {}),
       actor: { userId },
+      readStoredFile: sha256OfStoredFile,
     })
   } catch (error) {
     // E4-UI-1.b: ninguna excepción del bloque de invariantes (en particular del

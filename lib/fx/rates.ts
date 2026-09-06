@@ -77,7 +77,53 @@ function assertLocalDate(value: string): void {
   if (!LOCAL_DATE.test(value)) throw new TypeError(`Fecha esperada como "YYYY-MM-DD", recibido "${value}"`)
 }
 
-const normalizeCode = (code: string): string => code.trim().toUpperCase()
+/**
+ * **Revisor #7 (PUEDE).** Código ISO-4217: tres letras, ni una más.
+ *
+ * `from` y `to` se interpolan en la ruta y en la query de la fuente. El host y
+ * la ruta son fijos (`FRANKFURTER_BASE_URL`), así que no hay SSRF, pero un
+ * código con `&` inyectaría parámetros en la petición saliente. Se valida en la
+ * frontera, junto a `assertLocalDate`, y no dentro del `fetch`: así también
+ * protege a la consulta de la tabla y al memo.
+ */
+const ISO_4217 = /^[A-Z]{3}$/
+
+export function assertCurrencyCode(code: string): void {
+  if (!ISO_4217.test(code)) {
+    throw new TypeError(`Código de moneda esperado como tres letras ISO-4217, recibido "${code}"`)
+  }
+}
+
+const normalizeCode = (code: string): string => {
+  const normalized = code.trim().toUpperCase()
+  assertCurrencyCode(normalized)
+  return normalized
+}
+
+/**
+ * **Revisor #8 (PUEDE) — la tasa pasa a micros SIN coma flotante.**
+ *
+ * `BigInt(roundHalfEven(value * 1_000_000))` multiplicaba en `Number` el valor
+ * que llega de la fuente: era la única aritmética en coma flotante de todo el
+ * camino de la tasa, y la tasa multiplica después a cada importe del asiento.
+ *
+ * `String(value)` es la representación decimal más corta que redondea de vuelta
+ * al mismo double, o sea **exactamente el literal que publicó la fuente** para
+ * cualquier tasa con seis o menos decimales (que son todas las del BCE). De ahí
+ * a micros el cálculo es entero: parte entera × 10⁶ + los seis primeros
+ * decimales, con half-up sobre el séptimo. La notación exponencial —imposible
+ * en una tasa de cambio publicada— cae al camino anterior, documentado.
+ */
+export function rateMicroFromValue(value: number): bigint {
+  const text = String(value)
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text)
+  if (!match) return BigInt(roundHalfEven(value * 1_000_000))
+  const [, sign, whole, decimals = ""] = match
+  const six = decimals.slice(0, 6).padEnd(6, "0")
+  const seventh = decimals.charCodeAt(6) - 48
+  const magnitude = BigInt(whole) * BigInt(1_000_000) + BigInt(six) + (seventh >= 5 ? BigInt(1) : BigInt(0))
+  return sign === "-" ? -magnitude : magnitude
+}
 
 /**
  * Tasa a aplicar a un documento.
@@ -243,7 +289,7 @@ async function fetchLastPublished(date: string, from: string, to: string): Promi
     const value = payload.rates?.[lastDay]?.[to]
     if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) continue
 
-    return { date: lastDay, from, to, rateMicro: BigInt(roundHalfEven(value * 1_000_000)) }
+    return { date: lastDay, from, to, rateMicro: rateMicroFromValue(value) }
   }
 
   throw new ExchangeRateUnavailableError(date, from, to, "la fuente no publica ese par en las semanas anteriores")

@@ -21,6 +21,8 @@
  * autorrepercusión no procede de ninguna factura emitida.
  */
 
+import { convertDocumentToBase } from "@/lib/fx/convert"
+import { applyBps } from "@/lib/taxes/bps"
 import { convertWithRateMicro } from "@/lib/money"
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 import type { Cents, LocalDate, PostedEntry } from "@/lib/ledger/types"
@@ -42,6 +44,19 @@ export type ExtractionRunRef = {
   promptSha: string
   /** sha del contenido EFECTIVO del prompt, cuando el llamante puede calcularlo. */
   promptShaExpected?: string | null
+  /**
+   * **Ronda 1, auditor H-5.** El sello de la propuesta tal como lo guarda la
+   * columna `extraction_runs.proposal_sha`, y el que se obtiene al RECALCULARLO
+   * sobre el JSON que hoy tiene la fila. Un run es inmutable por permisos
+   * (`REVOKE UPDATE` + política RESTRICTIVE), pero eso no es evidencia
+   * criptográfica: quien pueda escribir en la base como propietario editaba la
+   * propuesta de un run ya contabilizado y ningún invariante lo nombraba.
+   */
+  proposalSha?: string | null
+  proposalShaExpected?: string | null
+  /** Ídem para el esquema pedido al modelo (G-17), cuando la versión es la vigente. */
+  schemaSha?: string | null
+  schemaShaExpected?: string | null
   /** Confianzas selladas en `field_origins`, para I-E8-10. */
   fieldConfidences?: readonly string[]
   /** I-E8-7b: desviaciones de cuota por tipo, tal como las selló `reconcile`. */
@@ -75,15 +90,41 @@ export type TransactionDocRef = {
 export type FileDocRef = {
   id: string
   sha256: string | null
-  /** sha256 de los BYTES en disco, cuando el script los ha leído (I-E8-2). */
+  /** sha256 de los BYTES en disco, cuando el lector los ha leído (I-E8-2). */
   diskSha256?: string | null
+  /**
+   * **Ronda 1, auditor H-3 / BUG-E8-1.** Por qué NO se pudo leer el documento
+   * del almacén: no existe, no se puede abrir, la ruta se sale del directorio de
+   * la organización… Un fichero que respalda un asiento y ya no está es un
+   * FAIL, no un «sin comprobar»: la mitad de la cadena que detecta un documento
+   * cambiado bajo los pies del ERP depende de que esto se diga.
+   */
+  diskError?: string | null
+  /** Ruta relativa, para que la evidencia nombre el fichero que falta. */
+  path?: string | null
 }
 
 /**
- * Una anotación del **libro registro** (arts. 63 y 64 RIVA), derivada del
- * DOCUMENTO —de la propuesta sellada en el `ExtractionRun`—, no del asiento.
- * Que las dos derivaciones sean independientes es lo que convierte I-E8-15 en
- * un puente y no en una tautología.
+ * Una anotación del **libro registro** (arts. 63 y 64 RIVA).
+ *
+ * ## Ronda 1 de corrección — de dónde sale cada cifra (auditor H-1 y H-2)
+ *
+ * Hasta esta ronda la anotación se derivaba SÓLO de la propuesta sellada, que
+ * está en la **moneda del documento** y, en una rectificativa por sustitución,
+ * trae el importe del documento **sustituto** y no la diferencia que se
+ * contabiliza (ADR-0014 D12). El diario está en moneda base y lleva la
+ * diferencia: los tres puentes al 303 daban FAIL sobre quince asientos
+ * correctos al céntimo (−10 438 en C12, +12 600 en C07).
+ *
+ * Ahora las **cuotas del libro salen del ASIENTO CONTABILIZADO** —de las líneas
+ * de 472 y 477, que ya están en moneda base y ya llevan la diferencia—, y la
+ * propuesta se conserva **como contraste** en `contrast`. El puente sigue
+ * existiendo, pero se ha movido de sitio: I-E8-15a/b/c cuadran el libro con los
+ * saldos del diario (y detectan un movimiento de 472/477 sin documento detrás),
+ * y **I-E8-7a compara documento contra asiento**, documento a documento, con
+ * tolerancia 0. Ahí es donde una propuesta manipulada o una conversión mal
+ * hecha se ven, y ahí no hay tautología posible: son dos derivaciones distintas
+ * de dos fuentes distintas.
  */
 export type VatBookRow = {
   entryId: string | null
@@ -98,6 +139,23 @@ export type VatBookRow = {
   documentDate: LocalDate
   /** `max(receptionDate, documentDate)`: la fecha en la que se deduce (D8). */
   deductionDate: LocalDate
+  /**
+   * La MISMA anotación derivada del documento (propuesta sellada, convertida a
+   * moneda base y con la diferencia de la rectificativa aplicada). `null`
+   * cuando el llamante no puede reconstruirla; entonces I-E8-7a lo dice en vez
+   * de callarlo.
+   */
+  contrast?: VatBookContrast | null
+}
+
+/** La derivación del DOCUMENTO, para contrastar (nunca para declarar). */
+export type VatBookContrast = {
+  baseCents: Cents
+  cuotaTotalCents: Cents
+  cuotaDeducibleCents: Cents
+  cuotaNoDeducibleAlCosteCents: Cents
+  cuotaRepercutidaCents: Cents
+  cuotaDevengadaIspAibCents: Cents
 }
 
 /** Saldos del DIARIO por periodo de IVA: la otra orilla del puente. */
@@ -163,6 +221,33 @@ export type BookRowOptions = {
   prorrataBps: number | null
   /** RC-25: el devengo se difirió al cobro, así que el periodo no anota cuota. */
   deferredByRc25?: boolean
+  /**
+   * **H-1.** Tasa `moneda del documento → moneda base` × 10⁶, tal como la selló
+   * el run. `null` o ausente = el documento ya está en moneda base. Sin ella la
+   * anotación quedaba en dólares frente a un diario en euros.
+   *
+   * La conversión usa `convertDocumentToBase`, que es **literalmente la misma
+   * función** que convirtió el asiento (ADR-0014 D2, reparto del residuo por
+   * mayor resto). Convertir cuota a cuota con `convertWithRateMicro` daría ±1 c
+   * de diferencia justo en los documentos con residuo, que son los que importan.
+   */
+  rateMicro?: bigint | null
+  /**
+   * **H-2.** Rectificativa por **SUSTITUCIÓN**: lo que se contabiliza —y por
+   * tanto lo que se anota— es la **diferencia** contra el documento rectificado
+   * (ADR-0014 D12), no la cuota que el documento sustituto imprime. Es el
+   * `rectificationDelta` que selló `reconcile`, en las mismas unidades que el
+   * motor usa para los `taxOverrides`.
+   */
+  rectificationDelta?: { baseByRate: Readonly<Record<string, Cents>>; quotaByRate: Readonly<Record<string, Cents>> } | null
+  /**
+   * `taxRateCode → rateBps` del catálogo de la organización. Con él, el reparto
+   * de la cuota entre las líneas de un mismo tipo es **el del motor**
+   * (`applyBps` por línea y residuo a la última, `rateGroups` de
+   * `lib/ledger/templates/documento.ts`); sin él se reparte en proporción a la
+   * base, que coincide casi siempre y no siempre.
+   */
+  rateBpsByCode?: Readonly<Record<string, number>>
 }
 
 const PURCHASE_DOC_KINDS: ReadonlySet<string> = new Set([
@@ -176,10 +261,73 @@ const PURCHASE_DOC_KINDS: ReadonlySet<string> = new Set([
   "NOTA_GASTO_EMPLEADO",
 ])
 
+const isSelfChargedKey = (key: string | undefined): boolean => key === "ISP" || key === "AIB"
+
+const netBaseOf = (l: BookableProposal["lines"][number]): Cents => l.baseCents - (l.discountCents ?? 0)
+
 /**
- * Anotación del libro registro **derivada de la propuesta sellada**, que es el
- * documento. Es a propósito un camino DISTINTO del que produjo el asiento: si
- * las dos derivaciones fueran la misma función, I-E8-15 no comprobaría nada.
+ * La propuesta sellada, **en moneda base y con la diferencia de la
+ * rectificativa aplicada**: exactamente las cifras sobre las que trabajó
+ * `postFromProposal`, obtenidas por el mismo camino que él (§3.4, ADR-0014 D2 y
+ * D12). Es lo que hace comparable el documento con el asiento.
+ */
+function documentAmounts(
+  proposal: BookableProposal,
+  opts: BookRowOptions
+): { baseByLine: Cents[]; quotaByCode: Record<string, Cents> } {
+  const delta = opts.rectificationDelta ?? null
+  const operationLines = proposal.lines.filter((l) => l.kind === "OPERACION")
+  const otherLines = proposal.lines.filter((l) => l.kind !== "OPERACION")
+  const ordered = [...operationLines, ...otherLines]
+
+  if (delta) {
+    // Sustitución: ni bases ni cuotas del documento entran; entra la diferencia.
+    // Se reparte sobre las líneas de cada tipo en proporción a su base original,
+    // porque el libro registro anota por tipo y no por línea.
+    const baseByLine = ordered.map((l) => {
+      const code = l.taxRateCode ?? ""
+      const rateLines = ordered.filter((x) => (x.taxRateCode ?? "") === code)
+      const rateBase = sum(rateLines.map(netBaseOf))
+      const target = delta.baseByRate[code] ?? 0
+      if (rateBase === 0) return rateLines[rateLines.length - 1] === l ? target : 0
+      return rateLines[rateLines.length - 1] === l
+        ? target - sum(rateLines.slice(0, -1).map((x) => Math.trunc((target * netBaseOf(x)) / rateBase)))
+        : Math.trunc((target * netBaseOf(l)) / rateBase)
+    })
+    return { baseByLine, quotaByCode: { ...delta.quotaByRate } }
+  }
+
+  const rateMicro = opts.rateMicro ?? null
+  if (rateMicro === null) {
+    const quotaByCode: Record<string, Cents> = {}
+    for (const t of proposal.taxes) quotaByCode[t.taxRateCode] = (quotaByCode[t.taxRateCode] ?? 0) + t.quotaCents
+    return { baseByLine: ordered.map(netBaseOf), quotaByCode }
+  }
+
+  // El MISMO reparto que el asiento: las cuotas absorben el residuo de la
+  // conversión por mayor resto, y las autorrepercutidas quedan fuera del total
+  // porque no se pagan al proveedor (postFromProposal §3).
+  const taxesInTotal = proposal.taxes.filter((t) => !isSelfChargedKey(t.operationKey) && t.quotaCents !== 0)
+  const converted = convertDocumentToBase(
+    ordered.map((l) => ({ baseCents: netBaseOf(l) })),
+    taxesInTotal.map((t) => ({ taxRateCode: t.taxRateCode, quotaCents: t.quotaCents })),
+    rateMicro
+  )
+  const quotaByCode: Record<string, Cents> = {}
+  for (const t of proposal.taxes) {
+    const share = converted.quotaByRate[t.taxRateCode]
+    quotaByCode[t.taxRateCode] = share ?? convertWithRateMicro(t.quotaCents, rateMicro)
+  }
+  return { baseByLine: [...converted.lineBases], quotaByCode }
+}
+
+/**
+ * Anotación del libro registro **derivada de la propuesta sellada**, o sea del
+ * DOCUMENTO. Desde la ronda 1 de corrección **no es la que se declara**: es la
+ * que `checkIE87a` contrasta contra la que sale del asiento (H-1, H-2). Por eso
+ * ahora conoce la moneda del documento, la tasa persistida y el modo de la
+ * rectificativa: sin las tres, comparaba dólares con euros y el documento
+ * sustituto con la diferencia contabilizada.
  */
 export function vatBookRowFromProposal(proposal: BookableProposal, opts: BookRowOptions): VatBookRow {
   const purchase = PURCHASE_DOC_KINDS.has(proposal.docKind)
@@ -187,36 +335,38 @@ export function vatBookRowFromProposal(proposal: BookableProposal, opts: BookRow
   const signo = credit ? -1 : 1
   const deferred = opts.deferredByRc25 === true
 
+  const { baseByLine, quotaByCode } = documentAmounts(proposal, opts)
   const operationLines = proposal.lines.filter((l) => l.kind === "OPERACION")
-  const baseCents = signo * sum(operationLines.map((l) => l.baseCents - (l.discountCents ?? 0)))
+  // `documentAmounts` ordena OPERACION primero, igual que `postFromProposal`.
+  const baseCents = signo * sum(baseByLine.slice(0, operationLines.length))
+  const baseOfLine = new Map(operationLines.map((l, i) => [l, baseByLine[i] ?? netBaseOf(l)]))
 
   let deducible = 0
   let noDeducible = 0
   let repercutida = 0
   let ispAib = 0
 
-  for (const tax of proposal.taxes) {
-    const quota = signo * tax.quotaCents
+  for (const code of Object.keys(quotaByCode)) {
+    const quota = signo * (quotaByCode[code] ?? 0)
     if (quota === 0) continue
     if (deferred) continue
-    const selfCharged = tax.operationKey === "ISP" || tax.operationKey === "AIB"
+    const selfCharged = proposal.taxes.some((t) => t.taxRateCode === code && isSelfChargedKey(t.operationKey))
     if (!purchase) {
       repercutida += quota
       continue
     }
     // Reparto deducible / no deducible por la deducibilidad de las líneas de
     // ese tipo: la cuota no deducible NO pasa por 472, engorda el coste
-    // (art. 103 LIVA, NRV 2ª y 10ª).
-    const rateLines = operationLines.filter((l) => l.taxRateCode === tax.taxRateCode)
-    const rateBase = sum(rateLines.map((l) => l.baseCents - (l.discountCents ?? 0)))
-    let assigned = 0
+    // (art. 103 LIVA, NRV 2ª y 10ª). El reparto por línea es el del motor
+    // (`applyBps` sobre la base y residuo a la última) cuando se conoce el tipo.
+    const rateLines = operationLines.filter((l) => l.taxRateCode === code)
+    const shares = splitQuotaAcrossLines(quota, rateLines.map((l) => baseOfLine.get(l) ?? 0), opts.rateBpsByCode?.[code])
     rateLines.forEach((l, index) => {
-      const share = index === rateLines.length - 1 ? quota - assigned : rateBase === 0 ? 0 : Math.trunc((quota * (l.baseCents - (l.discountCents ?? 0))) / rateBase)
-      assigned += share
+      const share = shares[index]
       const deductibility = l.deductibility ?? "FULL"
       if (deductibility === "NONE") noDeducible += share
       else if (deductibility === "PRORRATA" && opts.prorrataBps !== null) {
-        const d = Math.trunc((share * opts.prorrataBps) / 10000)
+        const d = applyBps(share, opts.prorrataBps)
         deducible += d
         noDeducible += share - d
       } else deducible += share
@@ -239,6 +389,91 @@ export function vatBookRowFromProposal(proposal: BookableProposal, opts: BookRow
     deductionDate: opts.deductionDate,
   }
 }
+
+/**
+ * Cuota de un tipo repartida entre sus líneas **con la aritmética del motor**:
+ * `applyBps(base_i, rateBps)` y el residuo a la última (`rateGroups`). Sin
+ * `rateBps` —el llamante no siempre tiene el catálogo— se reparte en proporción
+ * a la base, que es lo que hacía esta función antes de la ronda 1.
+ */
+function splitQuotaAcrossLines(quota: Cents, bases: readonly Cents[], rateBps: number | undefined): Cents[] {
+  if (bases.length === 0) return []
+  if (bases.length === 1) return [quota]
+  const provisional =
+    rateBps === undefined
+      ? proportionalShares(quota, bases)
+      : bases.map((b) => applyBps(b, rateBps))
+  const out = [...provisional]
+  out[out.length - 1] += quota - sum(out)
+  return out
+}
+
+function proportionalShares(quota: Cents, bases: readonly Cents[]): Cents[] {
+  const total = sum(bases)
+  if (total === 0) return bases.map(() => 0)
+  return bases.map((b) => Math.trunc((quota * b) / total))
+}
+
+/**
+ * La anotación del libro registro **derivada del ASIENTO CONTABILIZADO**
+ * (ronda 1, auditor H-1 y H-2). Las cuotas salen de las líneas de 472 y 477,
+ * que ya están en moneda base y ya llevan la diferencia de una rectificativa
+ * por sustitución: es la única derivación que no puede quedar desfasada
+ * respecto de lo que de verdad se declara en el 303.
+ *
+ * Lo que el asiento **no** sabe y hay que traerle del documento:
+ *  · `cuotaNoDeducibleAlCoste`, que viaja *dentro* de la línea de gasto y por
+ *    definición no tiene cuenta propia (art. 103 LIVA);
+ *  · si el 477 es repercutido o **devengado por ISP/AIB**, que es una propiedad
+ *    de la operación y no del apunte (OBS-F1, casillas 10-13 del 303);
+ *  · la base imponible, que es la del documento.
+ * Los tres llegan por `contrast`, y `checkIE87a` comprueba que el resto cuadra.
+ */
+export function vatBookRowFromEntry(
+  entry: PostedEntry,
+  opts: BookRowOptions & {
+    inputVatCode: string
+    outputVatCode: string
+    purchase: boolean
+    selfCharged: boolean
+    contrast: VatBookContrast | null
+  }
+): VatBookRow {
+  const deducible472 = sum(
+    entry.lines.filter((l) => l.accountCode === opts.inputVatCode).map((l) => l.debitCents - l.creditCents)
+  )
+  const output477 = sum(
+    entry.lines.filter((l) => l.accountCode === opts.outputVatCode).map((l) => l.creditCents - l.debitCents)
+  )
+  const noDeducible = opts.contrast?.cuotaNoDeducibleAlCosteCents ?? 0
+  const devengadaIspAib = opts.selfCharged ? output477 : 0
+  const repercutida = opts.selfCharged ? 0 : output477
+
+  return {
+    entryId: opts.entryId,
+    ivaPeriod: opts.ivaPeriod,
+    tipo: opts.purchase ? "RECIBIDAS" : "EMITIDAS",
+    baseCents: opts.contrast?.baseCents ?? 0,
+    cuotaTotalCents: opts.purchase ? deducible472 + noDeducible : repercutida,
+    cuotaDeducibleCents: opts.purchase ? deducible472 : 0,
+    cuotaNoDeducibleAlCosteCents: opts.purchase ? noDeducible : 0,
+    cuotaRepercutidaCents: opts.purchase ? 0 : repercutida,
+    cuotaDevengadaIspAibCents: devengadaIspAib,
+    documentDate: opts.documentDate,
+    deductionDate: opts.deductionDate,
+    contrast: opts.contrast,
+  }
+}
+
+/** La parte contrastable de una anotación: lo que el documento y el asiento dicen los dos. */
+export const contrastOf = (row: VatBookRow): VatBookContrast => ({
+  baseCents: row.baseCents,
+  cuotaTotalCents: row.cuotaTotalCents,
+  cuotaDeducibleCents: row.cuotaDeducibleCents,
+  cuotaNoDeducibleAlCosteCents: row.cuotaNoDeducibleAlCosteCents,
+  cuotaRepercutidaCents: row.cuotaRepercutidaCents,
+  cuotaDevengadaIspAibCents: row.cuotaDevengadaIspAibCents,
+})
 
 /** Trimestre natural de una fecha ISO: "2026-Q2" (ADR-0014 D8). */
 export const quarterOf = (date: LocalDate): string =>
@@ -338,15 +573,31 @@ export function checkIE82(input: DocumentsInvariantInput, entries: readonly Post
     if (file.sha256 !== run.fileSha256) {
       failures.push(`run ${run.id}: el sha del run no es el del fichero (documento alterado)`)
     }
+    /**
+     * **Ronda 1, H-3 / BUG-E8-1.** Un documento que respalda un asiento y ya no
+     * se puede leer del almacén es un FAIL, no un «sin comprobar»: es
+     * exactamente el escenario del criterio 30 («alterar o borrar los bytes»).
+     */
+    if (file.diskError) {
+      failures.push(
+        `fichero ${file.id}${file.path ? ` (${file.path})` : ""}: no se pueden leer los bytes en disco — ${file.diskError}`
+      )
+      continue
+    }
     if (file.diskSha256 === undefined || file.diskSha256 === null) withoutDisk++
-    else if (file.diskSha256 !== file.sha256) failures.push(`fichero ${file.id}: los bytes en disco no son los registrados`)
+    else if (file.diskSha256 !== file.sha256) {
+      failures.push(
+        `fichero ${file.id}${file.path ? ` (${file.path})` : ""}: los bytes en disco no son los registrados ` +
+          `(disco ${file.diskSha256.slice(0, 12)} ≠ registrado ${file.sha256.slice(0, 12)})`
+      )
+    }
   }
   if (failures.length > 0) return failed("I-E8-2", failures.slice(0, 20).join(" · "))
   const evidencia =
     withoutDisk === 0
       ? `${checked} run(s) con asiento: sha en disco = sha del fichero = sha del run`
       : `${checked} run(s) con asiento cuadran con el fichero; ${withoutDisk} sin comprobar en disco ` +
-        "(ejecuta scripts/run-invariants.ts, que sí lee los bytes)"
+        "(el almacén no expuso los bytes)"
   return withoutDisk === 0 ? pass("I-E8-2", evidencia) : warn("I-E8-2", evidencia)
 }
 
@@ -447,14 +698,24 @@ export function checkIE86(): CheckResult {
 }
 
 /**
- * I-E8-7a — identidad de lo **contabilizado**, con tolerancia 0. Se cumple por
- * construcción con la cuota del documento (D3), y por eso mismo verificarlo es
- * barato: si alguna vez deja de cumplirse, alguien ha reintroducido un ajuste.
+ * I-E8-7a — **el puente documento ↔ asiento**, con tolerancia 0.
+ *
+ * Desde la ronda 1 de corrección (auditor H-1, H-2) el libro registro sale del
+ * asiento, así que es AQUÍ donde vive la comparación con el documento: la
+ * anotación derivada de la propuesta sellada —convertida a moneda base con la
+ * tasa persistida y con la diferencia de la rectificativa aplicada— tiene que
+ * dar, céntimo a céntimo, la que sale de las líneas de 472 y 477.
+ *
+ * Es lo que detecta una propuesta editada por SQL en un run ya contabilizado
+ * (junto con I-E8-11, que recomputa su sello), una conversión de divisa mal
+ * hecha y una rectificativa contabilizada por el importe entero. Y no es una
+ * tautología: son dos derivaciones independientes de dos fuentes distintas.
  */
 export function checkIE87a(input: DocumentsInvariantInput, entries: readonly PostedEntry[]): CheckResult {
   const byId = new Map(entries.map((e) => [e.id, e]))
   const failures: string[] = []
   let checked = 0
+  let sinContraste = 0
   for (const row of input.vatBook) {
     if (row.entryId === null) continue
     const entry = byId.get(row.entryId)
@@ -469,8 +730,33 @@ export function checkIE87a(input: DocumentsInvariantInput, entries: readonly Pos
         `asiento ${entry.entryNumber}: la cuota anotada (${row.cuotaTotalCents}) no es la contabilizada (${cuota})`
       )
     }
+
+    const contrast = row.contrast ?? null
+    if (contrast === null) {
+      sinContraste++
+      continue
+    }
+    for (const [campo, delAsiento, delDocumento] of [
+      ["base imponible", row.baseCents, contrast.baseCents],
+      ["cuota deducible", row.cuotaDeducibleCents, contrast.cuotaDeducibleCents],
+      ["cuota no deducible al coste", row.cuotaNoDeducibleAlCosteCents, contrast.cuotaNoDeducibleAlCosteCents],
+      ["cuota repercutida", row.cuotaRepercutidaCents, contrast.cuotaRepercutidaCents],
+      ["cuota devengada por ISP/AIB", row.cuotaDevengadaIspAibCents, contrast.cuotaDevengadaIspAibCents],
+    ] as const) {
+      if (delAsiento !== delDocumento) {
+        failures.push(
+          `asiento ${entry.entryNumber}: ${campo} — el asiento dice ${delAsiento} y el documento ${delDocumento} ` +
+            `(diferencia ${delAsiento - delDocumento})`
+        )
+      }
+    }
   }
-  return verdict("I-E8-7a", failures, `${checked} documento(s) contabilizados con identidad exacta y Σdebe = Σhaber`)
+  if (failures.length > 0) return failed("I-E8-7a", failures.slice(0, 20).join(" · "))
+  const evidencia =
+    sinContraste === 0
+      ? `${checked} documento(s): la anotación del asiento y la del documento coinciden al céntimo`
+      : `${checked} documento(s) con identidad exacta y Σdebe = Σhaber; ${sinContraste} sin propuesta reconstruible con la que contrastar`
+  return sinContraste === 0 ? pass("I-E8-7a", evidencia) : warn("I-E8-7a", evidencia)
 }
 
 /**
@@ -547,16 +833,54 @@ export function checkIE810(input: DocumentsInvariantInput, entries: readonly Pos
   return verdict("I-E8-10", failures, `${checked} extracción(es) parcial(es), ninguna con campos fuertes ni con asiento`)
 }
 
-/** I-E8-11 — el `promptSha` del run es el del contenido efectivo. */
+/**
+ * I-E8-11 — **los sellos del run son los de su contenido**: `proposal_sha` de
+ * la propuesta que hoy tiene la fila, `schema_sha` del esquema con el que se
+ * pidió y `prompt_sha` del prompt efectivo.
+ *
+ * **Ronda 1, auditor H-5.** `extraction_runs` es inmutable *por permisos*
+ * (`REVOKE UPDATE, DELETE` + política RESTRICTIVE), y eso no es lo mismo que
+ * ser inmutable por evidencia: el auditor editó por SQL, como propietario, la
+ * cuota de la propuesta de un run **ya contabilizado**, `proposal_sha` quedó
+ * intacto y ningún invariante nombró el run. Comparar `journal_entries` es el
+ * espejo: allí `entry_hash` se recomputa y tiene trigger de guarda. Aquí se
+ * recomputa desde el motor, que es donde se puede.
+ */
 export function checkIE811(input: DocumentsInvariantInput): CheckResult {
-  const comparable = input.runs.filter((r) => r.promptShaExpected !== undefined && r.promptShaExpected !== null)
-  if (comparable.length === 0) {
-    return info("I-E8-11", "No se aporta el contenido efectivo de los prompts: la comparación la hace tests/integration/e8-extraction")
+  const failures: string[] = []
+  let comparados = 0
+
+  for (const r of input.runs) {
+    const checks: [string, string | null | undefined, string | null | undefined][] = [
+      ["proposal_sha", r.proposalSha, r.proposalShaExpected],
+      ["schema_sha", r.schemaSha, r.schemaShaExpected],
+      ["prompt_sha", r.promptSha, r.promptShaExpected],
+    ]
+    let alguno = false
+    for (const [nombre, sellado, esperado] of checks) {
+      if (esperado === undefined || esperado === null) continue
+      alguno = true
+      if (sellado === undefined || sellado === null) {
+        failures.push(`run ${r.id}: sin ${nombre} y con contenido que sellar`)
+        continue
+      }
+      if (sellado !== esperado) {
+        failures.push(
+          `run ${r.id}: ${nombre} ${sellado.slice(0, 12)} ≠ ${esperado.slice(0, 12)} recalculado sobre su contenido ` +
+            "(el run se ha editado después de sellarse)"
+        )
+      }
+    }
+    if (alguno) comparados++
   }
-  const failures = comparable
-    .filter((r) => r.promptSha !== r.promptShaExpected)
-    .map((r) => `run ${r.id}: prompt_sha ${r.promptSha.slice(0, 8)} ≠ ${String(r.promptShaExpected).slice(0, 8)}`)
-  return verdict("I-E8-11", failures, `${comparable.length} run(s) con el sha del prompt efectivo`)
+
+  if (comparados === 0) {
+    return info(
+      "I-E8-11",
+      "No se aporta el contenido efectivo de los runs: la comparación la hacen tests/integration/e8-invariants y e8-extraccion-fx"
+    )
+  }
+  return verdict("I-E8-11", failures, `${comparados} run(s) con sus sellos recalculados sobre el contenido de la fila`)
 }
 
 /** I-E8-12 — aislamiento por tenant de runs, prompts, series y contrapartes. */

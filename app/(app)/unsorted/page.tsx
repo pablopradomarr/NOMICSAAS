@@ -37,6 +37,9 @@ type SealedDetail = {
   checks?: { id: string; status: string; blocksBatch: boolean; message: string }[]
 }
 
+/** Filas por página de la bandeja. */
+const INBOX_PAGE_SIZE = 100
+
 const STATUS_FILTERS: readonly { value: string; label: string }[] = [
   { value: "", label: "Todos" },
   { value: "SIN_RUN", label: "Sin analizar" },
@@ -50,6 +53,18 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
     const params = await searchParams
     const statusParam = typeof params.status === "string" ? params.status : ""
     const canEdit = role === Role.EDITOR || role === Role.ADMIN
+
+    /**
+     * **Paginación (revisor #10, PUEDE).** La bandeja pedía 200 ficheros fijos y
+     * sin `OFFSET`: con más de doscientos documentos sin revisar truncaba EN
+     * SILENCIO, que es la peor manera de perder una factura. `LIMIT/OFFSET` es
+     * lo que pide §9 del diseño y lo que `listInboxWithLatestRun` ya sabía hacer
+     * (devuelve además el total con un `COUNT(*) OVER ()`, sin segunda
+     * consulta). El número de página va en la URL, como el filtro: la bandeja se
+     * puede enlazar y compartir.
+     */
+    const page = Math.max(Number.parseInt(typeof params.page === "string" ? params.page : "1", 10) || 1, 1)
+    const offset = (page - 1) * INBOX_PAGE_SIZE
 
     /**
      * `listInboxWithLatestRun` y `countPendingByStatus` resuelven la bandeja con SQL
@@ -66,7 +81,8 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
       db.$organizationId,
       async (tx) =>
         await listInboxWithLatestRun(tx, {
-          limit: 200,
+          limit: INBOX_PAGE_SIZE,
+          offset,
           ...(statusParam === "" ? {} : { status: statusParam as ReconcileStatus | "SIN_RUN" }),
         })
     )
@@ -169,12 +185,61 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
             </div>
           </div>
         ) : (
-          <InboxTable rows={rows} canEdit={canEdit} />
+          <>
+            <InboxTable rows={rows} canEdit={canEdit} />
+            <Pagination page={page} total={inbox.total} shown={rows.length} status={statusParam} />
+          </>
         )}
       </div>
     )
   }
 )
+
+/**
+ * Paginación de la bandeja. Se pinta SIEMPRE que hay filas, aunque quepan en
+ * una página: decir «1-37 de 37» es lo que hace que «1-100 de 412» no pase
+ * desapercibido el día que llegue.
+ */
+function Pagination({ page, total, shown, status }: { page: number; total: number; shown: number; status: string }) {
+  const from = total === 0 ? 0 : (page - 1) * INBOX_PAGE_SIZE + 1
+  const to = (page - 1) * INBOX_PAGE_SIZE + shown
+  const pages = Math.max(Math.ceil(total / INBOX_PAGE_SIZE), 1)
+  const href = (target: number): string => {
+    const query = new URLSearchParams()
+    if (status !== "") query.set("status", status)
+    if (target > 1) query.set("page", String(target))
+    const suffix = query.toString()
+    return suffix === "" ? "/unsorted" : `/unsorted?${suffix}`
+  }
+  return (
+    <nav
+      className="flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-xs text-muted-foreground"
+      aria-label="Paginación de la bandeja"
+      data-testid="inbox-pagination"
+      data-page={page}
+      data-pages={pages}
+      data-total={total}
+    >
+      <span>
+        Documentos <span className="tabular-nums">{from}</span>–<span className="tabular-nums">{to}</span> de{" "}
+        <span className="tabular-nums">{total}</span>
+        {pages > 1 ? ` · página ${page} de ${pages}` : ""}
+      </span>
+      <span className="flex gap-2">
+        {page > 1 && (
+          <Button asChild variant="outline" size="sm" data-testid="inbox-prev">
+            <Link href={href(page - 1)}>Anterior</Link>
+          </Button>
+        )}
+        {page < pages && (
+          <Button asChild variant="outline" size="sm" data-testid="inbox-next">
+            <Link href={href(page + 1)}>Siguiente</Link>
+          </Button>
+        )}
+      </span>
+    </nav>
+  )
+}
 
 function Counter({ label, value }: { label: string; value: number }) {
   return (

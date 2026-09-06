@@ -166,7 +166,10 @@ async function main() {
 
   if (organizationId) {
     const { runLedgerInvariants } = await import("@/models/ledger")
-    const run = await runLedgerInvariants(organizationId, { refDate, noCache: true })
+    // I-E8-2 lee los BYTES del almacén (auditor H-3): sin este lector el check
+    // se quedaría en «el almacén no expuso los bytes», que es lo que pasaba.
+    const { sha256OfStoredFile } = await import("@/lib/files-integrity")
+    const run = await runLedgerInvariants(organizationId, { refDate, noCache: true, readStoredFile: sha256OfStoredFile })
     ledgerHash = run.validacion.ledgerHash
     gitSha = run.validacion.gitSha
     sello = { sello: run.sello.sello, motivos: run.sello.motivos }

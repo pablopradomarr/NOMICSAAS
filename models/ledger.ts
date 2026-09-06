@@ -44,13 +44,17 @@ import {
   type E8SealReason,
 } from "@/lib/ledger/invariants"
 import {
+  contrastOf,
   E8_INVARIANT_IDS,
   ivaPeriodOf,
   quarterOf,
+  vatBookRowFromEntry,
   vatBookRowFromProposal,
   type BookableProposal,
+  type BookRowOptions,
   type DataQualityWarning,
   type DocumentsInvariantInput,
+  type FileDocRef,
   type VatBookRow,
 } from "@/lib/ledger/invariants-e8"
 import { checkDraft, type CheckDraftOptions } from "@/lib/ledger/post"
@@ -1526,12 +1530,36 @@ function firstFileIdOf(files: unknown): string | null {
   return null
 }
 
+/**
+ * **E8 ronda 1 (auditor H-3 / BUG-E8-1) — quién lee los BYTES del almacén.**
+ *
+ * El lector entra por parámetro y no se importa aquí. Dos razones, y la
+ * segunda es la que manda:
+ *
+ *  1. `models/` accede a la BASE; el sistema de ficheros es de `lib/files*` y
+ *     de quien atiende la petición.
+ *  2. `models/ledger.ts` está en el grafo de casi toda la aplicación. Un
+ *     módulo que hace `createReadStream` dentro de ese grafo hace que el
+ *     rastreador de ficheros de Next (NFT) declare que «se ha trazado el
+ *     proyecto entero» y empaquete de más: medido, el `build` pasaba de **1
+ *     aviso a 38**. Con el lector inyectado, sólo lo alcanzan las rutas del
+ *     diario y los scripts, que es donde de verdad se leen documentos.
+ *
+ * Sin lector, I-E8-2 no miente: se queda en WARN diciendo que el almacén no
+ * expuso los bytes, que es exactamente lo que ha pasado.
+ */
+export type StoredFileReader = (
+  organizationId: string,
+  relativePath: string
+) => Promise<{ sha256: string } | { error: string }>
+
 async function readDocumentsInvariantInput(
   tx: TenantTransactionClient,
   organizationId: string,
   entries: readonly PostedEntry[],
   accountMap: Map<AccountKey, string>,
-  prorrataBps: number | null
+  prorrataBps: number | null,
+  readStoredFile: StoredFileReader | null
 ): Promise<DocumentsInvariantInput | null> {
   const runRows = await tx.extractionRun.findMany({
     select: {
@@ -1542,6 +1570,9 @@ async function readDocumentsInvariantInput(
       partial: true,
       reconcileStatus: true,
       promptSha: true,
+      proposalSha: true,
+      schemaSha: true,
+      schemaVersion: true,
       provider: true,
       proposal: true,
       reconcile: true,
@@ -1565,7 +1596,7 @@ async function readDocumentsInvariantInput(
       extractionRunId: true,
     },
   })
-  const fileRows = await tx.file.findMany({ select: { id: true, sha256: true } })
+  const fileRows = await tx.file.findMany({ select: { id: true, sha256: true, path: true } })
   if (runRows.length === 0 && transactionRows.length === 0 && fileRows.length === 0) return null
 
   const seriesRows = await tx.invoiceSeries.findMany({ select: { code: true, kind: true, prefix: true } })
@@ -1589,6 +1620,31 @@ async function readDocumentsInvariantInput(
   const outputVat = accountMap.get("IVA_REPERCUTIDO") ?? "477"
   const withholdingAccount = accountMap.get("IRPF_PROFESIONALES_A_PAGAR") ?? "4751"
 
+  /**
+   * **E8 ronda 1, auditor H-5.** El sello de la propuesta y el del esquema se
+   * RECALCULAN sobre lo que hoy tiene la fila y viajan al invariante I-E8-11,
+   * que compara. `extraction_runs` es inmutable por permisos; esto lo hace
+   * inmutable por evidencia, que es lo que exige P6.
+   *
+   * El del esquema sólo se compara cuando la versión del run es la vigente: un
+   * run sellado con `v1` cuando la versión en git era otra no es un run
+   * manipulado, es un run viejo, y decir lo contrario sería un FAIL falso.
+   */
+  const { proposalHash } = await import("@/lib/extraction/hash")
+  const { EXTRACTION_SCHEMA_VERSION, extractionSchemaSha } = await import("@/ai/schema")
+  const currentSchemaSha = extractionSchemaSha()
+
+  const shaOfProposal = (proposal: unknown): string | null => {
+    if (proposal === null || typeof proposal !== "object") return null
+    try {
+      return proposalHash(proposal as never)
+    } catch {
+      // Una propuesta que ya no es serializable canónicamente (un `NaN` metido
+      // por SQL) no puede compararse; el hueco lo declara el propio invariante.
+      return null
+    }
+  }
+
   // ── Runs, con lo que `reconcile` selló en su día ────────────────────────────
   const runs = runRows.map((r) => {
     const reconcile = (r.reconcile ?? {}) as {
@@ -1604,6 +1660,10 @@ async function readDocumentsInvariantInput(
       partial: r.partial,
       reconcileStatus: r.reconcileStatus,
       promptSha: r.promptSha,
+      proposalSha: r.proposalSha,
+      proposalShaExpected: r.proposalSha === null ? null : shaOfProposal(r.proposal),
+      schemaSha: r.schemaSha,
+      schemaShaExpected: r.schemaVersion === EXTRACTION_SCHEMA_VERSION ? currentSchemaSha : null,
       provider: r.provider,
       quotaDeviationsCents: reconcile.quotaDeviationsCents ?? {},
       fieldConfidences: Object.values(origins).map((o) => o?.confidence ?? "no_verificado"),
@@ -1615,29 +1675,73 @@ async function readDocumentsInvariantInput(
     }
   })
 
-  // ── Libro registro: una anotación por asiento con documento ─────────────────
+  /**
+   * ── Libro registro (E8 ronda 1, auditor H-1 y H-2) ─────────────────────────
+   *
+   * Las CUOTAS salen del asiento contabilizado —en moneda base y con la
+   * diferencia de la rectificativa ya dentro—; la propuesta sellada se deriva
+   * en paralelo, convertida con la tasa del run y con el `rectificationDelta`
+   * aplicado, y viaja como CONTRASTE. I-E8-7a cuadra las dos derivaciones
+   * documento a documento; I-E8-15a/b/c cuadran el libro con los saldos del
+   * diario. Antes de esta ronda el libro salía sólo de la propuesta, en la
+   * moneda del documento y con el importe del sustituto: tres FAIL sobre
+   * quince asientos correctos.
+   */
   const proposalByRun = new Map(runRows.map((r) => [r.id, r.proposal]))
-  const deferredByRun = new Map(
+  const sealedByRun = new Map(
     runRows.map((r) => {
-      const reconcile = (r.reconcile ?? {}) as { checks?: { id: string; status: string }[] }
+      const reconcile = (r.reconcile ?? {}) as {
+        checks?: { id: string; status: string }[]
+        conversion?: { rateMicro?: string } | null
+        rectificationDelta?: { baseByRate: Record<string, number>; quotaByRate: Record<string, number> } | null
+      }
       const rc25 = (reconcile.checks ?? []).find((c) => c.id === "RC-25")
-      return [r.id, rc25?.status === "WARN"]
+      const rateMicro = reconcile.conversion?.rateMicro
+      return [
+        r.id,
+        {
+          deferred: rc25?.status === "WARN",
+          rateMicro: typeof rateMicro === "string" && rateMicro !== "" ? BigInt(rateMicro) : null,
+          rectificationDelta: reconcile.rectificationDelta ?? null,
+        },
+      ] as const
     })
   )
+  const taxRates = await listTaxRates(tx, {})
+  const rateBpsByCode: Record<string, number> = {}
+  for (const rate of taxRates) rateBpsByCode[rate.code] = rate.rateBps
+
   const vatBook: VatBookRow[] = []
   for (const entry of entries) {
     if (!entry.extractionRunId) continue
     const proposal = proposalByRun.get(entry.extractionRunId)
     if (!proposal || typeof proposal !== "object") continue
+    const sealed = sealedByRun.get(entry.extractionRunId)
     const documentDate = entry.documentDate ?? entry.entryDate
+    const bookable = proposal as unknown as BookableProposal
+    const opts: BookRowOptions = {
+      entryId: entry.id,
+      ivaPeriod: ivaPeriodOf(entry.receptionDate ?? null, documentDate),
+      documentDate,
+      deductionDate: entry.receptionDate && entry.receptionDate > documentDate ? entry.receptionDate : documentDate,
+      prorrataBps,
+      deferredByRc25: sealed?.deferred === true,
+      rateMicro: sealed?.rateMicro ?? null,
+      rectificationDelta: sealed?.rectificationDelta ?? null,
+      rateBpsByCode,
+    }
+    const fromDocument = vatBookRowFromProposal(bookable, opts)
+    const selfCharged =
+      bookable.docKind === "FACTURA_RECIBIDA_ISP" ||
+      (bookable.taxes ?? []).some((t) => t.operationKey === "ISP" || t.operationKey === "AIB")
     vatBook.push(
-      vatBookRowFromProposal(proposal as unknown as BookableProposal, {
-        entryId: entry.id,
-        ivaPeriod: ivaPeriodOf(entry.receptionDate ?? null, documentDate),
-        documentDate,
-        deductionDate: entry.receptionDate && entry.receptionDate > documentDate ? entry.receptionDate : documentDate,
-        prorrataBps,
-        deferredByRc25: deferredByRun.get(entry.extractionRunId) === true,
+      vatBookRowFromEntry(entry, {
+        ...opts,
+        inputVatCode: inputVat,
+        outputVatCode: outputVat,
+        purchase: fromDocument.tipo === "RECIBIDAS",
+        selfCharged,
+        contrast: contrastOf(fromDocument),
       })
     )
   }
@@ -1697,6 +1801,40 @@ async function readDocumentsInvariantInput(
     .filter(([, ids]) => ids.length > 1)
     .map(([sha, ids]) => ({ key: `sha256:${sha}`, transactionIds: ids, forced: ids.some((id) => forcedIds.has(id)) }))
 
+  /**
+   * ── I-E8-2 en producción (auditor H-3 / BUG-E8-1) ──────────────────────────
+   *
+   * Se leen del almacén, en streaming, **los bytes de los ficheros que
+   * respaldan un asiento** —los únicos que I-E8-2 mira— y se comparan con
+   * `files.sha256`. Si el fichero no está, es un FAIL con su ruta, no un WARN
+   * genérico de «sin comprobar».
+   *
+   * Acotado a esos ficheros a propósito: hashear el almacén entero en cada
+   * carga de la pestaña Auditoría sería un barrido de disco por petición. Con
+   * la caché por `ledgerHash` de `runLedgerInvariants`, en la práctica se hace
+   * una vez por estado del diario.
+   */
+  const runsWithEntry = new Set(entries.map((e) => e.extractionRunId).filter((id): id is string => Boolean(id)))
+  const filesToVerify = new Set(runRows.filter((r) => runsWithEntry.has(r.id)).map((r) => r.fileId))
+  const diskByFile = new Map<string, { sha256?: string; error?: string }>()
+  if (readStoredFile !== null && filesToVerify.size > 0) {
+    for (const f of fileRows) {
+      if (!filesToVerify.has(f.id)) continue
+      const read = await readStoredFile(organizationId, f.path)
+      diskByFile.set(f.id, "sha256" in read ? { sha256: read.sha256 } : { error: read.error })
+    }
+  }
+  const files: FileDocRef[] = fileRows.map((f) => {
+    const disk = diskByFile.get(f.id)
+    return {
+      id: f.id,
+      sha256: f.sha256,
+      path: f.path,
+      ...(disk?.sha256 !== undefined ? { diskSha256: disk.sha256 } : {}),
+      ...(disk?.error !== undefined ? { diskError: disk.error } : {}),
+    }
+  })
+
   return {
     runs,
     transactions: transactionRows.map((t) => ({
@@ -1714,7 +1852,7 @@ async function readDocumentsInvariantInput(
       rateSource: t.rateSource,
       extractionRunId: t.extractionRunId,
     })),
-    files: fileRows.map((f) => ({ id: f.id, sha256: f.sha256 })),
+    files,
     vatBook,
     vatBalances: [...balances.entries()].sort().map(([ivaPeriod, b]) => ({ ivaPeriod, ...b })),
     withholdings,
@@ -1772,6 +1910,12 @@ export async function runLedgerInvariants(
     actor?: Actor
     /** Ignora la caché por `ledgerHash` (los tests de corrupción la necesitan). */
     noCache?: boolean
+    /**
+     * Lector de los BYTES del almacén para I-E8-2 (auditor H-3). Lo aportan la
+     * pestaña del diario y los scripts con `sha256OfStoredFile` de
+     * `@/lib/files-integrity`; sin él, I-E8-2 se queda en WARN y lo dice.
+     */
+    readStoredFile?: StoredFileReader
   }
 ): Promise<InvariantRun> {
   return await tenantTransaction(organizationId, opts.actor?.userId ?? undefined, async (tx) => {
@@ -1853,7 +1997,8 @@ export async function runLedgerInvariants(
         organizationId,
         entries,
         accountMapByKey,
-        organization?.prorrataBps ?? null
+        organization?.prorrataBps ?? null,
+        opts.readStoredFile ?? null
       )
 
       // E5 · T8: las imputaciones VIGENTES del mismo periodo y las reglas con

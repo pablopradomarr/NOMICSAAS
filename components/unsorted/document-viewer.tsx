@@ -2,9 +2,10 @@
 
 import { Button } from "@/components/ui/button"
 import type { DocumentFileView } from "@/components/unsorted/types"
+import { DOCUMENT_STATUS_HEADER, DOCUMENT_UNAVAILABLE } from "@/lib/previews/unavailable"
 import { formatBytes } from "@/lib/utils"
 import Link from "next/link"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 /**
  * E8 · T15 — Visor del documento (panel izquierdo de `/unsorted/[fileId]`).
@@ -31,11 +32,46 @@ export function DocumentViewer({
   const total = Math.max(pagesTotal, 1)
   const [page, setPage] = useState(1)
   const [failed, setFailed] = useState(false)
+  /**
+   * **BUG-E8-2.** «La ficha existe y los bytes no» es un estado propio, y la
+   * pantalla tiene que decirlo: antes la ruta devolvía un 404 silencioso, el
+   * `onError` del `<img>` pintaba «no se ha podido componer la vista previa» y
+   * ofrecía descargar un documento que tampoco estaba. Se pregunta a la ruta
+   * —una `HEAD`, sin traerse la imagen— y se distingue el caso.
+   */
+  const [unavailable, setUnavailable] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetch(`/files/preview/${file.id}?page=${page}`, { method: "HEAD" })
+      .then((response) => {
+        if (cancelled) return
+        setUnavailable(response.headers.get(DOCUMENT_STATUS_HEADER) === DOCUMENT_UNAVAILABLE)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [file.id, page])
 
   return (
     <div className="space-y-3" data-testid="document-viewer">
       <div className="flex min-h-[420px] items-center justify-center overflow-hidden rounded-md border bg-muted/20 p-2">
-        {failed ? (
+        {unavailable ? (
+          <div
+            className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-6 text-center text-sm text-amber-900"
+            data-testid="document-unavailable"
+            data-notice="DOCUMENTO_NO_DISPONIBLE"
+          >
+            <p className="font-medium">El documento no está disponible en el almacén.</p>
+            <p>
+              La ficha de <span className="font-code">{file.filename}</span> existe —con su{" "}
+              <span className="font-code">sha256</span> registrado— pero sus bytes no están en la ruta registrada.
+              Vuelva a subirlo: hasta entonces el invariante <span className="font-code">I-E8-2</span> marca en FAIL el
+              asiento que se apoye en él, y la vista previa no se puede componer.
+            </p>
+          </div>
+        ) : failed ? (
           <div className="p-6 text-center text-sm text-muted-foreground">
             <p>No se ha podido componer la vista previa de esta página.</p>
             <p>

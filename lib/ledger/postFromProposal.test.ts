@@ -369,3 +369,91 @@ describe("anticipo de cliente CON cobro registrado", () => {
     expect(r.value.draft.lines.find((l) => l.accountCode === "477")?.creditCents).toBe(210000)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E8 ronda 1 · revisor #4 — `originalAmountCents` sale del DOCUMENTO
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ronda 1 · el importe original de la línea monetaria no se obtiene deshaciendo la conversión", () => {
+  /**
+   * `reverseConvert(convert(x))` es lossy salvo para tasas próximas a 1. Este
+   * test lo demuestra sobre **miles de importes** con `rateMicro = 920000`
+   * (1 CHF = 0,92 EUR) y comprueba que el motor NO usa ese camino: el importe
+   * en divisa de la línea de pasivo es, para todos ellos, el total del papel.
+   *
+   * El golden test de C12 pasaba con 925 926 µ porque ahí el round-trip acierta;
+   * eso es exactamente lo que escondía el defecto.
+   */
+  const RATE = BigInt(920_000)
+
+  const convert = (cents: number): number => {
+    const product = BigInt(cents) * RATE
+    const scale = BigInt(1_000_000)
+    const quotient = product / scale
+    const remainder = product - quotient * scale
+    const twice = remainder * BigInt(2)
+    const up = twice > scale || (twice === scale && quotient % BigInt(2) === BigInt(1))
+    return Number(up ? quotient + BigInt(1) : quotient)
+  }
+
+  const reverse = (cents: number): number => {
+    const product = BigInt(cents) * BigInt(1_000_000)
+    const quotient = product / RATE
+    const remainder = product - quotient * RATE
+    return Number(remainder * BigInt(2) >= RATE ? quotient + BigInt(1) : quotient)
+  }
+
+  it("el round-trip por la tasa pierde céntimos: no es una fuente admisible del importe original", () => {
+    let perdidos = 0
+    for (let cents = 100_000; cents < 120_000; cents++) {
+      if (reverse(convert(cents)) !== cents) perdidos++
+    }
+    // Con 0,92 falla en cerca de una de cada doce cifras. La aserción es sobre
+    // «> 0» para que no dependa del reparto exacto, y el número medido va en el
+    // mensaje por si algún día cambia el redondeo.
+    expect(`${perdidos} de 20 000 importes`).not.toBe("0 de 20 000 importes")
+    expect(perdidos).toBeGreaterThan(1_000)
+  })
+
+  it("con una tasa lejana de 1, la línea de pasivo lleva el importe del documento al céntimo", () => {
+    const c = caseById("C12")
+    const base = inputProposalFor(c)
+    // La misma factura, en francos y con una tasa que el round-trip no soporta.
+    const proposal = { ...base, currency: "CHF" }
+    const context = reconcileContextFor(c, {
+      rate: { id: "RATE-CHF", date: "2026-11-20", from: "CHF", to: "EUR", rateMicro: 920_000, source: "ECB_FRANKFURTER" },
+    })
+    const rec = reconcile(proposal, { ...context, currencies: [...context.currencies, { code: "CHF", exponent: 2 }] })
+    expect(rec.checks.find((k) => k.id === "RC-14")?.status).toBe("PASS")
+
+    const posted = unwrap(postFromProposal(rec, fixtureLedgerContext(c)))
+    const monetary = posted.draft.lines.filter((l) => l.originalCurrency !== null && l.originalCurrency !== undefined)
+    expect(monetary).toHaveLength(1)
+    expect(monetary[0].originalCurrency).toBe("CHF")
+    expect(monetary[0].originalAmountCents).toBe(proposal.totalCents)
+    // Y NO es lo que habría devuelto la inversa, que es el defecto que se cierra.
+    expect(monetary[0].originalAmountCents).not.toBe(reverse(monetary[0].creditCents + monetary[0].debitCents) - 1)
+
+    // El asiento sigue cuadrando y el bloque de pasivo conoce su importe original.
+    const debit = posted.draft.lines.reduce((a, l) => a + l.debitCents, 0)
+    const credit = posted.draft.lines.reduce((a, l) => a + l.creditCents, 0)
+    expect(debit).toBe(credit)
+    expect(posted.payableBlocks[0].originalAmountCents).toBe(proposal.totalCents)
+  })
+
+  it("documento MIXTO en divisa: la suma de los importes originales de los bloques es el total del papel", () => {
+    const c = caseById("C05") // dos bloques de pasivo: 523 (inmovilizado) y 410
+    const base = inputProposalFor(c)
+    const proposal = { ...base, currency: "CHF" }
+    const context = reconcileContextFor(c, {
+      rate: { id: "RATE-CHF", date: "2026-05-05", from: "CHF", to: "EUR", rateMicro: 920_000, source: "ECB_FRANKFURTER" },
+    })
+    const rec = reconcile(proposal, { ...context, currencies: [...context.currencies, { code: "CHF", exponent: 2 }] })
+    const posted = unwrap(postFromProposal(rec, fixtureLedgerContext(c)))
+    expect(posted.payableBlocks.length).toBeGreaterThan(1)
+    const suma = posted.payableBlocks.reduce((a, b) => a + (b.originalAmountCents ?? 0), 0)
+    expect(suma).toBe(proposal.totalCents)
+    const monetary = posted.draft.lines.filter((l) => l.originalCurrency !== null && l.originalCurrency !== undefined)
+    expect(monetary.reduce((a, l) => a + (l.originalAmountCents ?? 0), 0)).toBe(proposal.totalCents)
+  })
+})

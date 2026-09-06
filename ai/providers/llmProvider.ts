@@ -24,10 +24,10 @@
  * (`lib/encryption.ts`); aquí no se guarda ninguna clave ni ningún cuerpo de
  * respuesta, sólo códigos de error.
  */
-import { ChatOpenAI } from "@langchain/openai"
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai"
-import { ChatMistralAI } from "@langchain/mistralai"
-import { BaseMessage, HumanMessage } from "@langchain/core/messages"
+import type { ChatOpenAI } from "@langchain/openai"
+import type { ChatGoogleGenerativeAI } from "@langchain/google-genai"
+import type { ChatMistralAI } from "@langchain/mistralai"
+import type { BaseMessage } from "@langchain/core/messages"
 import type { AnalyzeAttachment } from "@/ai/attachments"
 
 export type LLMProvider = "openai" | "google" | "mistral" | "openai_compatible"
@@ -107,6 +107,52 @@ type LLMModel = ChatOpenAI | ChatGoogleGenerativeAI | ChatMistralAI
 
 type MessageContent = Array<{ type: string; text?: string; image_url?: { url: string } }>
 
+/**
+ * **Ronda 1 de E8, revisor #5 — los tres SDK se cargan cuando se llama al
+ * modelo, no cuando alguien importa este fichero.**
+ *
+ * `@langchain/openai` + `@langchain/mistralai` cuestan ~1,3 s de carga. Con los
+ * `import` arriba, ese coste entraba en el grafo de todo lo que roza el módulo:
+ * `app/(app)/settings/actions.ts` importa `testLLMProvider` para el botón de
+ * «probar proveedor» y arrastraba los tres SDK en cada arranque, lo que hacía
+ * que `tests/integration/authz-actions.test.ts` agotara los 5 000 ms de vitest
+ * en su `await import()`. Las importaciones de tipo NO tienen coste en tiempo
+ * de ejecución: sólo las de valor, y son éstas.
+ *
+ * No hay caché explícita: el registro de módulos de Node ya memoiza, así que la
+ * segunda llamada no vuelve a leer nada del disco.
+ */
+async function createChatModel(config: LLMConfig): Promise<LLMModel | null> {
+  const temperature = 0
+  if (config.provider === "openai" || config.provider === "openai_compatible") {
+    const { ChatOpenAI } = await import("@langchain/openai")
+    if (config.provider === "openai") {
+      return new ChatOpenAI({ apiKey: config.apiKey, model: config.model, temperature })
+    }
+    return new ChatOpenAI({
+      apiKey: config.apiKey || "not-needed",
+      model: config.model,
+      temperature,
+      configuration: { baseURL: config.baseUrl?.trim() },
+    })
+  }
+  if (config.provider === "google") {
+    const { ChatGoogleGenerativeAI } = await import("@langchain/google-genai")
+    return new ChatGoogleGenerativeAI({ apiKey: config.apiKey, model: config.model, temperature })
+  }
+  if (config.provider === "mistral") {
+    const { ChatMistralAI } = await import("@langchain/mistralai")
+    return new ChatMistralAI({ apiKey: config.apiKey, model: config.model, temperature })
+  }
+  return null
+}
+
+/** `HumanMessage` también es un valor: se carga con el modelo, no antes. */
+async function humanMessage(content: MessageContent): Promise<BaseMessage> {
+  const { HumanMessage } = await import("@langchain/core/messages")
+  return new HumanMessage({ content })
+}
+
 function extractErrorInfo(error: unknown): {
   message: string | undefined
   cause: unknown
@@ -132,24 +178,8 @@ async function requestLLMUnified<T>(config: LLMConfig, req: LLMRequest<T>): Prom
   }
 
   try {
-    const temperature = 0
-    let model: LLMModel
-    if (config.provider === "openai") {
-      model = new ChatOpenAI({ apiKey: config.apiKey, model: config.model, temperature })
-    } else if (config.provider === "google") {
-      model = new ChatGoogleGenerativeAI({ apiKey: config.apiKey, model: config.model, temperature })
-    } else if (config.provider === "mistral") {
-      model = new ChatMistralAI({ apiKey: config.apiKey, model: config.model, temperature })
-    } else if (config.provider === "openai_compatible") {
-      model = new ChatOpenAI({
-        apiKey: config.apiKey || "not-needed",
-        model: config.model,
-        temperature,
-        configuration: { baseURL: config.baseUrl?.trim() },
-      })
-    } else {
-      return { ...base, error: "Proveedor desconocido" }
-    }
+    const model = await createChatModel(config)
+    if (model === null) return { ...base, error: "Proveedor desconocido" }
 
     const messageContent: MessageContent = [{ type: "text", text: req.prompt }]
     if (req.attachments && req.attachments.length > 0) {
@@ -160,7 +190,7 @@ async function requestLLMUnified<T>(config: LLMConfig, req: LLMRequest<T>): Prom
         }))
       )
     }
-    const messages: BaseMessage[] = [new HumanMessage({ content: messageContent })]
+    const messages: BaseMessage[] = [await humanMessage(messageContent)]
 
     let response: Record<string, unknown>
     let usage: ReturnType<typeof readUsage> = {}
@@ -238,32 +268,16 @@ const TINY_TEST_IMAGE_BASE64 =
 
 export async function testLLMProvider(config: LLMConfig): Promise<LLMTestResult> {
   try {
-    const temperature = 0
-    let model: LLMModel
-    if (config.provider === "openai") {
-      model = new ChatOpenAI({ apiKey: config.apiKey, model: config.model, temperature })
-    } else if (config.provider === "google") {
-      model = new ChatGoogleGenerativeAI({ apiKey: config.apiKey, model: config.model, temperature })
-    } else if (config.provider === "mistral") {
-      model = new ChatMistralAI({ apiKey: config.apiKey, model: config.model, temperature })
-    } else if (config.provider === "openai_compatible") {
-      model = new ChatOpenAI({
-        apiKey: config.apiKey || "not-needed",
-        model: config.model,
-        temperature,
-        configuration: { baseURL: config.baseUrl?.trim() },
-      })
-    } else {
+    const model = await createChatModel(config)
+    if (model === null) {
       return { success: false, supportsVision: false, message: `Unknown provider: ${config.provider}` }
     }
 
     const messages: BaseMessage[] = [
-      new HumanMessage({
-        content: [
-          { type: "text", text: "Reply with the single word: ok" },
-          { type: "image_url", image_url: { url: `data:image/png;base64,${TINY_TEST_IMAGE_BASE64}` } },
-        ],
-      }),
+      await humanMessage([
+        { type: "text", text: "Reply with the single word: ok" },
+        { type: "image_url", image_url: { url: `data:image/png;base64,${TINY_TEST_IMAGE_BASE64}` } },
+      ]),
     ]
 
     const raw = await model.invoke(messages)

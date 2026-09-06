@@ -34,7 +34,11 @@ import {
   checkIE87b,
   checkN5,
   dataQualityWarnings,
+  checkIE87a,
+  checkIE811,
+  contrastOf,
   runDocumentInvariants,
+  vatBookRowFromEntry,
   vatBookRowFromProposal,
   E8_INVARIANT_IDS,
   E8_SEAL_REASONS,
@@ -492,6 +496,18 @@ describe("E8 · bloque documental", () => {
         cuotaDevengadaIspAibCents: 0,
         documentDate: "2026-03-28",
         deductionDate: "2026-05-04",
+        /**
+         * Ronda 1 (auditor H-1/H-2): la anotación sale del ASIENTO y lleva
+         * como contraste la derivada del DOCUMENTO. I-E8-7a compara las dos.
+         */
+        contrast: {
+          baseCents: 100000,
+          cuotaTotalCents: 21000,
+          cuotaDeducibleCents: 21000,
+          cuotaNoDeducibleAlCosteCents: 0,
+          cuotaRepercutidaCents: 0,
+          cuotaDevengadaIspAibCents: 0,
+        },
       },
     ],
     vatBalances: [{ ivaPeriod: "2026-Q2", saldo472Cents: 21000, saldo477Cents: 0 }],
@@ -765,4 +781,152 @@ describe("E8 · bloque documental", () => {
     )
     expect(conDocumentos.checks.filter((c) => c.id.startsWith("I-E8-")).map((c) => c.id)).toEqual(E8_INVARIANT_IDS)
   })
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // E8 · ronda 1 de corrección — el libro registro sale del ASIENTO y la
+  // propuesta CONTRASTA (auditor H-1, H-2 y H-5)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  describe("E8 ronda 1 · libro registro derivado del asiento, propuesta como contraste", () => {
+    const opts = {
+      entryId: "entry-fx",
+      ivaPeriod: "2026-Q4",
+      documentDate: "2026-11-20",
+      deductionDate: "2026-11-23",
+      prorrataBps: null,
+    } as const
+
+    /** C12 del fixture: 10 000,00 USD al 21 % y al 10 %, tasa 925 926 µ. */
+    const c12: import("@/lib/ledger/invariants").BookableProposal = {
+      docKind: "FACTURA_RECIBIDA",
+      lines: [
+        { kind: "OPERACION", baseCents: 500_000, taxRateCode: "IVA_21", deductibility: "FULL" },
+        { kind: "OPERACION", baseCents: 359_091, taxRateCode: "IVA_10", deductibility: "FULL" },
+      ],
+      taxes: [
+        { taxRateCode: "IVA_21", baseCents: 500_000, quotaCents: 105_000 },
+        { taxRateCode: "IVA_10", baseCents: 359_091, quotaCents: 35_909 },
+      ],
+    }
+
+    const fxEntry = (): PostedEntry => ({
+      id: "entry-fx",
+      organizationId: "org-test",
+      fiscalYearId: "fy-2026",
+      entryNumber: 12,
+      documentDate: "2026-11-20",
+      accrualDate: null,
+      entryDate: "2026-11-20",
+      receptionDate: "2026-11-23",
+      description: "C12 · factura en dólares",
+      kind: "NORMAL",
+      taxRoundingMode: "PER_TIPO",
+      sourceType: "INVOICE_IN",
+      lines: [
+        { lineNo: 1, accountCode: "600", debitCents: 462963, creditCents: 0, entryDate: "2026-11-20", fiscalYearId: "fy-2026", entryKind: "NORMAL" },
+        { lineNo: 2, accountCode: "600", debitCents: 332492, creditCents: 0, entryDate: "2026-11-20", fiscalYearId: "fy-2026", entryKind: "NORMAL" },
+        { lineNo: 3, accountCode: "472", debitCents: 97222, creditCents: 0, entryDate: "2026-11-20", fiscalYearId: "fy-2026", entryKind: "NORMAL" },
+        { lineNo: 4, accountCode: "472", debitCents: 33249, creditCents: 0, entryDate: "2026-11-20", fiscalYearId: "fy-2026", entryKind: "NORMAL" },
+        { lineNo: 5, accountCode: "400", debitCents: 0, creditCents: 925926, entryDate: "2026-11-20", fiscalYearId: "fy-2026", entryKind: "NORMAL" },
+      ],
+    })
+
+    it("H-1 · sin tasa, la anotación del documento sigue en DÓLARES y no cuadra con el diario", () => {
+      const sinTasa = vatBookRowFromProposal(c12, opts)
+      expect(sinTasa.cuotaDeducibleCents).toBe(140_909) // 105 000 + 35 909, en USD
+      // Que es justo la diferencia de −10 438 que el auditor midió contra el diario.
+      expect(sinTasa.cuotaDeducibleCents - 130_471).toBe(10_438)
+    })
+
+    it("H-1 · con la tasa persistida, la anotación del documento llega en euros al céntimo del asiento", () => {
+      const conTasa = vatBookRowFromProposal(c12, { ...opts, rateMicro: BigInt(925_926) })
+      expect(conTasa.cuotaDeducibleCents).toBe(130_471)
+      expect(conTasa.baseCents).toBe(795_455)
+
+      const delAsiento = vatBookRowFromEntry(fxEntry(), {
+        ...opts,
+        rateMicro: BigInt(925_926),
+        inputVatCode: "472",
+        outputVatCode: "477",
+        purchase: true,
+        selfCharged: false,
+        contrast: contrastOf(conTasa),
+      })
+      expect(delAsiento.cuotaDeducibleCents).toBe(130_471)
+      const r = checkIE87a({ ...baseDocuments(), vatBook: [delAsiento] }, [fxEntry()])
+      expect(r.status).toBe("PASS")
+    })
+
+    it("H-1 · si la conversión del documento no es la del asiento, I-E8-7a lo dice con la diferencia", () => {
+      const malConvertido = vatBookRowFromProposal(c12, opts) // sin tasa: en dólares
+      const delAsiento = vatBookRowFromEntry(fxEntry(), {
+        ...opts,
+        inputVatCode: "472",
+        outputVatCode: "477",
+        purchase: true,
+        selfCharged: false,
+        contrast: contrastOf(malConvertido),
+      })
+      const r = checkIE87a({ ...baseDocuments(), vatBook: [delAsiento] }, [fxEntry()])
+      expect(r.status).toBe("FAIL")
+      expect(r.evidencia).toMatch(/cuota deducible/)
+      expect(r.evidencia).toMatch(/-10438/)
+    })
+
+    it("H-2 · rectificativa por SUSTITUCIÓN: la anotación es la DIFERENCIA, no la cuota del sustituto", () => {
+      // C07: factura original de 100 000 + 21 000 sustituida por otra de 80 000.
+      const c07: import("@/lib/ledger/invariants").BookableProposal = {
+        docKind: "ABONO_EMITIDO",
+        lines: [{ kind: "OPERACION", baseCents: 80_000, taxRateCode: "IVA_21" }],
+        taxes: [{ taxRateCode: "IVA_21", baseCents: 80_000, quotaCents: 16_800 }],
+      }
+      const sinDelta = vatBookRowFromProposal(c07, { ...opts, ivaPeriod: "2026-Q3" })
+      expect(sinDelta.cuotaRepercutidaCents).toBe(-16_800)
+
+      const conDelta = vatBookRowFromProposal(c07, {
+        ...opts,
+        ivaPeriod: "2026-Q3",
+        rectificationDelta: { baseByRate: { IVA_21: 20_000 }, quotaByRate: { IVA_21: 4_200 } },
+      })
+      expect(conDelta.cuotaRepercutidaCents).toBe(-4_200)
+      // La diferencia entre las dos derivaciones es el +12 600 que rompía I-E8-15c.
+      expect(conDelta.cuotaRepercutidaCents - sinDelta.cuotaRepercutidaCents).toBe(12_600)
+    })
+
+    it("sin contraste, I-E8-7a no miente con un PASS: avisa de que no ha podido comparar", () => {
+      const docs = baseDocuments()
+      docs.vatBook = docs.vatBook.map((row) => ({ ...row, contrast: null }))
+      const r = checkIE87a(docs, [documentEntry()])
+      expect(r.status).toBe("WARN")
+      expect(r.evidencia).toMatch(/sin propuesta reconstruible/)
+    })
+
+    it("H-5 · I-E8-11 recomputa `proposal_sha` y delata un run editado después de sellarse", () => {
+      const docs = baseDocuments()
+      docs.runs = [{ ...docs.runs[0], proposalSha: "1".repeat(64), proposalShaExpected: "1".repeat(64) }]
+      expect(checkIE811(docs).status).toBe("PASS")
+
+      docs.runs = [{ ...docs.runs[0], proposalSha: "1".repeat(64), proposalShaExpected: "2".repeat(64) }]
+      const r = checkIE811(docs)
+      expect(r.status).toBe("FAIL")
+      expect(r.evidencia).toMatch(/proposal_sha/)
+      expect(r.evidencia).toMatch(/editado después de sellarse/)
+    })
+
+    it("H-5 · el sello del ESQUEMA también se recomputa cuando la versión es la vigente", () => {
+      const docs = baseDocuments()
+      docs.runs = [{ ...docs.runs[0], schemaSha: "a".repeat(64), schemaShaExpected: "b".repeat(64) }]
+      expect(checkIE811(docs).evidencia).toMatch(/schema_sha/)
+    })
+
+    it("H-3 · un fichero que respalda un asiento y ya no se puede leer del almacén es FAIL, no WARN", () => {
+      const docs = baseDocuments()
+      docs.files = [{ id: docs.files[0].id, sha256: docs.files[0].sha256, path: "unsorted/x.pdf", diskError: "el fichero no está en el almacén" }]
+      const r = checkIE82(docs, [documentEntry()])
+      expect(r.status).toBe("FAIL")
+      expect(r.evidencia).toMatch(/unsorted\/x\.pdf/)
+      expect(r.evidencia).toMatch(/no está en el almacén/)
+    })
+  })
+
 })

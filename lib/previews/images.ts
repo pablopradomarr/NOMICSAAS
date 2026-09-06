@@ -3,7 +3,6 @@
 import { fileExists, getOrganizationPreviewsDirectory, OrganizationRef, safePathJoin } from "@/lib/files"
 import fs from "fs/promises"
 import path from "path"
-import sharp from "sharp"
 import config from "../config"
 import { DEFAULT_PREVIEW_FORMAT, PreviewFormat, previewContentType, previewExtension } from "./format"
 
@@ -15,6 +14,9 @@ export async function resizeImage(
   quality: number = config.upload.images.quality,
   format: PreviewFormat = DEFAULT_PREVIEW_FORMAT
 ): Promise<{ contentType: string; resizedPath: string }> {
+  // Ronda 1 de E8, revisor #5: `sharp` es un binario nativo de ~2,3 s de carga.
+  // Perezoso, para que no entre en el grafo de quien sólo importa esta función.
+  const { default: sharp } = await import("sharp")
   try {
     const previewsDirectory = getOrganizationPreviewsDirectory(organization)
     await fs.mkdir(previewsDirectory, { recursive: true })

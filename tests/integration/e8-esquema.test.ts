@@ -222,6 +222,25 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 · T3 — CHECK y triggers del esquema",
       }
     })
 
+    /**
+     * Ronda 1 de corrección, revisor #6 (PUEDE) — migración
+     * `20260915090000_e8_ronda1_transiciones`. §2.3 del diseño enumera
+     * `DRAFT → PROPOSED → POSTED → VOID`, el atajo `DRAFT → POSTED` y la vuelta
+     * `VOID → PROPOSED`. `PROPOSED → DRAFT` era una rama de más respecto del
+     * contrato aprobado, inocua pero no enumerada, y se ha retirado.
+     */
+    it("PROPOSED → DRAFT está PROHIBIDA: no está en el contrato de ADR-0014 D1", async () => {
+      const id = await newTransaction()
+      await q(`UPDATE transactions SET status = 'PROPOSED' WHERE id = $1::uuid`, [id])
+      const error = await failure(`UPDATE transactions SET status = 'DRAFT' WHERE id = $1::uuid`, [id])
+      expect(error).toMatch(/no permitida/)
+      // Y las que sí están en el contrato siguen abiertas.
+      expect(await failure(`UPDATE transactions SET status = 'POSTED', journal_entry_id = $2::uuid WHERE id = $1::uuid`, [
+        id,
+        await newEntry(),
+      ])).toBeNull()
+    })
+
     it("`voided_entry_ids` es APPEND-ONLY: no se puede vaciar ni acortar", async () => {
       const id = await newTransaction()
       const entry = await newEntry()

@@ -34,6 +34,7 @@ import {
   forceOverrideSchema,
   formatZodError,
   markSimplifiedQualifiedSchema,
+  MOTIVO_MIN,
   previewProposalSchema,
   revoidAndRedoSchema,
   splitProposalSchema,
@@ -48,7 +49,7 @@ import { reconcile, type ReconcileResult } from "@/lib/extraction/reconcile"
 import { applyFieldOverride, documentWarnings, sealedReconcile } from "@/lib/extraction/seal"
 import { splitProposal } from "@/lib/extraction/split"
 import type { ExtractionProposal } from "@/lib/extraction/types"
-import { newRateMemo } from "@/lib/fx/rates"
+import { ExchangeRateUnavailableError, newRateMemo } from "@/lib/fx/rates"
 import { postFromProposal, previewFromProposal, type PostedProposal } from "@/lib/ledger/postFromProposal"
 import type { TemplateCode } from "@/lib/ledger/templates/types"
 import { getOrganizationUploadsDirectory, getTransactionFileUploadPath, safePathJoin, unsortedFilePath } from "@/lib/files"
@@ -245,7 +246,9 @@ const previewProposalActionImpl = withOrg(
     const loaded = await loadRun(db, parsed.data.runId)
     if ("error" in loaded) return { success: false, error: loaded.error }
 
-    const proposal = parsed.data.proposal ? (parsed.data.proposal as unknown as ExtractionProposal) : loaded.proposal
+    const proposal = parsed.data.proposal
+      ? withSealedQualification(parsed.data.proposal as unknown as ExtractionProposal, loaded.proposal)
+      : loaded.proposal
     if (!proposal) return { success: false, error: "El run no tiene propuesta que previsualizar" }
 
     const edited = parsed.data.proposal !== undefined && proposalHash(proposal) !== loaded.run.proposalSha
@@ -562,42 +565,64 @@ const markSimplifiedQualifiedActionImpl = withOrg(
  * viven arriba envueltos en `withOrg(<rol>)` —que es quien aplica la matriz de
  * roles y traduce el `AuthzError` a «Sin permiso»— y aquí se exponen con la
  * misma forma que el resto de módulos de acciones del producto.
+ *
+ * **E8 ronda 1 (auditor H-4) — `guardingRates`.** `lib/fx/rates.ts` LANZA
+ * `ExchangeRateUnavailableError` cuando la fuente no publica, y hace bien:
+ * nunca se inventa una tasa. Pero nadie la capturaba, así que la excepción
+ * atravesaba `buildReconcileContext` y salía de la server action rompiendo su
+ * contrato `ActionState`: el usuario veía un error genérico de servidor y la
+ * rama «sin tasa» de **RC-14** era código muerto en producción, porque `rate`
+ * sólo llega a `null` cuando la divisa es la moneda base, caso que ni siquiera
+ * entra en esa rama. Aquí se traduce a un `ActionState` con el texto de RC-14 y
+ * su evidencia (par, fecha y causa), que es exactamente lo que la pantalla
+ * necesita decir: **falta la tasa, no se ha guardado nada y no se aproxima**.
  */
+const rc14Message = (error: ExchangeRateUnavailableError): string =>
+  `RC-14 · sin tasa persistida para ${error.from}→${error.to} del ${error.date}. ` +
+  "No se convierte con otra fuente ni con otro día, así que no se ha guardado nada. " +
+  "Reintente cuando la fuente publique, o precargue el periodo en Configuración → Monedas."
+
+function guardingRates<T>(run: () => Promise<T>): Promise<T> {
+  return run().catch((error: unknown) => {
+    if (!(error instanceof ExchangeRateUnavailableError)) throw error
+    return { success: false, error: rc14Message(error) } as T
+  })
+}
 
 export async function analyzeFileAction(input: unknown): Promise<Awaited<ReturnType<typeof analyzeFileActionImpl>>> {
-  return await analyzeFileActionImpl(input)
+  return await guardingRates(() => analyzeFileActionImpl(input))
 }
 
 export async function analyzeBatchAction(input: unknown): Promise<Awaited<ReturnType<typeof analyzeBatchActionImpl>>> {
-  return await analyzeBatchActionImpl(input)
+  return await guardingRates(() => analyzeBatchActionImpl(input))
 }
 
 export async function previewProposalAction(input: unknown): Promise<Awaited<ReturnType<typeof previewProposalActionImpl>>> {
-  return await previewProposalActionImpl(input)
+  return await guardingRates(() => previewProposalActionImpl(input))
 }
 
 export async function confirmProposalAction(input: unknown): Promise<Awaited<ReturnType<typeof confirmProposalActionImpl>>> {
-  return await confirmProposalActionImpl(input)
+  return await guardingRates(() => confirmProposalActionImpl(input))
 }
 
 export async function confirmBatchAction(input: unknown): Promise<Awaited<ReturnType<typeof confirmBatchActionImpl>>> {
-  return await confirmBatchActionImpl(input)
+  return await guardingRates(() => confirmBatchActionImpl(input))
 }
 
 export async function splitProposalAction(input: unknown): Promise<Awaited<ReturnType<typeof splitProposalActionImpl>>> {
-  return await splitProposalActionImpl(input)
+  return await guardingRates(() => splitProposalActionImpl(input))
 }
 
 export async function revoidAndRedoAction(input: unknown): Promise<Awaited<ReturnType<typeof revoidAndRedoActionImpl>>> {
-  return await revoidAndRedoActionImpl(input)
+  return await guardingRates(() => revoidAndRedoActionImpl(input))
 }
 
 export async function forceOverrideAction(input: unknown): Promise<Awaited<ReturnType<typeof forceOverrideActionImpl>>> {
-  return await forceOverrideActionImpl(input)
+  return await guardingRates(() => forceOverrideActionImpl(input))
 }
 
 export async function markSimplifiedQualifiedAction(input: unknown): Promise<Awaited<ReturnType<typeof markSimplifiedQualifiedActionImpl>>> {
-  return await markSimplifiedQualifiedActionImpl(input)
+  return await guardingRates(() => markSimplifiedQualifiedActionImpl(input))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -612,6 +637,54 @@ async function loadRun(db: TenantClient, runId: string): Promise<LoadedRun | { e
   const file = await getFileById(db, run.fileId)
   if (!file) return { error: "El fichero de la extracción no existe en esta organización" }
   return { run, file, proposal: proposalOf(run) }
+}
+
+/**
+ * **E8 ronda 1, revisor #2.** La marca de «factura simplificada cualificada»
+ * sale SIEMPRE del run sellado, nunca del cuerpo de la petición: zod ya la
+ * rechaza en la entrada (`submittedProposalSchema`) y aquí se recupera de la
+ * propuesta que escribió `markSimplifiedQualifiedAction` con su `AuditLog`.
+ *
+ * Se reinyecta antes de cualquier `proposalHash`, para que reenviar la misma
+ * propuesta de un run ya cualificado no cuente como edición y no engendre una
+ * revisión espuria.
+ */
+function withSealedQualification(
+  submitted: ExtractionProposal,
+  sealed: ExtractionProposal | null
+): ExtractionProposal {
+  if (sealed?.simplifiedQualified !== true) return submitted
+  return { ...submitted, simplifiedQualified: true }
+}
+
+/**
+ * **E8 ronda 1, revisor #3.** Los campos que el veredicto deja en
+ * `no_verificado`. «Con algún campo no verificado, exige motivo» (§6 del
+ * diseño) se aplicaba SÓLO en el navegador: un control de auditoría que vive en
+ * el cliente no es un control. El servidor lo recalcula desde `fieldOrigins`,
+ * que es el mismo sitio del que la pantalla lo saca.
+ */
+function unverifiedFieldsOf(result: ReconcileResult, sealed?: unknown): string[] {
+  const out = new Set<string>()
+  /**
+   * Dos fuentes, y las dos hacen falta:
+   *
+   *  · las procedencias que el veredicto acaba de recalcular, que es lo que la
+   *    pantalla pinta;
+   *  · y las **selladas en el run**, porque un campo forzado por
+   *    `forceOverrideAction` queda en `no_verificado` en el run de revisión y
+   *    `reconcile()` no puede saber que alguien lo tecleó: si sólo se mirase lo
+   *    recalculado, el forzado perdería su marca justo al confirmar, que es el
+   *    momento en el que el motivo importa.
+   */
+  for (const origins of [result.fieldOrigins as unknown, sealed]) {
+    const map = (origins ?? {}) as Record<string, { confidence?: string } | undefined>
+    if (typeof map !== "object") continue
+    for (const [key, value] of Object.entries(map)) {
+      if (value?.confidence === "no_verificado") out.add(key)
+    }
+  }
+  return [...out].sort()
 }
 
 type Judged = {
@@ -782,7 +855,9 @@ async function confirmOne(
   const loaded = await loadRun(db, opts.runId)
   if ("error" in loaded) return { error: loaded.error }
 
-  const edited = opts.forceRevision === true || proposalHash(opts.proposal) !== loaded.run.proposalSha
+  // Revisor #2: la marca de ticket cualificado la pone el run, no la petición.
+  const proposal = withSealedQualification(opts.proposal, loaded.proposal)
+  const edited = opts.forceRevision === true || proposalHash(proposal) !== loaded.run.proposalSha
 
   // Idempotencia de negocio: si esta extracción (o su revisión) ya tiene
   // asiento vivo, se devuelve el que hay. Confirmar dos veces no contabiliza
@@ -802,7 +877,7 @@ async function confirmOne(
     }
   }
 
-  const judged = await judge(db, org, loaded.run, loaded.file, opts.proposal, {
+  const judged = await judge(db, org, loaded.run, loaded.file, proposal, {
     asRevision: edited,
     ...(opts.skipDuplicateCheck ? { skipDuplicateCheck: true } : {}),
     ...(opts.categoryCode === undefined ? {} : { categoryCode: opts.categoryCode }),
@@ -822,6 +897,22 @@ async function confirmOne(
   const duplicate = judged.result.checks.find((c) => c.id === "RC-12" && c.status !== "PASS")
   if (duplicate && !opts.forceReason) {
     return { error: `${duplicate.message}. Para contabilizarlo igualmente hace falta un motivo (queda en el registro de auditoría)` }
+  }
+
+  /**
+   * **Revisor #3 — el motivo por campos `no_verificado` se exige en el
+   * SERVIDOR.** El diálogo de la pantalla ya lo pedía; el servidor sólo lo
+   * exigía para RC-12, así que un POST directo contabilizaba sin él y el
+   * `AuditLog` quedaba sin razón. El lote no pasa por aquí con campos sin
+   * verificar: `batchIneligibility` los aparta antes.
+   */
+  const unverified = unverifiedFieldsOf(judged.result, loaded.run.fieldOrigins)
+  if (unverified.length > 0 && (opts.forceReason ?? "").trim().length < MOTIVO_MIN) {
+    return {
+      error:
+        `Hay ${unverified.length} campo(s) sin verificar (${unverified.slice(0, 6).join(", ")}). ` +
+        `Confirmar es asumirlos: hace falta un motivo de al menos ${MOTIVO_MIN} caracteres, que queda en el registro de auditoría`,
+    }
   }
 
   const refDate = todayLocalDate()
@@ -930,6 +1021,9 @@ async function confirmOne(
         ivaPeriod: draft.value.ivaPeriod,
         sellos: judged.result.sellos,
         warnings: judged.warnings,
+        /** Revisor #3: qué se asumió sin verificar, y con qué motivo. */
+        camposNoVerificados: unverified,
+        simplifiedQualified: proposal.simplifiedQualified === true,
       },
       reason: opts.forceReason ?? null,
       userId,
@@ -1126,7 +1220,17 @@ function idempotencyKeyFor(runId: string, proposalSha: string, attempt: number, 
   return `e8-${digest.slice(0, 40)}`
 }
 
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+/**
+ * Mensaje de un error para `ActionState`. La tasa que falta se nombra con RC-14
+ * también aquí (auditor H-4): `analyzeFileAction` y `analyzeBatchAction` tienen
+ * su propio `catch` y, sin esto, `guardingRates` no llegaría a verlo.
+ */
+const messageOf = (error: unknown): string =>
+  error instanceof ExchangeRateUnavailableError
+    ? rc14Message(error)
+    : error instanceof Error
+      ? error.message
+      : String(error)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Heredado de TaxHacker: alta manual y borrado. Se conservan (§8)

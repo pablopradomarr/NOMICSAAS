@@ -290,10 +290,14 @@ export async function runInvariantsAction(
     const validated = runInvariantsSchema.safeParse(input ?? {})
     if (!validated.success) return invalid(validated.error)
 
+    // I-E8-2 compara los bytes del almacén: el lector se inyecta desde aquí
+    // (ver `StoredFileReader` en `models/ledger`).
+    const { sha256OfStoredFile } = await import("@/lib/files-integrity")
     const run = await runLedgerInvariants(org.id, {
       refDate: validated.data.refDate ?? today(),
       ...(validated.data.fiscalYearId ? { fiscalYearId: validated.data.fiscalYearId } : {}),
       actor: { userId: user.id },
+      readStoredFile: sha256OfStoredFile,
     })
     return { success: true, data: run }
   })()

@@ -154,6 +154,16 @@ export type ResolvedPayableBlock = {
   retencionCents?: Cents
   /** Bruto del bloque menos su parte de retención y anticipo: la línea de pasivo. */
   amountCents: Cents
+  /**
+   * **E8 ronda 1, revisor #4.** El mismo importe **en la moneda del documento**,
+   * calculado con el MISMO reparto (Hamilton sobre los bloques) pero sobre las
+   * cifras originales, no deshaciendo la conversión del importe en euros.
+   *
+   * Sólo se rellena cuando hay divisa. Es lo que va a `journal_lines.
+   * original_amount_cents`, o sea lo que la NRV 11ª.2.1 revalorizará al cierre
+   * en E9, y entra en el `entryHash` v3: tiene que ser el céntimo del papel.
+   */
+  originalAmountCents?: Cents
 }
 
 /**
@@ -328,13 +338,34 @@ export function postFromProposal(
     }))
     .filter((o) => !delta || o.quotaCents !== 0)
 
+  /**
+   * **Revisor #4.** Las mismas cuotas **en la moneda del documento**. Sirven
+   * para recalcular los bloques de pasivo sobre el original y quedarse con el
+   * importe en divisa de cada línea monetaria: el round-trip
+   * `reverseConvert(convert(x))` es lossy salvo para tasas próximas a 1 (con
+   * `rateMicro = 920000` falla en 1 600 de 20 000 importes), y ese céntimo
+   * acaba en `original_amount_cents` y en el `entryHash`.
+   */
+  const taxOverridesOriginal: TaxOverride[] = p.taxes
+    .filter((t) => !zeroRateCodes.has(t.taxRateCode))
+    .filter(() => !(docKind === "FACTURA_ANTICIPO_CLIENTE" && anticipoSinCobro))
+    .map((t) => ({
+      taxRateCode: t.taxRateCode,
+      quotaCents: delta ? (delta.quotaByRate[t.taxRateCode] ?? 0) : t.quotaCents,
+    }))
+    .filter((o) => !delta || o.quotaCents !== 0)
+
   // ── 5 · Construcción del input y de los bloques de pasivo ─────────────────
   const built =
     templateCode === "AJUSTE_EJERCICIO_CERRADO"
       ? buildClosedYearAdjustment(reconciled, ctx, opts, { baseOf, orderedLines, taxOverrides })
       : side === "SALE"
-        ? buildSaleInput(reconciled, ctx, { templateCode, baseOf, orderedLines, taxOverrides, anticipoSinCobro, converted })
-        : buildPurchaseInput(reconciled, ctx, { templateCode, baseOf, orderedLines, taxOverrides, converted })
+        ? buildSaleInput(reconciled, ctx, {
+            templateCode, baseOf, orderedLines, taxOverrides, taxOverridesOriginal, anticipoSinCobro, converted,
+          })
+        : buildPurchaseInput(reconciled, ctx, {
+            templateCode, baseOf, orderedLines, taxOverrides, taxOverridesOriginal, converted,
+          })
   if (!built.ok) return fail<PostedProposal>(...built.errors)
 
   const draftResult = buildFromTemplate(built.value.templateCode, built.value.input, ctx)
@@ -360,11 +391,39 @@ export function postFromProposal(
       const code = ctx.map(key)
       if (code) monetary.add(code)
     }
+    /**
+     * **Revisor #4 — el importe original sale del DOCUMENTO, no de deshacer la
+     * conversión.** `reverseConvert(convert(x))` no devuelve `x` salvo para
+     * tasas próximas a 1: con `rateMicro = 920000` erraba en 1 600 de 20 000
+     * importes. La línea de deuda en divisa es justo la que la NRV 11ª.2.1
+     * revalorizará al cierre y entra en el `entryHash` v3, así que tiene que
+     * llevar el céntimo del papel.
+     *
+     * `reverseConvert` se queda como **red de seguridad** para la línea
+     * monetaria que no corresponde a ningún bloque de pasivo —la de clientes de
+     * una venta, cuyo importe original es el total del documento— y para el
+     * caso en que el recálculo sobre el original no cuadre.
+     */
+    const originalByAccount = new Map<string, Cents[]>()
+    for (const block of built.value.payableBlocks) {
+      if (block.originalAmountCents === undefined) continue
+      const list = originalByAccount.get(block.accountCode) ?? []
+      list.push(block.originalAmountCents)
+      originalByAccount.set(block.accountCode, list)
+    }
+    const receivable = ctx.map("CLIENTES")
+    const saleOriginalPending = side === "SALE" && receivable !== null && receivable !== undefined ? [p.totalCents] : []
+    if (receivable && saleOriginalPending.length > 0 && !originalByAccount.has(receivable)) {
+      originalByAccount.set(receivable, saleOriginalPending)
+    }
+
     for (const line of draft.lines) {
       if (!monetary.has(line.accountCode)) continue
       const amount = line.debitCents + line.creditCents
+      const pending = originalByAccount.get(line.accountCode)
+      const fromDocument = pending && pending.length > 0 ? pending.shift() : undefined
       line.originalCurrency = p.currency
-      line.originalAmountCents = reverseConvert(amount, conversion)
+      line.originalAmountCents = fromDocument ?? reverseConvert(amount, conversion)
       line.exchangeRateId = conversion.rateId
     }
   }
@@ -409,6 +468,8 @@ type BuildContext = {
   baseOf: (index: number) => Cents
   orderedLines: readonly ProposalLine[]
   taxOverrides: readonly TaxOverride[]
+  /** Revisor #4: las mismas cuotas en la moneda del DOCUMENTO. */
+  taxOverridesOriginal: readonly TaxOverride[]
   converted: ConvertedDocument | null
   anticipoSinCobro?: boolean
 }
@@ -571,6 +632,27 @@ function buildPurchaseInput(
   )
   if (errors.length > 0) return fail<BuiltInput>(...errors)
 
+  /**
+   * **Revisor #4 — el importe de cada bloque EN LA MONEDA DEL DOCUMENTO.**
+   * Mismo camino (`lineTaxes` → `resolvePayableBlocks` → `splitPayableBlocks`,
+   * o sea el mismo Hamilton) sobre las cifras originales. No se deshace la
+   * conversión: se calcula sobre lo que pone el papel.
+   */
+  const originalAmounts =
+    b.converted === null
+      ? null
+      : originalPayableAmounts({
+          bases: lines.map(({ line }, i) => (delta ? lines[i].baseCents : netBase(line))),
+          taxRateCodes: templateLines.map((l) => l.taxRateCode),
+          accountCodes: lines.map(({ line }) => line.accountCode),
+          overrides: b.taxOverridesOriginal,
+          isp,
+          payableContext,
+          ctx,
+          dates: { documentDate: p.documentDate as LocalDate, accrualDate: p.accrualDate ?? null, operationDate: p.operationDate ?? null },
+          reductionCents: withholdingCents + advanceCents,
+        })
+
   const payableBlocks: ResolvedPayableBlock[] = blocks.map((x, i) => ({
     payableKey: x.payableKey,
     accountCode: x.accountCode,
@@ -580,6 +662,7 @@ function buildPurchaseInput(
       ? { retencionCents: x.baseCents + x.quotaCents - (split[i]?.amountCents ?? 0) }
       : {}),
     amountCents: split[i]?.amountCents ?? x.baseCents + x.quotaCents,
+    ...(originalAmounts?.[i] !== undefined ? { originalAmountCents: originalAmounts[i] } : {}),
   }))
 
   const baseTotal = sum(templateLines.map((l) => l.baseCents))
@@ -839,6 +922,58 @@ function buildClosedYearAdjustment(
  * así el asiento es reproducible y el drill-down enseña las líneas en el orden
  * en que el documento las trae.
  */
+/**
+ * Importe en divisa de cada bloque de pasivo (revisor #4). Repite el cálculo
+ * de arriba —`lineTaxes`, `resolvePayableBlocks`, `splitPayableBlocks`— con las
+ * bases y las cuotas del documento en su moneda, de modo que la línea monetaria
+ * lleve el céntimo del papel y no un contravalor deshecho.
+ *
+ * Devuelve `null` si el recálculo no cuadra (un tipo que no está vigente a la
+ * fecha, por ejemplo): entonces §7 usa `reverseConvert` como aproximación, que
+ * es lo que había antes, en vez de dejar la línea sin importe original.
+ */
+function originalPayableAmounts(args: {
+  bases: readonly Cents[]
+  taxRateCodes: readonly string[]
+  accountCodes: readonly (string | undefined)[]
+  overrides: readonly TaxOverride[]
+  isp: boolean
+  payableContext: PayableContext
+  ctx: LedgerContext
+  dates: { documentDate: LocalDate; accrualDate: LocalDate | null; operationDate: LocalDate | null }
+  reductionCents: Cents
+}): Cents[] | null {
+  const taxes = lineTaxes(
+    args.bases.map((baseCents, i) => ({ baseCents, taxRateCode: args.taxRateCodes[i] })),
+    args.ctx,
+    args.dates,
+    "PURCHASE",
+    args.overrides
+  )
+  if (taxes.errors.length > 0) return null
+  const errors: LedgerError[] = []
+  const blocks = resolvePayableBlocks(
+    args.bases.map((baseCents, i) => ({
+      ...(args.accountCodes[i] ? { accountCode: args.accountCodes[i] as string } : {}),
+      baseCents,
+      quotaCents: args.isp ? 0 : taxes.perLine[i],
+    })),
+    args.payableContext,
+    args.ctx,
+    errors
+  )
+  if (errors.length > 0) return null
+  const gross = sum(blocks.map((x) => x.baseCents + x.quotaCents))
+  const split = splitPayableBlocks(
+    blocks.map((x) => ({ payableKey: x.payableKey, accountCode: x.accountCode, amountCents: x.baseCents + x.quotaCents })),
+    gross,
+    args.reductionCents,
+    errors
+  )
+  if (errors.length > 0) return null
+  return blocks.map((x, i) => split[i]?.amountCents ?? x.baseCents + x.quotaCents)
+}
+
 export function resolvePayableBlocks(
   lines: readonly { accountCode?: string; baseCents: Cents; quotaCents: Cents }[],
   context: PayableContext,

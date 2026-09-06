@@ -717,12 +717,15 @@ export {
   dataQualityWarnings,
   ivaPeriodOf,
   quarterOf,
+  contrastOf,
   runDocumentInvariants,
+  vatBookRowFromEntry,
   vatBookRowFromProposal,
   E8_INVARIANT_IDS,
 } from "@/lib/ledger/invariants-e8"
 export type {
   BookableProposal,
+  BookRowOptions,
   DataQualityWarning,
   DocumentsInvariantInput,
   DuplicateGroupRef,
@@ -732,6 +735,7 @@ export type {
   InvoiceSeriesRef,
   TransactionDocRef,
   VatBalanceRow,
+  VatBookContrast,
   VatBookRow,
   WithholdingRow,
 } from "@/lib/ledger/invariants-e8"

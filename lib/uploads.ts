@@ -4,7 +4,6 @@ import { createFile, findFilesBySha256 } from "@/models/files"
 import { createHash, randomUUID } from "crypto"
 import { mkdir, writeFile } from "fs/promises"
 import path from "path"
-import sharp from "sharp"
 import config from "./config"
 import {
   getOrganizationStorageUsed,
@@ -184,6 +183,16 @@ export async function uploadStaticImage(
     throw new UploadValidationError("El fichero subido no es una imagen válida")
   }
 
+  /**
+   * **Ronda 1 de E8, revisor #5.** `sharp` carga un binario nativo y cuesta
+   * ~2,3 s la primera vez. Importarlo arriba metía ese coste en el grafo de
+   * CUALQUIER módulo que tocara `lib/uploads` —incluido
+   * `app/(app)/settings/actions.ts`, que sólo lo usa para el logotipo—, y con él
+   * en `tests/integration/authz-actions.test.ts`, que agotaba los 5 000 ms de
+   * vitest en el `await import()`. Se carga cuando de verdad hay una imagen que
+   * redimensionar; el resto del fichero no lo necesita.
+   */
+  const { default: sharp } = await import("sharp")
   const sharpInstance = sharp(buffer).rotate().resize(maxWidth, maxHeight, {
     fit: "inside",
     withoutEnlargement: true,

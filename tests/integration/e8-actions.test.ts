@@ -552,4 +552,162 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 · T13 · server actions del camino docu
     expect(await tenantDb(ORG_B).journalEntry.count({ where: { sourceId: "FRA-B-0001" } })).toBe(0)
     expect(await tenantDb(ORG).extractionRun.count({ where: { id: ajeno.runId } })).toBe(0)
   }, 120_000)
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Ronda 1 de corrección — revisor #2, revisor #3 y auditor H-4
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it("revisor #2 · `simplifiedQualified` en el cuerpo de confirmProposalAction se RECHAZA, y la marca del run sí se honra", async () => {
+    const ticket = proposal({
+      documentNumber: "T-RONDA1-01",
+      docKind: "TICKET",
+      lines: [
+        { kind: "OPERACION", baseCents: 1_122, taxRateCode: "IVA_10", accountCode: "629", accountCodeOrigin: "catalogo", deductibility: "NONE" },
+      ],
+      taxes: [{ taxRateCode: "IVA_10", baseCents: 1_122, quotaCents: 112 }],
+      totalCents: 1_234,
+      paymentKey: "BANCO_DEFAULT",
+    })
+    const { runId } = await seedRun(ORG, ticket)
+    const { confirmProposalAction, markSimplifiedQualifiedAction } = await actions()
+
+    // (a) Por el cuerpo de la petición: zod lo rechaza como clave desconocida.
+    const colado = await confirmProposalAction({
+      runId,
+      proposal: { ...ticket, simplifiedQualified: true },
+    })
+    expect(colado.success).toBe(false)
+    expect(colado.error).toMatch(/simplifiedQualified/)
+    expect(await tenantDb(ORG).journalEntry.count({ where: { sourceId: "T-RONDA1-01" } })).toBe(0)
+
+    // (b) Por la puerta buena: `markSimplifiedQualifiedAction`, con motivo y AuditLog.
+    const marked = await markSimplifiedQualifiedAction({
+      runId,
+      reason: "el ticket lleva NIF y cuota desglosada: art. 7.2 RD 1619/2012",
+    })
+    expect(marked).toMatchObject({ success: true })
+    const revisionId = (marked.data as { runId: string }).runId
+    const db = tenantDb(ORG)
+    const revision = await db.extractionRun.findFirstOrThrow({ where: { id: revisionId } })
+    const revised = revision.proposal as unknown as Proposal
+
+    // Y al confirmar el run de revisión, la marca la pone el SERVIDOR desde el
+    // run: la propuesta que viaja no la lleva y el IVA se deduce igualmente.
+    const { simplifiedQualified: _marca, ...sinMarca } = revised
+    const confirmed = await confirmProposalAction({
+      runId: revisionId,
+      proposal: sinMarca as unknown as Proposal,
+      forceReason: "revisado el ticket cualificado antes de contabilizar",
+    })
+    expect(confirmed).toMatchObject({ success: true })
+    const entryId = (confirmed.data as { entryId: string }).entryId
+    const lines = await db.journalLine.findMany({ where: { entryId }, select: { accountCode: true, debitCents: true } })
+    const iva = lines.find((l) => l.accountCode === "472")
+    expect(iva?.debitCents).toBe(112)
+  }, 180_000)
+
+  it("revisor #3 · con campos `no_verificado`, el SERVIDOR exige motivo aunque el navegador no lo mande", async () => {
+    const p = proposal({ documentNumber: "FRA-RONDA1-03" })
+    const { runId } = await seedRun(ORG, p)
+    const { confirmProposalAction, forceOverrideAction } = await actions()
+
+    // Forzar un campo lo deja en `no_verificado`: es el estado que el diálogo
+    // de la pantalla acompaña de un motivo y que el servidor no exigía.
+    const forced = await forceOverrideAction({
+      runId,
+      field: "documentNumber",
+      value: "FRA-RONDA1-03-BIS",
+      reason: "el número del PDF está cortado por el sello de registro",
+    })
+    expect(forced).toMatchObject({ success: true })
+    const revisionId = (forced.data as { runId: string }).runId
+    const db = tenantDb(ORG)
+    const revision = await db.extractionRun.findFirstOrThrow({ where: { id: revisionId } })
+    const revised = revision.proposal as unknown as Proposal
+
+    const sinMotivo = await confirmProposalAction({ runId: revisionId, proposal: revised })
+    expect(sinMotivo.success).toBe(false)
+    expect(sinMotivo.error).toMatch(/sin verificar/)
+    expect(sinMotivo.error).toMatch(/documentNumber/)
+    expect(await db.journalEntry.count({ where: { sourceId: "FRA-RONDA1-03-BIS" } })).toBe(0)
+
+    // Un «ok» tampoco vale: el mínimo es el mismo que en el resto de forzados.
+    expect(await confirmProposalAction({ runId: revisionId, proposal: revised, forceReason: "ok" })).toMatchObject({
+      success: false,
+    })
+
+    const conMotivo = await confirmProposalAction({
+      runId: revisionId,
+      proposal: revised,
+      forceReason: "se asume el número tecleado a la vista del original en papel",
+    })
+    expect(conMotivo).toMatchObject({ success: true })
+    const log = await db.auditLog.findFirstOrThrow({
+      where: { action: "CONFIRM_PROPOSAL", entityId: revisionId },
+    })
+    expect(log.reason).toMatch(/número tecleado/)
+    expect((log.after as { camposNoVerificados?: string[] }).camposNoVerificados).toContain("documentNumber")
+  }, 180_000)
+
+  it("QA BUG-E8-2 · un documento cuyos bytes no están en el almacén se sirve como estado explícito, no como 404 mudo", async () => {
+    const p = proposal({ documentNumber: "FRA-RONDA1-BUG2" })
+    const { fileId } = await seedRun(ORG, p)
+    // `seedRun` crea la FICHA pero no escribe bytes: es exactamente el estado
+    // que el QA reprodujo (la fila sobrevive y el fichero no).
+    const { GET } = await import("@/app/(app)/files/preview/[fileId]/route")
+    const { DOCUMENT_STATUS_HEADER, DOCUMENT_UNAVAILABLE } = await import("@/lib/previews/unavailable")
+
+    const response = await GET(new Request(`http://localhost/files/preview/${fileId}?page=1`), {
+      params: Promise.resolve({ fileId }),
+    })
+    // 410 Gone, no 404: el recurso existió y ya no está, que no es lo mismo que
+    // «no es tuyo». La UI distingue los dos casos por esta cabecera.
+    expect(response.status).toBe(410)
+    expect(response.headers.get(DOCUMENT_STATUS_HEADER)).toBe(DOCUMENT_UNAVAILABLE)
+    const body = (await response.json()) as { status: string; fileId: string; path: string | null; message: string }
+    expect(body.status).toBe(DOCUMENT_UNAVAILABLE)
+    expect(body.fileId).toBe(fileId)
+    expect(body.message).toMatch(/no está en el almacén/)
+    expect(body.message).toMatch(/I-E8-2/)
+
+    // Y un fichero que no existe en la organización sigue siendo un 404.
+    const ajeno = "00000000-0000-4000-8000-0000000000ff"
+    const noExiste = await GET(new Request(`http://localhost/files/preview/${ajeno}`), {
+      params: Promise.resolve({ fileId: ajeno }),
+    })
+    expect(noExiste.status).toBe(404)
+  }, 120_000)
+
+  it("auditor H-4 · sin tasa publicada, la acción devuelve RC-14 «sin tasa» en su ActionState y no guarda nada", async () => {
+    // La fuente no responde: `getOrFetchRate` LANZA (nunca inventa una tasa) y
+    // hasta esta ronda la excepción atravesaba la server action sin tipar.
+    const original = process.env.FRANKFURTER_BASE_URL
+    vi.resetModules()
+    process.env.FRANKFURTER_BASE_URL = "http://127.0.0.1:1/no-hay-fuente"
+    try {
+      const enDolares = proposal({
+        documentNumber: "USD-RONDA1-04",
+        currency: "USD",
+        documentDate: "2026-04-07",
+        receptionDate: "2026-04-07",
+      })
+      const { runId } = await seedRun(ORG, enDolares)
+      const { confirmProposalAction, previewProposalAction } = await actions()
+
+      const preview = await previewProposalAction({ runId, proposal: enDolares })
+      expect(preview.success).toBe(false)
+      expect(preview.error).toMatch(/^RC-14 · sin tasa persistida para USD→EUR del 2026-04-07/)
+
+      const confirmed = await confirmProposalAction({ runId, proposal: enDolares })
+      expect(confirmed.success).toBe(false)
+      expect(confirmed.error).toMatch(/RC-14/)
+      expect(confirmed.error).toMatch(/no se ha guardado nada/)
+      expect(await tenantDb(ORG).journalEntry.count({ where: { sourceId: "USD-RONDA1-04" } })).toBe(0)
+      expect(await tenantDb(ORG).transaction.count({ where: { name: "USD-RONDA1-04" } })).toBe(0)
+    } finally {
+      if (original === undefined) delete process.env.FRANKFURTER_BASE_URL
+      else process.env.FRANKFURTER_BASE_URL = original
+      vi.resetModules()
+    }
+  }, 180_000)
 })
