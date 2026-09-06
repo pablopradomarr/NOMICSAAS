@@ -519,6 +519,14 @@ describe("aritmética y ramas", () => {
   })
 
   it("los tipos del fixture se leen con su vigencia, no con la fecha de hoy", () => {
-    expect(toTaxRateRefs(fixture).map((r) => r.code).sort()).toEqual(["IRPF_15", "IVA_10", "IVA_21", "IVA_4", "IVA_NO_SUJETO"])
+    // Ronda 2 (H-6): el fixture 1.1 llama al tipo de retención por su nombre
+    // en el catálogo del producto (`IRPF_PROF_15`), no por uno inventado.
+    expect(toTaxRateRefs(fixture).map((r) => r.code).sort()).toEqual([
+      "IRPF_PROF_15",
+      "IVA_10",
+      "IVA_21",
+      "IVA_4",
+      "IVA_NO_SUJETO",
+    ])
   })
 })

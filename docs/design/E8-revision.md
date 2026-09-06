@@ -55,3 +55,50 @@
 **BLOQUEADO** por el hallazgo 1 (deuda de E8 sin épica ni fecha en `docs/ESTADO.md`, CLAUDE.md §Estándar de calidad). No hay bloqueo de Nivel 2: ADR-0014 está APROBADO y el diff no se aparta de sus decisiones D1…D14.
 
 Levantado ese bloqueo —es el entregable de **T22**, aún no ejecutada— quedan **4 DEBE** (2, 3, 4, 5) y **6 PUEDE**. Los tres DEBE de producto son acotados y no afectan al núcleo: el motor de reconciliación, el mapeo a plantillas, la inmutabilidad en base de datos, la convivencia de `hashVersion` y el aislamiento por tenant están bien resueltos y bien probados.
+
+---
+
+# Ronda 2 — verificación del cierre (`git diff 1652150...008fa0d`)
+
+**Fecha:** 2026-09-06 · **Commit:** `008fa0d` · 36 ficheros, +3 430 / −127 · **1 migración nueva** (`20260915090000_e8_ronda1_transiciones`).
+
+| Comando | Ronda 1 | Ronda 2 |
+|---|---|---|
+| `npm run lint` | OK (0 err · 12 warn) | **OK** — 0 errores, los mismos 12 warnings preexistentes |
+| `npm run test` | 1294 pasan · 11 skip | **OK** — 59 ficheros, **1321 pasan**, **11 skip** (los mismos; +27 tests, ninguno nuevo saltado) |
+| `npm run test:integration` | **1 FALLA** / 1689 | **OK** — 90 ficheros, **1740 pasan, 0 fallan** |
+| `npm run test:integration:rls` | OK (155) | **OK** — 155 |
+| `npm run build` | OK | **OK** — compila y typechequea |
+
+## Cierre por hallazgo
+
+| # | Sev. ronda 1 | Estado | Evidencia verificada |
+|---|---|---|---|
+| 1 | BLOQUEA | **CERRADO** | `docs/ESTADO.md` §«E8 — deuda y decisiones»: **14 deudas** con estado, **épica de cierre** (E7/E9/E11/E12) y fundamento, más la tabla de lo cerrado en la ronda. Cubre 523→173, RECC/REDEME, DUA, 668/768, G-14, G-15, serie ORDINARIA, `files.sha256`, split en UI, rate limit, `exchange_rates` global, `resolveRectifiedEntry`, y la trazabilidad por `run_id` de #9 |
+| 2 | DEBE | **CERRADO** | `forms/extraction.ts:137` `submittedProposalSchema = extractionProposalSchema.omit({simplifiedQualified:true})` (hereda `.strict()`), usado en `confirmProposalSchema` y `previewProposalSchema`; la marca se **recupera del run sellado** (`actions.ts:656`), que sólo escribe `markSimplifiedQualifiedAction` con su `AuditLog`. Tests: `forms/extraction.test.ts:39-60` (4 casos) y `e8-actions.test.ts:560` de extremo a extremo |
+| 3 | DEBE | **CERRADO** | `actions.ts:903-915`: `unverifiedFieldsOf` une procedencias **recalculadas ∪ selladas** y exige `forceReason ≥ MOTIVO_MIN` **en el servidor**, con `camposNoVerificados` en el `AuditLog` (`:1025`). Ya no es un control de navegador |
+| 4 | DEBE | **CERRADO** | `postFromProposal.ts:341-356,632+`: `taxOverridesOriginal` recorre el **mismo** camino (`resolvePayableBlocks`→`splitPayableBlocks`, mismo Hamilton) sobre las cifras del documento; `reverseConvert` queda de red de seguridad. Tests con `rateMicro = 920 000`: el round-trip pierde > 1 000 de 20 000 importes, la línea de pasivo lleva el céntimo del papel, y en documento **mixto** la suma de originales = total del documento |
+| 5 | DEBE | **CERRADO** | LangChain y `sharp` pasan a `await import()` (`llmProvider.ts:42,54,58,66`; `lib/previews/*`). Medido por mí: **6 853 → 4 601 ms** con la suite de integración compitiendo por la CPU, y la suite completa pasa. Sin tocar timeout ni aserto |
+| 6 | PUEDE | **CERRADO** | `20260915090000_e8_ronda1_transiciones`: `CREATE OR REPLACE FUNCTION` sin `ALTER ROLE`/`OWNER TO`/extensiones, no toca datos ni RLS, no edita una migración aplicada. `PROPOSED → DRAFT` retirada; test en `e8-esquema.test.ts` |
+| 7 · 8 | PUEDE | **CERRADO** | `assertCurrencyCode` (`rates.ts:91`) en la frontera; `rateMicroFromValue` (`:117`) pasa el literal decimal a micros con `BigInt`, con redondeo por el séptimo decimal y respaldo documentado para notación exponencial |
+| 10 · 11 | PUEDE | **CERRADO** | `LIMIT/OFFSET` por `?page=` con rango y total a la vista (`unsorted/page.tsx:66,190`); `e8-bandeja-perf.test.ts`: 2 000 ficheros / 6 000 runs, **mediana < 150 ms** y test de que la paginación no trunca |
+| 9 | PUEDE | **ANOTADO** | Se acepta no partir `7a8a1c3`; queda escrito en `ESTADO.md` |
+
+## Lo nuevo, con lupa
+
+- **`vatBookRowFromEntry` / I-E8-7a no son tautológicos.** `models/ledger.ts:1734-1745` construye **dos derivaciones independientes**: la fila del libro registro sale de las líneas de 472/477 del **asiento** (`vatBookRowFromEntry`) y el contraste sale de la **propuesta sellada** (`vatBookRowFromProposal`, convertida con la tasa del run y con `rectificationDelta`). `checkIE87a` las compara en cinco campos con tolerancia 0, más `Σdebe = Σhaber` y la coherencia cuota anotada ↔ contabilizada. Es exactamente el puente que los FAIL H-1/H-2 pedían.
+- **Inyección de `readStoredFile`.** Decisión correcta y bien argumentada: `lib/files-integrity.ts` resuelve el raíz **dentro** de la función (no al cargar el módulo) para no arrastrar el rastreo de Next, y el lector se inyecta desde las cuatro entradas reales. Hay contención de ruta (`storedFilePath` rechaza salirse del directorio de la organización), lectura en **streaming**, y `sha256OfStoredFile` **nunca lanza**. Fichero ausente o ilegible ⇒ `diskError` ⇒ **I-E8-2 FAIL con la ruta** (`invariants-e8.ts:583-593`), no un WARN; sin lector, WARN honesto. La duplicación de la resolución de ruta está atada con un test que compara las dos.
+- **Migración nueva.** Aditiva, idempotente, sin SUPERUSER. Correcta.
+- **Tests.** El diff de tests es **puramente aditivo**: ni una aserción borrada, ni un `it` retirado, ni un `skip` nuevo (grep sobre las eliminaciones: cero). Seis ficheros nuevos, incluidos los quince casos sobre el **NPGC PYMES real** y el caso CHF que ejerce el Hamilton del residuo.
+
+## Hallazgos residuales
+
+| # | Fichero:línea | Severidad | Problema | Sugerencia |
+|---|---|---|---|---|
+| R2-1 | `lib/ledger/postFromProposal.ts:404-420` | PUEDE | El emparejamiento bloque ↔ línea es una cola FIFO **por `accountCode`** (`pending.shift()`). Con dos bloques de pasivo sobre la misma cuenta y distinto importe, un cambio de orden en la plantilla los intercambiaría en silencio; el test mixto sólo comprueba la **suma**. | Emparejar por importe convertido además de por cuenta, o aserción `reverseConvert(amount) ≈ fromDocument ± 2 c` que delate el cruce. |
+| R2-2 | `lib/ledger/invariants-e8.ts:735-738` | PUEDE | Cuando `contrast` es `null` el documento se **salta** y el invariante degrada a WARN. Hoy es inalcanzable por malicia (`extraction_runs` es append-only en BD), pero un run sin propuesta reconstruible sale del puente sin dejar rastro individual. | Nombrar en la evidencia los `entryId` sin contraste, no sólo contarlos. |
+| R2-3 | `tests/integration/authz-actions.test.ts:69` | PUEDE | El margen sigue siendo estrecho: 4 601 ms medidos bajo carga frente al techo de 5 000 ms. El grafo volverá a crecer. | Mover el `import` a `beforeAll` (coste una vez por fichero) o darle `timeout` explícito, como se sugirió en la ronda 1. |
+
+## Veredicto ronda 2
+
+**APROBADO.** El BLOQUEA y los cuatro DEBE están cerrados con evidencia verificada y con test que los ejerce; los seis PUEDE, también. Las cinco suites están en verde por primera vez en la épica. Quedan **tres PUEDE** nuevos (R2-1…R2-3), ninguno de ellos bloqueante: son endurecimiento, no defectos abiertos. Sin ronda 3.

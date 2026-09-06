@@ -404,26 +404,30 @@ export function postFromProposal(
      * una venta, cuyo importe original es el total del documento— y para el
      * caso en que el recálculo sobre el original no cuadre.
      */
-    const originalByAccount = new Map<string, Cents[]>()
-    for (const block of built.value.payableBlocks) {
-      if (block.originalAmountCents === undefined) continue
-      const list = originalByAccount.get(block.accountCode) ?? []
-      list.push(block.originalAmountCents)
-      originalByAccount.set(block.accountCode, list)
-    }
+    const candidates: OriginalCandidate[] = built.value.payableBlocks
+      .filter((b) => b.originalAmountCents !== undefined)
+      .map((b) => ({
+        payableKey: b.payableKey,
+        accountCode: b.accountCode,
+        amountCents: b.amountCents,
+        originalAmountCents: b.originalAmountCents as Cents,
+      }))
+    // La cuenta de clientes de una venta no es un bloque de pasivo: su importe
+    // original es, por definición, el total del documento.
     const receivable = ctx.map("CLIENTES")
-    const saleOriginalPending = side === "SALE" && receivable !== null && receivable !== undefined ? [p.totalCents] : []
-    if (receivable && saleOriginalPending.length > 0 && !originalByAccount.has(receivable)) {
-      originalByAccount.set(receivable, saleOriginalPending)
+    if (side === "SALE" && receivable && !candidates.some((c) => c.accountCode === receivable)) {
+      const amount = sum(
+        draft.lines.filter((l) => l.accountCode === receivable).map((l) => l.debitCents + l.creditCents)
+      )
+      candidates.push({ payableKey: "CLIENTES", accountCode: receivable, amountCents: amount, originalAmountCents: p.totalCents })
     }
 
+    const paired = pairOriginalAmounts(draft.lines, candidates)
     for (const line of draft.lines) {
       if (!monetary.has(line.accountCode)) continue
-      const amount = line.debitCents + line.creditCents
-      const pending = originalByAccount.get(line.accountCode)
-      const fromDocument = pending && pending.length > 0 ? pending.shift() : undefined
+      const fromDocument = paired.get(line.lineNo)
       line.originalCurrency = p.currency
-      line.originalAmountCents = fromDocument ?? reverseConvert(amount, conversion)
+      line.originalAmountCents = fromDocument ?? reverseConvert(line.debitCents + line.creditCents, conversion)
       line.exchangeRateId = conversion.rateId
     }
   }
@@ -922,6 +926,78 @@ function buildClosedYearAdjustment(
  * así el asiento es reproducible y el drill-down enseña las líneas en el orden
  * en que el documento las trae.
  */
+/**
+ * Un bloque de pasivo candidato a prestar su importe original a una línea.
+ * `payableKey` es la clave ESTABLE: dos bloques distintos pueden compartir
+ * cuenta, pero nunca clave.
+ */
+export type OriginalCandidate = {
+  payableKey: string
+  accountCode: string
+  /** Importe en moneda base con el que la línea aparece en el asiento. */
+  amountCents: Cents
+  /** El mismo importe, en la moneda del documento. */
+  originalAmountCents: Cents
+}
+
+/**
+ * **Ronda 2, R2-1 — a qué bloque de pasivo pertenece cada línea monetaria.**
+ *
+ * El emparejamiento anterior era un FIFO por `accountCode`: se iba consumiendo
+ * la lista de originales de esa cuenta en el orden en que aparecían las líneas.
+ * Funciona mientras la plantilla emita las líneas en el mismo orden que los
+ * bloques, que es lo que hace hoy — y ésa es exactamente la clase de garantía
+ * que no debe sostener un importe que entra en el `entryHash`. **Dos bloques
+ * con la misma cuenta existen de verdad**: basta con que una organización mapee
+ * `PROVEEDORES_INMOVILIZADO` y `ACREEDORES` a la misma 4100, y entonces las dos
+ * líneas de pasivo son indistinguibles entre sí y un cambio de orden en la
+ * plantilla intercambiaría sus importes en divisa sin que nada lo detectase (el
+ * asiento seguiría cuadrando, porque la suma no cambia).
+ *
+ * Ahora se empareja por **clave estable**, en tres pasadas de menos a más laxa:
+ *
+ *  1. `(accountCode, amountCents)` — el importe convertido de la línea es el
+ *     del bloque. Es único salvo empate exacto, y en el empate da igual cuál se
+ *     elija: los dos bloques tienen el mismo contravalor.
+ *  2. `accountCode` en orden de bloque, para el caso en que la plantilla haya
+ *     agrupado o repartido de otra manera.
+ *  3. sin pareja: la decide `reverseConvert` como red de seguridad.
+ *
+ * Devuelve `lineNo → importe original`. Es PURA y se exporta para que el test
+ * pueda darle los bloques en orden invertido y comprobar que no se intercambian.
+ */
+export function pairOriginalAmounts(
+  lines: readonly { lineNo: number; accountCode?: string | null; debitCents: Cents; creditCents: Cents }[],
+  candidates: readonly OriginalCandidate[]
+): Map<number, Cents> {
+  const out = new Map<number, Cents>()
+  const used = new Set<number>()
+
+  const claim = (index: number, lineNo: number): void => {
+    used.add(index)
+    out.set(lineNo, candidates[index].originalAmountCents)
+  }
+
+  // 1 · cuenta + importe convertido.
+  for (const line of lines) {
+    if (out.has(line.lineNo)) continue
+    const amount = line.debitCents + line.creditCents
+    const index = candidates.findIndex(
+      (c, i) => !used.has(i) && c.accountCode === line.accountCode && c.amountCents === amount
+    )
+    if (index >= 0) claim(index, line.lineNo)
+  }
+
+  // 2 · sólo cuenta, en orden de bloque.
+  for (const line of lines) {
+    if (out.has(line.lineNo)) continue
+    const index = candidates.findIndex((c, i) => !used.has(i) && c.accountCode === line.accountCode)
+    if (index >= 0) claim(index, line.lineNo)
+  }
+
+  return out
+}
+
 /**
  * Importe en divisa de cada bloque de pasivo (revisor #4). Repite el cálculo
  * de arriba —`lineTaxes`, `resolvePayableBlocks`, `splitPayableBlocks`— con las

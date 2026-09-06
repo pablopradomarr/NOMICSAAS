@@ -715,7 +715,7 @@ export function checkIE87a(input: DocumentsInvariantInput, entries: readonly Pos
   const byId = new Map(entries.map((e) => [e.id, e]))
   const failures: string[] = []
   let checked = 0
-  let sinContraste = 0
+  const sinContraste: string[] = []
   for (const row of input.vatBook) {
     if (row.entryId === null) continue
     const entry = byId.get(row.entryId)
@@ -733,7 +733,9 @@ export function checkIE87a(input: DocumentsInvariantInput, entries: readonly Pos
 
     const contrast = row.contrast ?? null
     if (contrast === null) {
-      sinContraste++
+      // R2-2: se NOMBRA el documento. «3 sin contraste» no es evidencia: no
+      // permite ir a mirar cuál, y son justo los que el puente no vigila.
+      sinContraste.push(`asiento ${entry.entryNumber} (${row.ivaPeriod})`)
       continue
     }
     for (const [campo, delAsiento, delDocumento] of [
@@ -752,11 +754,15 @@ export function checkIE87a(input: DocumentsInvariantInput, entries: readonly Pos
     }
   }
   if (failures.length > 0) return failed("I-E8-7a", failures.slice(0, 20).join(" · "))
-  const evidencia =
-    sinContraste === 0
-      ? `${checked} documento(s): la anotación del asiento y la del documento coinciden al céntimo`
-      : `${checked} documento(s) con identidad exacta y Σdebe = Σhaber; ${sinContraste} sin propuesta reconstruible con la que contrastar`
-  return sinContraste === 0 ? pass("I-E8-7a", evidencia) : warn("I-E8-7a", evidencia)
+  if (sinContraste.length === 0) {
+    return pass("I-E8-7a", `${checked} documento(s): la anotación del asiento y la del documento coinciden al céntimo`)
+  }
+  return warn(
+    "I-E8-7a",
+    `${checked} documento(s) con identidad exacta y Σdebe = Σhaber; ${sinContraste.length} sin propuesta reconstruible ` +
+      `con la que contrastar: ${sinContraste.slice(0, 20).join(", ")}` +
+      (sinContraste.length > 20 ? ` y ${sinContraste.length - 20} más` : "")
+  )
 }
 
 /**

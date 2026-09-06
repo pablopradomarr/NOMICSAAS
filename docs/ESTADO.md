@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-06 (E6 cerrada) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-06 (**E8 CERRADA**; siguiente: E7 Auditoría) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
 ## Hecho
 | Épica | Estado | Commits |
@@ -144,7 +144,23 @@ DATABASE_URL_MAINTENANCE=… npx tsx scripts/load-fixture.ts --org <org> --user 
     e. cierre E6 (ROADMAP, registro, ESTADO, push).
 15. ✅ **E5 implementada y corregida en dos rondas (2026-09-06).** Backend + UI (commits f57d6ee, 7d6d213, 17b8fe9). Auditor: **CONFORME** en cifras (`docs/design/E5-auditoria.md`, 4 hallazgos de detección). Revisor: ronda 1 CAMBIOS REQUERIDOS (3 BLOQUEA · 7 DEBE · 7 PUEDE) → **ronda 1 cerrada en 62ded40**; ronda 2 CAMBIOS REQUERIDOS (0 BLOQUEA · 1 DEBE · 2 PUEDE) → **R2-1/R2-2/R2-3 cerrados**. QA: BUG-E5-1 cerrado. Ver §«E5 — deuda y decisiones» más abajo.
 16. ✅ **E5 CERRADA (2026-09-06, commit 53f5818 + cierre).** Ronda 3 del revisor: **APROBADO** (0 abiertos). Re-auditoría: **CONFORME** (Δ=0 tras BigInt; I-E5-12 detecta la alteración de suma cero; ReportRun imputado caduca al revertir). e2e 21/21. Registro: `2026-09-06_e5_cierre`.
-17. **SIGUIENTE**: `/epica E8` (Documentos → asientos: ExtractionRun, PromptVersion, reconcile(), ExchangeRate servidor, Transaction.status, File.sha256, eliminar cachedParseResult, gaps G-01…G-04, ADR-0005) → `/sprint E8` → E7 (Auditoría + conciliación bancaria + deudas E6/E5 anotadas) → E9 → E10 → E11 → E12.
+17. ✅ **E8 implementada y corregida en dos rondas (2026-09-06).** Diseño + ADR-0014 (commit 607f53c) y siete commits de implementación hasta `1652150`. Ronda 1 (`008fa0d`): auditoría adversarial **DISCREPANCIA** (H-1…H-9) + revisión **BLOQUEADO** (1 BLOQUEA · 4 DEBE · 6 PUEDE) + QA (BUG-E8-1, BUG-E8-2, criterio 31 sin test) — todo cerrado. Ronda 2: R2-1 (emparejamiento bloque↔línea por clave estable), R2-2 (I-E8-7a nombra los documentos sin contraste + caso adverso permanente), H-6 (los quince casos sobre el NPGC real **sin traducciones de arnés**; el defecto era del fixture y se corrigió en el generador → `extraccion-esperada.v1.1.json`) y R2-3 (`lib/uploads` perezoso en `settings/actions`).
+18. ✅ **E8 CERRADA (2026-09-06).** **Auditor CONFORME** y **revisor APROBADO** en la ronda 2. Tests: unit **1 331** ✓ / 11 skip · integración **1 763** ✓ · RLS **155** ✓ · e2e **28** ✓ (documentos 7/7) · `build` OK · `build_extraccion_esperada.py --check` reproducible byte a byte. Deuda fechada y con épica en §«E8 — deuda y decisiones». Registro: `2026-09-06_e8_cierre`.
+19. **SIGUIENTE**: **`/epica E7` (Auditoría)** → `/sprint E7` → E9 → E10 → E11 → E12.
+
+    **E7 no empieza de cero: hereda deuda ya fechada.** Lo que tiene que cerrar, además de su propio alcance (pestaña Auditoría con checks, calidad de datos, `AuditLog`, runs y forzar revisión; `scripts/run-invariants.ts` en pantalla; test de error inyectado; conciliación bancaria básica con `BankStatementLine`):
+
+    | Viene de | Deuda | Qué hay que hacer en E7 |
+    |---|---|---|
+    | **E5** | Runs de liquidación con `lines_hash` NULL (sellados antes de `20260910110000`): I-E5-12 los declara INFO en vez de verificarlos | Listarlos en la pestaña con su periodo y su fecha, para re-liquidarlos y dejarlos sellados |
+    | **E5** | `journal_lines.debit_cents`/`credit_cents` en `integer` (techo 21.474.836,47 €), mismo problema que ya se retiró en `allocation_lines` | Decidir `bigint` y, si se aprueba, migrarlo con el barrido de Auditoría: es DDL puro pero toca la tabla más grande y el motor entero |
+    | **E5** | Un `ReportRun` sellado no caduca si alguien altera `allocation_lines` por SQL | Lo detecta el barrido (I5 + I-E5-12 con `linesHash`); la pestaña es donde se mira |
+    | **E6** | Deuda menor anotada en el registro de E6 | Revisar al abrir la épica |
+    | **E8** | **I-E8-2 sólo verifica los ficheros que respaldan un asiento** (los que el invariante mira) | Barrido del almacén COMPLETO desde la pestaña, con aviso de reingesta para el documento no disponible |
+    | **E8** | **Split N-a-1 sin interfaz**: `splitProposalAction` y `lib/extraction/split.ts` están cerrados y probados, falta el diálogo de reparto por líneas | Pantalla de split, con el resto del trabajo de interfaz de la Auditoría |
+    | **E8** | Endurecimiento condicional de `files.sha256` | Cerrado el hueco real en la ronda 1; queda el barrido masivo |
+
+    Y **E7 es quien pinta** lo que E8 ya produce y hoy nadie enseña: los `dataQualityWarnings` (documento sin asiento, run en FAIL sin resolver, extracción parcial, duplicado forzado, deducibilidad pendiente, ticket cualificado, contraparte sin régimen, desviación de cuota) y el bloque **I-E8-1…20** con su evidencia.
 ~~13. `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
 ~~11. `/epica E4` (analítica base: BusinessLine, Project, CostCenter, AnalyticType en líneas, MarginLevelConfig, PyG analítica sin imputaciones, I4; retirar CHECK NULL de dimensiones + FKs; fixtures con projectCode/costCenterCode activados) → `/sprint E4` → E6 (informes: balance, PyG, cashflow, ReportRun) → E5 (liquidación CECOs).
 ~~10. `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.
@@ -214,6 +230,18 @@ seguimiento. Las decisiones de fondo están en `docs/adr/0014-estados-transaccio
 | **Revisor #10** · bandeja sin paginación | `LIMIT/OFFSET` por `?page=`, con el rango y el total a la vista («Documentos 1–100 de 412») |
 | **QA BUG-E8-2** · el arnés e2e daba por sembrado un documento cuyos bytes no estaban | `tests/support/seed-extraction.ts` comprueba el sha256 en disco y regenera el fichero si falta; `/files/preview/[fileId]` devuelve **410** con `X-Document-Status: NO_DISPONIBLE` y el visor pinta el aviso en vez de un hueco |
 
+### Cerrado en la ronda 2 (2026-09-06) — revisor APROBADO, auditor CONFORME
+
+| Hallazgo | Qué se hizo |
+|---|---|
+| **R2-1** · el importe en divisa de la línea de pasivo se emparejaba por FIFO de `accountCode` | Dos claves de pasivo pueden mapear a la MISMA cuenta (`PROVEEDORES_INMOVILIZADO` y `ACREEDORES` a la 4100): las dos líneas son indistinguibles y un cambio de orden en la plantilla habría intercambiado sus importes **sin descuadrar el asiento**. `pairOriginalAmounts` empareja ahora por clave estable —`(accountCode, importe convertido)` y, en su defecto, por orden de bloque— y es pura, para que el test pueda darle los bloques al revés y comprobar que no se cruzan |
+| **R2-2** · I-E8-7a no decía QUÉ documentos se quedaban sin contraste | La evidencia los nombra (`asiento 12 (2026-Q4)`). Y el puente al 303 gana **vigilancia propia y permanente**: `e8-ronda1.test.ts` altera por SQL la cuota de la propuesta de un run ya contabilizado y comprueba que **I-E8-7a da FAIL con la diferencia** mientras I-E8-15a/b/c siguen en PASS —el asiento no se ha tocado—, que es justo el reparto de responsabilidades que la ronda 1 estableció |
+| **H-6 (ronda 2)** · el test de los quince casos sobre el NPGC real todavía traducía `IRPF_15 → IRPF_PROF_15` | El defecto era **del fixture**: `IRPF_15` no existe en el catálogo del producto (`lib/taxes/rates.ts`). Corregido en el generador y sellado en un fichero **nuevo versionado**, `extraccion-esperada.v1.1.json` (la 1.0 queda congelada como evidencia de la ronda 1). En la misma revisión, la línea del documento de C06 pasa de citar `608` —que tiene subcuentas y no es postable en el NPGC— a citar `607`: la 608 la decide el motor por `DEVOLUCION_COMPRAS`, que es lo que las notas del caso ya afirmaban. El asiento sellado **no cambia ni un céntimo**. El test resuelve las contrapartidas con el mecanismo del producto (`OrganizationAccountMap`) y **falla nombrando el fixture** si éste cita una cuenta no postable o un tipo que no está en el catálogo |
+| **Hidratación de la bandeja** (lo destapó el e2e a las 22:5x UTC, y era un fallo real) | `new Date(iso).toLocaleDateString("es-ES")` formatea con la zona de quien lo ejecuta: el servidor (UTC) y el navegador (Europe/Madrid) devolvían **días distintos** durante las dos horas anteriores a medianoche UTC. React lo denunciaba como desajuste de hidratación, regeneraba el árbol y la navegación por los filtros se quedaba colgada — un usuario en España que abriera la bandeja a la una de la madrugada veía lo mismo. `lib/dates-ui.ts` (`fechaUtc` / `fechaHoraUtc`) formatea desde las piezas UTC del ISO, con test propio; aplicado a la bandeja, al selector de extracciones y a la pestaña Documento |
+| **`HEAD` a `/files/preview` en cada carga de la ficha** (introducido por mí en la ronda 1) | El visor preguntaba desde el cliente si el documento estaba en el almacén con un `HEAD`, y Next atiende un `HEAD` **ejecutando el `GET` entero**: cada carga de la pantalla de revisión regeneraba la vista previa (sharp/pdf2pic) para responder algo que el servidor ya sabía. Ahora lo decide el servidor con un `access()` y viaja como prop (`unavailable`), en `/unsorted/[fileId]` y en la pestaña Documento de `/ledger/[entryId]` |
+| **e2e: los diálogos se pulsaban antes de la hidratación** | `page.click()` comprueba visibilidad y estabilidad, no que React haya enganchado el `onClick`: el botón se pulsaba, recibía el foco y no pasaba nada. `abrirDialogo()` reintenta la pulsación hasta que el contenido del diálogo aparece — el mismo patrón que `libro-diario.spec.ts` ya usaba para los `fill`. **No se relaja ninguna aserción**: sólo se espera a que la pantalla esté viva |
+| **R2-3** · el import de `settings/actions` seguía costando 2,4 s | `lib/uploads` (1,2 s) pasa a importación perezosa: sólo lo usa el avatar y el logotipo. **2 449 → 1 151 ms**. Lo que queda es la pila de autenticación (`lib/auth` → better-auth, ~1,6 s en frío) y el cliente de Prisma (~0,6 s), inevitables en una acción que empieza por `requireOrg`; no se retuerce más |
+
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
 
 `tests/e2e/session.ts` **siembra** lo que necesita en vez de darlo por hecho
@@ -241,6 +269,30 @@ proceso):
 - `adminUserId()` ya no lanza cuando no hay ningún ADMIN: devuelve el usuario
   sembrado. Las suites que degradan el rol para probar el VIEWER dejaban la base
   sin ADMIN y su `finally` moría sin restaurar el rol.
+
+## e2e en un sandbox saturado — cómo leer un fallo (2026-09-06)
+
+Los `test:e2e` corren contra `next dev`, y en esta máquina (8 GB, Postgres + dev
+server + Chromium + la sesión del agente) hay dos modos de fallo que **no son
+del producto** y conviene reconocer antes de perder una hora:
+
+1. **Compilación en frío de una ruta.** La primera visita la compila Turbopack:
+   medido, 30–90 s (`/ledger/new` 32,7 s · `/settings/taxes` 72 s ·
+   `/settings/account-map` 10,6 s), y con el techo de 90 s por test el primero
+   que toca esa ruta se va a timeout. La segunda visita baja a 0,3–3 s. Con
+   `mode: "serial"` el resto del fichero queda en «did not run», así que un
+   fichero entero aparece rojo por una sola compilación.
+2. **El dev server crece hasta 5–6 GB** a lo largo de una sesión larga de
+   compilaciones y acaba sin responder (`ERR_ABORTED`, o peticiones que nunca
+   terminan). Se arregla reiniciándolo.
+
+Cómo verificar de verdad: reiniciar `npm run dev`, **calentar las rutas** con
+`curl` y volver a lanzar el fichero. Y nunca borrar `.next` —ni lanzar
+`npm run build`— con el dev server arrancado: comparten directorio.
+
+Lo que **sí** era producto y se corrigió tras verlo aquí está en §«E8 — deuda y
+decisiones»: el desajuste de hidratación por `toLocaleDateString` y el `HEAD` a
+`/files/preview` que regeneraba la vista previa en cada carga de la ficha.
 
 ## Preview desplegado (Pablo, 2026-09-05 20:45)
 Vercel `nomicsaas-preview` (team pablo-7579s-projects) desde `main` como preview protegido por login Vercel; Supabase `nomicsaas-preview` (ref ilzqlmjbbmunwhoeyhoy, eu-west-1, free) con las 31 migraciones registradas (dos adaptadas a mano por exigir SUPERUSER: 20260904150000 y 20260906090000 — ver runbook DESPLIEGUE-PREVIEW.md en el Project). `DATABASE_URL` con `sslmode=no-verify` (deuda: CA del pooler), session pooler 5432. Cada push a `main` redespliega. URL: https://nomicsaas-preview-git-main-pablo-7579s-projects.vercel.app

@@ -1,6 +1,7 @@
 import { DocumentViewer } from "@/components/unsorted/document-viewer"
 import type { DocumentFileView, RunOptionView } from "@/components/unsorted/types"
 import Link from "next/link"
+import { fechaHoraUtc } from "@/lib/dates-ui"
 
 /**
  * E8 · T16 — Pestaña **Documento** del asiento (§6, §7).
@@ -19,10 +20,13 @@ export function EntryDocumentTab({
   file,
   runs,
   supportingRunId,
+  documentUnavailable = false,
 }: {
   file: DocumentFileView | null
   runs: readonly RunOptionView[]
   supportingRunId: string | null
+  /** BUG-E8-2: la ficha existe y los bytes no. Lo decide el servidor. */
+  documentUnavailable?: boolean
 }) {
   if (!file) {
     return (
@@ -40,7 +44,12 @@ export function EntryDocumentTab({
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]" data-testid="entry-document-tab">
-      <DocumentViewer file={file} pagesSent={supporting?.pagesSent ?? 0} pagesTotal={supporting?.pagesTotal ?? 1} />
+      <DocumentViewer
+        file={file}
+        pagesSent={supporting?.pagesSent ?? 0}
+        pagesTotal={supporting?.pagesTotal ?? 1}
+        unavailable={documentUnavailable}
+      />
 
       <div className="space-y-4">
         <section className="space-y-2">
@@ -49,7 +58,7 @@ export function EntryDocumentTab({
             <dl className="grid gap-x-6 gap-y-2 rounded-md border p-3 text-sm sm:grid-cols-2">
               <Item label="Tipo de extracción" value={supporting.kind} mono />
               <Item label="Proveedor y modelo" value={`${supporting.provider} / ${supporting.model}`} />
-              <Item label="Fecha" value={new Date(supporting.createdAt).toLocaleString("es-ES")} />
+              <Item label="Fecha" value={fechaHoraUtc(supporting.createdAt)} />
               <Item label="Prompt" value={supporting.promptShaShort} mono />
               <Item label="Esquema" value={supporting.schemaVersion} mono />
               <Item label="Páginas vistas" value={`${supporting.pagesSent} de ${supporting.pagesTotal}`} />
@@ -78,7 +87,7 @@ export function EntryDocumentTab({
                     <span className="font-code text-xs text-muted-foreground">#{run.ordinal}</span>{" "}
                     <span className="font-medium">{run.kind}</span>{" "}
                     <span className="text-xs text-muted-foreground">
-                      {run.provider}/{run.model} · {new Date(run.createdAt).toLocaleString("es-ES")}
+                      {run.provider}/{run.model} · {fechaHoraUtc(run.createdAt)}
                       {run.parentRunId ? " · revisión" : " · extracción original"}
                     </span>
                     {run.id === supportingRunId && (

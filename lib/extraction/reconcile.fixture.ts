@@ -201,7 +201,18 @@ export type FixtureNegative = {
   fundamento: string
 }
 
-const FIXTURE_PATH = resolve(process.cwd(), "docs/design/fixtures/extraccion-esperada.json")
+/**
+ * **Ronda 2 (H-6) — el sellado vigente es `v1.1`.**
+ *
+ * `extraccion-esperada.json` (schema 1.0) queda congelado como evidencia de la
+ * ronda 1 y ya no lo regenera nadie. La 1.1 corrige un defecto del propio
+ * fixture: llamaba `IRPF_15` a un tipo de retención que en el catálogo del
+ * producto (`lib/taxes/rates.ts`) se llama `IRPF_PROF_15`, lo que obligaba al
+ * test de los quince casos sobre el NPGC real a traducirlo en el arnés. Un
+ * fixture que describe un mundo que el producto no tiene es un fixture roto.
+ * Las cifras no se mueven: mismo `rateBps` 1500.
+ */
+const FIXTURE_PATH = resolve(process.cwd(), "docs/design/fixtures/extraccion-esperada.v1.1.json")
 
 let cached: FixtureJson | null = null
 

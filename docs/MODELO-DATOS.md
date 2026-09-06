@@ -164,10 +164,36 @@ model Counterparty { id; organizationId; kind CounterpartyKind; name; taxId?; ac
 ## Extracción, FX, informes, auditoría
 > `ReportRun` y `ManualReviewFlag` actualizados por **E6** (`docs/design/E6-informes.md` ronda 2) tras la validación contable (`docs/design/E6-validacion-estados.md`, **CONFORME CON OBSERVACIONES**; cifras selladas en `docs/design/fixtures/estados-esperados.json`, 47 checks). Se incorporan O-5 (`paramsHash` en la clave de reutilización), O-6 (`comparativeRunId`/`comparativeBasis`), O-7 (`sealReasons` con código), O-8 (`params.currency`), O-9/O-10/O-12 (`cashflowBucket` en `LedgerAccount`, categoría derivada, R-18′) y O-11 (el bloque del cashflow indirecto es función pura, **no** columna). O-13 (`AccountKey.PROVEEDORES_INMOVILIZADO → 523`) y O-4 quedan para **E8**; O-14 (`epigraphSortKey`) anotada y descartada por ahora.
 
+> **E8 CERRADA** (`docs/design/E8-documentos-asientos.md`, ADR-0014 APROBADO). Lo que sigue es el esquema **final** del camino documental, no el objetivo: `ExtractionRun`, `PromptVersion`, `Counterparty` e `InvoiceSeries` existen en `prisma/schema.prisma` con RLS `FORCE`, y `Transaction` gana la máquina de estados de D1.
+
 ```prisma
-model ExtractionRun { id; organizationId; fileId; provider String; model String; promptSha String; schemaVersion String; pagesSent Int; pagesTotal Int; partial Boolean; rawOutput Json; proposal Json?; reconcile Json?; tokensIn?; tokensOut?; durationMs; createdBy; createdAt }   // inmutable
-model PromptVersion { id; organizationId?; code String; version Int; content String; sha256 String; createdBy; createdAt; @@unique([organizationId,code,version]) }
-model ExchangeRate { id; date Date; from String; to String; rateMicro BigInt; source String; fetchedAt; @@unique([date,from,to,source]) }
+// ── E8 · el camino documento → asiento ──────────────────────────────────────
+model ExtractionRun {                                              // APPEND-ONLY
+  id; organizationId; fileId; fileSha256 String                    // el sha de los bytes que vio el modelo
+  kind ExtractionKind                                              // LLM | MANUAL | IMPORTED
+  parentRunId?                                                     // D5: editar/forzar NO muta el run, cuelga una REVISIÓN
+  provider String; model String; temperatureBps Int; attempts Json  // G-09: la cadena de fallback, con códigos y ms; sin cuerpos
+  promptCode String; promptSource PromptSource; promptVersionId?; promptSha String   // sha del prompt EFECTIVO (I-E8-11)
+  schemaVersion String; schemaSha String                           // G-17: una salida sólo vale contra el schema con el que se pidió
+  pagesSent Int; pagesTotal Int; partial Boolean                   // G-02: `partial` lo escribe un trigger BEFORE INSERT
+  rawOutput Json; proposal Json?; proposalSha? ; fieldOrigins Json? // los CUATRO badges de confianza, campo a campo
+  reconcile Json?; reconcileStatus ReconcileStatus?                // veredicto sellado: 25 checks, sellos, conversión, delta
+  tokensIn?; tokensOut?; costMicros?; durationMs Int; gitSha String
+  createdById?; createdAt
+  @@unique([organizationId,id]) @@index([organizationId,fileId,createdAt(desc)]) @@map("extraction_runs") }
+// Inmutable de verdad: `REVOKE UPDATE, DELETE` + política RESTRICTIVE `USING(false)`, y **I-E8-11 recomputa
+// `proposal_sha`/`schema_sha`/`prompt_sha`** sobre el contenido de la fila (el permiso no es evidencia). Cota de 256 KB.
+enum ExtractionKind { LLM MANUAL IMPORTED }   enum ReconcileStatus { PASS WARN FAIL }   enum PromptSource { GIT ORG }
+
+model PromptVersion { id; organizationId?; code String; version Int; content String; sha256 String; notes?; createdById?; createdAt; @@unique([organizationId,code,version]) }   // append-only: «editar» es insertar version+1
+model Counterparty { id; organizationId; code; name; taxId?; countryCode?; vatNumber?; viesValid?; viesCheckedAt?
+  withholdingRegime WithholdingRegime; withholdingRateCode?; surchargeRegime Boolean; isEmployee Boolean; isActive; notes?; createdAt; updatedAt
+  @@unique([organizationId,code]) @@map("counterparties") }
+// O-11/D11: **la calificación fiscal sale de la FICHA, no del papel**. La retención que se practica es la del
+// régimen del maestro (RC-19); lo que el documento diga sólo contrasta.
+model ExchangeRate { id; date Date; from String; to String; rateMicro BigInt; source String; fetchedAt; @@unique([date,from,to,source]) @@map("exchange_rates") }
+// GLOBAL por diseño (ADR-0014 D7) y append-only con ENABLE+FORCE: la referencia del BCE es pública. La tasa es la
+// del `documentDate` y se persiste con su fecha REAL de publicación; sin tasa no se convierte (RC-14).
 model ReportRun { id; organizationId; type ReportType; periodStart Date; periodEnd Date; fiscalYearId?
   params Json; paramsHash String @db.Char(64)                    // O-5: la FOTO y la VARIANTE son parámetros, no tipos
   ledgerHash String; analyticsHash?; marginConfigHash?; allocationRunSetHash? @map("allocation_run_set_hash"); analyticsKey String "∅"   // trigger; NULL<>NULL (O-A6). E5/O-E5-7: `allocationRunId` SUSTITUIDO por el hash del conjunto
@@ -187,7 +213,20 @@ model AuditLog { id; organizationId; userId?; entity String; entityId String; ac
 model ManualReviewFlag { id; organizationId; periodStart Date; periodEnd Date; scope ReportType?; reason; createdById; createdAt; clearedAt?; clearedById?; clearReason?; @@index([organizationId,periodStart,periodEnd]) @@map("manual_review_flags") }
 // E6: ADMIN fuerza `REQUIERE REVISIÓN` sobre todos los informes que solapen el periodo (`scope` null = todos). Semi-append-only: sin DELETE, y `UPDATE` sólo de las tres columnas de limpieza (GRANT de columna + trigger, patrón ADR-0010). Único flag activo por (org, periodo, scope) con dos índices únicos PARCIALES (`WHERE cleared_at IS NULL`), porque NULL<>NULL.
 // `Organization.reviewThresholds` (E1, sin uso hasta E6): {version:1, comparativeBasis, kpis:{ingresos, ebitda, resultado, tesoreria, deuda, dso, margenBruto → {pctBps, minAbsCents, minPointsBps}}}. Dispara revisión si |Δ%| > pctBps **Y** |Δ| > minAbsCents. Base por defecto SAME_PERIOD_PREVIOUS_YEAR. Variaciones explicables EV-1…EV-6 (no disparan) y EV-7…EV-10 (disparan siempre): E6 §2.4.
-model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int?; lastHash String?; @@unique([organizationId,code,year]) }
+model InvoiceSeries { id; organizationId; code; kind InvoiceSeriesKind; prefix; nextNumber Int; year Int?; lastHash String?; isActive; createdAt; updatedAt; @@unique([organizationId,code,year]) @@map("invoice_series") }
+enum InvoiceSeriesKind { ORDINARIA RECTIFICATIVA SIMPLIFICADA }   // `kind` INMUTABLE por trigger; numeración sin huecos (I-E8-20, art. 6.1.a RD 1619/2012)
+
+// ── E8 · `Transaction` deja de ser una tabla de apuntes y pasa a ser la OPERACIÓN ──
+// status TransactionStatus DRAFT|PROPOSED|POSTED|VOID  ·  journalEntryId?  ·  voidedEntryId?  ·  voidedEntryIds[]
+// extractionRunId?  ·  splitParentTransactionId?  ·  currencyCode, total, convertedTotal?, exchangeRateMicro?, rateDate?, rateSource?
+// convertedTotalOverrideReason? (CHECK: ≥ 10 caracteres si se fuerza)
+// CHECK D1: (DRAFT sin asiento) ∨ (PROPOSED sin asiento) ∨ (POSTED **⟺** journal_entry_id) ∨ (VOID con voided_entry_id).
+// Transiciones legales por trigger: DRAFT→PROPOSED→POSTED→VOID, el atajo DRAFT→POSTED y la vuelta VOID→PROPOSED
+// (anular y rehacer). Al anular, el asiento se TRASLADA a `voided_entry_id` y se apila en `voided_entry_ids`
+// (append-only): nada se pierde y `POSTED ⟺ asiento` sigue siendo cierto (I-E8-4).
+// `journal_lines` gana la tripleta de divisa (`original_currency`, `original_amount_cents`, `exchange_rate_id`),
+// INMUTABLE (sin GRANT UPDATE) y con CHECK de coherencia: es lo que la NRV 11ª.2.1 revalorizará al cierre en E9.
+// `files.sha256` pasa a NOT NULL y `files.cached_parse_result` **se elimina** (P4/G-03).
 ```
 
 ## Integridad (resumen)
@@ -217,4 +256,11 @@ model InvoiceSeries { id; organizationId; code; prefix; nextNumber Int; year Int
 | `cashflowBucket` en toda cuenta postable salvo 57x (R-18′); todo asiento con línea 57x reparte por línea y cuadra con Δ57x (I6) | `validate_cashflow()` en el generador del seed + `lib/ledger/reports/cashflow.ts` + test de exhaustividad sobre las 906 cuentas |
 | `report_runs` inmutable; un informe no se corrige, se emite otro | RLS append-only (`USING(false)` en UPDATE/DELETE) + `REVOKE` + I-E6-16 |
 | Anulación solo por contra-asiento; sin flag que excluya líneas de informes | código + ausencia de columna `voided` en líneas |
+| `extraction_runs` / `prompt_versions` / `exchange_rates` append-only, y sus sellos recomputables | `REVOKE UPDATE, DELETE` + RLS RESTRICTIVE `USING(false)` + **I-E8-11** (recomputa `proposal_sha`, `schema_sha`, `prompt_sha`) |
+| `POSTED ⟺ journal_entry_id`; transiciones de estado legales; histórico de anulaciones append-only | CHECK `transactions_status_entry_d1` + trigger `app.transactions_status_transition()` + I-E8-4 |
+| Los bytes del documento son los que vio la extracción **y los de hoy** | `files.sha256 NOT NULL` + `lib/files-integrity.sha256OfStoredFile` (streaming) + **I-E8-2** (fichero ausente o alterado ⇒ FAIL con su ruta) |
+| La cuota que se contabiliza es la **del documento**, y la desviación se mide sin corregirla | `taxOverrides` (ADR-0014 D3) + I-E8-7b; **no** hay línea de 669/769 por residuo de IVA |
+| El libro registro de IVA cuadra con el diario, y el documento cuadra con el asiento | **I-E8-15a/b/c** (los tres puentes al 303) + **I-E8-7a** (documento ↔ asiento, tolerancia 0) |
+| Divisa: residuo de conversión CERO por construcción; tres columnas por línea monetaria | `lib/fx/convert.convertDocumentToBase` (Hamilton sobre las cuotas, ADR-0014 D2) + CHECK + I-E8-19 |
+| Series de facturación sin huecos y con `kind` inmutable | trigger + **I-E8-20** |
 | Tenant | `tenantDb` + RLS |

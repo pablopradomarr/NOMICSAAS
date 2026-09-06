@@ -9,6 +9,7 @@ import {
   type InboxRowView,
   type InboxStatus,
 } from "@/components/unsorted/types"
+import { fechaUtc } from "@/lib/dates-ui"
 import { formatCents } from "@/lib/money"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
@@ -144,7 +145,7 @@ export function InboxTable({ rows, canEdit }: { rows: readonly InboxRowView[]; c
                     </span>
                   </Link>
                   <span className="text-[11px] text-muted-foreground">
-                    subido el {new Date(row.uploadedAt).toLocaleDateString("es-ES")}
+                    subido el {fechaUtc(row.uploadedAt)}
                     {row.sha256 ? "" : " · sin sha256"}
                   </span>
                 </td>
@@ -168,7 +169,7 @@ export function InboxTable({ rows, canEdit }: { rows: readonly InboxRowView[]; c
                   )}
                 </td>
                 <td className="px-3 py-1 text-xs text-muted-foreground">
-                  {row.runCount === 0 ? "—" : `${row.runCount} · ${new Date(row.runCreatedAt ?? row.uploadedAt).toLocaleDateString("es-ES")}`}
+                  {row.runCount === 0 ? "—" : `${row.runCount} · ${fechaUtc(row.runCreatedAt ?? row.uploadedAt)}`}
                 </td>
                 <td className="px-3 py-1 text-right">
                   <div className="flex justify-end gap-1">
@@ -199,3 +200,4 @@ export function InboxTable({ rows, canEdit }: { rows: readonly InboxRowView[]; c
     </div>
   )
 }
+

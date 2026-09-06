@@ -86,6 +86,24 @@ async function useOrg(page: Page, baseURL: string, orgId: string): Promise<void>
   ])
 }
 
+/**
+ * Abre un diálogo esperando a que el componente esté **hidratado**.
+ *
+ * `page.click()` comprueba que el elemento es visible y estable, pero no que
+ * React haya enganchado su `onClick`: el botón se pulsa, recibe el foco y no
+ * pasa nada. En `next dev` con Turbopack la hidratación de la ficha de revisión
+ * —que es una pantalla pesada— tarda lo suyo, y en una máquina cargada tarda
+ * segundos. Se reintenta la pulsación hasta que el contenido del diálogo
+ * aparece; no se relaja ninguna aserción, sólo se espera a que la pantalla esté
+ * viva. Es el mismo patrón que `libro-diario.spec.ts` usa para los `fill`.
+ */
+async function abrirDialogo(page: Page, gatillo: string, contenido: string): Promise<void> {
+  await expect(async () => {
+    await page.getByTestId(gatillo).click()
+    await expect(page.getByTestId(contenido)).toBeVisible({ timeout: 2_000 })
+  }).toPass({ timeout: 45_000 })
+}
+
 async function setRole(orgId: string, role: "ADMIN" | "EDITOR" | "VIEWER"): Promise<void> {
   const userId = await adminUserId()
   await withDb(async (client) => {
@@ -183,7 +201,7 @@ test("la revisión enseña procedencia, las cuatro fechas, las comprobaciones y 
 test("confirmar deja el asiento en el diario y el drill-down llega al documento en tres clics", async ({ page }) => {
   await page.goto(`/unsorted/${simple.fileId}`, { waitUntil: "domcontentloaded" })
 
-  await page.getByTestId("confirm-proposal").click()
+  await abrirDialogo(page, "confirm-proposal", "confirm-proposal-submit")
   await page.getByTestId("confirm-proposal-submit").click()
   await expect(page.getByTestId("confirmed-banner")).toBeVisible({ timeout: 60_000 })
 
@@ -234,7 +252,7 @@ test("confirmar deja el asiento en el diario y el drill-down llega al documento 
 test("anular y rehacer exige motivo y devuelve la operación a propuesta", async ({ page }) => {
   await page.goto(`/unsorted/${simple.fileId}`, { waitUntil: "domcontentloaded" })
 
-  await page.getByTestId("revoid-and-redo").click()
+  await abrirDialogo(page, "revoid-and-redo", "revoid-reason")
   // Sin motivo suficiente, el botón no deja hacer nada: es una acción
   // destructiva sobre el diario y el motivo queda en AuditLog.
   await expect(page.getByTestId("revoid-confirm")).toBeDisabled()

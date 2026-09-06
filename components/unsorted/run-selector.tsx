@@ -2,6 +2,7 @@ import { CheckStatusChip, type CheckStatusValue } from "@/components/ui/check-st
 import type { RunOptionView } from "@/components/unsorted/types"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
+import { fechaHoraUtc } from "@/lib/dates-ui"
 
 /**
  * E8 · T15 — Selector de `ExtractionRun` (§6, ADR-0014 D5).
@@ -56,7 +57,7 @@ export function RunSelector({
                 <span className="font-code w-6 shrink-0 text-xs text-muted-foreground">#{run.ordinal}</span>
                 <span className="font-medium">{KIND_LABEL[run.kind] ?? run.kind}</span>
                 <span className="text-xs text-muted-foreground">
-                  {new Date(run.createdAt).toLocaleString("es-ES")} · {run.provider}/{run.model}
+                  {fechaHoraUtc(run.createdAt)} · {run.provider}/{run.model}
                 </span>
                 <span className="font-code text-[11px] text-muted-foreground" title="sha del prompt efectivo">
                   prompt {run.promptShaShort} · esquema {run.schemaVersion}

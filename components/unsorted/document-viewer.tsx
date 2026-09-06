@@ -2,10 +2,9 @@
 
 import { Button } from "@/components/ui/button"
 import type { DocumentFileView } from "@/components/unsorted/types"
-import { DOCUMENT_STATUS_HEADER, DOCUMENT_UNAVAILABLE } from "@/lib/previews/unavailable"
 import { formatBytes } from "@/lib/utils"
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 /**
  * E8 · T15 — Visor del documento (panel izquierdo de `/unsorted/[fileId]`).
@@ -24,36 +23,26 @@ export function DocumentViewer({
   file,
   pagesSent,
   pagesTotal,
+  unavailable = false,
 }: {
   file: DocumentFileView
   pagesSent: number
   pagesTotal: number
+  /**
+   * **BUG-E8-2.** ¿Existe la ficha y NO los bytes? Lo decide el SERVIDOR, que ya
+   * tiene el fichero delante, y llega como prop.
+   *
+   * La primera versión lo preguntaba desde el cliente con un `HEAD` a
+   * `/files/preview/…`. Mala idea: Next atiende un `HEAD` ejecutando el `GET`
+   * entero, así que **cada carga de la pantalla de revisión regeneraba la vista
+   * previa** (sharp/pdf2pic) sólo para responder a una pregunta que el servidor
+   * ya sabía. Trabajo duplicado en el camino más caliente del módulo.
+   */
+  unavailable?: boolean
 }) {
   const total = Math.max(pagesTotal, 1)
   const [page, setPage] = useState(1)
   const [failed, setFailed] = useState(false)
-  /**
-   * **BUG-E8-2.** «La ficha existe y los bytes no» es un estado propio, y la
-   * pantalla tiene que decirlo: antes la ruta devolvía un 404 silencioso, el
-   * `onError` del `<img>` pintaba «no se ha podido componer la vista previa» y
-   * ofrecía descargar un documento que tampoco estaba. Se pregunta a la ruta
-   * —una `HEAD`, sin traerse la imagen— y se distingue el caso.
-   */
-  const [unavailable, setUnavailable] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    void fetch(`/files/preview/${file.id}?page=${page}`, { method: "HEAD" })
-      .then((response) => {
-        if (cancelled) return
-        setUnavailable(response.headers.get(DOCUMENT_STATUS_HEADER) === DOCUMENT_UNAVAILABLE)
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [file.id, page])
-
   return (
     <div className="space-y-3" data-testid="document-viewer">
       <div className="flex min-h-[420px] items-center justify-center overflow-hidden rounded-md border bg-muted/20 p-2">

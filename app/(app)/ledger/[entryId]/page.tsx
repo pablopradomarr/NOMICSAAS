@@ -14,6 +14,7 @@ import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
+import { fileExists, fullPathForFile } from "@/lib/files"
 import { tenantPage } from "@/lib/page-tenant"
 
 export const metadata: Metadata = { title: "Asiento" }
@@ -63,6 +64,8 @@ export default tenantPage<{
         isReviewed: file.isReviewed,
       }
     : null
+  // BUG-E8-2: el drill-down dice lo mismo que la Auditoría si el papel no está.
+  const documentoNoDisponible = file !== null && !(await fileExists(fullPathForFile(org, file)))
   const runViews: RunOptionView[] = documentRuns.map((run) => ({
     id: run.id,
     kind: run.kind,
@@ -133,7 +136,12 @@ export default tenantPage<{
       {tab === "asiento" ? (
         <EntryDetail entry={view} baseCurrency={org.baseCurrency} />
       ) : (
-        <EntryDocumentTab file={fileView} runs={runViews} supportingRunId={view.extractionRunId ?? null} />
+        <EntryDocumentTab
+          file={fileView}
+          runs={runViews}
+          supportingRunId={view.extractionRunId ?? null}
+          documentUnavailable={documentoNoDisponible}
+        />
       )}
     </div>
   )

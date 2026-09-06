@@ -30,6 +30,19 @@ disco y falla si difiere.
 
 NO TOCA `tests/fixtures/*` ni codigo de producto.
 
+Versionado del fichero sellado (E8 ronda 2, H-6)
+------------------------------------------------
+Un fixture sellado no se reescribe: se versiona. `extraccion-esperada.json` (schema
+1.0) queda como evidencia congelada de la ronda 1 y NO lo regenera nadie; este
+generador escribe y comprueba `extraccion-esperada.v1.1.json`.
+
+Que cambia en 1.1, y por que: el codigo de retencion pasa de `IRPF_15` a
+`IRPF_PROF_15`. `IRPF_15` no existe en el catalogo que siembra el producto
+(`lib/taxes/rates.ts`), asi que el test que replica los quince casos sobre el NPGC real
+tenia que traducirlo en el arnes. Una traduccion de arnes es un fixture que describe un
+mundo que el producto no tiene: el defecto era del fixture y se corrige aqui. La cifra
+no se mueve ni un centimo (mismo `rateBps` 1500); cambia el nombre del tipo.
+
 Convenciones (las mismas que sella el JSON en `convenciones`)
 ------------------------------------------------------------
 * Todo en CENTIMOS ENTEROS. Ni un float en el resultado.
@@ -62,9 +75,9 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True
-OUT = HERE / "extraccion-esperada.json"
+OUT = HERE / "extraccion-esperada.v1.1.json"
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 REF_DATE = "2026-12-31"
 BASE_CURRENCY = "EUR"
 FISCAL_YEAR = "2026"
@@ -208,7 +221,7 @@ TAX_RATES: dict[str, dict[str, Any]] = {
               "validFrom": "2012-09-01", "validTo": None},
     "IVA_NO_SUJETO": {"code": "IVA_NO_SUJETO", "kind": "EXENTO", "rateBps": 0, "appliesTo": "BOTH",
                       "validFrom": "2007-01-01", "validTo": None},
-    "IRPF_15": {"code": "IRPF_15", "kind": "IRPF", "rateBps": 1500, "appliesTo": "BOTH",
+    "IRPF_PROF_15": {"code": "IRPF_PROF_15", "kind": "IRPF", "rateBps": 1500, "appliesTo": "BOTH",
                 "validFrom": "2015-07-12", "validTo": None},
 }
 
@@ -256,7 +269,7 @@ CONTRAPARTES: dict[str, dict[str, Any]] = {
     "CP-ES-ABOGADO": {"id": "CP-ES-ABOGADO", "name": "Marta Ruiz Salas (abogada)",
                       "taxId": "12345678Z", "countryCode": "ES", "vatNumber": "ES12345678Z",
                       "viesValid": None, "viesCheckedAt": None, "withholdingRegime": "PROFESIONAL",
-                      "withholdingRateCode": "IRPF_15", "surchargeRegime": False,
+                      "withholdingRateCode": "IRPF_PROF_15", "surchargeRegime": False,
                       "isEmployee": False, "enMaestro": True},
     "CP-ES-CLIENTE": {"id": "CP-ES-CLIENTE", "name": "Constructora del Ebro SA",
                       "taxId": "A28017895", "countryCode": "ES", "vatNumber": "ESA28017895",
@@ -926,7 +939,12 @@ def caso_06() -> dict[str, Any]:
         cp=cp,
         prop=propuesta(doc_kind="ABONO_RECIBIDO", number="R-2026-0007", cp=cp,
                        document_date="2026-06-30", reception_date="2026-07-02",
-                       lines=[pl(base, "IVA_21", "608", description="Devolucion de montaje defectuoso",
+                       # H-6: la LINEA DEL DOCUMENTO cita la cuenta de la compra
+                       # original (607). La 608 la decide el motor
+                       # (`rectificationAccountFor` -> DEVOLUCION_COMPRAS), que es
+                       # justo lo que dicen las notas de este caso; ademas 608 tiene
+                       # subcuentas en el NPGC y no es postable en el plan real.
+                       lines=[pl(base, "IVA_21", "607", description="Devolucion de montaje defectuoso",
                                  project="PRJ-ALFA")],
                        taxes=[pt("IVA_21", base, cuota)], total=total,
                        description="Abono por devolucion parcial de F-2026-0001",
@@ -1051,7 +1069,7 @@ def caso_07() -> dict[str, Any]:
 def caso_08() -> dict[str, Any]:
     base, cuota, total_leido = 100_000, 21_000, 121_000
     cp = CONTRAPARTES["CP-ES-ABOGADO"]
-    retencion = apply_bps(base, TAX_RATES["IRPF_15"]["rateBps"])   # 15 000
+    retencion = apply_bps(base, TAX_RATES["IRPF_PROF_15"]["rateBps"])   # 15 000
     liquido = base + cuota - retencion                              # 106 000
     return mk(
         cid="C08", slug="profesional-sin-mencion-de-retencion",
@@ -1066,7 +1084,7 @@ def caso_08() -> dict[str, Any]:
                        lines=[pl(base, "IVA_21", "623", description="Direccion letrada", ceco="CC-ADM")],
                        taxes=[pt("IVA_21", base, cuota)], total=total_leido,
                        description="Honorarios de abogada, sin retencion en el documento",
-                       withholding={"rateCode": "IRPF_15", "quotaCents": retencion},
+                       withholding={"rateCode": "IRPF_PROF_15", "quotaCents": retencion},
                        readWithholding=None),
         overrides={
             "RC-03": {"message": "100 000 de base + 21 000 de cuota - 0 de retencion LEIDA = 121 000; "
@@ -1077,7 +1095,7 @@ def caso_08() -> dict[str, Any]:
                       "message": "esta factura deberia llevar retencion del 15 %; solicite factura "
                                  "rectificada. Se practica la retencion del regimen (15 000) y se "
                                  "abona a 4751",
-                      "evidence": {"regimen": "PROFESIONAL", "rateCode": "IRPF_15", "rateBps": 1500,
+                      "evidence": {"regimen": "PROFESIONAL", "rateCode": "IRPF_PROF_15", "rateBps": 1500,
                                    "baseRetencion": base, "retencionConfigurada": retencion,
                                    "retencionLeida": None, "modelo": "111"},
                       "fields": ["withholding", "readWithholding"]},
@@ -1106,7 +1124,7 @@ def caso_08() -> dict[str, Any]:
                           line("410", credit=liquido, description="Marta Ruiz Salas - liquido a pagar",
                                account_key="ACREEDORES"),
                           line("4751", credit=retencion, description="Retencion IRPF 15 % (modelo 111)",
-                               tax_rate_code="IRPF_15", account_key="IRPF_PROFESIONALES_A_PAGAR"),
+                               tax_rate_code="IRPF_PROF_15", account_key="IRPF_PROFESIONALES_A_PAGAR"),
                       ],
                       payable_blocks=[{"payableKey": "ACREEDORES", "accountCode": "410",
                                        "baseCents": base, "quotaCents": cuota,
@@ -1146,7 +1164,7 @@ def caso_09() -> dict[str, Any]:
                                  ceco="CC-ADM", deductibility=None)],
                        taxes=[pt("IVA_21", honorarios, cuota)], total=total,
                        description="Honorarios con tasa judicial como suplido",
-                       withholding={"rateCode": "IRPF_15", "quotaCents": retencion},
+                       withholding={"rateCode": "IRPF_PROF_15", "quotaCents": retencion},
                        readWithholding={"rateBps": 1500, "quotaCents": retencion}),
         overrides={
             "RC-01": {"message": "solo la linea OPERACION suma base: 100 000. El suplido de 30 000 "
@@ -1191,7 +1209,7 @@ def caso_09() -> dict[str, Any]:
                           line("410", credit=liquido, description="Marta Ruiz Salas - liquido a pagar",
                                account_key="ACREEDORES"),
                           line("4751", credit=retencion, description="Retencion IRPF 15 % sobre 100 000",
-                               tax_rate_code="IRPF_15", account_key="IRPF_PROFESIONALES_A_PAGAR"),
+                               tax_rate_code="IRPF_PROF_15", account_key="IRPF_PROFESIONALES_A_PAGAR"),
                       ],
                       payable_blocks=[{"payableKey": "ACREEDORES", "accountCode": "410",
                                        "baseCents": honorarios + suplido, "quotaCents": cuota,
@@ -2179,7 +2197,7 @@ def main() -> int:
         if OUT.read_text(encoding="utf-8") != text:
             print(f"{OUT} difiere de la reconstruccion", file=sys.stderr)
             return 1
-        print("OK: extraccion-esperada.json reproducible byte a byte")
+        print(f"OK: {OUT.name} reproducible byte a byte")
         return 0
 
     OUT.write_text(text, encoding="utf-8")

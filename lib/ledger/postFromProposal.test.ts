@@ -31,6 +31,7 @@ import {
 import {
   compatibleTemplates,
   convertDocumentToBase,
+  pairOriginalAmounts,
   payableKeyForAccount,
   postFromProposal,
   previewFromProposal,
@@ -455,5 +456,102 @@ describe("ronda 1 · el importe original de la línea monetaria no se obtiene de
     expect(suma).toBe(proposal.totalCents)
     const monetary = posted.draft.lines.filter((l) => l.originalCurrency !== null && l.originalCurrency !== undefined)
     expect(monetary.reduce((a, l) => a + (l.originalAmountCents ?? 0), 0)).toBe(proposal.totalCents)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E8 ronda 2 · R2-1 — dos bloques de pasivo con la MISMA cuenta
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ronda 2 · el importe original se empareja por clave estable, no por orden", () => {
+  /** El plan del fixture más una 4100 postable, que es la cuenta compartida. */
+  function planCon4100(ledger: LedgerContext): LedgerContext["plan"] {
+    const modelo = ledger.plan.byCode.get("410")
+    if (!modelo) throw new Error("el plan del fixture no tiene la 410")
+    const byCode = new Map(ledger.plan.byCode)
+    byCode.set("4100", { ...modelo, code: "4100", name: "Acreedores y proveedores de inmovilizado", level: 4, parentCode: "410" })
+    return { byCode, codes: [...byCode.keys()].sort() }
+  }
+
+  /**
+   * Una organización puede mapear dos claves de pasivo a la MISMA cuenta —
+   * `PROVEEDORES_INMOVILIZADO` y `ACREEDORES` a la 4100, por ejemplo—, y
+   * entonces las dos líneas de pasivo del asiento son indistinguibles: misma
+   * cuenta, misma contraparte, mismo vencimiento. El emparejamiento por FIFO de
+   * `accountCode` daba el resultado correcto sólo porque la plantilla emite las
+   * líneas en el orden de los bloques; un cambio de orden habría intercambiado
+   * los dos importes en divisa **sin descuadrar el asiento**, así que nada lo
+   * habría delatado hasta la revalorización de cierre de E9.
+   */
+  it("`pairOriginalAmounts` no intercambia dos bloques de la misma cuenta aunque lleguen en otro orden", () => {
+    const lines = [
+      { lineNo: 1, accountCode: "4100", debitCents: 0, creditCents: 92_000 },
+      { lineNo: 2, accountCode: "4100", debitCents: 0, creditCents: 46_000 },
+    ]
+    // Los bloques, DELIBERADAMENTE en el orden contrario al de las líneas.
+    const candidates = [
+      { payableKey: "ACREEDORES", accountCode: "4100", amountCents: 46_000, originalAmountCents: 50_000 },
+      { payableKey: "PROVEEDORES_INMOVILIZADO", accountCode: "4100", amountCents: 92_000, originalAmountCents: 100_000 },
+    ]
+    const paired = pairOriginalAmounts(lines, candidates)
+    expect(paired.get(1)).toBe(100_000) // la de 92 000 € es la de 100 000 CHF
+    expect(paired.get(2)).toBe(50_000)
+    // Un FIFO por cuenta habría dado justo lo contrario.
+    expect(paired.get(1)).not.toBe(candidates[0].originalAmountCents)
+  })
+
+  it("con empate exacto de importe convertido reparte los dos y no deja ninguna línea sin pareja", () => {
+    const lines = [
+      { lineNo: 1, accountCode: "4100", debitCents: 0, creditCents: 46_000 },
+      { lineNo: 2, accountCode: "4100", debitCents: 0, creditCents: 46_000 },
+    ]
+    const candidates = [
+      { payableKey: "ACREEDORES", accountCode: "4100", amountCents: 46_000, originalAmountCents: 50_000 },
+      { payableKey: "PROVEEDORES_INMOVILIZADO", accountCode: "4100", amountCents: 46_000, originalAmountCents: 50_001 },
+    ]
+    const paired = pairOriginalAmounts(lines, candidates)
+    expect([...paired.values()].sort((a, b) => a - b)).toEqual([50_000, 50_001])
+  })
+
+  it("una línea monetaria sin bloque que la respalde se queda sin pareja: la resuelve reverseConvert", () => {
+    const paired = pairOriginalAmounts([{ lineNo: 1, accountCode: "5720", debitCents: 0, creditCents: 1_000 }], [])
+    expect(paired.has(1)).toBe(false)
+  })
+
+  it("documento mixto en divisa con las DOS claves de pasivo mapeadas a la misma cuenta", () => {
+    const c = caseById("C05") // inmovilizado (217 → 523) + servicio (629 → 410)
+    const base = inputProposalFor(c)
+    const proposal = { ...base, currency: "CHF" }
+    const context = reconcileContextFor(c, {
+      rate: { id: "RATE-CHF", date: "2026-05-05", from: "CHF", to: "EUR", rateMicro: 920_000, source: "ECB_FRANKFURTER" },
+    })
+    const rec = reconcile(proposal, { ...context, currencies: [...context.currencies, { code: "CHF", exponent: 2 }] })
+
+    // El plan de esta organización manda las dos claves a la MISMA 4100.
+    const ledger = fixtureLedgerContext(c)
+    const mismaCuenta: LedgerContext = {
+      ...ledger,
+      map: (key) => (key === "PROVEEDORES_INMOVILIZADO" || key === "ACREEDORES" ? "4100" : ledger.map(key)),
+      plan: planCon4100(ledger),
+    }
+
+    const posted = unwrap(postFromProposal(rec, mismaCuenta))
+    const bloques = posted.payableBlocks.filter((b) => b.accountCode === "4100")
+    expect(bloques).toHaveLength(2)
+    expect(new Set(bloques.map((b) => b.payableKey)).size).toBe(2)
+
+    const monetarias = posted.draft.lines.filter((l) => l.accountCode === "4100")
+    expect(monetarias).toHaveLength(2)
+
+    // Cada línea lleva el importe en divisa de SU bloque, emparejado por clave.
+    for (const line of monetarias) {
+      const suyo = bloques.find((b) => b.amountCents === line.debitCents + line.creditCents)
+      expect(suyo, `no hay bloque con el importe de la línea ${line.lineNo}`).toBeTruthy()
+      expect(line.originalAmountCents).toBe(suyo?.originalAmountCents)
+    }
+    // Y la suma sigue siendo el total del papel, con el asiento cuadrado.
+    expect(monetarias.reduce((a, l) => a + (l.originalAmountCents ?? 0), 0)).toBe(proposal.totalCents)
+    const debit = posted.draft.lines.reduce((a, l) => a + l.debitCents, 0)
+    expect(debit).toBe(posted.draft.lines.reduce((a, l) => a + l.creditCents, 0))
   })
 })

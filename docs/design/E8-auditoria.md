@@ -234,3 +234,40 @@ Todo el trabajo se hizo en la base **`erp_audit`**, clon migrado de `erp_test`, 
 (`files.sha256`, `extraction_runs.reconcile_status`, `extraction_runs.proposal`, la tasa JPY→EUR del
 sondeo) se revirtieron y se verificó que los invariantes vuelven a la línea base; después se eliminó
 `erp_audit` y los scripts temporales del auditor. **No se modificó ni producto ni fixtures.**
+
+---
+
+# Re-auditoría (ronda 1) — `1652150…008fa0d`
+
+**Fecha:** 2026-09-06 · **Commit:** `008fa0d` · **Base aislada:** `erp_audit` (clon migrado de `erp_test`),
+almacén de ficheros propio en el scratchpad. Reconstrucción **de nuevo por Python/SQL propios**.
+
+```
+VEREDICTO: CONFORME
+```
+
+| # | Comprobación exigida | Resultado |
+|---|---|---|
+| 1 | Las 6 cifras y los 15 asientos | **Δ = 0.** Σdebe = Σhaber = 6 361 798 (5 441 794 de la ronda 0 + 920 004 del caso CHF nuevo); Σ472 = 660 020 (530 383 + 129 637); Σ477 = 79 800; Σ4751 = 30 000; C12 = 925 926; C05 bloques 523/4100 = 1 210 000 / 242 000. Los **14 asientos con `asiento` en el fixture se compararon línea a línea con `journal_lines`: 0 discrepancias**; C13 sigue sin asiento (RC-09) |
+| 2 | I-E8-15a/b/c a 0 con C12 y C07, y I-E8-7a **no tautológico** | **15a/15b/15c PASS en los cuatro trimestres** con C12 (divisa) y C07 (sustitución) dentro. **Ojo:** ahora ambas orillas de 15a/b/c salen del asiento, así que **15a/b/c sí son tautológicos**; el puente real es I-E8-7a con su `contrast` (libro-desde-propuesta convertido y con `rectificationDelta`). Se alteró por SQL la cuota de la propuesta de C01 (21 000 → 25 000) y **I-E8-7a FAIL**: *«asiento 2: cuota deducible — el asiento dice 21000 y el documento 25000 (diferencia −4000)»*, mientras 15a/b/c seguían en PASS. **No es tautología, y es el único que lo detecta** |
+| 3 | `diskSha256` | **Implementado y efectivo.** Con el almacén intacto: `I-E8-2 PASS — 16 run(s) con asiento: sha en disco = sha del fichero = sha del run`. Alterando los bytes de un fichero **y borrando otro**: `I-E8-2 FAIL` con los dos motivos distinguidos (*«los bytes en disco no son los registrados»* y *«no se pueden leer los bytes en disco — el fichero no está en el almacén»*) y **sello REQUIERE REVISIÓN**. Cierra H-3 |
+| 4 | Sin tasa disponible → RC-14 sin inventar | **Correcto.** Con la fuente inalcanzable y un documento en GBP sin tasa persistida, el camino real devuelve un `ActionState { success:false }` con el texto **RC-14** («no se ha guardado nada»); `exchange_rates` pasa de 3 filas a 3 (**no se inventa ni se persiste nada**) y **ninguna excepción escapa**. `guardingRates` envuelve las seis acciones exportadas de `unsorted/actions.ts`, y su predicado es exactamente la clase `ExchangeRateUnavailableError` que se provocó. Cierra H-4 |
+| 5 | `proposal_sha` editado por SQL | **I-E8-11 FAIL** aislado: *«run c8432865…: proposal_sha ffffffffffff ≠ 29a23d24d5aa recalculado sobre su contenido (el run se ha editado después de sellarse)»*, con I-E8-2 y I-E8-7a en PASS. El invariante recalcula además `schema_sha` y `prompt_sha`. Cierra H-5 |
+| 6 | CHF con residuo ≠ 0 | **Δ = 0.** Caso construido por el auditor (no se tocó el fixture): bases 500 001 @21 % y 359 094 @10 %, cuotas 105 000 y 35 909, total 1 000 004 CHF, `rateMicro = 920 000`. Σ half-even de las partes = 920 003 vs `convertedTotal` 920 004 → **residuo +1**. Hamilton propio (mayor resto sobre el reparto de 129 637 entre las cuotas, desempate por menor código): restos 75 600 (IVA_21) > 65 309 (IVA_10) ⇒ el céntimo va a **IVA_21**. El motor: `600 460 001 · 600 330 366 · 472 96 601 · 472 33 036 · 4000 920 004 (CHF 1 000 004)`. **Idéntico**, y Σ = `convertedTotal` exacto. Cierra H-7 |
+| 7 | Los 15 casos sobre el NPGC real | **Δ = 0** contra la reconstrucción Python, con plan PYMES sembrado, tipos y contrapartes reales. Persisten las tres traducciones del arnés (`IRPF_15→IRPF_PROF_15`, `400/410/430/608/708 → 4000/4100/4300/6080/7080`), de modo que **H-6 sigue abierto**: no hay test de producto que replique los quince casos sobre el plan sembrado |
+
+**Estado del sello.** Con los diecisiete documentos correctos y el almacén intacto: **ningún invariante en
+FAIL** (antes: 15a, 15b, 15c). El sello sigue en REQUIERE REVISIÓN, pero ya sólo por motivos legítimos:
+git-sha desconocido (ejecución fuera de una build), la métrica I-E8-7b (el céntimo de C02, por diseño) y
+los tres motivos documentales de ADR-0014 D7 que los propios casos provocan (C01 IVA en otro periodo,
+C13 sin reconciliar, C08 sin retención consignada).
+
+**Hallazgos de la ronda 0:** H-1, H-2, H-3, H-4, H-5 y H-7 **cerrados y verificados**. **H-6 abierto**
+(cobertura del plan real). H-8 y H-9 siguen como observaciones asumidas. **No hay hallazgos nuevos**; la
+única anotación es que I-E8-15a/b/c pasaron a ser confirmaciones internas del diario y toda la carga de
+prueba del puente al 303 recae ahora en I-E8-7a, que es donde debe estar pero es un punto único.
+
+**Restauración.** Se revirtieron las cinco alteraciones (cuota de la propuesta, `proposal_sha`, bytes
+alterados, fichero borrado, `schema_sha` del arnés) y una ejecución final de invariantes es **idéntica a la
+línea base limpia, sin ningún FAIL**. Después se eliminó `erp_audit` y los scripts temporales. `erp` y
+`erp_test` no se tocaron. **No se modificó ni producto ni fixtures.**

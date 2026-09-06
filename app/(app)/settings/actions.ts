@@ -13,7 +13,6 @@ import { ActionState } from "@/lib/actions"
 import { getCurrentUser } from "@/lib/auth"
 import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
-import { uploadStaticImage } from "@/lib/uploads"
 import { codeFromName, randomHexColor } from "@/lib/utils"
 import { createCategory, deleteCategory, updateCategory } from "@/models/categories"
 import { createCurrency, deleteCurrency, updateCurrency } from "@/models/currencies"
@@ -25,6 +24,18 @@ import { updateUser } from "@/models/users"
 import { Organization, Prisma, User } from "@/prisma/client"
 import { revalidatePath } from "next/cache"
 import path from "path"
+
+/**
+ * **E8 ronda 2 (R2-3) — `lib/uploads` se carga cuando hay una imagen que subir.**
+ *
+ * Este módulo sólo lo usa para el avatar y el logotipo de facturación, y
+ * arrastraba 1,2 s al grafo de TODAS las acciones de configuración. Con
+ * `sharp` ya perezoso (ronda 1) quedaba el resto de la cadena de ficheros; así
+ * queda fuera entera. Lo que sigue costando es la pila de autenticación
+ * (`lib/auth` → better-auth, ~1,6 s) y el cliente de Prisma (~0,6 s), que sí son
+ * inevitables en una server action que empieza por `requireOrg`.
+ */
+const uploadStaticImage = async () => (await import("@/lib/uploads")).uploadStaticImage
 
 const SELF_HOSTED_ONLY_SETTINGS_SET = new Set<string>(SELF_HOSTED_ONLY_SETTINGS)
 
@@ -91,7 +102,7 @@ export async function saveProfileAction(
   const avatarFile = formData.get("avatar") as File | null
   if (avatarFile instanceof File && avatarFile.size > 0) {
     try {
-      const uploadedAvatarPath = await uploadStaticImage(user, org, avatarFile, "avatar.webp", 500, 500)
+      const uploadedAvatarPath = await (await uploadStaticImage())(user, org, avatarFile, "avatar.webp", 500, 500)
       avatarUrl = `/files/static/${path.basename(uploadedAvatarPath)}`
     } catch (error) {
       return { success: false, error: "Failed to upload avatar: " + error }
@@ -126,7 +137,7 @@ export async function saveBusinessSettingsAction(
   const businessLogoFile = formData.get("businessLogo") as File | null
   if (businessLogoFile instanceof File && businessLogoFile.size > 0) {
     try {
-      const uploadedBusinessLogoPath = await uploadStaticImage(user, org, businessLogoFile, "businessLogo.png", 500, 500)
+      const uploadedBusinessLogoPath = await (await uploadStaticImage())(user, org, businessLogoFile, "businessLogo.png", 500, 500)
       businessLogoUrl = `/files/static/${path.basename(uploadedBusinessLogoPath)}`
     } catch (error) {
       return { success: false, error: "Failed to upload business logo: " + error }

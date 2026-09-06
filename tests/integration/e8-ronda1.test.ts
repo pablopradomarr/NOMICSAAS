@@ -66,6 +66,8 @@ const { DEFAULT_CURRENCIES } = await import("@/models/defaults-data")
 const { createExtractionRun } = await import("@/models/extraction")
 const { createFile } = await import("@/models/files")
 const { buildReconcileContext } = await import("@/models/reconcile-context")
+const { getAccountMapByKey } = await import("@/models/account-map")
+const { listTaxRates } = await import("@/models/tax-rates")
 const { getLedgerContext, postEntryTx, runLedgerInvariants } = await import("@/models/ledger")
 const { reconcile } = await import("@/lib/extraction/reconcile")
 const { documentWarnings, sealedReconcile } = await import("@/lib/extraction/seal")
@@ -77,16 +79,8 @@ const { inputProposalFor, loadExtractionFixture } = await import("@/lib/extracti
 type Proposal = import("@/lib/extraction/types").ExtractionProposal
 type Organization = import("@/prisma/client").Organization
 
-/** El código de retención del fixture no existe en el catálogo sembrado. */
-const TAX_CODE_TRANSLATION: Readonly<Record<string, string>> = { IRPF_15: "IRPF_PROF_15" }
-
-const translateTaxCode = (code: string | null | undefined): string | null =>
-  code === null || code === undefined ? null : (TAX_CODE_TRANSLATION[code] ?? code)
-
 describe.skipIf(!TEST_DATABASE_URL)("E8 ronda 1 · los quince casos sobre el plan NPGC sembrado", () => {
   let organization: Organization
-  /** `código del fixture → cuenta POSTABLE del plan real`. */
-  let accountTranslation = new Map<string, string>()
   const entryIdByCase = new Map<string, string>()
   let rectifiedFv41 = ""
 
@@ -124,37 +118,26 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 ronda 1 · los quince casos sobre el pla
   }
 
   /**
-   * La cuenta del plan REAL con la que se contabiliza lo que el fixture llama
-   * `code`: la propia si es postable, y si no, la postable de código más corto
-   * que cuelga de ella (`400 → 4000`). Es la traducción que el auditor hizo a
-   * mano; automatizarla es lo que convierte el replay en un test.
-   */
-  function translateAccount(code: string | null | undefined): string | null {
-    if (code === null || code === undefined) return null
-    return accountTranslation.get(code) ?? code
-  }
-
-  /**
-   * La propuesta del fixture, hablando el idioma del plan sembrado.
+   * La propuesta del fixture, tal cual, **sin una sola traducción de arnés**
+   * (ronda 2, H-6).
    *
-   * Las dimensiones analíticas (`PRJ-ALFA`, `CC-OPS`) se retiran: son uuid
-   * inventados para el plan sintético y aquí no existen. Lo que este test mide
-   * es el puente al 303 y la cadena documento → asiento, no la analítica —que
-   * tiene sus propios invariantes en E4—, y la organización va con
-   * `analytics_required = false`, así que RC-08 no lo convierte en un aviso.
+   * Las cuentas del documento (`600`, `623`, `217`…) van verbatim: el motor las
+   * usa así en producción, y las de contrapartida las resuelve él por
+   * `ctx.map(AccountKey)` contra el `OrganizationAccountMap` sembrado, que es
+   * el mecanismo del producto. El código de retención también va verbatim
+   * porque el fixture 1.1 ya lo llama como el catálogo (`IRPF_PROF_15`).
+   *
+   * Lo único que se retira son las dimensiones analíticas (`PRJ-ALFA`,
+   * `CC-OPS`): son uuid inventados para el plan sintético y no existen en esta
+   * organización. No es una traducción, es no usarlas: lo que este test mide es
+   * el puente al 303 y la cadena documento → asiento, no la analítica —que
+   * tiene sus propios invariantes en E4— y la organización va con
+   * `analytics_required = false`.
    */
   function onRealPlan(proposal: Proposal): Proposal {
     return {
       ...proposal,
-      lines: proposal.lines.map(({ projectId: _p, costCenterId: _c, ...l }) => ({
-        ...l,
-        ...(l.accountCode ? { accountCode: translateAccount(l.accountCode) as string } : {}),
-        ...(l.taxRateCode ? { taxRateCode: translateTaxCode(l.taxRateCode) as string } : {}),
-      })),
-      taxes: proposal.taxes.map((t) => ({ ...t, taxRateCode: translateTaxCode(t.taxRateCode) as string })),
-      ...(proposal.withholding
-        ? { withholding: { ...proposal.withholding, rateCode: translateTaxCode(proposal.withholding.rateCode) as string } }
-        : {}),
+      lines: proposal.lines.map(({ projectId: _p, costCenterId: _c, ...l }) => l),
     }
   }
 
@@ -340,7 +323,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 ronda 1 · los quince casos sobre el pla
             viesValid: cp.viesValid,
             viesCheckedAt: cp.viesCheckedAt ? new Date(`${cp.viesCheckedAt}T00:00:00.000Z`) : null,
             withholdingRegime: cp.withholdingRegime as never,
-            withholdingRateCode: translateTaxCode(cp.withholdingRateCode),
+            withholdingRateCode: cp.withholdingRateCode,
             surchargeRegime: cp.surchargeRegime,
             isEmployee: cp.isEmployee,
           },
@@ -369,20 +352,39 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 ronda 1 · los quince casos sobre el pla
         skipDuplicates: true,
       })
 
-      // Traducción de cuentas: se resuelve contra el plan REAL ya sembrado.
+      /**
+       * **H-6 — el fixture tiene que caber en el plan REAL, sin traducciones.**
+       * Si una cuenta que el documento cita no es postable en el NPGC sembrado,
+       * o un tipo impositivo no está en el catálogo, el fallo es del fixture y
+       * este test lo dice por su nombre en vez de disimularlo traduciéndolo.
+       */
       const accounts = await db.ledgerAccount.findMany({ select: { code: true, isPostable: true, isActive: true } })
-      const postable = accounts.filter((a) => a.isPostable && a.isActive).map((a) => a.code).sort()
-      const wanted = new Set<string>()
-      for (const c of fixture.casos) for (const l of c.propuesta.lines) if (l.accountCode) wanted.add(l.accountCode)
-      for (const code of Object.values(fixture.contextoComun.accountMap)) wanted.add(code)
-      accountTranslation = new Map(
-        [...wanted].map((code) => {
-          const exact = postable.find((p) => p === code)
-          if (exact) return [code, exact]
-          const child = postable.filter((p) => p.startsWith(code)).sort((a, b) => a.length - b.length || (a < b ? -1 : 1))[0]
-          return [code, child ?? code]
-        })
-      )
+      const postable = new Set(accounts.filter((a) => a.isPostable && a.isActive).map((a) => a.code))
+      const citadas = new Set<string>()
+      for (const c of fixture.casos) for (const l of c.propuesta.lines) if (l.accountCode) citadas.add(l.accountCode)
+      for (const c of fixture.casos) if (c.contexto.categoria?.defaultAccountCode) citadas.add(c.contexto.categoria.defaultAccountCode)
+      const noPostables = [...citadas].filter((code) => !postable.has(code)).sort()
+      if (noPostables.length > 0) {
+        throw new Error(
+          `el fixture cita cuentas que el NPGC sembrado no admite como postables: ${noPostables.join(", ")}. ` +
+            "Corrija el fixture (docs/design/fixtures/build_extraccion_esperada.py), no el test"
+        )
+      }
+      const catalogo = new Set((await listTaxRates(db, {})).map((r) => r.code))
+      const tiposDelFixture = new Set(Object.keys(fixture.contextoComun.taxRates))
+      const desconocidos = [...tiposDelFixture].filter((code) => !catalogo.has(code)).sort()
+      if (desconocidos.length > 0) {
+        throw new Error(
+          `el fixture usa tipos impositivos que el catálogo del producto no tiene: ${desconocidos.join(", ")}. ` +
+            "Corrija el fixture, no el test"
+        )
+      }
+      // Y las claves de contrapartida se resuelven con el mecanismo del
+      // producto: el mapa de la organización, no una tabla de este fichero.
+      const mapa = await getAccountMapByKey(db)
+      for (const key of ["PROVEEDORES", "ACREEDORES", "CLIENTES", "IVA_SOPORTADO", "IVA_REPERCUTIDO", "IRPF_PROFESIONALES_A_PAGAR"] as const) {
+        expect(mapa.get(key), `la clave ${key} no está mapeada en el plan sembrado`).toBeTruthy()
+      }
 
       for (const [code, cat] of categories) {
         await db.category.create({
@@ -390,7 +392,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 ronda 1 · los quince casos sobre el pla
             organizationId: ORG,
             code,
             name: code,
-            defaultAccountCode: translateAccount(cat.defaultAccountCode),
+            defaultAccountCode: cat.defaultAccountCode,
             defaultDeductibility: cat.defaultDeductibility as never,
           },
         })
@@ -516,6 +518,67 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 ronda 1 · los quince casos sobre el pla
     }
     const restaurado = await runLedgerInvariants(ORG, { refDate: "2026-12-31", noCache: true, actor: { userId: USER }, readStoredFile })
     expect(restaurado.validacion.checks.find((c) => c.id === "I-E8-11")?.status).toBe("PASS")
+  }, 300_000)
+
+  /**
+   * **Ronda 2, R2-2 — el puente al 303 con vigilancia propia.**
+   *
+   * Desde la ronda 1 el libro registro sale del ASIENTO, así que I-E8-15a/b/c
+   * ya no pueden detectar por sí solos una propuesta manipulada: quien lo hace
+   * es I-E8-7a, comparando la anotación del asiento con la que se deriva del
+   * documento. Ese contraste necesita su propio caso adverso permanente, o
+   * nadie se enteraría el día que se rompiera.
+   *
+   * La manipulación es la del auditor (H-5), pero mirada desde el otro lado: se
+   * cambia por SQL la cuota de la propuesta de un run YA contabilizado. El
+   * asiento no se mueve —es inmutable— así que documento y asiento dejan de
+   * decir lo mismo y **I-E8-7a lo dice con la diferencia**.
+   */
+  it("R2-2 · la cuota de la propuesta alterada por SQL rompe el puente documento ↔ asiento: I-E8-7a FAIL", async () => {
+    const entryId = entryIdByCase.get("C01") as string
+    const [row] = await prisma.$queryRawUnsafe<{ extraction_run_id: string; entry_number: number }[]>(
+      `SELECT extraction_run_id, entry_number FROM journal_entries WHERE id = $1::uuid`,
+      entryId
+    )
+    const runId = row.extraction_run_id
+
+    const limpio = await runLedgerInvariants(ORG, { refDate: "2026-12-31", noCache: true, actor: { userId: USER }, readStoredFile })
+    expect(limpio.validacion.checks.find((c) => c.id === "I-E8-7a")?.status).toBe("PASS")
+
+    const [before] = await prisma.$queryRawUnsafe<{ proposal: unknown }[]>(
+      `SELECT proposal FROM extraction_runs WHERE id = $1::uuid`,
+      runId
+    )
+    const original = (before.proposal as { taxes: { quotaCents: number }[] }).taxes[0].quotaCents
+    await prisma.$executeRawUnsafe(
+      `UPDATE extraction_runs
+          SET proposal = jsonb_set(proposal, '{taxes,0,quotaCents}', to_jsonb($2::int))
+        WHERE id = $1::uuid`,
+      runId,
+      original + 1_000
+    )
+    try {
+      const roto = await runLedgerInvariants(ORG, { refDate: "2026-12-31", noCache: true, actor: { userId: USER }, readStoredFile })
+      const ie87a = roto.validacion.checks.find((c) => c.id === "I-E8-7a")
+      expect(ie87a?.status).toBe("FAIL")
+      expect(ie87a?.evidencia).toMatch(new RegExp(`asiento ${row.entry_number}:`))
+      expect(ie87a?.evidencia).toMatch(/cuota deducible/)
+      expect(ie87a?.evidencia).toMatch(/diferencia -1000/)
+      expect(roto.sello.sello).toBe("REQUIERE REVISIÓN")
+      // Y los tres puentes al 303 siguen cuadrados: el asiento no se ha tocado.
+      // Es la prueba de que I-E8-7a es quien vigila el documento, no ellos.
+      for (const id of ["I-E8-15a", "I-E8-15b", "I-E8-15c"]) {
+        expect(`${id}: ${roto.validacion.checks.find((c) => c.id === id)?.status}`).toBe(`${id}: PASS`)
+      }
+    } finally {
+      await prisma.$executeRawUnsafe(
+        `UPDATE extraction_runs SET proposal = $2::jsonb WHERE id = $1::uuid`,
+        runId,
+        JSON.stringify(before.proposal)
+      )
+    }
+    const restaurado = await runLedgerInvariants(ORG, { refDate: "2026-12-31", noCache: true, actor: { userId: USER }, readStoredFile })
+    expect(restaurado.validacion.checks.find((c) => c.id === "I-E8-7a")?.status).toBe("PASS")
   }, 300_000)
 
   it("D2 · un documento en divisa con residuo de conversión ≠ 0 reparte por Hamilton y cuadra a cero", async () => {
