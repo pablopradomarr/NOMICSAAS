@@ -21,6 +21,7 @@
  * autorrepercusión no procede de ninguna factura emitida.
  */
 
+import { convertWithRateMicro } from "@/lib/money"
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 import type { Cents, LocalDate, PostedEntry } from "@/lib/ledger/types"
 
@@ -407,17 +408,13 @@ export function checkIE84(input: DocumentsInvariantInput): CheckResult {
   )
 }
 
-/** Conversión HALF-EVEN en enteros: la misma de `lib/money.convertWithRateMicro`. */
-export function convertWithRateMicro(cents: Cents, rateMicro: bigint): Cents {
-  const scale = BigInt(1_000_000)
-  const two = BigInt(2)
-  const product = BigInt(Math.abs(cents)) * rateMicro
-  const quotient = product / scale
-  const remainder = product - quotient * scale
-  const twice = remainder * two
-  const rounded = twice > scale || (twice === scale && quotient % two === BigInt(1)) ? quotient + BigInt(1) : quotient
-  return (cents < 0 ? -1 : 1) * Number(rounded)
-}
+/**
+ * Conversión HALF-EVEN en enteros. **La misma —literalmente— que la del
+ * asiento**: se re-exporta `lib/money.convertWithRateMicro` en vez de repetirla,
+ * porque un invariante que comprueba una aritmética con otra aritmética distinta
+ * no comprueba nada (T13).
+ */
+export { convertWithRateMicro }
 
 /** I-E8-5 — `convertedTotal` sale de la tasa persistida, no de otro sitio. */
 export function checkIE85(input: DocumentsInvariantInput): CheckResult {

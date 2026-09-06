@@ -77,15 +77,26 @@ export class DocumentAlteredError extends Error {
  * escribe `lib/extraction/reconcile.ts`— para que `ai/` no dependa del motor de
  * validación: aquí se sabe **pedir** una extracción, no juzgarla.
  */
-export type ReconcileFn = (
-  proposal: ExtractionProposal,
-  fieldOrigins: FieldOrigins
-) => {
+export type ReconcileOutcome = {
   status: "PASS" | "WARN" | "FAIL"
   detail: unknown
   proposal?: ExtractionProposal
   fieldOrigins?: FieldOrigins
 }
+
+/**
+ * T13 la cablea con `reconcile()` y su contexto, y ese contexto se LEE de la
+ * base (plan, tipos vigentes, ficha de la contraparte, tasa del día): por eso
+ * admite una promesa. Mantenerla síncrona habría obligado a adivinar el
+ * contexto antes de conocer la moneda y la contraparte del documento.
+ */
+export type ReconcileFn = (
+  proposal: ExtractionProposal,
+  fieldOrigins: FieldOrigins,
+  /** El documento y su extracción, para que el lote pueda cablear un contexto
+   *  distinto por fichero con una sola función (T13). */
+  context: { file: File; fileSha256: string; pagesSent: number; pagesTotal: number }
+) => ReconcileOutcome | Promise<ReconcileOutcome>
 
 export type RunExtractionOptions = {
   promptCode?: PromptCode
@@ -154,7 +165,7 @@ export async function runExtraction(
   })
 
   // 6 — Recálculo determinista, si el llamante lo aporta (T7).
-  const reconciled = options.reconcile?.(proposal, fieldOrigins)
+  const reconciled = await options.reconcile?.(proposal, fieldOrigins, { file, fileSha256, pagesSent, pagesTotal })
   const finalProposal = reconciled?.proposal ?? proposal
   const finalOrigins = reconciled?.fieldOrigins ?? fieldOrigins
 

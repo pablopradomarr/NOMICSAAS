@@ -27,6 +27,7 @@
  */
 
 import { applyBps } from "@/lib/taxes/bps"
+import { convertWithRateMicro } from "@/lib/money"
 import { cuota } from "@/lib/ledger/tax"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import type {
@@ -1209,17 +1210,16 @@ function normalizeProposal(
 const fmt = (cents: Cents): string => new Intl.NumberFormat("es-ES").format(cents)
 const fmtEur = (cents: Cents): string => `${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2 }).format(cents / 100)} EUR`
 
-/** Conversión a moneda base: HALF-EVEN sobre `cents × rate / 1e6` (NRV 11ª). */
+/**
+ * Conversión a moneda base: HALF-EVEN sobre `cents × rate / 1e6` (NRV 11ª).
+ *
+ * **Una sola implementación** (T13): delega en `lib/money.convertWithRateMicro`,
+ * que es la misma aritmética entera. Tener dos era tener dos redondeos que
+ * pueden divergir en el céntimo, y ese céntimo es el que decide si el asiento
+ * cuadra.
+ */
 export function convertWithRate(cents: Cents, rateMicro: bigint): Cents {
-  const two = BigInt(2)
-  const one = BigInt(1)
-  const denominator = BigInt(1_000_000)
-  const product = BigInt(Math.abs(cents)) * rateMicro
-  const quotient = product / denominator
-  const remainder = product - quotient * denominator
-  const twice = remainder * two
-  const rounded = twice > denominator || (twice === denominator && quotient % two === one) ? quotient + one : quotient
-  return (cents < 0 ? -1 : 1) * Number(rounded)
+  return convertWithRateMicro(cents, rateMicro)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1911,9 +1911,20 @@ function assignConfidence(
   }
 
   if (p.docKind === "TICKET") {
+    /**
+     * Las dos decisiones del ticket son del usuario y son **distintas**: el
+     * medio de pago elige la contrapartida (570 / 572) y la cualificación
+     * decide la deducibilidad. Sellar sólo una deja sin procedencia la línea de
+     * tesorería del asiento, que es la mitad del apunte. `simplifiedQualified`
+     * se sella **sólo cuando es `true`**: no cualificado es el estado legal por
+     * defecto de una factura simplificada (art. 97.Uno LIVA, D9), no un acto de
+     * nadie, y darle origen `usuario` atribuiría a una persona una decisión que
+     * no tomó.
+     */
     if (p.simplifiedQualified === true) {
       origins["simplifiedQualified"] = prov(true, "usuario", "verificado")
-    } else if (p.paymentKey) {
+    }
+    if (p.paymentKey) {
       origins["paymentKey"] = prov(p.paymentKey as PaymentKey, "usuario", "verificado")
     }
   }

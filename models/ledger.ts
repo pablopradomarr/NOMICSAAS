@@ -49,6 +49,7 @@ import {
   quarterOf,
   vatBookRowFromProposal,
   type BookableProposal,
+  type DataQualityWarning,
   type DocumentsInvariantInput,
   type VatBookRow,
 } from "@/lib/ledger/invariants-e8"
@@ -1567,7 +1568,17 @@ async function readDocumentsInvariantInput(
   const fileRows = await tx.file.findMany({ select: { id: true, sha256: true } })
   if (runRows.length === 0 && transactionRows.length === 0 && fileRows.length === 0) return null
 
-  const seriesRows = await tx.invoiceSeries.findMany({ select: { code: true, kind: true } })
+  const seriesRows = await tx.invoiceSeries.findMany({ select: { code: true, kind: true, prefix: true } })
+  /**
+   * **I-E8-20 cableado (T13).** La numeración emitida se lee del DIARIO, no del
+   * contador de la serie: el contador dice cuántos números se repartieron y los
+   * asientos, cuáles existen. Un contador adelantado sin asiento detrás es
+   * exactamente el hueco que el art. 6.1.a RD 1619/2012 no admite.
+   */
+  const emittedRows = await tx.journalEntry.findMany({
+    where: { sourceType: "INVOICE_OUT", sourceId: { not: null } },
+    select: { sourceId: true, documentDate: true, entryDate: true },
+  })
   const rateRows = await tx.exchangeRate.findMany({ select: { id: true, date: true, from: true, to: true, rateMicro: true, source: true } })
   const forcedLogs = await tx.auditLog.findMany({
     where: { action: "FORCE_DUPLICATE" },
@@ -1580,7 +1591,10 @@ async function readDocumentsInvariantInput(
 
   // ── Runs, con lo que `reconcile` selló en su día ────────────────────────────
   const runs = runRows.map((r) => {
-    const reconcile = (r.reconcile ?? {}) as { quotaDeviationsCents?: Record<string, number> }
+    const reconcile = (r.reconcile ?? {}) as {
+      quotaDeviationsCents?: Record<string, number>
+      warnings?: string[]
+    }
     const origins = (r.fieldOrigins ?? {}) as Record<string, { confidence?: string }>
     return {
       id: r.id,
@@ -1593,6 +1607,11 @@ async function readDocumentsInvariantInput(
       provider: r.provider,
       quotaDeviationsCents: reconcile.quotaDeviationsCents ?? {},
       fieldConfidences: Object.values(origins).map((o) => o?.confidence ?? "no_verificado"),
+      /**
+       * Los sella T13 al crear el run (`sealedReconcile`), porque un run es
+       * inmutable: lo que no se escriba al confirmar no se puede añadir después.
+       */
+      warnings: (reconcile.warnings ?? []) as DataQualityWarning["code"][],
     }
   })
 
@@ -1707,9 +1726,18 @@ async function readDocumentsInvariantInput(
       rateMicro: r.rateMicro,
       source: r.source,
     })),
-    // T18 aporta la numeración emitida; hasta entonces I-E8-20 lo dice (INFO)
-    // en vez de dar un PASS que no ha comprobado nada.
-    invoiceSeries: seriesRows.map((x) => ({ code: x.code, kind: x.kind, numbers: [] })),
+    invoiceSeries: seriesRows.map((serie) => ({
+      code: serie.code,
+      kind: serie.kind,
+      numbers: emittedRows
+        .filter((e) => serie.prefix !== "" && (e.sourceId ?? "").startsWith(serie.prefix))
+        .map((e) => ({
+          suffix: (e.sourceId ?? "").slice(serie.prefix.length),
+          date: fromUtcDate(e.documentDate ?? e.entryDate),
+        }))
+        .filter((e) => /^\d+$/.test(e.suffix))
+        .map((e) => ({ number: Number(e.suffix), date: e.date })),
+    })),
     duplicates,
     accounts: { inputVat, outputVat, withholding: withholdingAccount },
   }

@@ -31,7 +31,6 @@
  *     cuotas por mayor resto (ADR-0014 D2). Cero líneas de ajuste.
  */
 
-import { hamilton } from "@/lib/analytics/allocate"
 import { applyBps } from "@/lib/taxes/bps"
 import { deducible, type TaxOverride } from "@/lib/ledger/tax"
 import { buildFromTemplate } from "@/lib/ledger/templates"
@@ -52,6 +51,7 @@ import {
 } from "@/lib/ledger/types"
 import type { AccountKey } from "@/lib/accounts/types"
 import { convertWithRate, type ConversionRef, type ReconcileResult } from "@/lib/extraction/reconcile"
+import { convertDocumentToBase, type ConvertedDocument } from "@/lib/fx/convert"
 import type { Cents as ProposalCents, Deductibility, DocKind, ProposalLine } from "@/lib/extraction/types"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,45 +218,17 @@ const isSelfCharged = (operationKey: string | undefined): boolean => operationKe
 // Conversión a moneda base (ADR-0014 D2) — residuo CERO por construcción
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ConvertedDocument = {
-  /** Base de cada línea del documento, en moneda base y en el mismo orden. */
-  lineBases: readonly Cents[]
-  /** Cuota de cada tipo en moneda base; su suma absorbe el residuo. */
-  quotaByRate: Readonly<Record<string, Cents>>
-  /** Bruto convertido: `Σ bases + Σ cuotas`, exacto. */
-  grossCents: Cents
-}
-
 /**
- * `payable_EUR = convert(total)`, `base_i_EUR = convert(base_i)` y las **cuotas
- * absorben la diferencia**, repartida por mayor resto (Hamilton) con desempate
- * por código. No hay residuo que contabilizar: no existe. Si alguna vez
- * procediera reconocer uno, su cuenta sería 668/768 —diferencia de cambio—,
- * jamás 669/769.
+ * **Una sola aritmética de divisa** (T13). El reparto vive en `lib/fx/convert`
+ * —que es donde vive la divisa— y aquí se re-exporta para quien ya lo importaba
+ * de este módulo: dos implementaciones del mismo céntimo acaban divergiendo, y
+ * ése es justo el céntimo que decide si el asiento cuadra.
  *
- * Se exporta porque `lib/fx/convert.ts` (T10) debe **delegar aquí** en vez de
- * reimplementar el reparto: dos aritméticas para el mismo céntimo acaban
- * divergiendo, y ése es justo el céntimo que decide si el asiento cuadra.
+ * `payable_EUR = convert(total)`, `base_i_EUR = convert(base_i)` y las **cuotas
+ * absorben la diferencia** por mayor resto. Si alguna vez procediera reconocer
+ * un residuo de conversión, su cuenta sería 668/768, jamás 669/769.
  */
-export function convertDocumentToBase(
-  lines: readonly { baseCents: Cents }[],
-  quotas: readonly { taxRateCode: string; quotaCents: Cents }[],
-  rateMicro: bigint
-): ConvertedDocument {
-  const grossOriginal = sum(lines.map((l) => l.baseCents)) + sum(quotas.map((q) => q.quotaCents))
-  const grossCents = convertWithRate(grossOriginal, rateMicro)
-  const lineBases = lines.map((l) => convertWithRate(l.baseCents, rateMicro))
-  const pool = grossCents - sum(lineBases)
-  const shares = hamilton(
-    pool,
-    quotas.map((q) => ({ code: q.taxRateCode, weight: q.quotaCents }))
-  )
-  const quotaByRate: Record<string, Cents> = {}
-  quotas.forEach((q, i) => {
-    quotaByRate[q.taxRateCode] = shares[i]?.amountCents ?? 0
-  })
-  return { lineBases, quotaByRate, grossCents }
-}
+export { convertDocumentToBase, type ConvertedDocument } from "@/lib/fx/convert"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // postFromProposal

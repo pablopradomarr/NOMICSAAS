@@ -24,6 +24,10 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      // `server-only` es un centinela de Next sin implementación instalada: en
+      // vitest se resuelve a un módulo vacío para poder probar los ficheros de
+      // servidor que lo declaran (T13).
+      { find: /^server-only$/, replacement: path.resolve(__dirname, "tests/support/server-only.ts") },
       { find: /^@\/prisma\/client$/, replacement: path.resolve(__dirname, "prisma/client/client.ts") },
       { find: /^@\//, replacement: path.resolve(__dirname, ".") + "/" },
     ],

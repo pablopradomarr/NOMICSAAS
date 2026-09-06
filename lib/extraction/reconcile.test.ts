@@ -14,9 +14,11 @@
  * exige lo que sí es contrastable: que existan, que estén en español y que no
  * sean el identificador de la regla.
  *
- * Las dos únicas discrepancias conocidas del fixture consigo mismo están
- * declaradas en `OMISIONES_DEL_FIXTURE`, con su motivo. Cualquier otra hace
- * fallar el test.
+ * **Sin excepciones.** Las dos discrepancias que T7/T9 dejaron declaradas —el
+ * origen de `lines[0].accountCode` en C05 y el par `paymentKey` /
+ * `simplifiedQualified` de C03-C04— se resolvieron en T13 corrigiendo el
+ * generador del fixture y el sellado de procedencia: la tabla de confianza y la
+ * propuesta dicen ya lo mismo, y cualquier divergencia hace fallar el test.
  */
 
 import { describe, expect, it } from "vitest"
@@ -47,20 +49,6 @@ import {
 
 const fixture = loadExtractionFixture()
 
-/**
- * Discrepancias del fixture consigo mismo, declaradas una a una. No son
- * excepciones del motor: son puntos donde la propuesta y la tabla de confianza
- * del JSON dicen cosas distintas, y el motor sigue a la propuesta, que es el
- * dato de entrada.
- *
- * · **C05 `lines[0].accountCode`** — la propuesta declara
- *   `accountCodeOrigin: "catalogo"` y la tabla de confianza lo pinta como
- *   `usuario/verificado`. El motor no puede adivinar quién tecleó la 217: usa
- *   lo que la línea declara (O-10).
- */
-const OMISIONES_DEL_FIXTURE: Readonly<Record<string, readonly string[]>> = {
-  C05: ["lines[0].accountCode"],
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Proyecciones comparables
@@ -184,7 +172,7 @@ describe("catálogo de reglas RC-01…RC-25", () => {
 // 2 · Los quince casos, uno a uno
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe.each(fixture.casos.map((c) => [c.id, c] as const))("%s", (id, c) => {
+describe.each(fixture.casos.map((c) => [c.id, c] as const))("%s", (_id, c) => {
   const result = run(c)
 
   it(`${c.titulo} — estado global, elegibilidad y sellos`, () => {
@@ -211,9 +199,7 @@ describe.each(fixture.casos.map((c) => [c.id, c] as const))("%s", (id, c) => {
 
   it("la confianza de cada campo, en los cuatro niveles", () => {
     const actual = projectConfidence(result)
-    const omitted = OMISIONES_DEL_FIXTURE[id] ?? []
     for (const [key, expected] of Object.entries(c.reconcile.confianzaPorCampo)) {
-      if (omitted.includes(key)) continue
       expect({ campo: key, ...actual[key] }).toEqual({ campo: key, ...expected })
     }
   })

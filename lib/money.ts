@@ -86,12 +86,30 @@ export function applyPermille(cents: Cents, permille: number): Cents {
   return roundHalfEven((cents * permille) / 1000)
 }
 
-/** Convierte con tasa en micro-unidades (rate × 1e6). */
+/**
+ * Convierte con tasa en micro-unidades (rate × 1e6), **half-even y en enteros**.
+ *
+ * E8 · T13: es la ÚNICA conversión de divisa del producto. Antes había tres
+ * copias —ésta, `lib/extraction/reconcile.convertWithRate` y la de
+ * `lib/ledger/invariants-e8`— y dos de ellas se escribieron en `BigInt` porque
+ * el producto `cents × rate` supera 2^53 en cuanto hay millones de euros: con
+ * dobles, el céntimo del desempate deja de ser el real y el invariante que
+ * compara las dos aritméticas falla sobre datos correctos. Se conserva la
+ * exacta y las otras dos delegan aquí.
+ */
 export function convertWithRateMicro(cents: Cents, rateMicro: bigint | number): Cents {
   assertCents(cents)
-  const r = typeof rateMicro === "bigint" ? Number(rateMicro) : rateMicro
-  if (!isSafeInt(r) || r <= 0) throw new TypeError("rateMicro debe ser entero positivo")
-  return roundHalfEven((cents * r) / 1_000_000)
+  const r = typeof rateMicro === "bigint" ? rateMicro : BigInt(rateMicro)
+  if (r <= BigInt(0)) throw new TypeError("rateMicro debe ser entero positivo")
+  const two = BigInt(2)
+  const one = BigInt(1)
+  const denominator = BigInt(1_000_000)
+  const product = BigInt(Math.abs(cents)) * r
+  const quotient = product / denominator
+  const remainder = product - quotient * denominator
+  const twice = remainder * two
+  const rounded = twice > denominator || (twice === denominator && quotient % two === one) ? quotient + one : quotient
+  return (cents < 0 ? -1 : 1) * Number(rounded)
 }
 
 /**

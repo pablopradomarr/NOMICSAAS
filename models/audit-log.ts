@@ -36,6 +36,14 @@ export type AuditEntity =
   | "AllocationRun"
   // E8 · T23 — calificación fiscal de la contraparte (ADR-0014 D11).
   | "Counterparty"
+  // E8 · T13 — camino documental (§4.3): la evidencia de la extracción, los
+  // prompts versionados y las series de facturación.
+  | "ExtractionRun"
+  | "PromptVersion"
+  | "InvoiceSeries"
+  /// La operación heredada de TaxHacker: anular-y-rehacer y duplicado forzado
+  /// se registran sobre ella, que es lo que el usuario ve en `/transactions`.
+  | "Transaction"
 
 export type AuditAction =
   | "create"
@@ -71,6 +79,17 @@ export type AuditAction =
   // E8 · T23 — la comprobación en VIES se REGISTRA con su fecha: es la
   // precondición (1) del ISP, y una comprobación sin fecha no acredita nada.
   | "vies_check"
+  // E8 · T13 — actos del camino documental (§4.3). Todos con `before`/`after`
+  // en la MISMA transacción: son las decisiones que un inspector pregunta.
+  | "EXTRACT"
+  | "CONFIRM_PROPOSAL"
+  | "FORCE_FIELD"
+  | "FORCE_DUPLICATE"
+  | "MARK_SIMPLIFIED_QUALIFIED"
+  | "REVOID_AND_REDO"
+  | "SET_PROMPT_VERSION"
+  | "SET_REGIME"
+  | "EMIT_INVOICE"
 
 export type AuditLogInput = {
   entity: AuditEntity

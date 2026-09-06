@@ -2437,6 +2437,11 @@
             "confidence": "verificado",
             "check": "RC-15"
           },
+          "paymentKey": {
+            "origin": "usuario",
+            "confidence": "verificado",
+            "check": null
+          },
           "receptionDate": {
             "origin": "usuario",
             "confidence": "verificado",
@@ -2654,7 +2659,7 @@
             "taxRateCode": "IVA_21",
             "description": "Servidor de calculo",
             "accountCode": "217",
-            "accountCodeOrigin": "catalogo",
+            "accountCodeOrigin": "usuario",
             "projectId": null,
             "costCenterId": null,
             "deductibility": "FULL"

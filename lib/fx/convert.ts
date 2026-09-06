@@ -29,9 +29,10 @@
  * metería en el asiento un concepto que no existe en el documento.
  */
 
+import { hamilton } from "@/lib/analytics/allocate"
 import type { Cents } from "@/lib/extraction/types"
 import type { ExtractionProposal, ProposalLine, ProposalTax } from "@/lib/extraction/types"
-import { assertCents, convertWithRateMicro, splitLargestRemainder, sumCents } from "@/lib/money"
+import { assertCents, convertWithRateMicro, sumCents } from "@/lib/money"
 
 export type LocalDateString = string
 
@@ -64,6 +65,82 @@ export class FxConversionError extends Error {
 /** Convierte un importe en céntimos con la tasa en micro-unidades (half-even). */
 export function convertCents(cents: Cents, rateMicro: bigint): Cents {
   return convertWithRateMicro(cents, rateMicro)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El reparto, UNA sola vez
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ConvertedDocument = {
+  /** Base de cada línea del documento, en moneda base y en el mismo orden. */
+  lineBases: readonly Cents[]
+  /** Cuota de cada tipo en moneda base; su suma absorbe la diferencia. */
+  quotaByRate: Readonly<Record<string, Cents>>
+  /** Las mismas cuotas **en el orden recibido** (un documento puede repetir tipo). */
+  quotaShares: readonly Cents[]
+  /** Bruto convertido: `Σ bases + Σ cuotas`, exacto. */
+  grossCents: Cents
+}
+
+/**
+ * **El núcleo de la conversión de un documento (ADR-0014 D2).**
+ *
+ * `payable_EUR = convert(bruto)`, `base_i_EUR = convert(base_i)` y las **cuotas
+ * absorben la diferencia**, repartida por mayor resto (Hamilton) con desempate
+ * por código de tipo. No hay residuo que contabilizar: no existe.
+ *
+ * Vive aquí —y no en `lib/ledger/postFromProposal.ts`, que es quien la
+ * consume— porque es aritmética de divisa, no de asiento, y porque tenerla dos
+ * veces era tener dos repartos que divergen en el céntimo. `postFromProposal`
+ * la re-exporta para no romper a quien ya la importaba de allí.
+ *
+ * @param grossTargetCents contravalor exacto que el reparto debe alcanzar.
+ *        Por defecto `convert(Σ bases + Σ cuotas)`; el conversor de propuesta
+ *        pasa el suyo porque su identidad incluye retención y anticipo.
+ */
+export function convertDocumentToBase(
+  lines: readonly { baseCents: Cents }[],
+  quotas: readonly { taxRateCode: string; quotaCents: Cents }[],
+  rateMicro: bigint,
+  opts: { grossTargetCents?: Cents } = {}
+): ConvertedDocument {
+  const grossOriginal = sumCents(lines.map((l) => l.baseCents)) + sumCents(quotas.map((q) => q.quotaCents))
+  const grossCents = opts.grossTargetCents ?? convertCents(grossOriginal, rateMicro)
+  const lineBases = lines.map((l) => convertCents(l.baseCents, rateMicro))
+  const pool = grossCents - sumCents(lineBases)
+  const shares = shareByLargestRemainder(
+    pool,
+    quotas.map((q) => ({ code: q.taxRateCode, weight: q.quotaCents }))
+  )
+  const quotaByRate: Record<string, Cents> = {}
+  quotas.forEach((q, i) => {
+    quotaByRate[q.taxRateCode] = shares[i]
+  })
+  return { lineBases, quotaByRate, quotaShares: shares, grossCents }
+}
+
+/**
+ * Mayor resto sobre `hamilton()` —la misma función que reparte la liquidación
+ * analítica— con dos adaptaciones que el documento necesita y la liquidación no:
+ * pesos **todos negativos** (un abono) se reparten en valor absoluto y se les
+ * devuelve el signo, y pesos **todos cero** reparten a partes iguales en vez de
+ * devolver ceros y perder el importe.
+ */
+function shareByLargestRemainder(total: Cents, weights: readonly { code: string; weight: Cents }[]): Cents[] {
+  assertCents(total, "total del reparto")
+  if (weights.length === 0) return []
+  const signs = weights.map((w) => (w.weight < 0 ? -1 : 1))
+  const homogeneous = signs.every((s) => s === signs[0])
+  const allZero = weights.every((w) => w.weight === 0)
+  // El desempate de `hamilton` es por código MENOR: con el índice como código,
+  // eso es «a igualdad de resto, la primera línea del documento».
+  const keyed = weights.map((w, i) => ({
+    code: `${String(i).padStart(4, "0")}|${w.code}`,
+    weight: allZero ? 1 : Math.abs(w.weight),
+  }))
+  const shares = hamilton(Math.abs(total), keyed)
+  const totalSign = total < 0 ? -1 : 1
+  return shares.map((s, i) => (homogeneous ? totalSign * s.amountCents : Math.abs(s.amountCents) * signs[i]))
 }
 
 export type ConversionReport = {
@@ -161,7 +238,16 @@ export function convertProposalWithReport(
   let absorbedBy: ConversionReport["absorbedBy"]
 
   if (proposal.taxes.length > 0) {
-    convertedQuotas = distribute(quotaTargetCents, proposal.taxes.map((tax) => tax.quotaCents))
+    // **El mismo reparto que el asiento** (`convertDocumentToBase`): con el
+    // contravalor objetivo de esta identidad, que incluye retención y anticipo.
+    convertedQuotas = [
+      ...convertDocumentToBase(
+        proposal.lines.map((line) => ({ baseCents: line.baseCents })),
+        proposal.taxes.map((tax) => ({ taxRateCode: tax.taxRateCode, quotaCents: tax.quotaCents })),
+        rate.rateMicro,
+        { grossTargetCents: basesCents + quotaTargetCents }
+      ).quotaShares,
+    ]
     absorbedBy = "cuotas"
   } else if (quotaTargetCents === 0) {
     convertedQuotas = []
@@ -246,13 +332,10 @@ export function convertProposalWithReport(
  * reales, y no se corrompe el signo en el caso raro.
  */
 function distribute(total: Cents, weights: readonly Cents[]): Cents[] {
-  assertCents(total, "total del reparto")
-  if (weights.length === 0) return []
-  const signs = weights.map((weight) => (weight < 0 ? -1 : 1))
-  const homogeneous = signs.every((sign) => sign === signs[0])
-  const shares = splitLargestRemainder(total, weights.map((weight) => Math.abs(weight)))
-  if (homogeneous) return shares
-  return shares.map((share, index) => Math.abs(share) * signs[index])
+  return shareByLargestRemainder(
+    total,
+    weights.map((weight, index) => ({ code: String(index), weight }))
+  )
 }
 
 /** Suma de las bases YA convertidas de las líneas con ese tipo; `null` si no hay. */

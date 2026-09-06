@@ -19,11 +19,19 @@
  *     escribe (límite #2 documentado en `lib/db.ts`).
  */
 
-import type { TenantClient } from "@/lib/db"
+import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { proposalHash } from "@/lib/extraction/hash"
 import type { ExtractionProposal, FieldOrigins } from "@/lib/extraction/types"
 import { currentGitSha } from "@/models/reports"
 import { Prisma, type ExtractionRun, type ReconcileStatus } from "@/prisma/client"
+
+/**
+ * Un run se puede crear **dentro** de la transacción que postea el asiento
+ * (T13): el run de revisión y su asiento nacen o mueren juntos, que es lo que
+ * hace que la cadena `journal_entries.extraction_run_id → extraction_runs` no
+ * tenga eslabones sueltos.
+ */
+export type ExtractionClient = TenantClient | TenantTransactionClient
 
 export type ReconcileOutcome = {
   status: ReconcileStatus
@@ -65,7 +73,7 @@ const json = (value: unknown): Prisma.InputJsonValue => value as Prisma.InputJso
  * `IMPORTED` pasan por aquí). **Firma pública para T13.**
  */
 export async function createExtractionRun(
-  db: TenantClient,
+  db: ExtractionClient,
   input: CreateExtractionRunInput
 ): Promise<ExtractionRun> {
   return await db.extractionRun.create({
@@ -129,7 +137,7 @@ export type CreateRevisionRunInput = {
  * **Firma pública para T13** (`confirmProposalAction`).
  */
 export async function createRevisionRun(
-  db: TenantClient,
+  db: ExtractionClient,
   input: CreateRevisionRunInput
 ): Promise<ExtractionRun> {
   const parent = await getExtractionRun(db, input.parentRunId)
@@ -162,7 +170,7 @@ export async function createRevisionRun(
   })
 }
 
-export async function getExtractionRun(db: TenantClient, id: string): Promise<ExtractionRun | null> {
+export async function getExtractionRun(db: ExtractionClient, id: string): Promise<ExtractionRun | null> {
   return await db.extractionRun.findFirst({ where: { id } })
 }
 
@@ -181,7 +189,7 @@ export async function getLatestRunForFile(db: TenantClient, fileId: string): Pro
 }
 
 /** Cadena de revisión de un run, del más antiguo al más reciente. */
-export async function getRunChain(db: TenantClient, runId: string): Promise<ExtractionRun[]> {
+export async function getRunChain(db: ExtractionClient, runId: string): Promise<ExtractionRun[]> {
   const chain: ExtractionRun[] = []
   let current = await getExtractionRun(db, runId)
   while (current) {
