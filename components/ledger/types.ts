@@ -59,6 +59,10 @@ export type EntryView = {
   postedAt?: string | null
   transactionId?: string | null
   fileId?: string | null
+  /** E8 · T16 — extracción que respalda el asiento y las dos fechas nuevas (§7). */
+  extractionRunId?: string | null
+  receptionDate?: string | null
+  operationDate?: string | null
   fiscalYearCode?: string | null
   lines: LineView[]
   totalDebitCents: number

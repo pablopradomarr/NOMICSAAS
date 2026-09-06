@@ -130,6 +130,18 @@ function FragmentRows({ entry, isOpen, onToggle }: { entry: EntryView; isOpen: b
         <td className="px-3 py-1 text-xs text-muted-foreground">
           {SOURCE_TYPE_LABELS[entry.sourceType] ?? entry.sourceType}
           {entry.templateCode && <span className="font-code ml-1">{entry.templateCode}</span>}
+          {/* E8 · T16 — del diario al documento en un clic: la pestaña Documento
+              del asiento lleva al papel, a su sha256 y a la extracción que lo
+              respalda (§6, drill-down en ≤ 3 clics). */}
+          {entry.fileId && (
+            <Link
+              href={`/ledger/${entry.id}?tab=documento`}
+              className="ml-1 underline underline-offset-2"
+              data-testid={`entry-document-${entry.entryNumber}`}
+            >
+              documento
+            </Link>
+          )}
         </td>
         <td className="px-3 py-1 text-right">
           <AmountPlain cents={entry.totalDebitCents} zeroAsDash={false} />

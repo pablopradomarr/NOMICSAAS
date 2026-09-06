@@ -37,9 +37,11 @@ import {
   Hourglass,
   House,
   Import,
+  Layers,
   ListTree,
   NotebookPen,
   Percent,
+  ReceiptText,
   Scale,
   ScrollText,
   SlidersHorizontal,
@@ -87,6 +89,11 @@ const settingsItems = [
   // E8 · T23 — calificación fiscal de terceros y de la organización (ADR-0014
   // D11). La LEE cualquier rol; escribir es de ADMIN y lo exige la acción.
   { title: "Terceros y fiscalidad", href: "/settings/counterparties", icon: Contact, adminOnly: false },
+  // E8 · T17 — configuración del camino documental. Los prompts son de ADMIN
+  // (cambian lo que el modelo lee); las series y las tasas las LEE cualquier
+  // rol y escribirlas lo exige la acción, no el menú.
+  { title: "Prompts de extracción", href: "/settings/prompts", icon: Sparkles, adminOnly: true },
+  { title: "Facturación", href: "/settings/invoicing", icon: ReceiptText, adminOnly: false },
   { title: "Auditoría de cambios", href: "/settings/audit", icon: ScrollText, adminOnly: true },
   { title: "LLM settings", href: "/settings/llm", icon: Sparkles, adminOnly: true },
   { title: "Fields", href: "/settings/fields", icon: FormInput, adminOnly: true },
@@ -193,7 +200,7 @@ export function AppSidebar({
                   <SidebarMenuButton asChild>
                     <Link href="/unsorted">
                       <ClockArrowUp />
-                      <span>Unsorted</span>
+                      <span>Bandeja de documentos</span>
                       {unsortedFilesCount > 0 && (
                         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs font-medium text-primary-foreground">
                           {unsortedFilesCount}
@@ -201,6 +208,27 @@ export function AppSidebar({
                       )}
                       {notification && notification.code === "sidebar.unsorted" && notification.message && <Blinker />}
                       <span></span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItemWithHighlight>
+                {/* E8 · T15/T17 — el resto del camino documental. La
+                    confirmación por lote la ve cualquier rol (enseña qué entra
+                    y qué no, que es información de revisión) y sólo un EDITOR
+                    contabiliza; la acción lo vuelve a exigir. */}
+                <SidebarMenuItemWithHighlight href="/unsorted/batch">
+                  <SidebarMenuButton asChild>
+                    <Link href="/unsorted/batch">
+                      <Layers />
+                      <span>Confirmación por lote</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItemWithHighlight>
+
+                <SidebarMenuItemWithHighlight href="/apps/invoices">
+                  <SidebarMenuButton asChild>
+                    <Link href="/apps/invoices">
+                      <ReceiptText />
+                      <span>Facturas emitidas</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItemWithHighlight>

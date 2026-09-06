@@ -333,10 +333,35 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
     await client.query(`DELETE FROM allocation_runs WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM allocation_rule_targets WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM allocation_rules WHERE organization_id = $1::uuid`, [organizationId])
+    // E8 — el camino documental, en el ÚNICO orden que las restricciones
+    // admiten, y por eso se explica:
+    //
+    //  · `journal_entries.transaction_id → transactions` es `RESTRICT`: la
+    //    operación no se puede borrar mientras su asiento la referencie.
+    //  · `transactions.journal_entry_id → journal_entries` es `ON DELETE SET
+    //    NULL`: borrar el asiento primero deja una `POSTED` sin asiento, y el
+    //    CHECK de ADR-0014 D1 aborta el reset entero.
+    //  · Y la operación tampoco se puede «apagar» antes: el trigger de
+    //    transiciones prohíbe `POSTED → DRAFT`, que es exactamente lo que D1
+    //    quiere que sea imposible desde la aplicación.
+    //
+    // La salida es soltar el enlace por el lado del asiento —`transaction_id`
+    // es anulable— y borrar entonces las operaciones, que ya no las referencia
+    // nadie. Ni una fila de `transactions` se actualiza en un estado inválido.
+    // Todo como `app_maintenance` (ADR-0009 §6): vaciar una organización es una
+    // operación de operador, no algo que la aplicación pueda hacer.
+    await client.query(`UPDATE journal_entries SET transaction_id = NULL WHERE organization_id = $1::uuid`, [
+      organizationId,
+    ])
+    await client.query(`DELETE FROM transactions WHERE organization_id = $1::uuid`, [organizationId])
     // Las líneas y los asientos, en la MISMA transacción: el constraint trigger
     // diferido de cuadre sólo se calla si el asiento tampoco existe al COMMIT.
     await client.query(`DELETE FROM journal_lines WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM journal_entries WHERE organization_id = $1::uuid`, [organizationId])
+    // `journal_entries.(file_id, extraction_run_id)` son `RESTRICT`: la
+    // evidencia documental cae DESPUÉS del diario que la referenciaba.
+    await client.query(`DELETE FROM extraction_runs WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM files WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM period_locks WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM fiscal_years WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM margin_level_configs WHERE organization_id = $1::uuid`, [organizationId])

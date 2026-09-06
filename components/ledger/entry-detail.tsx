@@ -117,6 +117,11 @@ export function EntryDetail({ entry, baseCurrency }: { entry: EntryView; baseCur
         <dl className="grid gap-x-6 gap-y-2 rounded-md border p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
           <Item label="Fecha del documento" value={formatLocalDate(entry.documentDate)} />
           <Item label="Fecha de devengo" value={formatLocalDate(entry.accrualDate)} />
+          {/* E8 · T16 (O-6) — las dos fechas que E8 añade: la de la operación,
+              que selecciona el tipo de IVA, y la de recepción, que decide el
+              trimestre en el que se deduce el soportado. */}
+          <Item label="Fecha de la operación" value={formatLocalDate(entry.operationDate)} />
+          <Item label="Fecha de recepción" value={formatLocalDate(entry.receptionDate)} />
           <Item label="Fecha contable" value={formatLocalDate(entry.entryDate)} />
           <Item label="Ejercicio" value={entry.fiscalYearCode ?? "—"} mono />
           <Item label="Origen" value={SOURCE_TYPE_LABELS[entry.sourceType] ?? entry.sourceType} />

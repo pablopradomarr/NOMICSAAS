@@ -50,6 +50,10 @@ export type EntryExtras = {
   postedByName: string | null
   transactionId: string | null
   fileId: string | null
+  /** E8 · T16 — el eslabón que lleva del asiento al documento (§7). */
+  extractionRunId: string | null
+  receptionDate: string | null
+  operationDate: string | null
   fiscalYearCode: string | null
   reversedByEntryId: string | null
   reversedByEntryNumber: number | null
@@ -75,6 +79,9 @@ export async function entryExtras(db: TenantClient, entryIds: readonly string[])
       postedById: true,
       transactionId: true,
       fileId: true,
+      extractionRunId: true,
+      receptionDate: true,
+      operationDate: true,
       fiscalYearId: true,
       reversesEntryId: true,
     },
@@ -122,6 +129,9 @@ export async function entryExtras(db: TenantClient, entryIds: readonly string[])
           postedByName: row.postedById ? (userName.get(row.postedById) ?? null) : null,
           transactionId: row.transactionId,
           fileId: row.fileId,
+          extractionRunId: row.extractionRunId,
+          receptionDate: row.receptionDate ? row.receptionDate.toISOString().slice(0, 10) : null,
+          operationDate: row.operationDate ? row.operationDate.toISOString().slice(0, 10) : null,
           fiscalYearCode: fiscalYearCode.get(row.fiscalYearId) ?? null,
           reversedByEntryId: reversal?.id ?? null,
           reversedByEntryNumber: reversal?.entryNumber ?? null,
@@ -213,6 +223,9 @@ export function toEntryView(
     postedAt: extras?.postedAt ?? null,
     transactionId: extras?.transactionId ?? null,
     fileId: extras?.fileId ?? null,
+    extractionRunId: extras?.extractionRunId ?? null,
+    receptionDate: extras?.receptionDate ?? null,
+    operationDate: extras?.operationDate ?? null,
     fiscalYearCode: extras?.fiscalYearCode ?? null,
     lines,
     totalDebitCents,

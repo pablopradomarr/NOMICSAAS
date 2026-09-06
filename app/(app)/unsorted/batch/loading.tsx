@@ -1,6 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton"
 
-/** E8 · T15 — Estado de carga de la bandeja de documentos. */
+/** E8 · T17 — Estado de carga de la confirmación por lote. */
 export default function Loading() {
   return (
     <div className="space-y-6">
@@ -8,12 +8,8 @@ export default function Loading() {
         <Skeleton className="h-8 w-72" />
         <Skeleton className="h-4 w-full max-w-3xl" />
       </div>
-      <div className="flex flex-wrap gap-3">
-        {[...Array(6)].map((_, i) => (
-          <Skeleton key={i} className="h-16 w-32" />
-        ))}
-      </div>
-      <Skeleton className="h-[480px] w-full" />
+      <Skeleton className="h-64 w-full" />
+      <Skeleton className="h-32 w-full" />
     </div>
   )
 }

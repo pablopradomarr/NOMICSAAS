@@ -51,6 +51,7 @@ export type InvoiceSeriesRow = {
   prefix: string
   nextNumber: number
   year: number | null
+  isActive: boolean
 }
 
 export type AssignedNumber = {
@@ -132,9 +133,61 @@ export const listInvoiceSeries = async (db: TenantClient): Promise<InvoiceSeries
   (
     await db.invoiceSeries.findMany({
       orderBy: [{ kind: "asc" }, { code: "asc" }],
-      select: { id: true, code: true, kind: true, prefix: true, nextNumber: true, year: true },
+      select: { id: true, code: true, kind: true, prefix: true, nextNumber: true, year: true, isActive: true },
     })
   ).map((s) => ({ ...s }))
+
+export type CreateInvoiceSeriesInput = {
+  code: string
+  kind: InvoiceSeriesKind
+  prefix: string
+  year?: number | null
+}
+
+/**
+ * E8 · T17 — Alta de una serie de facturación (O-18, art. 15.4 RD 1619/2012).
+ *
+ * La serie nace **siempre en el número 1** y su tipo no se cambia después: el
+ * trigger `invoice_series_no_gaps` lo impide, y con razón —renumerar o
+ * reclasificar una serie con facturas emitidas es exactamente lo que la
+ * numeración correlativa existe para hacer imposible—. Para otro tipo, otra
+ * serie.
+ */
+export async function createInvoiceSeries(db: TenantClient, input: CreateInvoiceSeriesInput): Promise<InvoiceSeriesRow> {
+  const created = await db.invoiceSeries.create({
+    data: {
+      organizationId: db.$organizationId,
+      code: input.code,
+      kind: input.kind,
+      prefix: input.prefix,
+      year: input.year ?? null,
+      nextNumber: 1,
+      isActive: true,
+    },
+    select: { id: true, code: true, kind: true, prefix: true, nextNumber: true, year: true, isActive: true },
+  })
+  return created
+}
+
+/**
+ * Activa o desactiva una serie. **No la borra**: `invoice_series` no admite
+ * `DELETE` (política RESTRICTIVE y `REVOKE`), porque una factura emitida no se
+ * borra y su serie tampoco puede desaparecer del histórico.
+ */
+export async function setInvoiceSeriesActive(
+  db: TenantClient,
+  seriesId: string,
+  isActive: boolean
+): Promise<InvoiceSeriesRow | null> {
+  const existing = await db.invoiceSeries.findFirst({ where: { id: seriesId } })
+  if (!existing) return null
+  const updated = await db.invoiceSeries.update({
+    where: { id: seriesId },
+    data: { isActive },
+    select: { id: true, code: true, kind: true, prefix: true, nextNumber: true, year: true, isActive: true },
+  })
+  return updated
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // I-E8-20 · numeración correlativa por serie y ejercicio

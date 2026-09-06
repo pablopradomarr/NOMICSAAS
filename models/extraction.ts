@@ -13,6 +13,12 @@
  *     agregado en la misma consulta: 2 000 ficheros y 6 000 runs por debajo de
  *     150 ms (§9). El patrón «un `findFirst` por fila» que TaxHacker usaba en
  *     la bandeja es exactamente lo que el estándar de calidad prohíbe.
+ *  2.b **Ese SQL crudo exige el cliente de una TRANSACCIÓN de tenant.** El SQL
+ *     crudo no pasa por la extensión (límite #2 de `lib/db.ts`) y, con la RLS
+ *     estricta de ADR-0009, sin `app.current_org` fijado devuelve **cero filas
+ *     sin error**. Por eso estas dos funciones aceptan `ExtractionClient` y las
+ *     pantallas las llaman dentro de `tenantTransaction` —que dentro de
+ *     `tenantPage` reutiliza la transacción ya abierta—.
  *  3. **Nada de SQL interpolado** (§10): todo por `Prisma.sql`, incluida la
  *     organización, aunque `tenantDb` ya la inyecte en los delegados —el SQL
  *     crudo no pasa por la extensión y el filtro es responsabilidad de quien lo
@@ -238,7 +244,7 @@ export type InboxFilter = {
  * `extraction_runs (organization_id, file_id, created_at DESC)` que T2 creó
  * para esto. El `COUNT(*) OVER ()` evita la segunda consulta de paginación.
  */
-export async function listInboxWithLatestRun(db: TenantClient, filter: InboxFilter = {}): Promise<InboxPage> {
+export async function listInboxWithLatestRun(db: ExtractionClient, filter: InboxFilter = {}): Promise<InboxPage> {
   const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200)
   const offset = Math.max(filter.offset ?? 0, 0)
   const organizationId = db.$organizationId
@@ -308,7 +314,7 @@ export type PendingCounts = {
  * las filas y contarlas en TypeScript— materializa la bandeja entera para
  * pintar cinco números, que es justo lo que el estándar de calidad descarta.
  */
-export async function countPendingByStatus(db: TenantClient): Promise<PendingCounts> {
+export async function countPendingByStatus(db: ExtractionClient): Promise<PendingCounts> {
   const organizationId = db.$organizationId
   const rows = await db.$queryRaw<
     { sinRun: bigint; pass: bigint; warn: bigint; fail: bigint; partial: bigint; total: bigint }[]

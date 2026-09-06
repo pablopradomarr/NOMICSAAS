@@ -12,10 +12,23 @@ import { cn } from "@/lib/utils"
  * - `interpretacion_ia` — propuesta de un modelo, sin confirmar.
  * - `no_verificado` — feedback de pantalla, no cifra contable.
  *
+ * **E8 · T15 (O-20.1)** añade el cuarto nivel del camino documental,
+ * `verificado`: «leído del documento y coincidente con el recálculo
+ * determinista». Es la distinción que un auditor busca primero y la que
+ * `lib/extraction/types.ts` sella en `Confidence`; no sustituye a `comprobado`
+ * (invariantes del diario) ni a `validado` (contraste con la fuente), que son
+ * los del motor contable de E3 y siguen significando lo mismo.
+ *
  * Sin rojo/verde semáforo: la marca es negro, gris, hielo y lima.
  */
 
-export type ConfidenceLevel = "calculado" | "comprobado" | "validado" | "interpretacion_ia" | "no_verificado"
+export type ConfidenceLevel =
+  | "calculado"
+  | "comprobado"
+  | "validado"
+  | "verificado"
+  | "interpretacion_ia"
+  | "no_verificado"
 
 const LEVELS: Record<ConfidenceLevel, { label: string; className: string; dot?: boolean }> = {
   calculado: {
@@ -30,6 +43,10 @@ const LEVELS: Record<ConfidenceLevel, { label: string; className: string; dot?: 
     label: "✓ validado contra fuente",
     className: "border-transparent bg-[#0A0A0A] text-white",
     dot: true,
+  },
+  verificado: {
+    label: "✓ verificado",
+    className: "border-transparent bg-[#0A0A0A] text-white",
   },
   interpretacion_ia: {
     label: "interpretación IA",
