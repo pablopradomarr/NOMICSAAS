@@ -4,7 +4,19 @@
 
 import { describe, expect, it } from "vitest"
 
-import { ajusteRedondeo, cuota, cuotaPorLinea, cuotaPorTipo, deducible, groupBasesByRate, retencion, selectRate } from "@/lib/ledger/tax"
+import {
+  ajusteRedondeo,
+  cuota,
+  cuotaPorLinea,
+  cuotaPorTipo,
+  deducible,
+  groupBasesByRate,
+  overrideQuota,
+  retencion,
+  selectRate,
+  taxAccrualDate,
+  TOLERANCIA_CUOTA_IVA_CENTS,
+} from "@/lib/ledger/tax"
 import { testContext } from "@/tests/support/ledger-context"
 
 describe("cuotaPorTipo / cuotaPorLinea (R-IVA-1 y R-IVA-3)", () => {
@@ -130,5 +142,50 @@ describe("groupBasesByRate", () => {
     ])
     expect(groups.map((g) => g.code)).toEqual(["IVA_21", "IVA_10"])
     expect(groups[0].bases).toEqual([500000, 100000])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E8 · T9b — cuota del documento y fecha de devengo (ADR-0014 D3 y D8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("overrideQuota (ADR-0014 D3)", () => {
+  it("sin overrides devuelve null: el motor recalcula, como en E3", () => {
+    expect(overrideQuota(undefined, "IVA_21")).toBeNull()
+    expect(overrideQuota([], "IVA_21")).toBeNull()
+  })
+
+  it("devuelve la cuota del documento para SU tipo, y null para los demás", () => {
+    const overrides = [
+      { taxRateCode: "IVA_21", quotaCents: 21001 },
+      { taxRateCode: "IVA_10", quotaCents: 0 },
+    ]
+    expect(overrideQuota(overrides, "IVA_21")).toBe(21001)
+    // Una cuota de cero declarada es una cuota, no una ausencia.
+    expect(overrideQuota(overrides, "IVA_10")).toBe(0)
+    expect(overrideQuota(overrides, "IVA_4")).toBeNull()
+  })
+
+  it("la tolerancia por tipo es constante del motor (un céntimo)", () => {
+    expect(TOLERANCIA_CUOTA_IVA_CENTS).toBe(1)
+  })
+})
+
+describe("taxAccrualDate (art. 90.Dos LIVA, O-14)", () => {
+  it("con las tres fechas iguales —el caso de todos los fixtures— nada cambia", () => {
+    const d = "2026-03-10"
+    expect(taxAccrualDate({ operationDate: d, accrualDate: d, documentDate: d })).toBe(d)
+  })
+
+  it("manda la fecha de operación; luego el devengo contable; luego la expedición", () => {
+    expect(taxAccrualDate({ documentDate: "2026-06-25" })).toBe("2026-06-25")
+    expect(taxAccrualDate({ accrualDate: "2026-07-01", documentDate: "2026-06-25" })).toBe("2026-07-01")
+    expect(taxAccrualDate({ operationDate: "2026-08-01", accrualDate: "2026-07-01", documentDate: "2026-06-25" })).toBe(
+      "2026-08-01"
+    )
+  })
+
+  it("un null explícito no cuenta como fecha", () => {
+    expect(taxAccrualDate({ operationDate: null, accrualDate: null, documentDate: "2026-06-25" })).toBe("2026-06-25")
   })
 })

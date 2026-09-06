@@ -90,9 +90,68 @@ export function ajusteRedondeo(diffCents: number, ctx: Pick<LedgerContext, "poli
   return diffCents > 0 ? { kind: "GASTO", amountCents: diffCents } : { kind: "INGRESO", amountCents: -diffCents }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// E8 · T9b — cuota del documento y fecha de devengo (ADR-0014 D3 y D8, O-14)
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * C-10: el tipo se selecciona con `documentDate`, NO con `entryDate` (un
- * documento de 2025 contabilizado en 2026 lleva el tipo de 2025).
+ * ADR-0014 D3 / O-16: desviación máxima admitida, **por tipo impositivo**, entre
+ * la cuota que el documento declara y la que el motor recalcula.
+ *
+ * Es una **constante del motor**, no una política de la organización: subirla
+ * exige un ADR nuevo, no una pantalla de ajustes. No confundir con
+ * `LedgerPolicy.redondeoToleranciaCents`, que es el residuo de **tesorería** de
+ * T-08/T-09 (669/769) y sí es configurable con techo duro de 5 c.
+ */
+export const TOLERANCIA_CUOTA_IVA_CENTS = 1
+
+/** Cuota que el DOCUMENTO declara para un tipo (ADR-0014 D3). */
+export type TaxOverride = { taxRateCode: string; quotaCents: Cents }
+
+/** Cuota del documento para `code`, o `null` si el documento no la declara. */
+export function overrideQuota(overrides: readonly TaxOverride[] | undefined, code: string): Cents | null {
+  if (!overrides) return null
+  const hit = overrides.find((o) => o.taxRateCode === code)
+  return hit ? hit.quotaCents : null
+}
+
+/** Las tres fechas de las que sale el devengo del impuesto. */
+export type AccrualDates = {
+  /** Fecha de la operación / devengo del IVA (art. 75 LIVA). Manda si existe. */
+  operationDate?: LocalDate | null
+  /** Devengo contable. */
+  accrualDate?: LocalDate | null
+  /** Expedición del documento. Último recurso. */
+  documentDate: LocalDate
+}
+
+/**
+ * **Art. 90.Dos LIVA (O-14): el tipo aplicable es el vigente al DEVENGO**, no
+ * el de la fecha de expedición. Con las tres fechas iguales —el caso normal, y
+ * el de todos los fixtures de E3–E6— el resultado es idéntico al anterior.
+ */
+export function taxAccrualDate(dates: AccrualDates): LocalDate {
+  return dates.operationDate ?? dates.accrualDate ?? dates.documentDate
+}
+
+/**
+ * `selectRate` por fecha de **devengo** (O-14). Es el punto único que comparten
+ * las plantillas del bloque A de E3 y RC-06 de E8: si alguna vez cambia el
+ * criterio, cambia aquí y en ningún otro sitio.
+ */
+export function selectRateForAccrual(
+  ctx: Pick<LedgerContext, "rates">,
+  code: string,
+  dates: AccrualDates,
+  side: TaxSide
+): { rate: TaxRateRow } | { error: LedgerError } {
+  return selectRate(ctx, code, taxAccrualDate(dates), side)
+}
+
+/**
+ * C-10: el tipo se selecciona con la fecha de **devengo** (`operationDate ??
+ * accrualDate ?? documentDate`, art. 90.Dos LIVA), NUNCA con `entryDate`: un
+ * documento de 2025 contabilizado en 2026 lleva el tipo de 2025.
  */
 export function selectRate(
   ctx: Pick<LedgerContext, "rates">,

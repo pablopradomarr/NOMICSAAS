@@ -10,7 +10,17 @@
  */
 
 import { applyBps } from "@/lib/taxes/bps"
-import { cuota, deducible, groupBasesByRate, retencion, selectRate } from "@/lib/ledger/tax"
+import { hamilton } from "@/lib/analytics/allocate"
+import {
+  cuota,
+  deducible,
+  groupBasesByRate,
+  overrideQuota,
+  retencion,
+  selectRate,
+  taxAccrualDate,
+  type TaxOverride,
+} from "@/lib/ledger/tax"
 import { buildEntry, DocumentCheck } from "@/lib/ledger/post"
 import {
   AccountKey,
@@ -32,6 +42,8 @@ import type {
   AnticipoInput,
   FacturaEmitidaInput,
   FacturaRecibidaInput,
+  PayableBlockInput,
+  PayableKey,
 } from "@/lib/ledger/templates/schemas"
 
 /** `analyticType` de la línea: override del input, si no el de la cuenta. */
@@ -54,40 +66,73 @@ type RateGroup = {
   rateId: string
   rateBps: number
   bases: Cents[]
-  /** Cuota total del tipo, con el modo de redondeo sellado (R-IVA-1/R-IVA-3). */
+  /**
+   * Cuota total del tipo que se CONTABILIZA: la del documento si viene por
+   * `taxOverrides` (ADR-0014 D3), y si no la recalculada con el modo de
+   * redondeo sellado (R-IVA-1/R-IVA-3).
+   */
   cuotaCents: Cents
+  /** Cuota recalculada por el motor. Control de verosimilitud, no importe. */
+  expectedCents: Cents
+  /** La cuota del grupo viene del documento. */
+  fromDocument: boolean
   /** Cuota imputada a cada línea; su suma es exactamente `cuotaCents`. */
   perLine: Cents[]
 }
 
 /**
  * Cuota por tipo con reparto por línea. La cuota del GRUPO se calcula con el
- * modo sellado (un solo redondeo en `PER_TIPO`); el residuo del reparto se
- * asigna a la última línea del grupo, de modo que `Σ perLine === cuotaCents`
- * siempre y la prorrata pueda calcularse línea a línea sin redondear dos veces.
+ * modo sellado (un solo redondeo en `PER_TIPO`) —o se toma del documento, si el
+ * llamante la aporta— y el residuo del reparto se asigna a la última línea del
+ * grupo, de modo que `Σ perLine === cuotaCents` siempre y la prorrata pueda
+ * calcularse línea a línea sin redondear dos veces.
+ *
+ * `taxDate` es la fecha de **devengo** (art. 90.Dos LIVA, O-14), no la de
+ * expedición: la resuelve `taxAccrualDate()`.
  */
 function rateGroups(
   lines: readonly { baseCents: Cents; taxRateCode: string }[],
   ctx: LedgerContext,
-  documentDate: LocalDate,
+  taxDate: LocalDate,
   side: "SALE" | "PURCHASE",
-  errors: LedgerError[]
+  errors: LedgerError[],
+  overrides?: readonly TaxOverride[]
 ): RateGroup[] {
   const groups: RateGroup[] = []
   for (const g of groupBasesByRate(lines.map((l) => ({ baseCents: l.baseCents, taxRateCode: l.taxRateCode })))) {
-    const selected = selectRate(ctx, g.code, documentDate, side)
+    const selected = selectRate(ctx, g.code, taxDate, side)
     if ("error" in selected) {
       errors.push(selected.error)
       continue
     }
     const rate = selected.rate
-    const cuotaCents = cuota(g.bases, rate.rateBps, ctx.policy.taxRoundingMode)
+    const expectedCents = cuota(g.bases, rate.rateBps, ctx.policy.taxRoundingMode)
+    const declared = overrideQuota(overrides, g.code)
+    const cuotaCents = declared ?? expectedCents
     const perLine = g.bases.map((b) => applyBps(b, rate.rateBps))
     const residual = cuotaCents - sumCents(perLine)
     if (perLine.length > 0) perLine[perLine.length - 1] += residual
-    groups.push({ code: g.code, rateId: rate.id, rateBps: rate.rateBps, bases: g.bases, cuotaCents, perLine })
+    groups.push({
+      code: g.code,
+      rateId: rate.id,
+      rateBps: rate.rateBps,
+      bases: g.bases,
+      cuotaCents,
+      expectedCents,
+      fromDocument: declared !== null,
+      perLine,
+    })
   }
   return groups
+}
+
+/** Lo que `checkDocument` necesita para medir la desviación de D3, tipo a tipo. */
+function quotaChecks(
+  groups: readonly RateGroup[]
+): { taxRateCode: string; quotaCents: Cents; expectedCents: Cents }[] {
+  return groups
+    .filter((g) => g.fromDocument)
+    .map((g) => ({ taxRateCode: g.code, quotaCents: g.cuotaCents, expectedCents: g.expectedCents }))
 }
 
 /** Índice `línea del documento → cuota que le toca`, para la prorrata (T-03). */
@@ -106,6 +151,91 @@ function perLineTax(
   })
   return out
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E8 · T9b — cuota por línea expuesta, y bloques de pasivo (ADR-0014 D3 y D6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Cuota que le toca a **cada línea** del documento, con la misma aritmética que
+ * usa la plantilla: cuota del documento si viene por `taxOverrides`, reparto por
+ * línea y residuo a la última del grupo.
+ *
+ * Se exporta para que `postFromProposal` (E8 · T9) construya los
+ * `payableBlocks` con los mismos céntimos que después contabilizará la
+ * plantilla: dos cálculos separados acabarían divergiendo en el céntimo, y ése
+ * es justo el céntimo que decide si un documento mixto cuadra.
+ */
+export function lineTaxes(
+  lines: readonly { baseCents: Cents; taxRateCode: string }[],
+  ctx: LedgerContext,
+  dates: { operationDate?: string | null; accrualDate?: string | null; documentDate: LocalDate },
+  side: "SALE" | "PURCHASE",
+  overrides?: readonly TaxOverride[]
+): { perLine: Cents[]; totalCents: Cents; errors: LedgerError[] } {
+  const errors: LedgerError[] = []
+  const groups = rateGroups(lines, ctx, taxAccrualDate(dates), side, errors, overrides)
+  const index = perLineTax(lines, groups)
+  const perLine = lines.map((_, i) => index.get(i)?.cuotaCents ?? 0)
+  return { perLine, totalCents: sumCents(groups.map((g) => g.cuotaCents)), errors }
+}
+
+/**
+ * ADR-0014 D6 (O-3) — reparto del pasivo de un documento mixto.
+ *
+ * Cada bloque llega con su **bruto** (`base + su cuota`); la retención y el
+ * anticipo aplicado, que son del documento y no de un bloque, se reparten por
+ * **mayor resto (Hamilton)** en proporción a ese bruto, con desempate por
+ * código de cuenta. Así `Σ líneas de pasivo = pasivo del documento` con
+ * tolerancia 0 y el céntimo huérfano cae siempre en el mismo sitio.
+ */
+export function splitPayableBlocks(
+  blocks: readonly { payableKey: PayableKey; accountCode: string; amountCents: Cents }[],
+  grossPayable: Cents,
+  reductionCents: Cents,
+  errors: LedgerError[]
+): { payableKey: PayableKey; accountCode: string; amountCents: Cents }[] {
+  const declared = sumCents(blocks.map((b) => b.amountCents))
+  if (declared !== grossPayable) {
+    errors.push(
+      err(
+        "DOCUMENT_TOTAL_MISMATCH",
+        "payableBlocks",
+        `Los bloques de pasivo suman ${declared} y el documento debe ${grossPayable} (base + cuotas)`,
+        { check: "D6" }
+      )
+    )
+    return []
+  }
+  if (reductionCents === 0) return blocks.map((b) => ({ ...b }))
+
+  // El peso es el bruto del bloque y el desempate, el código de cuenta: dos
+  // bloques de igual importe reparten siempre igual, lea el motor lo que lea.
+  const shares = hamilton(
+    reductionCents,
+    blocks.map((b) => ({ code: b.accountCode, weight: b.amountCents }))
+  )
+  return blocks.map((b, i) => {
+    const amountCents = b.amountCents - (shares[i]?.amountCents ?? 0)
+    if (amountCents < 0) {
+      errors.push(
+        err(
+          "DOCUMENT_TOTAL_MISMATCH",
+          "payableBlocks",
+          `La retención y el anticipo dejan el bloque ${b.payableKey} en ${amountCents}: reparta el documento en dos`,
+          { check: "D6" }
+        )
+      )
+    }
+    return { ...b, amountCents }
+  })
+}
+
+/**
+ * Toda `PayableKey` es una clave del mapa: el motor pide la cuenta y jamás la
+ * inventa. Si la organización no tiene 523 mapeada, sale `MAP_KEY_UNMAPPED`.
+ */
+const asAccountKey = (key: PayableKey): AccountKey => key
 
 /**
  * Reparte el crédito o la deuda entre vencimientos (decisión 6 de §9.2). Sin
@@ -149,21 +279,24 @@ function receivableLines(
 export function buildFacturaEmitida(input: FacturaEmitidaInput, ctx: LedgerContext): Result<EntryDraft> {
   const errors: LedgerError[] = []
   const docDate = input.documentDate
+  // Art. 90.Dos LIVA (O-14): el tipo es el vigente al DEVENGO.
+  const taxDate = taxAccrualDate(input)
 
   const clientesCode = mapped(ctx, "CLIENTES", errors)
   const ivaRepercutidoCode = mapped(ctx, "IVA_REPERCUTIDO", errors)
   const ventasDefaultCode = mapped(ctx, "VENTAS_DEFAULT", errors)
 
-  const groups = rateGroups(input.lines, ctx, docDate, "SALE", errors)
+  const groups = rateGroups(input.lines, ctx, taxDate, "SALE", errors, input.taxOverrides)
 
   // Recargo de equivalencia: tributo distinto, línea separada, casilla propia.
   const surchargeLines = input.lines.filter((l) => l.surchargeRateCode)
   const surchargeGroups = rateGroups(
     surchargeLines.map((l) => ({ baseCents: l.baseCents, taxRateCode: l.surchargeRateCode! })),
     ctx,
-    docDate,
+    taxDate,
     "SALE",
-    errors
+    errors,
+    input.taxOverrides
   )
 
   const baseTotal = sumCents(input.lines.map((l) => l.baseCents))
@@ -242,7 +375,8 @@ export function buildFacturaEmitida(input: FacturaEmitidaInput, ctx: LedgerConte
     lineBases: input.lines.map((l) => l.baseCents),
     taxCents: taxTotal,
     withholdingCents,
-    expectedTaxByRate: [...groups.map((g) => g.cuotaCents), ...surchargeGroups.map((g) => g.cuotaCents)],
+    expectedTaxByRate: [...groups.map((g) => g.expectedCents), ...surchargeGroups.map((g) => g.expectedCents)],
+    taxQuotaChecks: [...quotaChecks(groups), ...quotaChecks(surchargeGroups)],
     appliedAdvanceCents: advanceCents,
   }
 
@@ -260,7 +394,7 @@ export function buildFacturaEmitida(input: FacturaEmitidaInput, ctx: LedgerConte
       lines,
     },
     ctx,
-    { document }
+    { document, taxAccrualDate: taxDate }
   )
 }
 
@@ -278,14 +412,15 @@ const SALE_RECTIFICATION_KEY: Record<AbonoEmitidoInput["reason"], AccountKey> = 
 
 export function buildAbonoEmitido(input: AbonoEmitidoInput, ctx: LedgerContext): Result<EntryDraft> {
   const errors: LedgerError[] = []
-  // El tipo es el vigente en el DOCUMENTO ORIGINAL, no el de hoy.
-  const rateDate = input.originalDocumentDate ?? input.documentDate
+  // El tipo es el vigente en el DOCUMENTO ORIGINAL, no el de hoy; y dentro de
+  // ese documento, el del devengo de la operación rectificada (O-14).
+  const rateDate = input.originalDocumentDate ?? taxAccrualDate(input)
 
   const clientesCode = mapped(ctx, "CLIENTES", errors)
   const ivaRepercutidoCode = mapped(ctx, "IVA_REPERCUTIDO", errors)
   const rectificationCode = mapped(ctx, SALE_RECTIFICATION_KEY[input.reason], errors)
 
-  const groups = rateGroups(input.lines, ctx, rateDate, "SALE", errors)
+  const groups = rateGroups(input.lines, ctx, rateDate, "SALE", errors, input.taxOverrides)
   const baseTotal = sumCents(input.lines.map((l) => l.baseCents))
   const taxTotal = sumCents(groups.map((g) => g.cuotaCents))
 
@@ -333,7 +468,8 @@ export function buildAbonoEmitido(input: AbonoEmitidoInput, ctx: LedgerContext):
     lineBases: input.lines.map((l) => l.baseCents),
     taxCents: taxTotal,
     withholdingCents,
-    expectedTaxByRate: groups.map((g) => g.cuotaCents),
+    expectedTaxByRate: groups.map((g) => g.expectedCents),
+    taxQuotaChecks: quotaChecks(groups),
   }
 
   return buildEntry(
@@ -350,7 +486,7 @@ export function buildAbonoEmitido(input: AbonoEmitidoInput, ctx: LedgerContext):
       lines,
     },
     ctx,
-    { document }
+    { document, taxAccrualDate: rateDate }
   )
 }
 
@@ -429,18 +565,20 @@ export function buildFacturaRecibidaIsp(input: FacturaRecibidaInput, ctx: Ledger
 function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, isp: boolean): Result<EntryDraft> {
   const errors: LedgerError[] = []
   const docDate = input.documentDate
+  // Art. 90.Dos LIVA (O-14): el tipo es el vigente al DEVENGO.
+  const taxDate = taxAccrualDate(input)
 
   const inputVatKey: AccountKey = isp ? "IVA_SOPORTADO_ISP" : "IVA_SOPORTADO"
   const inputVatCode = mapped(ctx, inputVatKey, errors)
   const outputVatCode = isp ? mapped(ctx, "IVA_REPERCUTIDO_ISP", errors) : null
-  const payableCode = mapped(ctx, input.payableKey, errors)
+  const payableCode = mapped(ctx, asAccountKey(input.payableKey), errors)
   const expenseDefaultCode = mapped(
     ctx,
     input.payableKey === "PROVEEDORES" ? "COMPRAS_DEFAULT" : "SUBCONTRATACION_DEFAULT",
     errors
   )
 
-  const groups = rateGroups(input.lines, ctx, docDate, "PURCHASE", errors)
+  const groups = rateGroups(input.lines, ctx, taxDate, "PURCHASE", errors, input.taxOverrides)
   const tax = purchaseTax(input.lines, groups, ctx, errors)
   const baseTotal = sumCents(input.lines.map((l) => l.baseCents))
 
@@ -460,10 +598,42 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
   const advanceCents = input.appliedAdvanceCents ?? 0
   const advanceCode = advanceCents > 0 ? mapped(ctx, "ANTICIPOS_PROVEEDORES", errors) : null
 
+  // ADR-0014 D6 (O-3): documento mixto → una línea de pasivo POR BLOQUE.
+  const blocks: { payableKey: PayableKey; accountCode: string; amountCents: Cents }[] = []
+  if (input.payableBlocks) {
+    for (const b of input.payableBlocks as readonly PayableBlockInput[]) {
+      const code = mapped(ctx, asAccountKey(b.payableKey), errors)
+      if (code) blocks.push({ payableKey: b.payableKey, accountCode: code, amountCents: b.amountCents })
+    }
+    if (input.dueSchedule && input.payableBlocks.length > 1) {
+      errors.push(
+        err(
+          "TEMPLATE_INPUT",
+          "dueSchedule",
+          "Un documento con varios bloques de pasivo no admite calendario de vencimientos: fraccione el documento"
+        )
+      )
+    }
+  }
+
   if (errors.length > 0) return fail<EntryDraft>(...errors)
 
   // Con ISP el proveedor NO repercute: la deuda es solo la base.
-  const payable = (isp ? baseTotal : baseTotal + tax.taxTotal) - withholdingCents - advanceCents
+  const grossPayable = isp ? baseTotal : baseTotal + tax.taxTotal
+  const payable = grossPayable - withholdingCents - advanceCents
+  const splitBlocks =
+    blocks.length > 0 ? splitPayableBlocks(blocks, grossPayable, withholdingCents + advanceCents, errors) : []
+
+  const payableLines: DraftLine[] =
+    blocks.length > 0
+      ? splitBlocks.map((b) =>
+          credit(b.amountCents, {
+            accountCode: b.accountCode,
+            counterpartyId: input.counterpartyId ?? null,
+            dueDate: input.dueDate ?? null,
+          })
+        )
+      : receivableLines(payable, payableCode!, "CREDIT", input, input.counterpartyId, errors)
 
   const lines: DraftLine[] = [
     ...input.lines.map((l, index) => {
@@ -480,7 +650,7 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
       .filter((g) => g.deductibleCents !== 0)
       .map((g) => debit(g.deductibleCents, { accountCode: inputVatCode!, taxRateId: g.rateId, taxBaseCents: g.baseCents })),
     ...(advanceCode ? [credit(advanceCents, { accountCode: advanceCode })] : []),
-    ...receivableLines(payable, payableCode!, "CREDIT", input, input.counterpartyId, errors),
+    ...payableLines,
     ...(withholdingCode
       ? [credit(withholdingCents, { accountCode: withholdingCode, taxRateId: withholdingRateId, taxBaseCents: baseTotal })]
       : []),
@@ -503,7 +673,8 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
     // Con ISP el documento del proveedor es solo la base: no repercute nada.
     taxCents: isp ? 0 : tax.taxTotal,
     withholdingCents,
-    expectedTaxByRate: isp ? [] : groups.map((g) => g.cuotaCents),
+    expectedTaxByRate: isp ? [] : groups.map((g) => g.expectedCents),
+    taxQuotaChecks: quotaChecks(groups),
     appliedAdvanceCents: advanceCents,
   }
 
@@ -521,7 +692,7 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
       lines,
     },
     ctx,
-    { document }
+    { document, taxAccrualDate: taxDate }
   )
 }
 
@@ -531,9 +702,9 @@ function buildPurchaseInvoice(input: FacturaRecibidaInput, ctx: LedgerContext, i
 
 export function buildAbonoRecibido(input: AbonoRecibidoInput, ctx: LedgerContext): Result<EntryDraft> {
   const errors: LedgerError[] = []
-  const rateDate = input.originalDocumentDate ?? input.documentDate
+  const rateDate = input.originalDocumentDate ?? taxAccrualDate(input)
 
-  const payableCode = mapped(ctx, input.payableKey, errors)
+  const payableCode = mapped(ctx, asAccountKey(input.payableKey), errors)
   const inputVatCode = mapped(ctx, "IVA_SOPORTADO", errors)
   const rectificationKey: AccountKey =
     input.reason === "DEVOLUCION"
@@ -547,7 +718,7 @@ export function buildAbonoRecibido(input: AbonoRecibidoInput, ctx: LedgerContext
             : "SUBCONTRATACION_DEFAULT"
   const rectificationCode = mapped(ctx, rectificationKey, errors)
 
-  const groups = rateGroups(input.lines, ctx, rateDate, "PURCHASE", errors)
+  const groups = rateGroups(input.lines, ctx, rateDate, "PURCHASE", errors, input.taxOverrides)
   const tax = purchaseTax(input.lines, groups, ctx, errors)
   const baseTotal = sumCents(input.lines.map((l) => l.baseCents))
 
@@ -597,7 +768,8 @@ export function buildAbonoRecibido(input: AbonoRecibidoInput, ctx: LedgerContext
     lineBases: input.lines.map((l) => l.baseCents),
     taxCents: tax.taxTotal,
     withholdingCents,
-    expectedTaxByRate: groups.map((g) => g.cuotaCents),
+    expectedTaxByRate: groups.map((g) => g.expectedCents),
+    taxQuotaChecks: quotaChecks(groups),
   }
 
   return buildEntry(
@@ -614,7 +786,7 @@ export function buildAbonoRecibido(input: AbonoRecibidoInput, ctx: LedgerContext
       lines,
     },
     ctx,
-    { document }
+    { document, taxAccrualDate: rateDate }
   )
 }
 

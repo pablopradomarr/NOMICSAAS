@@ -34,7 +34,69 @@ const baseDocumentDates = {
   documentDate: localDateSchema,
   accrualDate: localDateSchema.optional(),
   entryDate: localDateSchema.optional(),
+  /**
+   * E8 · ADR-0014 D8 (O-14): fecha de la operación = **devengo del IVA**
+   * (art. 75 LIVA). Es la que elige el tipo aplicable (art. 90.Dos). Opcional:
+   * sin ella el devengo es `accrualDate ?? documentDate`, que es el caso normal.
+   */
+  operationDate: localDateSchema.optional(),
 }
+
+/**
+ * E8 · ADR-0014 D3 — cuota **del documento** por tipo impositivo.
+ *
+ * Con override presente la plantilla contabiliza esta cuota tal cual (el IVA
+ * deducible es el repercutido por el proveedor, arts. 92.Uno y 97.Uno LIVA) y
+ * `checkDraft` comprueba `|override − recalculada| ≤ 1 c` **por tipo**. Sin
+ * override, el comportamiento es exactamente el de E3.
+ */
+export const taxOverrideSchema = z.object({
+  taxRateCode: taxRateCodeSchema,
+  quotaCents: centsSchema,
+})
+export type TaxOverrideInput = z.infer<typeof taxOverrideSchema>
+
+/**
+ * E8 · ADR-0014 D6/D9 — claves de contrapartida de una factura recibida.
+ *
+ * `PROVEEDORES` (400) para 60x · `ACREEDORES` (410) para 62x/63x/64x/66x/69x ·
+ * `PROVEEDORES_INMOVILIZADO` (**523 siempre en el alta**; la reclasificación
+ * 523→173 se mide desde el CIERRE y es un asiento de E9) · tesorería
+ * (`BANCO_DEFAULT`/`CAJA`) para el ticket, que se paga en el acto ·
+ * `REMUNERACIONES_PENDIENTES` (465) para la nota de gasto de un empleado, que
+ * **nunca** es un 400 ni un 410.
+ */
+export const PAYABLE_KEYS = [
+  "PROVEEDORES",
+  "ACREEDORES",
+  "PROVEEDORES_INMOVILIZADO",
+  "BANCO_DEFAULT",
+  "CAJA",
+  "REMUNERACIONES_PENDIENTES",
+] as const
+export type PayableKey = (typeof PAYABLE_KEYS)[number]
+export const payableKeySchema = z.enum(PAYABLE_KEYS)
+
+/**
+ * E8 · ADR-0014 D6 — reparto del pasivo de un documento **mixto**.
+ *
+ * Un bloque por naturaleza de línea, y **`amountCents` es el bruto del bloque:
+ * su base más su cuota** (la del documento si hay override), antes de retención
+ * y de anticipo aplicado. La plantilla comprueba con tolerancia 0 que
+ * `Σ amountCents = base + cuotas` y reparte retención y anticipo entre los
+ * bloques por **mayor resto (Hamilton)** con desempate por código de cuenta, de
+ * modo que el céntimo huérfano cae en el bloque de mayor importe y
+ * `Σ líneas de pasivo` es exacto.
+ *
+ * Quien construye los bloques (`postFromProposal`, E8 · T9) obtiene la cuota de
+ * cada línea con `lineTaxes()` de `templates/documento.ts`, que es la misma
+ * aritmética que usa la plantilla: no hay dos cálculos que puedan divergir.
+ */
+export const payableBlockSchema = z.object({
+  payableKey: payableKeySchema,
+  amountCents: centsSchema.min(1),
+})
+export type PayableBlockInput = z.infer<typeof payableBlockSchema>
 
 const analyticFields = {
   projectId: uuidSchema.optional(),
@@ -81,6 +143,8 @@ export const facturaEmitidaSchema = z.object({
   withholdingRateCode: taxRateCodeSchema.optional(),
   appliedAdvanceCents: centsSchema.optional(),
   appliedAdvanceTaxCents: centsSchema.optional(),
+  /** ADR-0014 D3: la cuota que se contabiliza es la del documento. */
+  taxOverrides: z.array(taxOverrideSchema).optional(),
   totalCents: centsSchema,
   description: z.string().max(512).optional(),
 })
@@ -106,7 +170,15 @@ export const facturaRecibidaSchema = z.object({
   ...baseDocumentDates,
   dueDate: localDateSchema.optional(),
   dueSchedule: dueScheduleSchema.optional(),
-  payableKey: z.enum(["PROVEEDORES", "ACREEDORES"]),
+  /**
+   * Contrapartida por defecto del documento y, con ella, la cuenta de gasto
+   * por defecto (600 vs 623). En un documento **mixto** el pasivo lo reparten
+   * `payableBlocks`; ésta sigue decidiendo el gasto por defecto de las líneas
+   * que no traen `expenseAccountCode`.
+   */
+  payableKey: payableKeySchema,
+  /** ADR-0014 D6 (O-3): una línea de pasivo por naturaleza, con su cuota. */
+  payableBlocks: z.array(payableBlockSchema).min(1).optional(),
   lines: z
     .array(
       z.object({
@@ -125,6 +197,8 @@ export const facturaRecibidaSchema = z.object({
     .enum(["IRPF_PROFESIONALES_A_PAGAR", "IRPF_ALQUILERES_A_PAGAR", "IRPF_TRABAJO_A_PAGAR", "IRPF_A_PAGAR"])
     .optional(),
   appliedAdvanceCents: centsSchema.optional(),
+  /** ADR-0014 D3: la cuota que se contabiliza es la del documento. */
+  taxOverrides: z.array(taxOverrideSchema).optional(),
   totalCents: centsSchema,
   description: z.string().max(512).optional(),
 })

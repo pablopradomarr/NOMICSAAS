@@ -15,6 +15,7 @@ import { resolveEffectiveAnalyticType } from "@/lib/analytics/margins"
 import { compareDates, findFiscalYear, isMonthLocked, isValidLocalDate, monthOf, resolveEntryDate } from "@/lib/ledger/dates"
 import { isInForce, taxAppliesToSide } from "@/lib/taxes/rates"
 import { toUtcDate } from "@/lib/ledger/dates"
+import { TOLERANCIA_CUOTA_IVA_CENTS } from "@/lib/ledger/tax"
 import {
   AnalyticType,
   Cents,
@@ -64,12 +65,25 @@ export type DocumentCheck = {
   withholdingCents?: Cents
   /** Cuotas teóricas por tipo, para C-7. */
   expectedTaxByRate?: readonly Cents[]
+  /**
+   * E8 · ADR-0014 D3 — cuota **del documento** contra cuota recalculada, tipo a
+   * tipo. Sólo la aportan las plantillas que reciben `taxOverrides`; el techo
+   * es duro (`TOLERANCIA_CUOTA_IVA_CENTS`) y por encima **no hay asiento**.
+   */
+  taxQuotaChecks?: readonly { taxRateCode: string; quotaCents: Cents; expectedCents: Cents }[]
   /** Importes que ya estaban anticipados y minoran el crédito/deuda. */
   appliedAdvanceCents?: Cents
 }
 
 export type CheckDraftOptions = {
   document?: DocumentCheck
+  /**
+   * C-10 · art. 90.Dos LIVA (O-14): fecha de **devengo** con la que se comprueba
+   * la vigencia de los tipos. La aportan las plantillas de documento
+   * (`operationDate ?? accrualDate ?? documentDate`). Ausente —todo E3 hasta
+   * hoy— se mantiene el criterio anterior: `documentDate ?? entryDate`.
+   */
+  taxAccrualDate?: string
   /**
    * I-E4-10 (gap de QA) — excepción para postear a un proyecto ya `CLOSED`.
    *
@@ -341,7 +355,7 @@ export function checkDraft(draft: EntryDraft, ctx: LedgerContext, opts: CheckDra
   errors.push(...validateAnalytics(draft, ctx, opts.closedProjectOverride))
 
   // ── C-10 tipos vigentes (se seleccionan con `documentDate`, no `entryDate`) ──
-  const taxRefDate = draft.documentDate ?? draft.entryDate
+  const taxRefDate = opts.taxAccrualDate ?? draft.documentDate ?? draft.entryDate
   for (const line of draft.lines) {
     if (!line.taxRateId) continue
     const rate = ctx.rates.find((r) => r.id === line.taxRateId)
@@ -682,6 +696,26 @@ export function checkDocument(doc: DocumentCheck): LedgerError[] {
         { check: "C-5" }
       )
     )
+  }
+
+  // ADR-0014 D3: la cuota contabilizada es la del documento, y el recálculo es
+  // control de verosimilitud. La desviación se mide POR TIPO —no por
+  // documento, que compensaría un +3 con un −3— y su techo es duro: por encima
+  // el tipo está mal leído o la factura es defectuosa, y no hay asiento.
+  for (const q of doc.taxQuotaChecks ?? []) {
+    const deviation = q.quotaCents - q.expectedCents
+    if (Math.abs(deviation) > TOLERANCIA_CUOTA_IVA_CENTS) {
+      errors.push(
+        err(
+          "TAX_BASE_MISMATCH",
+          "taxOverrides",
+          `La cuota declarada para el tipo ${q.taxRateCode} (${q.quotaCents}) se aparta de la calculada ` +
+            `(${q.expectedCents}) en ${deviation} céntimo(s), por encima de la tolerancia de ` +
+            `${TOLERANCIA_CUOTA_IVA_CENTS}`,
+          { check: "D3" }
+        )
+      )
+    }
   }
 
   // C-7: |Σ cuotas − Σ cuotas teóricas| ≤ 1 × nº de tipos (R-IVA-5).
