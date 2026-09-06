@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest"
 import {
   allocate,
   hamilton,
+  settlementPeriodFitsIn,
   linesHash,
   reconstructBalances,
   type AllocationInput,
@@ -420,5 +421,92 @@ describe("auditoría 2 · reconstructBalances (I5.a en producción)", () => {
     const annual = balances.find((b) => b.runId === "run-1")
     expect(annual?.baseCents).toBe(60_000)
     expect(annual?.residualCents).toBe(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R2-1 (ronda 2) — I5.b no exige cierre a una regla que todavía no vence
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("R2-1 · periodicidades mixtas", () => {
+  it("`settlementPeriodFitsIn`: qué periodicidades vencen dentro de una ventana", () => {
+    // Informe mensual: cabe el mes, no el trimestre ni el año.
+    expect(settlementPeriodFitsIn("MONTH", "2026-03-01", "2026-03-31")).toBe(true)
+    expect(settlementPeriodFitsIn("QUARTER", "2026-03-01", "2026-03-31")).toBe(false)
+    expect(settlementPeriodFitsIn("YEAR", "2026-03-01", "2026-03-31")).toBe(false)
+    // Informe trimestral: caben los meses y el trimestre, no el año.
+    expect(settlementPeriodFitsIn("MONTH", "2026-04-01", "2026-06-30")).toBe(true)
+    expect(settlementPeriodFitsIn("QUARTER", "2026-04-01", "2026-06-30")).toBe(true)
+    expect(settlementPeriodFitsIn("YEAR", "2026-04-01", "2026-06-30")).toBe(false)
+    // Informe anual: caben las tres.
+    for (const kind of ["MONTH", "QUARTER", "YEAR"] as const) {
+      expect(settlementPeriodFitsIn(kind, "2026-01-01", "2026-12-31")).toBe(true)
+    }
+    // Ventana a caballo de dos años que contiene un trimestre natural entero.
+    expect(settlementPeriodFitsIn("QUARTER", "2026-02-15", "2026-07-15")).toBe(true)
+    expect(settlementPeriodFitsIn("YEAR", "2026-02-15", "2027-11-30")).toBe(false)
+    expect(settlementPeriodFitsIn("YEAR", "2025-12-31", "2027-01-01")).toBe(true)
+  })
+
+  const lines = [gasto("cc-ga", 100_000, "2026-03-10")]
+  const reglaAnual = ruleOf({ code: "AL-GA-Y", period: "YEAR", driver: "EQUAL" })
+
+  it("informe MENSUAL con regla ANUAL vigente: I5 PASA y el saldo se declara pendiente", () => {
+    const check = checkI5({
+      lines,
+      config: CONFIG,
+      period: { from: "2026-03-01", to: "2026-03-31", fiscalYearId: "fy-2026" },
+      allocations: [],
+      rules: [reglaAnual],
+      balances: [],
+    })
+    expect(check.status).toBe("PASS")
+    expect(check.evidencia).toContain("pendiente de liquidar")
+    expect(check.evidencia).toContain("CC-GA/EBITDA: 100000 c")
+    expect(check.evidencia).toContain("AL-GA-Y (YEAR)")
+  })
+
+  it("informe ANUAL con la MISMA regla y sin run: sigue siendo FAIL (el año ya venció)", () => {
+    const check = checkI5({
+      lines,
+      config: CONFIG,
+      period: { from: "2026-01-01", to: "2026-12-31", fiscalYearId: "fy-2026" },
+      allocations: [],
+      rules: [reglaAnual],
+      balances: [],
+    })
+    expect(check.status).toBe("FAIL")
+    expect(check.evidencia).toContain("I5.b CC-GA/EBITDA: quedan 100000 c sin liquidar")
+  })
+
+  it("un run REVERTIDO deja residuo real y sigue en FAIL, con regla del propio periodo", () => {
+    // Regla mensual sobre CC-GA, informe anual, ninguna imputación vigente
+    // (el run se revirtió): los 100 000 c son un residuo de verdad.
+    const check = checkI5({
+      lines,
+      config: CONFIG,
+      period: { from: "2026-01-01", to: "2026-12-31", fiscalYearId: "fy-2026" },
+      allocations: [],
+      rules: [ruleOf({ code: "AL-GA-M", period: "MONTH", driver: "EQUAL" })],
+      balances: [],
+    })
+    expect(check.status).toBe("FAIL")
+    expect(check.evidencia).toContain("sin liquidar")
+  })
+
+  it("una fuente con regla mensual Y anual no se juzga en un informe mensual (parte pendiente)", () => {
+    const check = checkI5({
+      lines,
+      config: CONFIG,
+      period: { from: "2026-03-01", to: "2026-03-31", fiscalYearId: "fy-2026" },
+      allocations: [],
+      rules: [
+        ruleOf({ code: "AL-GA-M", period: "MONTH", driver: "EQUAL", sourceShareBps: 3000 }),
+        ruleOf({ id: "r-2", code: "AL-GA-Y", period: "YEAR", driver: "EQUAL", sourceShareBps: 7000 }),
+      ],
+      balances: [],
+    })
+    expect(check.status).toBe("PASS")
+    expect(check.evidencia).toContain("AL-GA-Y (YEAR)")
   })
 })

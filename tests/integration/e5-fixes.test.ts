@@ -530,6 +530,96 @@ describe.skipIf(!TEST_DATABASE_URL)("E5 · ronda 1 de corrección", () => {
   })
 
   // ───────────────────────────────────────────────────────────────────────
+  // R2-1 (ronda 2) · periodicidades mixtas: pendiente de liquidar ≠ descuadre
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("R2-1 · informe MENSUAL con run mensual sellado y regla ANUAL vigente: I5 PASA con el pendiente informado", async () => {
+    // CC-OPS liquida por MESES; CC-GA, por AÑOS. En el informe de un mes, el
+    // saldo de CC-GA no es un descuadre: está pendiente de liquidar (§3.3 y
+    // criterio 18). Antes de la ronda 2 esto sellaba REQUIERE REVISIÓN.
+    await post({ accountCode: "628", debitCents: 40_000, costCenterId: ceco["CC-OPS"], entryDate: "2026-07-10" })
+    await post({ accountCode: "621", debitCents: 25_000, costCenterId: ceco["CC-GA"], entryDate: "2026-07-12" })
+    await tenantTransaction(ORG, USER, async (tx) =>
+      createAllocationRuleTx(
+        tx,
+        {
+          code: "AL-OPS-M2",
+          name: "Operaciones a proyectos por ingresos (mensual)",
+          sourceCostCenterId: ceco["CC-OPS"],
+          targetKind: "PROJECTS",
+          driver: "REVENUE_SHARE",
+          period: "MONTH",
+          priority: 10,
+          sourceShareBps: 10000,
+          zeroBaseFallback: "YTD",
+          targetFilter: { projectStatus: ["ACTIVE"] },
+          validFrom: "2026-01-01",
+          validTo: null,
+          targets: [],
+        },
+        actor
+      )
+    )
+    const julio = { periodKind: "MONTH" as const, periodStart: "2026-07-01", periodEnd: "2026-07-31" }
+    const run = await tenantTransaction(ORG, USER, async (tx) => sealAllocationRunTx(tx, { ...julio, gitSha: "fixes" }, actor))
+    expect(run.lineCount).toBeGreaterThan(0)
+
+    clearMarginCache()
+    const mensual = await tenantTransaction(ORG, USER, async (tx) =>
+      getAnalyticPnl(tx, {
+        from: "2026-07-01",
+        to: "2026-07-31",
+        withAllocations: true,
+        provenance: { runId: "r2-mes", gitSha: "fixes", baseCurrency: "EUR" },
+      })
+    )
+    const i5Mensual = mensual.checks.find((c) => c.id === "I5")
+    expect(i5Mensual?.status).toBe("PASS")
+    // Y lo dice: importe y regla que lo liquidará.
+    expect(i5Mensual?.evidencia).toContain("pendiente de liquidar")
+    expect(i5Mensual?.evidencia).toContain("AL-GA-Y (YEAR)")
+    expect(mensual.checks.filter((c) => c.status === "FAIL")).toEqual([])
+
+    // La misma organización en informe ANUAL: el año ya venció y CC-GA no está
+    // liquidado del todo (el run anual es anterior a estos dos asientos), así
+    // que I5.b SÍ debe fallar. Un residuo real sigue siendo un residuo real.
+    clearMarginCache()
+    const anual = await tenantTransaction(ORG, USER, async (tx) =>
+      getAnalyticPnl(tx, {
+        from: "2026-01-01",
+        to: "2026-12-31",
+        withAllocations: true,
+        provenance: { runId: "r2-anio", gitSha: "fixes", baseCurrency: "EUR" },
+      })
+    )
+    const i5Anual = anual.checks.find((c) => c.id === "I5")
+    expect(i5Anual?.status).toBe("FAIL")
+    expect(i5Anual?.evidencia).toContain("sin liquidar")
+
+    await tenantTransaction(ORG, USER, async (tx) =>
+      reverseAllocationRunTx(tx, { runId: run.id, reason: "limpieza del test de periodicidades", reversedAt: new Date() }, actor)
+    )
+    clearMarginCache()
+  })
+
+  it("R2-1 · revertir el run mensual deja residuo REAL en su propio periodo: I5 vuelve a FAIL", async () => {
+    // El run de julio quedó revertido en el test anterior: CC-OPS tiene regla
+    // MENSUAL —que sí vence en julio— y ya no hay imputación que la cierre.
+    clearMarginCache()
+    const mensual = await tenantTransaction(ORG, USER, async (tx) =>
+      getAnalyticPnl(tx, {
+        from: "2026-07-01",
+        to: "2026-07-31",
+        withAllocations: true,
+        provenance: { runId: "r2-mes-rev", gitSha: "fixes", baseCurrency: "EUR" },
+      })
+    )
+    const i5 = mensual.checks.find((c) => c.id === "I5")
+    expect(i5?.status).toBe("FAIL")
+    expect(i5?.evidencia).toContain("I5.b CC-OPS/MC3")
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
   // DEBE #8 y #9 · agregados SQL y sin N+1
   // ───────────────────────────────────────────────────────────────────────
 

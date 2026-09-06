@@ -173,3 +173,99 @@ independiente con **diferencia 0 céntimos**. Los cuatro hallazgos son de **dete
 importes: ninguno altera un número del ejercicio auditado. Los dos primeros deberían cerrarse antes de
 que la liquidación se use sobre datos reales, porque hoy una alteración de suma cero dentro de un run
 —o una I5.a que nunca se evalúa— dejaría de avisar.
+
+---
+
+# Re-auditoría — ronda 1 de correcciones (`17b8fe9…62ded40`)
+
+> Rol: `auditor-fiabilidad`. Fecha: 2026-09-06. Base aislada `erp_audit2` (esquema de `erp` con la
+> migración `20260910110000_e5_fixes` aplicada), fixture recargado y las seis reglas y los 17 runs
+> vueltos a sellar con el motor real. Reconstrucción, otra vez, con el Python entero propio sobre
+> `journal_lines`; ninguna función de `lib/analytics/` interviene en ella.
+
+## R.1 Las cifras no se han movido (a)
+
+Tras el paso a `BigInt`/`bigint`, motor = reconstrucción = `liquidacion-esperada.json` en las **14
+líneas** y sus diez columnas; **I5.a** cuadra en las 5 combinaciones (diff 0); **I5.b** deja los cuatro
+CECOs imputables a 0; los **8 totales de I4** siguen en 6 250 000 · 5 670 000 · 3 276 000 · 3 084 110 ·
+2 390 430 · 1 995 430 · 1 996 430 · **1 497 322**; **EBITDA por proyecto** −30 643 / 1 292 507 / 1 228 566
+y MC3 262 423 / 1 529 411 / 1 392 276. **Δ = 0 en todo.** El cambio de tipo no ha alterado ni un céntimo.
+
+## R.2 Hallazgo 1 — CERRADO (b)
+
+`allocation_runs.lines_hash` se persiste en los tres runs con líneas (p. ej. `9bbf141f…` en 2026-11) y
+**I-E5-12 lo verifica sobre datos** («las líneas de 17 run(s) reproducen su linesHash sellado, desempates
+incluidos»). Repetida la alteración de suma cero que en la ronda 0 era invisible —mover el céntimo de
+remanente de Hamilton, P-01 53 577→53 576 y P-03 7 724→7 725, mismo run, misma regla, mismo nivel—:
+
+```
+I-E5-12  FAIL  run 3d1c4a1e…: las líneas de hoy hashean 2c370c1712ab… y el run selló 9bbf141f6ff0…
+sello: REQUIERE REVISIÓN · motivos: […, «invariantes en FAIL: I-E5-12»]
+```
+
+Restaurados los dos importes, I-E5-12 vuelve a PASS y no queda ningún FAIL.
+
+## R.3 Hallazgo 2 — CERRADO (c)
+
+`run-invariants` sobre el fixture: **`I5 PASS · 5 combinación(es) (run, CECO fuente, nivel) con
+diferencia 0 · 14 línea(s) de reparto`**. En la ronda 0 la misma evidencia decía «0 combinación(es)»:
+I5.a se evalúa ahora de verdad en producción, con las mismas cinco combinaciones que reconstruí a mano.
+
+## R.4 Hallazgo 3 — CERRADO (d)
+
+Emitidos los dos `ReportRun` de `PYG_ANALITICA` del ejercicio:
+
+| Informe | `allocation_run_set_hash` | 3.er componente de `analytics_key` | EBITDA P-01 |
+|---|---|---|---:|
+| sin imputaciones | NULL | `∅` | 316 000 |
+| con imputaciones | `157a29cd4b99…` | `157a29cd4b99…` (idéntico) | **−30 643** |
+
+Son dos runs distintos —la caché no sirve el uno por el otro— y la clave que compone la aplicación
+coincide **carácter a carácter** con la que escribe el trigger `app.report_runs_analytics_key`. Al
+**revertir** el run de noviembre, el conjunto vigente cambia (`2f8c547f5956…`), la caché caduca y se
+emite un `ReportRun` nuevo con EBITDA de P-01 = **22 934** (= −30 643 + 53 577, el importe que la
+liquidación revertida ya no imputa), mientras el total de nivel EBITDA sigue en 2 390 430: I4 aguanta.
+Reemitir sin cambios sí devuelve el mismo run, luego la caché sigue sirviendo cuando debe.
+
+## R.5 Hallazgo 4 — CERRADO (e)
+
+En el ejercicio 2027, con las mismas reglas vigentes: CC-GA con **30 M€** de estructura y **60 M€** de
+coste directo repartido 20/15/25 M€ entre los tres proyectos — todo por encima del techo de `integer`
+(21 474 836,47 €). El run anual **se sella sin abortar**: 7 líneas, 3 900 000 000 c. Los repartos:
+
+| Regla | Destino | Importe | Base driver |
+|---|---|---:|---|
+| AL-GA-OPS-Y | CC-OPS | 900 000 000 | 10 000/10 000 bps |
+| AL-GA-PRY-Y | P-01/02/03 | 700 000 000 ×3 | 1/3 |
+| AL-OPS-Y | P-01 / P-02 / P-03 | 300 000 000 / 225 000 000 / 375 000 000 | 2 000/1 500/2 500 M€ sobre 6 000 M€ |
+
+`driver_base_total = 6 000 000 000` (2,8 × el techo antiguo) se persiste sin problema y el reparto
+coincide **exactamente** con mi cálculo entero en Python; Σ = 900 000 000 = base. Los productos `A·wᵢ`
+llegan a 2,25·10¹⁸, muy por encima de `2^53`: es justo el régimen en el que la aritmética en `double`
+dejaba de estar garantizada, y `BigInt` lo resuelve. Nota honesta: en la ronda 0 no encontré
+contraejemplo numérico con doubles; la corrección elimina el riesgo estructural, no un error observado.
+
+> Comprobación colateral: tras revertir el run de noviembre (paso d), `I5` pasa a
+> `FAIL — I5.b CC-OPS/MC3: quedan 91 890 c sin liquidar al cierre`. Es el residuo **real** de la
+> reversión, no un falso positivo: el invariante hace exactamente lo que debe.
+
+## R.6 Veredicto de la re-auditoría
+
+```
+VEREDICTO: CONFORME
+Cifras reconstruidas: | Métrica | Motor | Reconstrucción | Δ | Método |
+  | 14 AllocationLine (importe, nivel, bases, bps, fallback) | 1.075.524 c | 1.075.524 c | 0 | drivers + doble Hamilton + cascada propios en Python entero |
+  | I5.a — 5 combinaciones (run, fuente, nivel) | = base | = base | 0 | own − yaRepartido + recibido desde journal_lines |
+  | I4 — 8 totales de nivel | 1.497.322 c (RESULTADO) | 1.497.322 c | 0 | matriz por columna/nivel con Δ de imputación |
+  | EBITDA por proyecto | −30.643 / 1.292.507 / 1.228.566 | idénticos | 0 | ídem |
+  | Reparto > techo integer (2027) | 900.000.000 c en 3 cuotas | 300/225/375 M | 0 | Hamilton entero sobre bases de 6.000 M c |
+Hallazgos: los cuatro de la ronda 0 quedan CERRADOS y verificados sobre datos (linesHash + I-E5-12;
+  I5.a con 5 combinaciones; allocation_run_set_hash en el ReportRun, igual al del trigger, y caducidad
+  al revertir; bigint/BigInt sin abortar y con reparto exacto). No aparecen hallazgos nuevos.
+Trazabilidad: OK (sin cambios respecto de §5; el drill-down de la celda imputada sigue llegando a los
+  apuntes de origen en dos consultas).
+Recomendación: nada bloqueante. Dos apuntes menores para E7: (1) `lines_hash` queda NULL en runs
+  anteriores a la migración e I-E5-12 los declara «sin sello» — conviene listarlos en Auditoría para que
+  el hueco sea visible y finito; (2) `journal_lines.debit_cents/credit_cents` siguen en `integer`
+  (21,47 M€ por apunte), coherente con ADR-0006 pero ahora asimétrico con la liquidación en `bigint`.
+```

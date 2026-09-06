@@ -41,6 +41,12 @@ export default defineConfig({
     baseURL,
     locale: "es-ES",
     timezoneId: "Europe/Madrid",
+    // Las capturas que toman los specs pasan `caret: "initial"` (ver
+    // `tests/e2e/*.spec.ts`): con el valor por defecto (`hide`) Playwright
+    // inyecta `style="caret-color: transparent"` en los `input` del DOM y, en
+    // modo dev, React lo denuncia como desajuste de hidratación en la siguiente
+    // navegación. Los specs que comprueban «cero errores de consola» fallaban de
+    // forma intermitente por un artefacto del arnés, no por la aplicación.
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

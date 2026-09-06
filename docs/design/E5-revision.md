@@ -86,3 +86,84 @@ ejecutarse fuera de los tests** (#3). Los tres son de cableado, no de diseño.
 
 Re-revisión recomendada tras la ronda de fixes, con `test:integration` completo y los
 e2e ejecutados.
+
+---
+
+# Ronda 2 — verificación del commit 62ded40
+
+> Rol: `revisor-codigo`, contexto limpio. Diff revisado: `git diff 17b8fe9...62ded40`
+> (34 ficheros, +3 351 / −167) y el acumulado `ab9fb99...HEAD`.
+>
+> **Veredicto: CAMBIOS REQUERIDOS** (0 BLOQUEA · 1 DEBE · 2 PUEDE).
+> Los tres BLOQUEA, los siete DEBE, BUG-E5-1 y los cuatro hallazgos del auditor
+> están cerrados con evidencia. Queda **un FAIL falso de I5.b** que la propia
+> corrección de BLOQUEA #3 ha hecho alcanzable, y dos restos menores.
+
+## R2.0 Suites ejecutadas (todas sobre `erp_test`, 33 migraciones aplicadas)
+
+| Suite | Resultado |
+|---|---|
+| `npm run lint` | **0 errores**, 14 warnings preexistentes (`hooks/**`, `components/ui/**`) |
+| `npm run test` | **833 ✓** / 11 skipped (44 ficheros; +19 tests y +1 fichero respecto a la ronda 1) |
+| `npm run test:integration` | **1156 ✓** (67 ficheros) |
+| `npm run test:integration:rls` | **127 ✓** (9 ficheros). El fallo de la ronda 1 (`rls-strict.test.ts:389`, `app_maintenance` veía 0 organizaciones) queda cerrado: el test siembra ahora su propia organización |
+
+## R2.1 Estado de los hallazgos de la ronda 1
+
+| # | Sev. ronda 1 | Estado | Evidencia |
+|---|---|---|---|
+| 1 | BLOQUEA | **CERRADO** | Triple barrera: `lib/analytics/allocate.ts:746-777` (`TARGETS_REQUIRED` en `validate()`), `forms/allocations.ts:142-167` (zod), `models/allocations.ts:400-435` (al guardar). `driverWeights` ya sólo lee `targets` con `FIXED_PERCENT`/`MANUAL` (`allocate.ts:613`), y el caso «tiene saldo y ningún receptor con peso» devuelve `RULE_INERT` (`allocate.ts:988-998`) salvo base cero DECLARADA (`declaredZeroBase`, :937-940). `MIXED` retirado del selector |
+| 2 | BLOQUEA | **CERRADO** | `models/reports.ts:253,265-283` compone el `runSetHash` real, `:290-300` lo mete en `analyticsKeyOf`, `:624,632` lo escribe en `allocation_run_set_hash`, y `:461` propaga `withAllocations` al informe SELLADO. `lib/ledger/report-run.ts:75-90` renombra el parámetro. `withAllocations` entra en `paramsHash`, así que imputado y no imputado son dos `ReportRun` distintos |
+| 3 | BLOQUEA | **CERRADO** | `lib/analytics/invariants.ts:416-421`: `runAnalyticInvariants` lanza los trece de E5 cuando llega `allocations`. `models/margins.ts:201-230` aporta `rules`, `runs`, `balances` (reconstruidas) y `runLinesHashes`; `models/reports.ts:552-555` los mete en la validación del run, así que un FAIL pasa el sello a `REQUIERE REVISIÓN` por EV-9. Test de error inyectado por SQL: `tests/integration/e5-fixes.test.ts:360` |
+| 4 | DEBE | **CERRADO** | `forms/allocations.ts:222-232`: `expectedHashes` obligatorio (sin `.nullish()`); `actions.ts:344` lo pasa sin `?? null` |
+| 5 | DEBE | **CERRADO** | `20260910110000_e5_fixes` bloque 4: `app.allocation_rule_targets_immutable_when_used()` en `BEFORE INSERT OR UPDATE`, con exención para el `UPDATE` idéntico |
+| 6 | DEBE | **CERRADO con honestidad** | La deuda no se cierra: se **reabre y se fecha**. `docs/MODELO-DATOS.md:105,138-143` («O-A6 **NO** queda cerrada en E5 … su épica de cierre es **E10**»), nota al pie en `docs/adr/0013-liquidacion-cecos.md:84-91` que conserva el párrafo aprobado y corrige el hecho, y fila en `ESTADO.md` §«E5 — deuda y decisiones». Es la resolución correcta: `Budget` no existe todavía |
+| 7 | DEBE | **CERRADO** | `tests/integration/perf-pages.test.ts:71-72` (`MAX_MS_LIQUIDACION_ANUAL = 400`, `MAX_MS_PYG_IMPUTADA = 800`), tests en `:415` y `:441`, cargador nuevo `/analytics/pyg?imputaciones=si` en `:289-298`. El test comprueba además que la matriz medida lleva imputaciones de verdad (`:453-455`) |
+| 8 | DEBE | **CERRADO (parcial, y bien acotado)** | `models/allocations.ts:1168-1200` (`getAllocationTotals` con `groupBy` + `SUM`), `:1095-1105` (sólo las dimensiones REFERENCIADAS, antes tres catálogos enteros por llamada) y `:1210-1225` (`getSealedRunRefs`: el drill-down ya no lee el reparto entero para sacar los `runIds`). `buildAnalyticPnl` sigue consumiendo las líneas una a una, pero ahora es **necesario**: `linesHash` e I-E5-12 se verifican línea a línea. Anotado en `ESTADO.md` |
+| 9 | DEBE | **CERRADO** | `models/allocations.ts:470-505,548-583`: memoización por transacción del ejercicio, del `ledgerHash` por `(periodo, ejercicio)` y de las reglas por `(periodicidad, fin de periodo)`. La clave sigue siendo la identidad del cliente transaccional, así que no cruza peticiones ni organizaciones |
+| 10 | DEBE | **CERRADO** | `docs/ESTADO.md:150-166`: tabla «E5 — deuda y decisiones» con las nueve entradas, su estado y su **épica de cierre** (O-A6, `MIXED`, `DRAFT`, `HOURS`/`HEADCOUNT` → E10; `ReportRun` ajeno a un `UPDATE` por SQL → E7) |
+| 11 | PUEDE | **CERRADO** | `lib/analytics/allocate.ts:239-278`: producto, resto y `shareBps` en `BigInt`; exactitud por construcción, no por suerte. Refuerzo en BD: `20260910110000_e5_fixes` bloque 2 pasa `amount_cents`, `driver_base`, `driver_base_total` y `total_allocated_cents` a `bigint`. Conversión a `number` **sólo en el borde** (`models/allocations.ts:803-828, 1128-1130`; `models/margins.ts:500-503`), como ya hacía `models/ledger.ts` |
+| 12 | PUEDE | **CERRADO** | Barrido de `lib/**` y `models/**`: ningún byte NUL. `allocate.test.ts` vuelve a ser texto para `grep`/`ripgrep` |
+| 13 | PUEDE | **CERRADO** | `lib/money.ts:137-149` (`formatBps`, aritmética entera) y sus cuatro llamantes: `allocate.ts:802,822`, `models/allocations.ts:410,441`, `forms/allocations.ts:128` |
+| 14 | PUEDE | **PARCIAL** | `allocation-rule-form.tsx:143` usa ya `parseCents` y el comentario deja de mentir, pero `components/analytics/allocation-rules-table.tsx:204` conserva `Math.round(Number(sharePercent.replace(",", ".")) * 100)`. Ver R2-1 |
+| 15 | PUEDE | **CERRADO** | `actions.ts:126-137`: `previewAllocationAction` con `{ readOnly: true }` |
+| 16 | PUEDE | **CERRADO** | `components/analytics/allocation-cascade-graph.tsx` (127 líneas), montado en `allocations/page.tsx:147`. Aristas `fuente → destino` numeradas por `(prioridad, código)` y agrupadas por periodicidad; sin dinero. La decisión de no usar librería de layout está argumentada en el propio fichero |
+| 17 | PUEDE | **CERRADO** | `docs/design/E5-liquidacion.md`: `@@unique([organizationId, code, validFrom])` con la corrección fechada. El documento ya no contradice al código |
+| **BUG-E5-1** (QA) | — | **CERRADO** | `models/allocations.ts:400-414` rechaza `Σ percentBps ≠ 10000` **al guardar** y `20260910110000_e5_fixes` bloque 3 lo repite en la base con un **constraint trigger diferido** sobre las dos tablas (un `CHECK` no puede: agrega sobre otras filas) |
+| **Auditor 1** (sin sello de la salida) | — | **CERRADO** | `allocation_runs.lines_hash` (migración bloque 1 + 5, que lo mete en la lista de columnas inmutables), `canonicalLinesForm`/`linesHash` en `allocate.ts:1229-1266` con orden TOTAL independiente del orden de lectura, sellado en `models/allocations.ts:805`, y **I-E5-12 verificable sobre datos** (`invariants.ts:706-752`). El caso B del auditor (mover el céntimo de remanente por `UPDATE`) ya se detecta: `e5-fixes.test.ts:442-444` documenta que I5/I-E5-4/I-E5-9 siguen en PASS y es I-E5-12 quien lo caza |
+| **Auditor 2** (I5.a nunca evaluada) | — | **CERRADO** | `reconstructBalances` (`allocate.ts:1096-1180`) reconstruye la base **desde el diario y las líneas persistidas**, por un camino independiente del que las produjo; `models/margins.ts:222-227` la aporta. I5 ya no declara «0 combinación(es)» (`allocate-fixes.test.ts:358`) |
+| **Auditor 3** (clave de caché divergente) | — | **CERRADO** | Mismo cambio que #2: `analyticsKeyOf` con `allocationRunSetHash`, espejo exacto de `app.report_runs_analytics_key` |
+| **Auditor 4** (techo de `integer`) | — | **CERRADO** | Mismo cambio que #11: `bigint` en las cuatro columnas |
+
+## R2.2 Hallazgos nuevos
+
+| # | Fichero:línea | Sev. | Problema | Sugerencia |
+|---|---|---|---|---|
+| R2-1 | `models/margins.ts:157-160` + `lib/analytics/invariants.ts:483-509` | **DEBE** | **I5.b da FAIL falso con periodicidades mixtas, y la corrección de BLOQUEA #3 lo ha puesto en pantalla.** `getAllocationRuleSpecs(tx, { periodEnd: request.to })` se llama **sin filtro de `period`**, así que `sourcesWithRule` incluye CECOs cuya regla es de periodicidad más gruesa y todavía no está liquidada. I5.b exige entonces cierre a 0 en el periodo del informe, cuando el diseño §3.3 y el criterio 18 declaran ese saldo **«pendiente de liquidar»**, no un descuadre. Reproducido: informe mensual 2026-03 con un run mensual de `CC-OPS` sellado y una regla ANUAL vigente sobre `CC-GA` ⇒ `FAIL :: I5.b CC-GA/EBITDA: quedan 100000 c sin liquidar al cierre`. Mismo efecto con `zeroBaseFallback = SKIP_WARN` (que es el **default**) en cuanto el periodo tenga alguna otra imputación. Consecuencia: la PyG imputada se sella `REQUIERE REVISIÓN` en un escenario legítimo, y un FAIL que se sabe falso deja de mirarse | Acotar I5.b a lo que dice su definición: sólo los CECOs cuya regla es del **periodo del informe** (y sobre el ejercicio, no sobre un mes suelto), o restar el `pendingCents` ya calculado por `buildAnalyticPnl`. Añadir el caso mixto al fixture de tests: hoy ninguno lo cubre |
+| R2-2 | `components/analytics/allocation-rules-table.tsx:204` | PUEDE | Resto de #14: la banda de Σ de esta tabla sigue convirtiendo el porcentaje a bps con `Math.round(Number(texto.replace(",", ".")) * 100)`. `Math.round` lo salva hoy, pero es el patrón que #14 vino a retirar y el formulario hermano ya usa `parseCents` | Un `parseCents` más, igual que en `allocation-rule-form.tsx:143` |
+| R2-3 | `docs/ESTADO.md:146` | PUEDE | El punto 16 sigue diciendo «**SIGUIENTE**: `/epica E5` … → `/sprint E5`» justo debajo del punto 15, que ya declara E5 implementada y en corrección. Contradicción de estado en el fichero que existe para decir dónde se retoma | Reescribir el punto 16 como «E8 → E7 → E9 → E10 → E11 → E12» |
+
+## R2.3 Lo nuevo, revisado en detalle
+
+- **Migración `20260910110000_e5_fixes`**: **aditiva** (no toca ninguna migración aplicada), **sin sentencias de SUPERUSER** (sólo `ALTER TABLE`, `CREATE OR REPLACE FUNCTION`/`TRIGGER` y `COMMENT` sobre objetos propios; ningún `ALTER ROLE`, ningún `ALTER FUNCTION … OWNER TO`), **sin DML** — por eso no necesita el baile `NO FORCE → UPDATE → FORCE`, y el razonamiento está escrito en la cabecera. Cierra con la guarda de `NO FORCE` de rigor. El `ALTER COLUMN … TYPE bigint` es DDL, así que la RLS `FORCE` no lo estorba. `lines_hash` queda `NULL` en runs anteriores y **I-E5-12 lo declara** en vez de fingir un sello (`invariants.ts:728-745`), que es la conducta correcta.
+- **BigInt en `lib/analytics`**: la pureza se mantiene (sin `Date.now()`, sin IO, sin `prisma`; la única importación nueva es `formatBps` de `lib/money.ts`, que es aritmética entera). Toda la conversión `BigInt ⇄ number` vive en `models/**` y en el `$queryRawUnsafe` del drill-down. `canonicalLinesForm` y `canonicalAllocationJson` serializan `number`, así que **el fixture byte a byte no se ve afectado** (`allocate.test.ts:634` sigue en verde) y no hay `BigInt` que llegue a `JSON.stringify` — el `result` del `ReportRun` excluye explícitamente `levelTotalsBig` (`models/reports.ts:666-676`). El cociente de Hamilton se convierte con `Number(q)` y está acotado por `A ≤ 2^53`, correcto.
+- **`linesHash` e I-E5-12**: el orden del canónico —`(regla, fuente, tipo de destino, destino, nivel)` más importe y columnas del driver— es total y no depende del orden de lectura de la base; el `sort()` posterior lo hace idempotente. Sella la SALIDA, que es justo lo que faltaba.
+- **`reconstructBalances`**: independiente del motor (la base sale del diario), con el mismo filtro de `yaRepartido` que `loadRunContext` y emitiendo sólo las combinaciones que el run repartió. La suposición `liquidatedCents = baseCents` se apoya en I-E5-3 y está comentada; es correcta cuando todas las reglas del CECO reparten, y es exactamente el borde que R2-1 pone al descubierto en I5.b.
+- **`getAllocationTotals`**: `groupBy` de Prisma con `_sum`, filtrado por `runId IN (…)` bajo el cliente de tenant (RLS como segunda barrera) y con orden estable posterior. Correcto; hoy lo consumen el total exacto del drill-down y su test (`e5-fixes.test.ts:536`).
+- **`tests/support/ensure-self-hosted.ts`**: arnés idempotente que **siembra** el usuario self-hosted y una segunda organización `e2e-analitica` con plan sin subcuentas. El motivo (planes incompatibles y `--reset-org` cruzado) está documentado y es real. Importa `prisma` directamente, admisible en `tests/**`; el lint pasa.
+- **`allocation-cascade-graph.tsx`**: componente de servidor, sin dinero, con estado vacío propio; la renuncia al layout de grafo está argumentada. Cumple lo que §6 pedía de utilidad (el orden de ejecución visible), no la forma.
+
+## R2.4 Veredicto de la ronda 2
+
+**CAMBIOS REQUERIDOS** — a un solo hallazgo de la aprobación. La ronda 1 se ha
+aplicado con rigor poco común: no hay ningún cierre cosmético, las tres barreras de
+BLOQUEA #1 son código + zod + BD, el `linesHash` cierra el agujero que el auditor
+había demostrado, y la deuda O-A6 se ha **reabierto y fechado** en vez de taparse,
+que era la única salida honesta. Las suites completas están en verde.
+
+Lo que falta es un efecto colateral de la propia corrección: al poner I5 en
+producción (BLOQUEA #3) se ha hecho visible un **FAIL falso de I5.b** en el escenario
+de periodicidades mixtas que el diseño declara legítimo (R2-1). Un invariante que
+falla cuando no debe se aprende a ignorar, y eso vale menos que no tenerlo. Con
+R2-1 corregido y un test del caso mixto, **APROBADO**; R2-2 y R2-3 son de un minuto y
+pueden ir en el mismo commit.

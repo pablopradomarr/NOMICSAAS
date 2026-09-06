@@ -91,7 +91,7 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
 
   // ── 1. Ejercicio abierto ───────────────────────────────────────────────────
   await ensureFiscalYear(page)
-  await page.screenshot({ path: `${SHOTS}/01-ejercicios.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/01-ejercicios.png`, fullPage: true, caret: "initial" })
 
   // ── 2. Asiento DESCUADRADO: el botón no se habilita ────────────────────────
   await page.goto("/ledger/new", { waitUntil: "networkidle" })
@@ -116,7 +116,7 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
   await expect(diferencia).toContainText("descuadrado")
   await expect(page.getByTestId("post-entry")).toBeDisabled()
   await expect(page.getByTestId("post-disabled-reason")).toContainText("descuadrado")
-  await page.screenshot({ path: `${SHOTS}/02-descuadrado.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/02-descuadrado.png`, fullPage: true, caret: "initial" })
 
   // ── 3. Se cuadra con el IVA repercutido y se contabiliza ───────────────────
   await page.getByRole("button", { name: "Añadir línea" }).click()
@@ -125,7 +125,7 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
   await expect(diferencia).toContainText("0,00")
   await expect(diferencia).toContainText("cuadrado")
   await expect(page.getByTestId("post-entry")).toBeEnabled()
-  await page.screenshot({ path: `${SHOTS}/03-cuadrado.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/03-cuadrado.png`, fullPage: true, caret: "initial" })
 
   await page.getByTestId("post-entry").click()
 
@@ -136,7 +136,7 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
   const entryNumber = Number(heading.replace(/\D+/g, ""))
   expect(entryNumber, "el asiento debe llevar número correlativo").toBeGreaterThan(0)
   await expect(page.getByTestId("entry-lines")).toContainText("1.210,00")
-  await page.screenshot({ path: `${SHOTS}/04-asiento-detalle.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/04-asiento-detalle.png`, fullPage: true, caret: "initial" })
 
   // ── 4. Aparece en el diario con su número ──────────────────────────────────
   await page.goto("/ledger", { waitUntil: "networkidle" })
@@ -144,7 +144,7 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
   await expect(fila).toBeVisible()
   await expect(fila).toContainText(concepto)
   await expect(fila).toContainText("1.210,00")
-  await page.screenshot({ path: `${SHOTS}/05-diario.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/05-diario.png`, fullPage: true, caret: "initial" })
 
   // El cuadre lo garantiza la base, no la pantalla: se comprueba contra ella.
   const enBase = await withDb(async (client) => {
@@ -170,13 +170,13 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
   // El contra-asiento nace con su propio número y enseña a quién anula.
   await expect(page.locator('[data-badge="contra-asiento"]')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('[data-badge="contra-asiento"]')).toContainText(`Anula el nº ${entryNumber}`)
-  await page.screenshot({ path: `${SHOTS}/06-contra-asiento.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/06-contra-asiento.png`, fullPage: true, caret: "initial" })
 
   // El anulado sigue en el diario, marcado, junto a su contra-asiento (I-E3-3).
   await page.goto("/ledger", { waitUntil: "networkidle" })
   await expect(fila.locator('[data-badge="anulado"]')).toBeVisible()
   await expect(page.locator('[data-badge="contra-asiento"]').first()).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/07-diario-anulado.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/07-diario-anulado.png`, fullPage: true, caret: "initial" })
 
   // ── 6. Sumas y saldos: sello y fila de cuadre a 0,00 € ─────────────────────
   await page.goto("/ledger/sumas-saldos", { waitUntil: "networkidle" })
@@ -194,10 +194,10 @@ test("un asiento manual cuadrado se contabiliza, se anula con contra-asiento y s
   await expect(page.getByTestId("check-list")).toBeVisible()
   await expect(page.locator('[data-check-id="I1"]')).toBeVisible()
   await expect(page.locator('[data-check-id="I7"]')).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/08-sumas-saldos-validacion.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/08-sumas-saldos-validacion.png`, fullPage: true, caret: "initial" })
   await page.keyboard.press("Escape")
   await expect(page.getByTestId("check-list")).toBeHidden()
-  await page.screenshot({ path: `${SHOTS}/09-sumas-saldos.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/09-sumas-saldos.png`, fullPage: true, caret: "initial" })
 
   expect(consoleErrors, consoleErrors.join("\n")).toEqual([])
 })
@@ -208,7 +208,7 @@ test("el mayor de una cuenta enseña saldo inicial, movimientos y saldo final", 
   await expect(page.locator("[data-seal]")).toBeVisible()
   await expect(page.getByTestId("opening-balance").first()).toBeVisible()
   await expect(page.getByTestId("closing-balance").first()).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/10-mayor.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/10-mayor.png`, fullPage: true, caret: "initial" })
 })
 
 test("el formulario de una plantilla se genera de su schema y previsualiza el asiento con su IVA", async ({ page }) => {
@@ -246,5 +246,5 @@ test("el formulario de una plantilla se genera de su schema y previsualiza el as
   await expect(preview).toContainText("1.210,00")
   await expect(preview).toContainText("210,00")
   await expect(preview).toContainText("1.000,00")
-  await page.screenshot({ path: `${SHOTS}/11-plantilla-vista-previa.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/11-plantilla-vista-previa.png`, fullPage: true, caret: "initial" })
 })

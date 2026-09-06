@@ -11,6 +11,7 @@ import {
   checkTopologicalOrder,
   findCycle,
   linesHash as computeLinesHash,
+  settlementPeriodFitsIn,
   type AllocationRuleSpec,
   type AppliedAllocation,
   type SourceBalance,
@@ -479,9 +480,38 @@ export function checkI5(input: AllocationInvariantInput): CheckResult {
     }
   }
 
-  // I5.b — cierre: todo CECO imputable con regla vigente queda a 0.
+  // I5.b — cierre: todo CECO imputable con regla vigente **YA LIQUIDABLE** en el
+  // periodo del informe queda a 0.
+  //
+  // Revisión ronda 2, R2-1 — antes bastaba con tener regla, de la periodicidad
+  // que fuese. En un informe MENSUAL con una regla ANUAL vigente, el saldo del
+  // CECO se declaraba «sin liquidar al cierre» y la PyG imputada se sellaba
+  // REQUIERE REVISIÓN por un FAIL que el propio diseño (§3.3 y criterio 18)
+  // declara comportamiento correcto: ese importe está **pendiente de liquidar**,
+  // y prorratear el anual entre los meses inventaría un devengo.
+  //
+  // El corte es por FUENTE, no por regla: si alguna de las reglas vigentes de un
+  // CECO todavía no es liquidable en P, su saldo tiene una parte legítimamente
+  // pendiente y exigirle cierre a 0 sería el mismo FAIL falso. Lo que sí sigue
+  // cubierto con tolerancia 0 es la parte que SÍ se liquidó: la vigila I5.a,
+  // run a run, contra la base reconstruida del diario. Y un run REVERTIDO deja
+  // su fuente con residuo real, que sigue siendo FAIL.
   const cecoById = new Map(input.config.costCenters.map((c) => [c.id, c]))
-  const sourcesWithRule = new Set((input.rules ?? []).map((r) => r.sourceCostCenterId))
+  const rulesBySource = new Map<string, AllocationRuleSpec[]>()
+  for (const rule of input.rules ?? []) {
+    rulesBySource.set(rule.sourceCostCenterId, [...(rulesBySource.get(rule.sourceCostCenterId) ?? []), rule])
+  }
+  const sourcesWithRule = new Set<string>()
+  /** `(fuente → periodicidades)` que todavía no vencen dentro del periodo. */
+  const notDueYet = new Map<string, Set<string>>()
+  for (const [sourceId, rules] of rulesBySource) {
+    const pending = rules.filter((r) => !settlementPeriodFitsIn(r.period, input.period.from, input.period.to))
+    if (pending.length === 0) {
+      sourcesWithRule.add(sourceId)
+      continue
+    }
+    notDueYet.set(sourceId, new Set(pending.map((r) => `${r.code} (${r.period})`)))
+  }
   const own = new Map<string, Cents>()
   for (const line of input.lines) {
     if (!isPnlLine(line) || !line.costCenterId) continue
@@ -518,13 +548,28 @@ export function checkI5(input: AllocationInvariantInput): CheckResult {
     }
   }
 
+  // Lo que NO es un descuadre se DICE, no se calla: el saldo de un CECO cuya
+  // regla todavía no vence en este periodo aparece como pendiente de liquidar,
+  // con su importe y la regla que lo liquidará (criterio 18).
+  const pending: string[] = []
+  for (const [sourceId, rules] of notDueYet) {
+    const ceco = cecoById.get(sourceId)
+    if (!ceco || !ceco.allocatable) continue
+    for (const level of ["MC3", "EBITDA"] as const) {
+      const cents = (ceco.marginLevel === level ? (own.get(sourceId) ?? 0) : 0) + (net.get(`${sourceId}|${level}`) ?? 0)
+      if (cents === 0) continue
+      pending.push(`${ceco.code}/${level}: ${cents} c pendientes de liquidar por ${[...rules].sort().join(", ")}`)
+    }
+  }
+  const pendingNote = pending.length === 0 ? "" : ` · pendiente de liquidar: ${pending.slice(0, 10).join(" · ")}`
+
   return failures.length === 0
     ? pass(
         "I5",
-        `${combos} combinación(es) (run, CECO fuente, nivel) con diferencia 0 · ${input.allocations.length} línea(s) de reparto`,
+        `${combos} combinación(es) (run, CECO fuente, nivel) con diferencia 0 · ${input.allocations.length} línea(s) de reparto${pendingNote}`,
         query
       )
-    : fail("I5", failures.slice(0, 10).join(" · "), query)
+    : fail("I5", `${failures.slice(0, 10).join(" · ")}${pendingNote}`, query)
 }
 
 /** I-E5-1 — el grafo `fuente → CECO destino` de un mismo `period` es un DAG. */

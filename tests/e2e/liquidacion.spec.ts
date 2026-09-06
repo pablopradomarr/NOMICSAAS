@@ -228,7 +228,7 @@ test("se dan de alta las seis reglas de liquidación del fixture", async ({ page
   await page.goto("/analytics/allocations", { waitUntil: "networkidle" })
   await expect(page.getByRole("heading", { name: "Reglas de liquidación" })).toBeVisible()
   await expect(page.getByTestId("allocation-rules-empty")).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/01-reglas-vacio.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/01-reglas-vacio.png`, fullPage: true, caret: "initial" })
 
   // Operaciones indirectas: mensual por coste directo (con base cero → YTD) y
   // anual para absorber lo que le llega en cascada de G&A.
@@ -321,7 +321,7 @@ test("se dan de alta las seis reglas de liquidación del fixture", async ({ page
   }
   // Cobertura completa: ningún centro de coste declara menos del 100 %.
   await expect(page.getByTestId("share-warning")).toBeHidden()
-  await page.screenshot({ path: `${SHOTS}/02-reglas.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/02-reglas.png`, fullPage: true, caret: "initial" })
 
   const stored = await withDb(async (client) => {
     const { rows } = await client.query<{ n: string }>(
@@ -345,7 +345,7 @@ test("se simulan y sellan los tres periodos con reparto", async ({ page }) => {
   await page.getByTestId("simulate").click()
   await expect(page.getByTestId("preview-table")).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('[data-warning-code="W-E5-ZERO-BASE"]')).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/03-simulacion-mensual.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/03-simulacion-mensual.png`, fullPage: true, caret: "initial" })
   await page.getByTestId("seal-run").click()
   await expect(page.getByTestId("seal-done")).toBeVisible({ timeout: 30_000 })
 
@@ -357,7 +357,7 @@ test("se simulan y sellan los tres periodos con reparto", async ({ page }) => {
   for (const label of ["2026-11", "2026-Q2", "2026"]) {
     await expect(page.locator(`[data-run-period="${label}"]`)).toBeVisible()
   }
-  await page.screenshot({ path: `${SHOTS}/04-runs.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/04-runs.png`, fullPage: true, caret: "initial" })
 
   const totals = await withDb(async (client) => {
     const { rows } = await client.query<{ lines: string; total: string }>(
@@ -399,12 +399,12 @@ test("la PyG analítica imputada deja el EBITDA de P-01 en −306,43 €", async
   await expect(page.locator('[data-column-key="BLREAL:BL-CONS"]')).toBeVisible()
   await expect(page.getByTestId("pending-settlement")).toBeVisible()
   await expect(page.getByTestId("pending-runs-link")).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/05-pyg-imputada.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/05-pyg-imputada.png`, fullPage: true, caret: "initial" })
 
   // Drill-down: la celda imputada enseña las líneas de reparto que la aportan.
   await page.locator('[data-cell="MC3|PROJ:P-01"] button').click()
   await expect(page.getByTestId("cell-allocation-lines")).toBeVisible({ timeout: 30_000 })
-  await page.screenshot({ path: `${SHOTS}/06-drilldown-imputacion.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/06-drilldown-imputacion.png`, fullPage: true, caret: "initial" })
   await page.getByRole("button", { name: "Cerrar" }).click()
 
   // Sin imputaciones, el mismo proyecto no absorbe estructura.
@@ -435,7 +435,7 @@ test("revertir una liquidación la deja en REVERSED con su motivo y sin tocar el
   await page.getByTestId("confirm-reverse").click()
 
   await expect(page.locator('[data-run-period="2026-11"] [data-run-state="REVERSED"]')).toBeVisible({ timeout: 30_000 })
-  await page.screenshot({ path: `${SHOTS}/07-run-revertido.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/07-run-revertido.png`, fullPage: true, caret: "initial" })
 
   // No se genera ningún asiento: la imputación es capa analítica paralela.
   const ledgerAfter = await withDb(async (client) => {
@@ -462,7 +462,7 @@ test("revertir una liquidación la deja en REVERSED con su motivo y sin tocar el
   await page.locator('[data-run-period="2026-11"] a').first().click()
   await expect(page.getByTestId("allocation-lines-table")).toBeVisible({ timeout: 60_000 })
   await expect(page.getByTestId("run-hashes")).toContainText("rulesHash")
-  await page.screenshot({ path: `${SHOTS}/08-detalle-run.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/08-detalle-run.png`, fullPage: true, caret: "initial" })
 })
 
 test("una regla nueva deja caducadas las liquidaciones selladas de su periodo", async ({ page }) => {
@@ -485,7 +485,7 @@ test("una regla nueva deja caducadas las liquidaciones selladas de su periodo", 
   const annual = page.locator('[data-run-period="2026"]')
   await expect(annual.locator('[data-run-state="STALE"]')).toBeVisible()
   await expect(annual.getByTestId("stale-reasons")).not.toBeEmpty()
-  await page.screenshot({ path: `${SHOTS}/09-run-caducado.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/09-run-caducado.png`, fullPage: true, caret: "initial" })
 })
 
 test("un VIEWER ve las pantallas y ninguno de los botones de mutación", async ({ page }) => {
@@ -497,7 +497,7 @@ test("un VIEWER ve las pantallas y ninguno de los botones de mutación", async (
     await expect(page.getByTestId("new-allocation-rule")).toHaveCount(0)
     await expect(page.getByRole("button", { name: "Versionar" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: "Cerrar", exact: true })).toHaveCount(0)
-    await page.screenshot({ path: `${SHOTS}/10-viewer-reglas.png`, fullPage: true })
+    await page.screenshot({ path: `${SHOTS}/10-viewer-reglas.png`, fullPage: true, caret: "initial" })
 
     await page.goto("/analytics/allocations/runs", { waitUntil: "networkidle" })
     await expect(page.getByTestId("allocation-runs-table")).toBeVisible()
@@ -508,7 +508,7 @@ test("un VIEWER ve las pantallas y ninguno de los botones de mutación", async (
     await page.getByTestId("simulate").click()
     await expect(page.getByTestId("preview-table")).toBeVisible({ timeout: 30_000 })
     await expect(page.getByTestId("seal-run")).toHaveCount(0)
-    await page.screenshot({ path: `${SHOTS}/11-viewer-simulacion.png`, fullPage: true })
+    await page.screenshot({ path: `${SHOTS}/11-viewer-simulacion.png`, fullPage: true, caret: "initial" })
   } finally {
     await setRole(org.id, "ADMIN")
   }

@@ -154,10 +154,12 @@ export async function getAnalyticPnl(
   // BLOQUEA #3 — las reglas con las que se emitieron esas líneas. Sin ellas,
   // I-E5-1, I-E5-2, I-E5-3, I-E5-8 e I-E5-10 no tienen nada que juzgar y el
   // sello de la PyG imputada no acreditaría la liquidación que muestra.
-  const allocationRules =
-    withAllocations && applied.lines.length > 0
-      ? await getAllocationRuleSpecs(tx, { periodEnd: request.to })
-      : []
+  // Se cargan SIEMPRE que el informe sea imputado, aunque el periodo no tenga
+  // ni una línea de reparto (revisión ronda 2, R2-1): un run revertido deja el
+  // periodo sin imputaciones y con la regla vigente, y ese residuo es real. Lo
+  // que no es un descuadre es no tener reglas — entonces la lista sale vacía y
+  // I5.b no exige cierre a nadie.
+  const allocationRules = withAllocations ? await getAllocationRuleSpecs(tx, { periodEnd: request.to }) : []
 
   const configHash = marginConfigHash(config)
   const analyticsHash = computeAnalyticsHash(

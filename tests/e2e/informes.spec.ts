@@ -103,13 +103,13 @@ test("el balance cuadra a 0,00 €, enseña el sello y la nota de no compensaci�
   // Cabecera con run_id y ledgerHash.
   await expect(page.getByTestId("report-hashes")).toContainText("ledgerHash")
 
-  await page.screenshot({ path: `${SHOTS}/01-balance.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/01-balance.png`, fullPage: true, caret: "initial" })
 
   // Drill-down por celda: la primera cifra del activo abre su procedencia.
   await page.getByTestId("balance-activo").locator("tbody button[aria-label^='Detalle']").first().click()
   await expect(page.getByTestId("cell-detail")).toBeVisible()
   await expect(page.getByTestId("cell-accounts")).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/02-balance-drilldown.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/02-balance-drilldown.png`, fullPage: true, caret: "initial" })
   await page.getByRole("button", { name: "Cerrar" }).click()
 
   // Foto POST_CIERRE: otro `paramsHash`, otro informe.
@@ -119,7 +119,7 @@ test("el balance cuadra a 0,00 €, enseña el sello y la nota de no compensaci�
     "data-balance-difference",
     "0"
   )
-  await page.screenshot({ path: `${SHOTS}/03-balance-post-cierre.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/03-balance-post-cierre.png`, fullPage: true, caret: "initial" })
 })
 
 test("la PyG cuadra A.4 con el resultado del periodo y enseña los subtotales", async ({ page }) => {
@@ -139,7 +139,7 @@ test("la PyG cuadra A.4 con el resultado del periodo y enseña los subtotales", 
   await expect(check.locator("[data-balance-difference]")).toHaveAttribute("data-balance-difference", "0")
   await expect(check.locator("[data-balance-difference]")).toContainText("0,00")
 
-  await page.screenshot({ path: `${SHOTS}/04-pyg.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/04-pyg.png`, fullPage: true, caret: "initial" })
 })
 
 test("el cashflow concilia I6 a cero y pinta las tres vistas", async ({ page }) => {
@@ -157,16 +157,16 @@ test("el cashflow concilia I6 a cero y pinta las tres vistas", async ({ page }) 
   const i6 = page.getByTestId("cashflow-i6")
   await expect(i6.locator("[data-balance-difference]")).toHaveAttribute("data-balance-difference", "0")
   await expect(i6.locator("[data-balance-difference]")).toContainText("0,00")
-  await page.screenshot({ path: `${SHOTS}/05-cashflow-directo.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/05-cashflow-directo.png`, fullPage: true, caret: "initial" })
 
   await page.getByTestId("cashflow-tab-indirecto").click()
   await expect(page.getByTestId("cashflow-indirecto")).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/06-cashflow-indirecto.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/06-cashflow-indirecto.png`, fullPage: true, caret: "initial" })
 
   await page.getByTestId("cashflow-tab-efe").click()
   await expect(page.getByTestId("cashflow-efe")).toBeVisible()
   await expect(page.getByTestId("cashflow-efe")).toContainText("A) Flujos de efectivo de las actividades de explotación")
-  await page.screenshot({ path: `${SHOTS}/07-cashflow-efe.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/07-cashflow-efe.png`, fullPage: true, caret: "initial" })
 })
 
 test("la antigüedad de saldos enseña los tramos con SIN VENCIMIENTO visible", async ({ page }) => {
@@ -181,7 +181,7 @@ test("la antigüedad de saldos enseña los tramos con SIN VENCIMIENTO visible", 
   await expect(clientes.locator('[data-bucket="D_MAS_90"]')).toBeVisible()
   await expect(page.getByTestId("aging-proveedores")).toBeVisible()
 
-  await page.screenshot({ path: `${SHOTS}/08-aging.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/08-aging.png`, fullPage: true, caret: "initial" })
 })
 
 test("el histórico lista los runs y el XLSX se descarga con su tipo y tamaño", async ({ page }) => {
@@ -203,7 +203,7 @@ test("el histórico lista los runs y el XLSX se descarga con su tipo y tamaño",
   // Un XLSX es un ZIP: los dos primeros bytes son `PK`.
   expect(body.subarray(0, 2).toString("latin1")).toBe("PK")
 
-  await page.screenshot({ path: `${SHOTS}/09-runs.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/09-runs.png`, fullPage: true, caret: "initial" })
 })
 
 test("forzar la revisión cambia el sello del siguiente informe y levantarla lo devuelve", async ({ page }) => {
@@ -221,13 +221,13 @@ test("forzar la revisión cambia el sello del siguiente informe y levantarla lo 
   await page.getByLabel("Motivo", { exact: true }).fill("Pendiente de conciliar el extracto bancario de diciembre")
   await page.getByRole("button", { name: "Forzar revisión" }).last().click()
   await expect(page.getByTestId("review-flags")).toContainText("Pendiente de conciliar")
-  await page.screenshot({ path: `${SHOTS}/10-forzar-revision.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/10-forzar-revision.png`, fullPage: true, caret: "initial" })
 
   // El SIGUIENTE run del balance sale bajo revisión, con el motivo etiquetado.
   await page.goto("/reports/balance", { waitUntil: "networkidle" })
   await expect(page.locator("[data-seal]")).toHaveAttribute("data-seal", "REVISION")
   await expect(page.getByTestId("seal-reasons")).toContainText("REVISION_FORZADA")
-  await page.screenshot({ path: `${SHOTS}/11-balance-en-revision.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/11-balance-en-revision.png`, fullPage: true, caret: "initial" })
 
   // Levantarlo (no lo borra: lo marca) devuelve el sello de partida.
   await page.goto("/reports/runs", { waitUntil: "networkidle" })
@@ -258,5 +258,5 @@ test("el panel enseña los KPI derivados del diario y las series mensuales", asy
   await expect(page.getByTestId("chart-tesoreria")).toBeVisible()
   await expect(page.getByTestId("series-table")).toBeAttached()
 
-  await page.screenshot({ path: `${SHOTS}/12-dashboard.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/12-dashboard.png`, fullPage: true, caret: "initial" })
 })

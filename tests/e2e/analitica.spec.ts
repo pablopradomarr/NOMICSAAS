@@ -106,19 +106,19 @@ test("la PyG analítica se pinta con sello y la fila de cuadre a 0,00 €", asyn
   await expect(hashes).toContainText("analyticsHash")
   await expect(hashes).toContainText("marginConfigHash")
 
-  await page.screenshot({ path: `${SHOTS}/01-pyg-analitica.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/01-pyg-analitica.png`, fullPage: true, caret: "initial" })
 
   // Drill-down por celda: provenance + líneas del diario.
   await matrix.locator('[data-row-id="MC1"] button').first().click()
   await expect(page.getByTestId("cell-lines")).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/02-drill-down.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/02-drill-down.png`, fullPage: true, caret: "initial" })
   await page.getByRole("button", { name: "Cerrar" }).click()
 
   // "Ver validación" con I4 y los I-E4-*.
   await page.getByRole("button", { name: /Ver validación/ }).click()
   await expect(page.getByTestId("check-list")).toBeVisible()
   await expect(page.locator('[data-check-id="I4"]')).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/03-validacion.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/03-validacion.png`, fullPage: true, caret: "initial" })
   await page.keyboard.press("Escape")
 
   // Vista transpuesta: proyectos en filas.
@@ -127,7 +127,7 @@ test("la PyG analítica se pinta con sello y la fila de cuadre a 0,00 €", asyn
   await expect(page.getByTestId("margin-matrix")).toBeVisible()
   await expect(page.getByTestId("margin-matrix").locator("thead th").first()).toHaveText("Proyecto / centro")
   await expect(page.getByTestId("margin-matrix").locator('[data-row-id^="PROJ:"]').first()).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/04-pyg-transpuesta.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/04-pyg-transpuesta.png`, fullPage: true, caret: "initial" })
 
   expect(consoleErrors, `errores de consola: ${consoleErrors.join(" | ")}`).toEqual([])
 })
@@ -148,7 +148,7 @@ test("se crea un proyecto y aparece en la lista y en la matriz", async ({ page }
   const row = page.locator(`[data-project-code="${PROJECT_CODE}"]`)
   await expect(row).toBeVisible({ timeout: 20_000 })
   await expect(row).toContainText("120.000,00")
-  await page.screenshot({ path: `${SHOTS}/05-proyectos.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/05-proyectos.png`, fullPage: true, caret: "initial" })
 
   // Aparece como columna de la matriz.
   await page.goto("/analytics/pyg", { waitUntil: "networkidle" })
@@ -203,7 +203,7 @@ test("reclasificar una línea deja AuditLog, cambia el entryHash y no toca el le
 
   await page.goto(`/analytics/projects/${project.id}`, { waitUntil: "networkidle" })
   await expect(page.getByTestId("project-mini-pnl")).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/06-ficha-proyecto.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/06-ficha-proyecto.png`, fullPage: true, caret: "initial" })
 
   await page.getByTestId("reclassify-open").click()
   await expect(page.getByTestId("reclassify-window")).toBeVisible()
@@ -231,10 +231,10 @@ test("reclasificar una línea deja AuditLog, cambia el entryHash y no toca el le
   await page.getByLabel("Destino analítico nuevo").fill("CC-GA")
   await page.getByRole("option", { name: /CC-GA/ }).first().click()
   await page.getByLabel("Motivo de la reclasificación").fill("El gasto es estructura general, no del proyecto")
-  await page.screenshot({ path: `${SHOTS}/07-reclasificar.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/07-reclasificar.png`, fullPage: true, caret: "initial" })
   await page.getByTestId("confirm-reclassify").click()
   await expect(page.getByTestId("reclassify-done")).toBeVisible({ timeout: 20_000 })
-  await page.screenshot({ path: `${SHOTS}/08-reclasificada.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/08-reclasificada.png`, fullPage: true, caret: "initial" })
 
   // ── AuditLog + entryHash rehecho ───────────────────────────────────────────
   const after = await withDb(async (client) => {
@@ -267,5 +267,5 @@ test("reclasificar una línea deja AuditLog, cambia el entryHash y no toca el le
   await expect(
     page.getByTestId("matrix-balance-check").locator("[data-balance-difference]")
   ).toHaveAttribute("data-balance-difference", "0")
-  await page.screenshot({ path: `${SHOTS}/09-pyg-tras-reclasificar.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/09-pyg-tras-reclasificar.png`, fullPage: true, caret: "initial" })
 })

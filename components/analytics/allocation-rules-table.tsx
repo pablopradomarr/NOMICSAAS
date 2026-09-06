@@ -27,6 +27,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { MIN_ALLOCATION_REASON } from "@/forms/allocations"
+import { parseCents } from "@/lib/money"
 import { useRouter } from "next/navigation"
 import { useState, useTransition } from "react"
 
@@ -201,7 +202,10 @@ function SupersedeRuleDialog({ rule }: { rule: AllocationRuleView }) {
   const submit = () =>
     startTransition(async () => {
       setError(null)
-      const bps = Math.round(Number(sharePercent.replace(",", ".")) * 100)
+      // R2-2 (ronda 2, resto de #14): el MISMO parser que el servidor
+      // (`ui-actions.ts` → `lib/money.parseCents`), en vez de una conversión en
+      // coma flotante propia sobre la cifra que mueve dinero entre columnas.
+      const bps = parseCents(sharePercent)
       const state = await supersedeAllocationRuleAction({
         ruleId: rule.id,
         validFrom,
@@ -209,7 +213,7 @@ function SupersedeRuleDialog({ rule }: { rule: AllocationRuleView }) {
         changes: {
           name: name.trim(),
           priority: Number.parseInt(priority, 10),
-          sourceShareBps: Number.isFinite(bps) ? bps : rule.sourceShareBps,
+          sourceShareBps: bps ?? rule.sourceShareBps,
         },
       })
       if (!state.success) {

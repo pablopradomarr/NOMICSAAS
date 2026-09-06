@@ -29,7 +29,7 @@ test("el plan de cuentas se abre, se busca y se renombra dejando rastro en la au
   await page.goto("/settings/accounts", { waitUntil: "networkidle" })
   await expect(page.getByRole("heading", { name: "Plan de cuentas" })).toBeVisible()
   await expect(page.getByText(/cuentas en el plan/)).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/01-plan-cuentas.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/01-plan-cuentas.png`, fullPage: true, caret: "initial" })
 
   // Búsqueda por código: la lista se reduce a la rama de la 572.
   // `toPass` reintenta: hasta que React hidrata, el `input` controlado descarta
@@ -41,7 +41,7 @@ test("el plan de cuentas se abre, se busca y se renombra dejando rastro en la au
     await expect(banco).toBeVisible({ timeout: 2_000 })
   }).toPass({ timeout: 30_000 })
   await expect(page.locator('tr[data-account-code="430"]')).toHaveCount(0)
-  await page.screenshot({ path: `${SHOTS}/02-busqueda-572.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/02-busqueda-572.png`, fullPage: true, caret: "initial" })
 
   // Renombrado en línea de una subcuenta: doble clic → Enter.
   const objetivo = page.locator('tr[data-account-code="5720"]')
@@ -55,7 +55,7 @@ test("el plan de cuentas se abre, se busca y se renombra dejando rastro en la au
   await editor.fill(nombre)
   await editor.press("Enter")
   await expect(objetivo.getByText(nombre)).toBeVisible({ timeout: 20_000 })
-  await page.screenshot({ path: `${SHOTS}/03-renombrado.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/03-renombrado.png`, fullPage: true, caret: "initial" })
 
   // El renombrado quedó en AuditLog (§7): se comprueba contra la base.
   const registrado = await withDb(async (client) => {
@@ -72,7 +72,7 @@ test("el plan de cuentas se abre, se busca y se renombra dejando rastro en la au
   await page.goto("/settings/audit", { waitUntil: "networkidle" })
   await expect(page.getByRole("heading", { name: "Auditoría de cambios" })).toBeVisible()
   await expect(page.getByText(nombre).first()).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/04-auditoria.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/04-auditoria.png`, fullPage: true, caret: "initial" })
 
   expect(consoleErrors, consoleErrors.join("\n")).toEqual([])
 })
@@ -81,12 +81,12 @@ test("mapa de cuentas e impuestos se pintan con los datos sembrados", async ({ p
   await page.goto("/settings/account-map", { waitUntil: "networkidle" })
   await expect(page.getByRole("heading", { name: "Mapa de cuentas de sistema" })).toBeVisible()
   await expect(page.locator('tr[data-account-key="BANCO_DEFAULT"]')).toBeVisible()
-  await page.screenshot({ path: `${SHOTS}/05-mapa-cuentas.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/05-mapa-cuentas.png`, fullPage: true, caret: "initial" })
 
   await page.goto("/settings/taxes", { waitUntil: "networkidle" })
   await expect(page.getByRole("heading", { name: "Impuestos" })).toBeVisible()
   await expect(page.locator('tr[data-tax-code="IVA_21"]').first()).toBeVisible()
   // El caso que rompía el modelo anterior: 1,75 % del recargo de labores del tabaco.
   await expect(page.locator('tr[data-tax-code="REQ_1_75"]').first()).toContainText("1,75 %")
-  await page.screenshot({ path: `${SHOTS}/06-impuestos.png`, fullPage: true })
+  await page.screenshot({ path: `${SHOTS}/06-impuestos.png`, fullPage: true, caret: "initial" })
 })

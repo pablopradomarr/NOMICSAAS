@@ -316,6 +316,35 @@ export function periodBounds(label: string): DateWindow {
   return { from: `${y}-${pad2(m)}-01`, to: `${y}-${pad2(m)}-${pad2(daysInMonth(y, m))}` }
 }
 
+/**
+ * ¿Cabe al menos UN periodo completo de periodicidad `kind` dentro de
+ * `[from, to]`? (revisión ronda 2, R2-1 · diseño §3.3 y criterio 18).
+ *
+ * Es la pregunta «¿esta regla ya tenía que haber liquidado dentro del periodo
+ * que estoy mirando?». Un informe **mensual** con una regla **anual** responde
+ * `false`: el saldo del CECO no es un descuadre, es **pendiente de liquidar**, y
+ * prorratear el anual entre los meses inventaría un devengo que la regla no
+ * declara. Un informe **anual** con reglas **mensuales** responde `true`: los
+ * doce meses caben, así que a 31-12 el CECO tiene que estar a cero.
+ */
+export function settlementPeriodFitsIn(kind: AllocPeriod, from: LocalDate, to: LocalDate): boolean {
+  const firstYear = yearOf(from)
+  const lastYear = yearOf(to)
+  for (let y = firstYear; y <= lastYear; y++) {
+    const labels =
+      kind === "YEAR"
+        ? [String(y)]
+        : kind === "QUARTER"
+          ? [1, 2, 3, 4].map((q) => `${y}-Q${q}`)
+          : Array.from({ length: 12 }, (_, i) => `${y}-${pad2(i + 1)}`)
+    for (const label of labels) {
+      const bounds = periodBounds(label)
+      if (bounds.from >= from && bounds.to <= to) return true
+    }
+  }
+  return false
+}
+
 /** Ventana del periodo INMEDIATAMENTE anterior del mismo tipo (`PRIOR_PERIOD`). */
 export function priorPeriodWindow(kind: AllocPeriod, label: string): DateWindow {
   const y = Number(label.slice(0, 4))

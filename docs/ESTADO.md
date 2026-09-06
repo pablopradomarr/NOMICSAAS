@@ -142,13 +142,13 @@ DATABASE_URL_MAINTENANCE=… npx tsx scripts/load-fixture.ts --org <org> --user 
     c. auditor-fiabilidad contexto limpio: reconstruir balance (activo 13.673.820 / PN 8.307.322), PyG (A.4 1.497.322), cashflow (Δ −1.056.080, cash final 2.943.920) por SQL/Python; error inyectado.
     d. revisor-codigo contexto limpio sobre `git diff 97221fb...HEAD`; rondas hasta APROBADO.
     e. cierre E6 (ROADMAP, registro, ESTADO, push).
-15. ✅ **E5 implementada y en ronda 1 de corrección (2026-09-06).** Backend + UI (commits f57d6ee, 7d6d213, 17b8fe9). Revisor: CAMBIOS REQUERIDOS (3 BLOQUEA · 7 DEBE · 7 PUEDE, `docs/design/E5-revision.md`); auditor: CONFORME en cifras con 4 hallazgos de detección (`docs/design/E5-auditoria.md`); QA: BUG-E5-1. Ronda 1 cierra los tres BLOQUEA, los siete DEBE, BUG-E5-1 y los hallazgos 1–4 del auditor. Ver §«E5 — deuda y decisiones» más abajo.
-16. **SIGUIENTE**: `/epica E5` (liquidación de CECOs: AllocationRule/Run/Line, drivers, Hamilton, I5, PyG analítica con MC3/EBITDA imputados) → `/sprint E5` → E8 (OCR → asientos) → E7 (Auditoría) → E9 → E10 → E11 → E12.
+15. ✅ **E5 implementada y corregida en dos rondas (2026-09-06).** Backend + UI (commits f57d6ee, 7d6d213, 17b8fe9). Auditor: **CONFORME** en cifras (`docs/design/E5-auditoria.md`, 4 hallazgos de detección). Revisor: ronda 1 CAMBIOS REQUERIDOS (3 BLOQUEA · 7 DEBE · 7 PUEDE) → **ronda 1 cerrada en 62ded40**; ronda 2 CAMBIOS REQUERIDOS (0 BLOQUEA · 1 DEBE · 2 PUEDE) → **R2-1/R2-2/R2-3 cerrados**. QA: BUG-E5-1 cerrado. Ver §«E5 — deuda y decisiones» más abajo.
+16. **SIGUIENTE**: cierre de E5 (re-revisión, ROADMAP a CERRADA, registro) → **E8** (OCR → asientos) → E7 (Auditoría) → E9 → E10 → E11 → E12.
 ~~13. `/epica E6` (informes financieros: balance, PyG contable, cashflow, ReportRun persistente con sello, export) → `/epica E5` (liquidación de CECOs) → E8 (OCR → asientos) → E7 → E9…
 ~~11. `/epica E4` (analítica base: BusinessLine, Project, CostCenter, AnalyticType en líneas, MarginLevelConfig, PyG analítica sin imputaciones, I4; retirar CHECK NULL de dimensiones + FKs; fixtures con projectCode/costCenterCode activados) → `/sprint E4` → E6 (informes: balance, PyG, cashflow, ReportRun) → E5 (liquidación CECOs).
 ~~10. `/epica E3` (libro diario: FiscalYear, JournalEntry/Line, post/void, numeración, trigger Σdebe=Σhaber, plantillas de asientos, mayor, sumas y saldos, invariantes I1/I7–I10, ledgerHash) **+ retirada de deuda RLS de E1/E2 + pendientes E2 (importCustomPlan createMany, alta org+siembra atómica, virtualizar árbol)** → `/sprint E3`.
 
-## E5 — deuda y decisiones (ronda 1 de corrección, 2026-09-06)
+## E5 — deuda y decisiones (rondas 1 y 2 de corrección, 2026-09-06)
 
 Todo lo que E5 deja abierto, con **épica de cierre y fecha**, como exige el
 §Estándar de calidad de `CLAUDE.md`. Nada de esto bloquea el cierre de E5; lo que
@@ -161,9 +161,12 @@ no puede pasar es que desaparezca del seguimiento.
 | **`AllocationRunStatus.DRAFT`** — valor de enum sin persistencia: la simulación **no escribe nada** (ADR-0013 D5) | ABIERTA (valor de enum sin uso) | **E10** | Se retira con `MIXED` en la misma migración, o se usa si aparece el caso de una simulación guardada para aprobación |
 | **Matriz imputada sin agregado SQL total** | **CERRADA en esta ronda (parcial y medida)**: `getAllocationTotals` agrega en SQL por `(fuente, destino, nivel)`, `readAllocationLines` pasó de cuatro consultas (con tres catálogos enteros) a una consulta más las dimensiones REFERENCIADAS, y `getAllocationCellDetail` ya no lee el reparto entero para sacar los `runIds` | — | Criterio 20 medido en `tests/integration/perf-pages.test.ts`: liquidación anual < 400 ms, PyG analítica imputada < 800 ms |
 | **N+1 en `/analytics/allocations/runs`** | **CERRADA en esta ronda**: memoización por transacción del `ledgerHash` por `(periodo, ejercicio)` y de las reglas por `(periodicidad, fin de periodo)` | — | Con 17 runs se pasa de ~68 consultas a una por periodo distinto |
+| **I5.b con periodicidades mixtas** — exigía cierre a 0 a un CECO cuya regla es de periodicidad más gruesa y todavía no vence en el periodo del informe (FAIL falso, sello REQUIERE REVISIÓN sin motivo) | **CERRADA en la ronda 2 (R2-1)**: `settlementPeriodFitsIn` acota I5.b a las reglas cuyo periodo cabe en el del informe; el resto se declara «pendiente de liquidar» con importe y regla (diseño §3.3, criterio 18). Un run REVERTIDO sigue dando FAIL, que es un residuo real | — | Las reglas se cargan aunque el periodo no tenga ni una línea: un run revertido deja exactamente ese estado |
 | **Grafo de cascada** (§6/T11 del diseño) | **ENTREGADO en esta ronda** como componente simple: `components/analytics/allocation-cascade-graph.tsx`, aristas `fuente → destino` numeradas por orden de ejecución y agrupadas por periodicidad | — | Se descarta el layout de grafo con librería: lo que hace falta saber es qué se reparte antes que qué (I-E5-8), no la geometría |
 | **`allocation_lines` en `bigint`** | **CERRADA en esta ronda**: `amount_cents`, `driver_base`, `driver_base_total` y `allocation_runs.total_allocated_cents` pasan a `bigint`; `hamilton()` opera en `BigInt` | — | Con `integer` el techo eran 21.474.836,47 €, por debajo del rango de producto («hasta 100 M€»). La conversión vive en el borde (`models/allocations.ts`); el motor y la UI siguen en `number` |
 | **`HOURS` / `HEADCOUNT`** | ABIERTA por diseño (ADR-0013 D4: se RECHAZAN, no quedan inertes) | **E10** | Con `TimeEntry` y el contrato del experto (minutos enteros, sólo entradas aprobadas, `fteMilli` a fin de periodo) |
+| **Auditoría: runs con `lines_hash` NULL** — los sellados antes de `20260910110000` no tienen sello de líneas e I-E5-12 los declara INFO en vez de verificarlos | ABIERTA (declarada, no oculta) | **E7** (pestaña Auditoría) | Listarlos en la pestaña con su periodo y su fecha, para que se puedan re-liquidar y quedar sellados. Petición del auditor tras la ronda 1 |
+| **`journal_lines.debit_cents` / `credit_cents` en `integer`** — mismo techo (21.474.836,47 €) que ya se retiró en `allocation_lines` | ABIERTA (decisión pendiente) | **E7** | Decidir `bigint` también en el diario y, si se aprueba, migrarlo con el resto del barrido de Auditoría: es DDL puro, pero toca la tabla más grande y el motor entero. Petición del auditor tras la ronda 1 |
 | **Un `ReportRun` sellado no caduca si alguien altera `allocation_lines` por SQL** | ABIERTA (limitación conocida) | **E7** (pestaña Auditoría) | La clave del run se compone del `ledgerHash` y del CONJUNTO de runs, no del contenido de las líneas. Lo detecta el barrido de invariantes (I5 e I-E5-12 con `linesHash`), que es donde se mira; incluirlo en la clave obligaría a hashear el reparto en cada petición de caché |
 
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
@@ -184,6 +187,12 @@ proceso):
   La membresía de `e2e-analitica` se ancla en 2020 para que la organización
   personal siga siendo la que la aplicación elige sin cookie de organización
   activa; las suites analíticas plantan la cookie explícitamente.
+- todas las capturas de los specs pasan `caret: "initial"`. Con el valor por
+  defecto (`hide`) Playwright inyecta `style="caret-color: transparent"` en los
+  `input`, y en modo dev React lo denuncia como desajuste de hidratación en la
+  navegación siguiente: los specs que comprueban «cero errores de consola»
+  (`libro-diario`, `plan-cuentas`) fallaban de forma intermitente por un
+  artefacto del arnés, no por la aplicación.
 - `adminUserId()` ya no lanza cuando no hay ningún ADMIN: devuelve el usuario
   sembrado. Las suites que degradan el rol para probar el VIEWER dejaban la base
   sin ADMIN y su `finally` moría sin restaurar el rol.
@@ -193,7 +202,18 @@ Vercel `nomicsaas-preview` (team pablo-7579s-projects) desde `main` como preview
 
 ## Cómo reanudar (sesión nueva)
 1. `git clone https://github.com/pablopradomarr/NOMICSAAS && cd NOMICSAAS && npm install --ignore-scripts --engine-strict=false`
-2. Postgres local: `initdb` + `pg_ctl start` (ver `docs/design/E1-organizaciones-roles.md` §8 y `vitest.integration.setup.ts`); crear BDs `erp` y `erp_test`; `export DATABASE_URL=postgresql://postgres@localhost:5432/erp`; `npx prisma migrate deploy` en ambas.
+2. **Postgres local, desde cero.** El cluster empaquetado del sandbox **pierde los datos al reiniciar**: no supongas que `erp`/`erp_test` siguen ahí. Secuencia completa:
+   ```bash
+   initdb -D "$PGDATA" 2>/dev/null; pg_ctl -D "$PGDATA" -l /tmp/pg.log start
+   # pg_hba.conf en `trust` para local y host 127.0.0.1/32 (es un sandbox, no producción)
+   createdb erp; createdb erp_test
+   ./scripts/dev-db-setup.sh                                              # roles app_runtime y app_maintenance
+   DATABASE_URL=postgresql://postgres@localhost:5432/erp_test ./scripts/dev-db-setup.sh
+   set -a && . ./.env && set +a
+   npx prisma migrate deploy                                              # sobre DIRECT_URL (erp)
+   DIRECT_URL=postgresql://postgres@localhost:5432/erp_test npx prisma migrate deploy
+   ```
+   Los tests de integración aplican las migraciones a `erp_test` por su cuenta (`vitest.integration.setup.ts`). Los **e2e** ya no necesitan preparar `erp` a mano: `tests/support/ensure-self-hosted.ts` siembra el usuario global, la organización personal y `e2e-analitica` con el fixture (ver §Higiene del entorno e2e).
 3. Leer `CLAUDE.md`, este fichero y `docs/design/E1-revision.md`; seguir el flujo `/sprint` (dev → qa → revisor → auditor si cifras → documentador → registro).
 4. Push: si el proxy devuelve 403, la sesión no tiene el repo autorizado → pedir a Pablo que añada `pablopradomarr/NOMICSAAS` a las fuentes de la sesión o un token fine-grained (Contents + Workflows: RW); mientras, entregar `git format-patch` o zip.
 

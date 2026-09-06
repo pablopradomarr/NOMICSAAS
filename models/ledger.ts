@@ -1547,8 +1547,10 @@ export async function runLedgerInvariants(
       // el ciclo no existe en tiempo de carga.
       const { getAllocationRuleSpecs, getAppliedAllocations, listAllocationRuns } = await import("@/models/allocations")
       const applied = await getAppliedAllocations(tx, { from: analyticPeriod.from, to: analyticPeriod.to })
-      const allocationRules =
-        applied.lines.length === 0 ? [] : await getAllocationRuleSpecs(tx, { periodEnd: analyticPeriod.to })
+      // Ronda 2, R2-1: las reglas se leen aunque el periodo no tenga ninguna
+      // línea de reparto. Un run revertido deja exactamente ese estado, y su
+      // residuo tiene que seguir siendo FAIL.
+      const allocationRules = await getAllocationRuleSpecs(tx, { periodEnd: analyticPeriod.to })
       const allocationRuns =
         applied.runIds.length === 0
           ? []
@@ -1564,7 +1566,7 @@ export async function runLedgerInvariants(
       // las produjo—, así que un `UPDATE` sobre `allocation_lines` mueve el
       // repartido y no la base, y la diferencia aparece.
       const allocationContext =
-        applied.lines.length === 0
+        applied.lines.length === 0 && allocationRules.length === 0
           ? null
           : {
               allocations: applied.lines,
