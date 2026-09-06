@@ -1,62 +1,209 @@
-"use server"
+/**
+ * E8 · T11 — `runExtraction`: una extracción es **un `ExtractionRun` inmutable**.
+ *
+ * Lo que había: `analyzeTransaction` llamaba al modelo, devolvía un mapa de
+ * strings y lo guardaba en `File.cachedParseResult`, una columna mutable sin
+ * proveedor, sin modelo, sin sha del prompt, sin páginas vistas y sin usuario.
+ * Con eso no se puede responder a la única pregunta que importa en una
+ * auditoría —«¿de dónde salió esta cifra?»—, y la columna era además una
+ * memoria de cifras que sobrevivía a cambios de prompt (G-03).
+ *
+ * Lo que hay: un `INSERT` en `extraction_runs`, tabla **append-only** (el
+ * `UPDATE` da 42501 incluso para el propietario), con todo lo que hace
+ * reproducible la extracción:
+ *
+ *  · proveedor, modelo y `attempts[]` con la cadena de fallback (G-09)
+ *  · `promptSha` del prompt **EFECTIVO** y `schemaSha` del esquema pedido (I-E8-11, G-17)
+ *  · `pagesSent` / `pagesTotal` → `partial` lo escribe un trigger (G-02)
+ *  · salida cruda **tal cual llegó**, y aparte la propuesta normalizada
+ *  · tokens de `usage_metadata`, duración y git-sha (G-12)
+ *  · `fileSha256` **releído del disco**: si el fichero cambió, no hay extracción
+ *
+ * Y una cosa que NO hace: calcular. El run guarda lo que el modelo dijo y lo que
+ * `reconcile` (T7) opinó; ninguna cifra contable sale de aquí. La deducción de
+ * saldo ocurre **por run creado** y sólo tras un `INSERT` con éxito.
+ */
 
-import { ActionState } from "@/lib/actions"
-import { TenantClient } from "@/lib/db"
+import "server-only"
+
+import { loadAttachmentsForAI } from "@/ai/attachments"
+import { renderPrompt, resolvePrompt } from "@/ai/prompt"
+import type { PromptCode } from "@/ai/prompts"
+import { normalizeExtractionOutput } from "@/ai/normalize"
+import {
+  EXTRACTION_SCHEMA_V1,
+  EXTRACTION_SCHEMA_VERSION,
+  extractionSchemaSha,
+  parseExtractionOutput,
+  type ExtractionOutput,
+} from "@/ai/schema"
+import { requestLLM, type LLMAttempt } from "@/ai/providers/llmProvider"
+import type { TenantClient } from "@/lib/db"
+import { fullPathForFile } from "@/lib/files"
+import { proposalHash } from "@/lib/extraction/hash"
+import type { ExtractionProposal, FieldOrigins } from "@/lib/extraction/types"
+import { sha256OfBuffer } from "@/lib/uploads"
+import { getFields } from "@/models/fields"
+import { currentGitSha } from "@/models/reports"
 import { getLLMSettings, getSettings } from "@/models/settings"
-import { AnalyzeAttachment } from "./attachments"
-import { requestLLM } from "./providers/llmProvider"
+import { listTaxRates } from "@/models/tax-rates"
+import type { ExtractionRun, File, Organization, Prisma } from "@/prisma/client"
+import fs from "fs/promises"
 
-export type AnalysisResult = {
-  output: Record<string, string>
-  tokensUsed: number
-}
+/** Fallo de extracción. Lleva la cadena de intentos: sin ella nadie sabe por qué. */
+export class ExtractionFailedError extends Error {
+  readonly attempts: readonly LLMAttempt[]
 
-export async function analyzeTransaction(
-  db: TenantClient,
-  prompt: string,
-  schema: Record<string, unknown>,
-  attachments: AnalyzeAttachment[],
-  // E8 · T11: hoy sin uso — desde que `cached_parse_result` desapareció (G-03),
-  // quien persiste la evidencia es `runExtraction` con un `ExtractionRun`. Se
-  // conserva en la firma porque es esa tarea la que lo consume.
-  _fileId: string
-): Promise<ActionState<AnalysisResult>> {
-  const settings = await getSettings(db)
-  const llmSettings = getLLMSettings(settings)
-
-  try {
-    const response = await requestLLM(llmSettings, {
-      prompt,
-      schema,
-      attachments,
-    })
-
-    if (response.error) {
-      throw new Error(response.error)
-    }
-
-    const result = response.output
-    const tokensUsed = response.tokensUsed || 0
-
-    console.log("LLM response:", result)
-    console.log("LLM tokens used:", tokensUsed)
-
-    // E8 · T3 (G-03): `files.cached_parse_result` ha DESAPARECIDO. La salida de
-    // un modelo no se memoriza en una columna mutable sin proveedor, sin
-    // prompt-sha y sin páginas vistas: se persiste como `ExtractionRun`
-    // inmutable, que es evidencia y no atajo. Lo hace `runExtraction` en **T11**.
-    return {
-      success: true,
-      data: {
-        output: result,
-        tokensUsed: tokensUsed,
-      },
-    }
-  } catch (error) {
-    console.error("AI Analysis error:", error)
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to analyze invoice",
-    }
+  constructor(message: string, attempts: readonly LLMAttempt[]) {
+    super(message)
+    this.name = "ExtractionFailedError"
+    this.attempts = attempts
   }
 }
+
+/** El documento en disco ya no es el que se ingirió (RC-10, `DOCUMENTO_ALTERADO`). */
+export class DocumentAlteredError extends Error {
+  constructor(expected: string, actual: string) {
+    super(
+      `El fichero en disco no coincide con el sha256 registrado (esperado ${expected.slice(0, 12)}…, ` +
+        `encontrado ${actual.slice(0, 12)}…). No se extrae de un documento alterado.`
+    )
+    this.name = "DocumentAlteredError"
+  }
+}
+
+/**
+ * Recálculo determinista de la propuesta. Lo inyecta el llamante —hoy T7, que
+ * escribe `lib/extraction/reconcile.ts`— para que `ai/` no dependa del motor de
+ * validación: aquí se sabe **pedir** una extracción, no juzgarla.
+ */
+export type ReconcileFn = (
+  proposal: ExtractionProposal,
+  fieldOrigins: FieldOrigins
+) => {
+  status: "PASS" | "WARN" | "FAIL"
+  detail: unknown
+  proposal?: ExtractionProposal
+  fieldOrigins?: FieldOrigins
+}
+
+export type RunExtractionOptions = {
+  promptCode?: PromptCode
+  /** Fecha de recepción (origen `usuario`). Default: la fecha de subida. */
+  receptionDate?: string | null
+  reconcile?: ReconcileFn
+  /** Reloj inyectable: mide duración sin atarse a `Date.now()` en los tests. */
+  clock?: () => number
+}
+
+export type ExtractionActor = { id: string | null }
+
+/**
+ * Ejecuta una extracción y **persiste su evidencia**.
+ *
+ * @returns el `ExtractionRun` recién insertado. Inmutable desde ese instante.
+ * @throws DocumentAlteredError si el fichero en disco no es el registrado.
+ * @throws ExtractionFailedError si ningún proveedor devolvió una salida válida.
+ */
+export async function runExtraction(
+  db: TenantClient,
+  organization: Organization,
+  file: File,
+  actor: ExtractionActor,
+  options: RunExtractionOptions = {}
+): Promise<ExtractionRun> {
+  const clock = options.clock ?? Date.now
+  const startedAt = clock()
+  const promptCode: PromptCode = options.promptCode ?? "extraction"
+
+  // 1 — El documento tiene que ser EL documento (RC-10, I-E8-9).
+  const fileSha256 = await verifyFileSha(organization, file)
+
+  // 2 — Adjuntos y páginas vistas de las totales (G-02).
+  const { attachments, pagesSent, pagesTotal } = await loadAttachmentsForAI(db, organization, file)
+
+  // 3 — Prompt efectivo y esquema, con sus sellos.
+  const [settings, fields, taxRates, resolved] = await Promise.all([
+    getSettings(db),
+    getFields(db),
+    listTaxRates(db),
+    resolvePrompt(db, promptCode),
+  ])
+  const rendered = renderPrompt(resolved.content, {
+    taxRates: taxRates.filter((rate) => rate.isActive).map((rate) => ({ code: rate.code, name: rate.name })),
+    fields: fields.map((field) => ({ code: field.code, llm_prompt: field.llm_prompt })),
+  })
+  const schemaSha = extractionSchemaSha()
+
+  // 4 — Llamada, con validación estricta de TODA salida (G-17).
+  const response = await requestLLM<ExtractionOutput>(getLLMSettings(settings), {
+    prompt: rendered.text,
+    schema: EXTRACTION_SCHEMA_V1 as Record<string, unknown>,
+    attachments,
+    parse: parseExtractionOutput,
+  })
+
+  if (response.error || !response.parsed) {
+    throw new ExtractionFailedError(response.error ?? "El proveedor no devolvió una salida utilizable", response.attempts)
+  }
+
+  // 5 — Normalización a los tipos del dominio. Sin calificar nada.
+  const { proposal, fieldOrigins } = normalizeExtractionOutput(response.parsed, {
+    defaultCurrency: settings.default_currency || "EUR",
+    receptionDate: options.receptionDate ?? toLocalDate(file.createdAt),
+  })
+
+  // 6 — Recálculo determinista, si el llamante lo aporta (T7).
+  const reconciled = options.reconcile?.(proposal, fieldOrigins)
+  const finalProposal = reconciled?.proposal ?? proposal
+  const finalOrigins = reconciled?.fieldOrigins ?? fieldOrigins
+
+  const durationMs = Math.max(0, clock() - startedAt)
+
+  // 7 — INSERT. A partir de aquí la evidencia es inmutable.
+  const run = await db.extractionRun.create({
+    data: {
+      organizationId: db.$organizationId,
+      fileId: file.id,
+      fileSha256,
+      kind: "LLM",
+      provider: response.provider,
+      model: response.model,
+      temperatureBps: 0,
+      attempts: response.attempts as unknown as Prisma.InputJsonValue,
+      promptCode,
+      promptSource: resolved.source,
+      promptVersionId: resolved.versionId,
+      promptSha: rendered.sha,
+      schemaVersion: EXTRACTION_SCHEMA_VERSION,
+      schemaSha,
+      pagesSent,
+      pagesTotal,
+      rawOutput: response.output as Prisma.InputJsonValue,
+      proposal: finalProposal as unknown as Prisma.InputJsonValue,
+      proposalSha: proposalHash(finalProposal),
+      fieldOrigins: finalOrigins as unknown as Prisma.InputJsonValue,
+      reconcile: (reconciled?.detail ?? null) as Prisma.InputJsonValue,
+      reconcileStatus: reconciled?.status ?? null,
+      tokensIn: response.tokensIn ?? null,
+      tokensOut: response.tokensOut ?? null,
+      durationMs,
+      gitSha: currentGitSha(),
+      createdById: actor.id,
+    },
+  })
+
+  return run
+}
+
+/** Relee los bytes y los sella. Una vez por run, como manda §9. */
+async function verifyFileSha(organization: Organization, file: File): Promise<string> {
+  const buffer = await fs.readFile(fullPathForFile(organization, file))
+  const actual = sha256OfBuffer(buffer)
+  if (file.sha256 && file.sha256 !== actual) {
+    throw new DocumentAlteredError(file.sha256, actual)
+  }
+  return actual
+}
+
+const toLocalDate = (value: Date): string => value.toISOString().slice(0, 10)

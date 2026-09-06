@@ -2,7 +2,8 @@ import { Prisma } from "@/prisma/client"
 import { prisma, tenantDb, withTenantGucs } from "@/lib/db"
 import { isMaintenanceConfigured, withMaintenanceClient } from "@/lib/db-maintenance"
 import { decryptSecret } from "@/lib/encryption"
-import { ingestUnsortedFile, syncOrganizationStorage, UploadContext } from "@/lib/uploads"
+import { ingestUnsortedFile, sha256OfBuffer, syncOrganizationStorage, UploadContext } from "@/lib/uploads"
+import { findFilesBySha256 } from "@/models/files"
 import { File, Organization, User } from "@/prisma/client"
 import { attachmentMatchesExtensions, buildSearchCriteria } from "./filters"
 import { realImapClient } from "./imap-client"
@@ -51,6 +52,7 @@ export async function syncServer(
     )
 
     let processed = 0
+    let skippedDuplicates = 0
     const watermark = server.lastProcessedUid ?? 0
     let maxUid = watermark
 
@@ -60,6 +62,30 @@ export async function syncServer(
       if (message.uid <= watermark) continue
       for (const attachment of message.attachments) {
         if (!attachmentMatchesExtensions(attachment.filename, server.allowedExtensions)) continue
+
+        // E8 · T19 (cierre de G-22). El watermark es una defensa de UN solo uso:
+        // en cuanto alguien reinicia `lastProcessedUid` —para recuperar un
+        // correo perdido, o porque el servidor renumeró— el buzón entero se
+        // vuelve a ingerir y la bandeja se llena de gastos duplicados. La clave
+        // dura es el par (bytes, mensaje): el MISMO adjunto del MISMO correo ya
+        // está dentro y no se guarda otra vez. El mismo adjunto en OTRO correo
+        // sí entra: son dos hechos distintos y el dedupe de documento (I-E8-13)
+        // es quien decide después.
+        const sha256 = sha256OfBuffer(attachment.content)
+        const sameBytes = await findFilesBySha256(ctx.db, sha256)
+        const alreadyIngested = sameBytes.some((file) => {
+          const metadata = (file.metadata ?? {}) as Record<string, unknown>
+          return (
+            metadata.source === "email" &&
+            metadata.emailServer === server.id &&
+            (message.messageId ? metadata.messageId === message.messageId : metadata.messageId == null)
+          )
+        })
+        if (alreadyIngested) {
+          skippedDuplicates++
+          continue
+        }
+
         await ingest(ctx, {
           buffer: attachment.content,
           filename: attachment.filename,
@@ -78,7 +104,7 @@ export async function syncServer(
       if (message.uid > maxUid) maxUid = message.uid
     }
 
-    return { serverId: server.id, processed, lastProcessedUid: maxUid, status: "connected" }
+    return { serverId: server.id, processed, skippedDuplicates, lastProcessedUid: maxUid, status: "connected" }
   } catch (error) {
     return {
       serverId: server.id,

@@ -38,6 +38,25 @@ export const getFilesByTransactionId = cache(async (db: TenantClient, id: string
   return []
 })
 
+/**
+ * E8 · T19 (cierre de G-11) — ficheros con los MISMOS bytes ya en la
+ * organización.
+ *
+ * El índice `(organization_id, sha256)` de T3 es el que sirve esta consulta. Es
+ * el primer eslabón del dedupe: el mismo PDF reenviado por correo, resubido a
+ * mano o duplicado por un reintento del cliente comparte hash y se detecta
+ * antes de que nadie lo contabilice dos veces. Es un **aviso**, no una puerta:
+ * hay motivos legítimos para el mismo binario (una copia adjunta a otra
+ * operación), y por eso quien fuerza deja `AuditLog`.
+ */
+export const findFilesBySha256 = cache(async (db: TenantClient, sha256: string, excludeId?: string) => {
+  if (!sha256) return []
+  return await db.file.findMany({
+    where: { sha256, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    orderBy: { createdAt: "asc" },
+  })
+})
+
 export const createFile = async (db: TenantClient, data: Prisma.FileUncheckedCreateInput) => {
   return await db.file.create({ data })
 }

@@ -1,4 +1,5 @@
 import { TenantClient } from "@/lib/db"
+import { parseCents } from "@/lib/money"
 import { codeFromName } from "@/lib/utils"
 import { formatDate } from "date-fns"
 import { createCategory, getCategoryByCode } from "./categories"
@@ -13,6 +14,24 @@ export type ExportFields = string[]
  * Los conversores reciben el cliente acotado a la organización (nunca un userId):
  * así categorías y proyectos referenciados en el CSV se resuelven dentro del tenant.
  */
+/**
+ * E8 · T19 (cierre de G-07). `parseFloat(String(value)) * 100` daba céntimos con
+ * decimales para una columna `Int` y convertía en **0,00 €** cualquier importe
+ * que no supiera leer —«1.234,56» incluido—. La conversión es ahora la única del
+ * proyecto (`lib/money.ts`) y un valor ilegible **lanza**: importar un CSV con la
+ * columna de importe mal formada no puede terminar en una operación de cero
+ * euros que nadie vuelve a mirar.
+ */
+const importCents = (label: string) =>
+  async function (_db: TenantClient, value: unknown) {
+    if (value === null || value === undefined || String(value).trim() === "") return null
+    const cents = parseCents(String(value))
+    if (cents === null) {
+      throw new Error(`${label}: «${String(value)}» no es un importe válido`)
+    }
+    return cents
+  }
+
 export type ExportImportFieldSettings = {
   code: string
   type: string
@@ -39,10 +58,7 @@ export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettin
     export: async function (_db, value) {
       return (value as number) / 100
     },
-    import: async function (_db, value) {
-      const num = parseFloat(String(value))
-      return isNaN(num) ? 0.0 : num * 100
-    },
+    import: importCents("total"),
   },
   currencyCode: {
     code: "currencyCode",
@@ -57,10 +73,7 @@ export const EXPORT_AND_IMPORT_FIELD_MAP: Record<string, ExportImportFieldSettin
       }
       return (value as number) / 100
     },
-    import: async function (_db, value) {
-      const num = parseFloat(String(value))
-      return isNaN(num) ? 0.0 : num * 100
-    },
+    import: importCents("convertedTotal"),
   },
   convertedCurrencyCode: {
     code: "convertedCurrencyCode",

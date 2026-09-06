@@ -19,6 +19,8 @@ vi.mock("@/models/files", () => ({
     created.push(data)
     return data
   }),
+  // E8 · T19 (G-11): la ingesta consulta los ficheros con los MISMOS bytes.
+  findFilesBySha256: vi.fn(async () => []),
 }))
 vi.mock("@/models/organizations", () => ({ updateOrganization: vi.fn() }))
 

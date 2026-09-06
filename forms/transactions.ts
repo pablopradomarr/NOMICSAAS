@@ -1,4 +1,31 @@
+import { parseCents } from "@/lib/money"
 import { z } from "zod"
+
+/**
+ * E8 · T19 (cierre de G-07) — un solo parseador de importes en TODO el camino
+ * de entrada.
+ *
+ * `parseFloat(val) * 100` era el patrón heredado: `Math.round` a veces sí y a
+ * veces no, ninguna tolerancia a los separadores españoles («1.234,56»), y un
+ * `19.99` que llegaba a una columna `Int` como `1998.9999999999998`. Ahora todo
+ * pasa por `parseCents` de `lib/money.ts`, que es aritmética entera y entiende
+ * es-ES y en-US. Un texto no interpretable **no** vale 0: es un error de
+ * validación, porque un importe silenciosamente puesto a cero es peor que un
+ * formulario que se queja.
+ */
+function centsField(label: string, path: string) {
+  return z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (!val || val.trim() === "") return null
+      const cents = parseCents(val)
+      if (cents === null) {
+        throw new z.ZodError([{ message: `${label} no es un importe válido`, path: [path], code: z.ZodIssueCode.custom }])
+      }
+      return cents
+    })
+}
 
 export const transactionFormSchema = z
   .object({
@@ -6,31 +33,9 @@ export const transactionFormSchema = z
     merchant: z.string().max(128).optional(),
     description: z.string().max(256).optional(),
     type: z.string().optional(),
-    total: z
-      .string()
-      .optional()
-      .transform((val) => {
-        if (!val || val.trim() === "") return null
-        const num = parseFloat(val)
-        if (isNaN(num)) {
-          throw new z.ZodError([{ message: "Invalid total", path: ["total"], code: z.ZodIssueCode.custom }])
-        }
-        return Math.round(num * 100) // convert to cents
-      }),
+    total: centsField("El total", "total"),
     currencyCode: z.string().max(5).optional(),
-    convertedTotal: z
-      .string()
-      .optional()
-      .transform((val) => {
-        if (!val || val.trim() === "") return null
-        const num = parseFloat(val)
-        if (isNaN(num)) {
-          throw new z.ZodError([
-            { message: "Invalid coverted total", path: ["convertedTotal"], code: z.ZodIssueCode.custom },
-          ])
-        }
-        return Math.round(num * 100) // convert to cents
-      }),
+    convertedTotal: centsField("El total convertido", "convertedTotal"),
     convertedCurrencyCode: z.string().max(5).optional(),
     categoryCode: z.string().optional(),
     projectCode: z.string().optional(),

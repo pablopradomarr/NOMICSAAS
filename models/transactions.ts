@@ -132,10 +132,24 @@ export const getTransactionsByFileId = cache(async (db: TenantClient, fileId: st
   })
 })
 
+/**
+ * E8 · T19 (cierre de G-19) — moneda por defecto de LA ORGANIZACIÓN.
+ *
+ * El código heredado asumía `"USD"` cuando la fila no traía moneda. En una
+ * contabilidad en euros eso significaba que el dedupe comparaba contra una
+ * moneda que no existe en la organización y **nunca encontraba el duplicado**:
+ * el gasto entraba dos veces. La moneda por defecto se resuelve en un solo
+ * sitio y sale de `Organization.baseCurrency`.
+ */
+export const defaultCurrencyCode = async (db: TenantClient): Promise<string> => {
+  const organization = await db.organization.findFirst({ select: { baseCurrency: true } })
+  return organization?.baseCurrency ?? "EUR"
+}
+
 // --- 1. New Dedicated Deduplication Function ---
 export const findDuplicateTransaction = async (db: TenantClient, data: TransactionData) => {
   const { standard } = await splitTransactionDataExtraFields(data, db)
-  const currencyCode = standard.currencyCode || "USD"
+  const currencyCode = standard.currencyCode || (await defaultCurrencyCode(db))
 
   if (standard.total && standard.merchant && standard.issuedAt) {
     const existingTransaction = await db.transaction.findFirst({
@@ -151,6 +165,68 @@ export const findDuplicateTransaction = async (db: TenantClient, data: Transacti
   }
 
   return null
+}
+
+export type DocumentKey = {
+  /** NIF/CIF de la contraparte tal y como está en su ficha. */
+  taxId: string | null | undefined
+  documentNumber: string | null | undefined
+  /** Ejercicio del documento (año natural de `documentDate`). */
+  year: number | null | undefined
+}
+
+export type DocumentDuplicate = {
+  entryId: string
+  entryNumber: number
+  documentDate: Date | null
+  documentNumber: string
+  counterpartyName: string
+}
+
+/**
+ * E8 · T19 / I-E8-13 (G-11, O-19) — duplicado por `(taxId, nº de documento,
+ * ejercicio)`.
+ *
+ * El `sha256` sólo caza el MISMO fichero; la factura reenviada en PDF y en foto,
+ * o tecleada dos veces, pasa por debajo. La clave que un auditor usa para el
+ * libro registro es ésta, y es el vector clásico del doble pago y de la doble
+ * deducción.
+ *
+ * Devuelve los asientos que ya usan esa clave; el llamante decide. **El aviso no
+ * bloquea**: hay casos legítimos (un split, una serie repetida entre ejercicios
+ * mal cerrada), y forzarlo exige `AuditLog` con `FORCE_DUPLICATE` y motivo.
+ */
+export const findDuplicateDocuments = async (db: TenantClient, key: DocumentKey): Promise<DocumentDuplicate[]> => {
+  const { taxId, documentNumber, year } = key
+  if (!taxId || !documentNumber || !year) return []
+
+  const counterparties = await db.counterparty.findMany({ where: { taxId }, select: { id: true, name: true } })
+  if (counterparties.length === 0) return []
+  const namesById = new Map(counterparties.map((c) => [c.id, c.name]))
+
+  const entries = await db.journalEntry.findMany({
+    where: {
+      sourceId: documentNumber,
+      documentDate: {
+        gte: new Date(Date.UTC(year, 0, 1)),
+        lte: new Date(Date.UTC(year, 11, 31)),
+      },
+      lines: { some: { counterpartyId: { in: [...namesById.keys()] } } },
+    },
+    select: { id: true, entryNumber: true, documentDate: true, lines: { select: { counterpartyId: true } } },
+    orderBy: { entryNumber: "asc" },
+  })
+
+  return entries.map((entry) => {
+    const counterpartyId = entry.lines.map((l) => l.counterpartyId).find((id) => id && namesById.has(id))
+    return {
+      entryId: entry.id,
+      entryNumber: entry.entryNumber,
+      documentDate: entry.documentDate,
+      documentNumber,
+      counterpartyName: (counterpartyId && namesById.get(counterpartyId)) || "",
+    }
+  })
 }
 
 export const createTransaction = async (

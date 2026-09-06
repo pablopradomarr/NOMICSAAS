@@ -11,7 +11,7 @@ export default defineConfig({
       // Ronda 2 (#5): la variable de CI manda; el default sólo cubre el local.
       DATABASE_URL_TEST: process.env.DATABASE_URL_TEST || DEFAULT_TEST_DATABASE_URL,
     },
-    include: ["lib/**/*.test.ts", "forms/**/*.test.ts", "models/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    include: ["ai/**/*.test.ts", "lib/**/*.test.ts", "forms/**/*.test.ts", "models/**/*.test.ts", "tests/integration/**/*.test.ts"],
     globalSetup: ["./vitest.integration.setup.ts"],
     fileParallelism: false,
     // BLOQUEA #1: los ficheros van en SERIE. Cada fichero abre su propio pool de

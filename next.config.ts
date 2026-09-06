@@ -31,6 +31,16 @@ const nextConfig: NextConfig = {
     unoptimized: true, // FIXME: bug on prod, images always empty, investigate later
   },
   serverExternalPackages: ["@prisma/adapter-pg"],
+  /**
+   * E8 · T6 — los prompts son ficheros de git (`ai/prompts/*.md`), no cadenas
+   * embebidas, y `resolvePrompt` los lee del disco para poder sellar el texto
+   * EFECTIVO (I-E8-11). El trazador de Next no los ve porque nadie los importa,
+   * así que hay que declararlos: sin esto, un despliegue `standalone` arranca
+   * sin prompt y ninguna extracción funciona.
+   */
+  outputFileTracingIncludes: {
+    "/**": ["./ai/prompts/**/*.md"],
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "256mb",

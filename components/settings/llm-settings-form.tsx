@@ -1,6 +1,6 @@
 "use client"
 
-import { fieldsToJsonSchema } from "@/ai/schema"
+import { EXTRACTION_SCHEMA_V1 } from "@/ai/schema"
 import { saveSettingsAction, testLLMProviderAction } from "@/app/(app)/settings/actions"
 import { FormError } from "@/components/forms/error"
 import { FormSelect, FormTextarea } from "@/components/forms/simple"
@@ -145,8 +145,14 @@ export default function LLMSettingsForm({
             <Edit className="w-4 h-4" /> Edit Fields
           </Link>
         </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Esquema fijo y versionado en git (<code>ai/schemas/extraction.v1.json</code>). No incluye cuenta contable,
+          dimensiones, deducibilidad ni retención: eso lo decide la organización, no el modelo (ADR-0014 D4 y D11).
+          Los campos personalizados viajan aparte, sin valor económico:{" "}
+          {fields.map((field) => field.code).join(", ") || "ninguno"}.
+        </p>
         <pre className="text-xs overflow-hidden text-ellipsis">
-          {JSON.stringify(fieldsToJsonSchema(fields), null, 2)}
+          {JSON.stringify(EXTRACTION_SCHEMA_V1, null, 2)}
         </pre>
       </Card>
     </>

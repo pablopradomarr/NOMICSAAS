@@ -46,6 +46,12 @@ export type ImapClient = {
 export type SyncResult = {
   serverId: string
   processed: number
+  /**
+   * E8 · T19 (cierre de G-22): adjuntos que YA estaban ingeridos —mismo
+   * `sha256` y mismo `messageId`— y por tanto no se han vuelto a guardar. El
+   * watermark solo protege mientras nadie lo reinicia; el hash protege siempre.
+   */
+  skippedDuplicates?: number
   lastProcessedUid?: number
   status: "connected" | "error"
   errorMessage?: string

@@ -1,6 +1,6 @@
 import { File as PrismaFile, Organization, User } from "@/prisma/client"
 import { TenantClient } from "@/lib/db"
-import { createFile } from "@/models/files"
+import { createFile, findFilesBySha256 } from "@/models/files"
 import { createHash, randomUUID } from "crypto"
 import { mkdir, writeFile } from "fs/promises"
 import path from "path"
@@ -234,10 +234,24 @@ export type UploadContext = {
   user: User
 }
 
-export async function ingestUnsortedFile(
+/**
+ * E8 · T19 (G-11) — resultado de una ingesta con su aviso de duplicado.
+ *
+ * `duplicateOf` son los ficheros de la organización con los MISMOS bytes. Se
+ * devuelve además del fichero creado, y **no** aborta la ingesta: el criterio de
+ * duplicado lo aplica quien contabiliza (I-E8-13), no quien guarda bytes; un
+ * adjunto legítimamente repetido no puede perderse en el camino de entrada.
+ */
+export type IngestResult = { file: PrismaFile; duplicateOf: PrismaFile[] }
+
+/**
+ * Ingesta con aviso de duplicado. `ingestUnsortedFile` la envuelve y devuelve
+ * sólo el fichero, que es lo que espera el código heredado.
+ */
+export async function ingestUnsortedFileWithDedupe(
   ctx: UploadContext,
   input: { buffer: Buffer; filename: string; mimetype: string; metadata?: Record<string, unknown> }
-): Promise<PrismaFile> {
+): Promise<IngestResult> {
   const { db, organization, user } = ctx
   if (!isEnoughStorageToUploadFile(organization, input.buffer.length)) {
     throw new Error("Not enough space to upload the file")
@@ -245,6 +259,8 @@ export async function ingestUnsortedFile(
 
   // E1-fix (#18): el mimetype que se persiste sale del CONTENIDO, no del cliente.
   const mimetype = assertAcceptableUpload(input.filename, input.buffer)
+  const sha256 = sha256OfBuffer(input.buffer)
+  const duplicateOf = await findFilesBySha256(db, sha256)
 
   const fileUuid = randomUUID()
   const relativeFilePath = unsortedFilePath(fileUuid, input.filename)
@@ -253,17 +269,29 @@ export async function ingestUnsortedFile(
   await mkdir(path.dirname(fullFilePath), { recursive: true })
   await writeFile(fullFilePath, input.buffer)
 
-  return await createFile(db, {
+  const file = await createFile(db, {
     id: fileUuid,
     organizationId: organization.id,
     uploadedById: user.id,
     filename: input.filename,
     path: relativeFilePath,
     mimetype,
-    sha256: sha256OfBuffer(input.buffer),
+    sha256,
     sizeBytes: input.buffer.length,
-    metadata: { size: input.buffer.length, ...input.metadata },
+    metadata: {
+      size: input.buffer.length,
+      ...input.metadata,
+      ...(duplicateOf.length > 0 ? { duplicateOfFileIds: duplicateOf.map((f) => f.id) } : {}),
+    },
   })
+  return { file, duplicateOf }
+}
+
+export async function ingestUnsortedFile(
+  ctx: UploadContext,
+  input: { buffer: Buffer; filename: string; mimetype: string; metadata?: Record<string, unknown> }
+): Promise<PrismaFile> {
+  return (await ingestUnsortedFileWithDedupe(ctx, input)).file
 }
 
 /** Recalcula y persiste el consumo de disco de la organización (cuota T11). */

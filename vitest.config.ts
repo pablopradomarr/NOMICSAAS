@@ -6,7 +6,7 @@ export default defineConfig({
     environment: "node",
     // Vitest expone BASE_URL="/" (de Vite) y lib/config exige una URL absoluta.
     env: { BASE_URL: process.env.BASE_URL?.startsWith("http") ? process.env.BASE_URL : "http://localhost:7331" },
-    include: ["lib/**/*.test.ts", "forms/**/*.test.ts", "models/**/*.test.ts"],
+    include: ["ai/**/*.test.ts", "lib/**/*.test.ts", "forms/**/*.test.ts", "models/**/*.test.ts"],
   },
   resolve: {
     alias: [

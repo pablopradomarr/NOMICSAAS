@@ -3,7 +3,6 @@
 import { useNotification } from "@/app/(app)/context"
 import { deleteTransactionAction } from "@/app/(app)/transactions/actions"
 import { deleteUnsortedFileAction, saveFileAsTransactionAction } from "@/app/(app)/unsorted/actions"
-import { CurrencyConverterTool } from "@/components/agents/currency-converter"
 import { ItemsDetectTool } from "@/components/agents/items-detect"
 import ToolWindow from "@/components/agents/tool-window"
 import { FormError } from "@/components/forms/error"
@@ -17,7 +16,6 @@ import { Button } from "@/components/ui/button"
 import { ActionState } from "@/lib/actions"
 import { analyzeLimiter, analyzeProgress } from "@/lib/analyze-queue"
 import { Category, Currency, Field, File, Project, Transaction } from "@/prisma/client"
-import { format } from "date-fns"
 import { ArrowDownToLine, Brain, Loader2, Trash2 } from "lucide-react"
 import { startTransition, useEffect, useActionState, useMemo, useState } from "react"
 import { useFormStatus } from "react-dom"
@@ -335,22 +333,18 @@ export default function AnalyzeForm({
           />
         </div>
 
+        {/*
+          E8 · T10 (G-04): el conversor de divisa DEL NAVEGADOR se ha retirado.
+          La tasa la resuelve el servidor contra la fuente única (BCE/
+          Frankfurter), a la fecha del documento, y se persiste en
+          `exchange_rates` con su fuente y su fecha real (ADR-0014 D2). La
+          conversión visible con su badge llega con la pantalla nueva de
+          /unsorted (T15/T16); hasta entonces el formulario heredado no
+          convierte, que es preferible a convertir con un número que nadie
+          guarda ni puede auditar.
+        */}
         {formData.total != 0 && formData.currencyCode && formData.currencyCode !== settings.default_currency && (
-          <ToolWindow
-            title={`Exchange rate on ${format(
-              formData.issuedAt ? new Date(formData.issuedAt + "T00:00:00") : new Date(),
-              "LLLL dd, yyyy"
-            )}`}
-          >
-            <CurrencyConverterTool
-              originalTotal={formData.total}
-              originalCurrencyCode={formData.currencyCode}
-              targetCurrencyCode={settings.default_currency}
-              date={formData.issuedAt ? new Date(formData.issuedAt + "T00:00:00") : new Date()}
-              onChange={(value) => setFormData((prev) => ({ ...prev, convertedTotal: value }))}
-            />
-            <input type="hidden" name="convertedCurrencyCode" value={settings.default_currency} />
-          </ToolWindow>
+          <input type="hidden" name="convertedCurrencyCode" value={settings.default_currency} />
         )}
 
         <div className="flex flex-row gap-4">

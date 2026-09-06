@@ -1,7 +1,20 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 // --- import-time mocks so importing ./ingest doesn't run config Zod validation or create a Prisma client ---
-vi.mock("@/lib/uploads", () => ({ ingestUnsortedFile: vi.fn(), syncOrganizationStorage: vi.fn() }))
+vi.mock("@/lib/uploads", async () => {
+  const { createHash } = await import("node:crypto")
+  return {
+    ingestUnsortedFile: vi.fn(),
+    syncOrganizationStorage: vi.fn(),
+    // E8 · T19 (G-22): el dedupe de adjuntos necesita el sha REAL de los bytes.
+    sha256OfBuffer: (buffer: Buffer) => createHash("sha256").update(buffer).digest("hex"),
+  }
+})
+/** G-22: ficheros ya ingeridos que el dedupe encuentra por sha. Vacío por defecto. */
+const alreadyIngested = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }))
+vi.mock("@/models/files", () => ({
+  findFilesBySha256: vi.fn(async () => alreadyIngested.rows),
+}))
 // E3-T2: `runEmailSync` ya no hace un `findMany` cross-org sin GUC. Enumera los
 // destinos por la puerta `app.list_email_sync_targets()` (`prisma.$queryRaw`) y
 // carga cada iteración dentro de `withTenantGucs`. El fixture de la fila de
@@ -42,6 +55,7 @@ import { realImapClient } from "@/lib/email-sync/imap-client"
 import { ingestUnsortedFile, syncOrganizationStorage } from "@/lib/uploads"
 import { File, User } from "@/prisma/client"
 import { EmailServer, ImapClient, ImapMessage } from "./types"
+import { createHash } from "node:crypto"
 
 beforeAll(() => {
   process.env.BETTER_AUTH_SECRET = "test-secret-key-for-encryption-unit-tests"
@@ -93,6 +107,64 @@ describe("syncServer", () => {
     expect(result.processed).toBe(2)
     expect(result.lastProcessedUid).toBe(12)
     expect(result.status).toBe("connected")
+  })
+
+  /**
+   * E8 · T19 (cierre de G-22). El watermark protege una vez; en cuanto alguien
+   * lo reinicia —para recuperar un correo perdido— el buzón entero se reingiere
+   * y la bandeja se llena de gastos duplicados. La clave dura es (bytes,
+   * mensaje).
+   */
+  describe("dedupe de adjuntos por sha256 + messageId (G-22)", () => {
+    const attachment = { filename: "invoice.pdf", contentType: "application/pdf", content: Buffer.from("pdf"), size: 3 }
+    const message: ImapMessage = { uid: 10, messageId: "<a@x>", attachments: [attachment] }
+    const sha = createHash("sha256").update(attachment.content).digest("hex")
+
+    beforeEach(() => {
+      alreadyIngested.rows = []
+    })
+
+    it("no vuelve a ingerir el MISMO adjunto del MISMO correo aunque se reinicie el watermark", async () => {
+      alreadyIngested.rows = [
+        { id: "f-1", sha256: sha, metadata: { source: "email", emailServer: "srv-1", messageId: "<a@x>" } },
+      ]
+      const ingested: { filename: string }[] = []
+      const result = await syncServer(makeServer({ lastProcessedUid: 0 }), ctx, {
+        client: fakeClient([message]),
+        ingest: async (_ctx, input) => { ingested.push(input); return { id: "f", ...input } as unknown as File },
+      })
+
+      expect(ingested).toEqual([])
+      expect(result.processed).toBe(0)
+      expect(result.skippedDuplicates).toBe(1)
+      // El watermark SÍ avanza: el mensaje se ha procesado, sencillamente no
+      // había nada nuevo que guardar.
+      expect(result.lastProcessedUid).toBe(10)
+    })
+
+    it("el mismo adjunto en OTRO correo sí entra: son dos hechos distintos", async () => {
+      alreadyIngested.rows = [
+        { id: "f-1", sha256: sha, metadata: { source: "email", emailServer: "srv-1", messageId: "<otro@x>" } },
+      ]
+      const ingested: { filename: string }[] = []
+      const result = await syncServer(makeServer(), ctx, {
+        client: fakeClient([message]),
+        ingest: async (_ctx, input) => { ingested.push(input); return { id: "f", ...input } as unknown as File },
+      })
+
+      expect(ingested.map((i) => i.filename)).toEqual(["invoice.pdf"])
+      expect(result.processed).toBe(1)
+      expect(result.skippedDuplicates).toBe(0)
+    })
+
+    it("un fichero con los mismos bytes que NO vino del correo no bloquea la ingesta", async () => {
+      alreadyIngested.rows = [{ id: "f-1", sha256: sha, metadata: { source: "upload" } }]
+      const result = await syncServer(makeServer(), ctx, {
+        client: fakeClient([message]),
+        ingest: async (_ctx, input) => ({ id: "f", ...input }) as unknown as File,
+      })
+      expect(result.processed).toBe(1)
+    })
   })
 
   it("does not advance the watermark when there are no new messages", async () => {

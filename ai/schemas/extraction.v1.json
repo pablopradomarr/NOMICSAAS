@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "extraction.v1",
+  "description": "Salida cruda de una extracción documental. SÓLO transcripción: ni una cuenta contable, ni una dimensión analítica, ni una calificación fiscal (ADR-0014 D4 y D11, O-10, O-11).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "docKind",
+    "documentNumber",
+    "counterparty",
+    "documentDate",
+    "dueSchedule",
+    "currency",
+    "lines",
+    "taxes",
+    "readWithholding",
+    "rectifies",
+    "totalCents",
+    "description",
+    "legalMentions",
+    "extra"
+  ],
+  "properties": {
+    "docKind": {
+      "description": "Clase de documento SUGERIDA. La firme la decide la organización.",
+      "type": "string",
+      "enum": [
+        "FACTURA_RECIBIDA",
+        "FACTURA_RECIBIDA_ISP",
+        "FACTURA_RECIBIDA_EXTRACOM",
+        "DUA_IMPORTACION",
+        "ABONO_RECIBIDO",
+        "TICKET",
+        "FACTURA_ANTICIPO_PROVEEDOR",
+        "NOTA_GASTO_EMPLEADO",
+        "FACTURA_EMITIDA",
+        "ABONO_EMITIDO",
+        "FACTURA_ANTICIPO_CLIENTE",
+        "NOMINA",
+        "RECIBO_SS",
+        "EXTRACTO_BANCARIO",
+        "DESCONOCIDO"
+      ]
+    },
+    "documentNumber": {
+      "description": "Número del documento tal y como está impreso.",
+      "type": ["string", "null"]
+    },
+    "counterparty": {
+      "description": "La OTRA parte del documento, nunca la organización que lo recibe.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "taxId"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "taxId": {
+          "description": "NIF/CIF/NIF-IVA o identificador del tercer país, transcrito sin espacios.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "documentDate": {
+      "description": "Fecha de expedición, YYYY-MM-DD.",
+      "type": ["string", "null"]
+    },
+    "dueSchedule": {
+      "description": "Vencimientos impresos en el documento.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dueDate", "amountCents"],
+        "properties": {
+          "dueDate": { "type": ["string", "null"] },
+          "amountCents": { "type": "integer" }
+        }
+      }
+    },
+    "currency": {
+      "description": "ISO 4217, tres letras mayúsculas.",
+      "type": ["string", "null"]
+    },
+    "lines": {
+      "description": "Líneas del documento, en céntimos enteros.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["baseCents", "discountCents", "taxRateCode", "description", "qty", "unitPriceCents"],
+        "properties": {
+          "baseCents": { "type": "integer" },
+          "discountCents": { "type": ["integer", "null"] },
+          "taxRateCode": { "type": ["string", "null"] },
+          "description": { "type": ["string", "null"] },
+          "qty": {
+            "description": "Informativo. NUNCA se multiplica para obtener la base.",
+            "type": ["number", "null"]
+          },
+          "unitPriceCents": { "type": ["integer", "null"] }
+        }
+      }
+    },
+    "taxes": {
+      "description": "Tabla de impuestos del pie. `quotaCents` es LA CUOTA QUE EL DOCUMENTO DECLARA (ADR-0014 D3).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["taxRateCode", "baseCents", "quotaCents"],
+        "properties": {
+          "taxRateCode": { "type": ["string", "null"] },
+          "baseCents": { "type": "integer" },
+          "quotaCents": { "type": "integer" }
+        }
+      }
+    },
+    "readWithholding": {
+      "description": "Retención LEÍDA en el documento. Sirve SÓLO para contrastar (RC-19): la que se contabiliza la fija el régimen de la contraparte.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["rateBps", "quotaCents"],
+      "properties": {
+        "rateBps": { "type": "integer" },
+        "quotaCents": { "type": "integer" }
+      }
+    },
+    "rectifies": {
+      "description": "Sólo el número del documento rectificado. La causa y el modo los decide el usuario (ADR-0014 D12).",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["documentNumber"],
+      "properties": {
+        "documentNumber": { "type": "string" }
+      }
+    },
+    "totalCents": {
+      "description": "Total del documento en céntimos enteros.",
+      "type": "integer"
+    },
+    "description": {
+      "description": "Descripción breve del objeto del documento.",
+      "type": ["string", "null"]
+    },
+    "legalMentions": {
+      "description": "Menciones legales COPIADAS literalmente, sin interpretar.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "extra": {
+      "description": "Campos personalizados NO económicos de la organización.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "value"],
+        "properties": {
+          "code": { "type": "string" },
+          "value": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

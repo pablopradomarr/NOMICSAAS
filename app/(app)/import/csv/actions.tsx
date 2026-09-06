@@ -3,7 +3,8 @@
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
 import { EXPORT_AND_IMPORT_FIELD_MAP } from "@/models/export_and_import"
-import { createTransaction, findDuplicateTransaction } from "@/models/transactions"
+import { getFields } from "@/models/fields"
+import { createTransaction, defaultCurrencyCode, findDuplicateTransaction } from "@/models/transactions"
 import { Transaction } from "@/prisma/client"
 import { parse } from "@fast-csv/parse"
 import { revalidatePath } from "next/cache"
@@ -55,16 +56,30 @@ export async function saveTransactionsAction(
     const startIndex = parseInt(formData.get("resumeIndex") as string) || 0
     const rowsToProcess = rows.slice(startIndex)
     let currentIndex = startIndex
+    // G-19: la moneda por defecto es la de la ORGANIZACIÓN, resuelta una vez.
+    const fallbackCurrency = await defaultCurrencyCode(db)
+    // G-08: columnas admitidas = las del mapa de import ∪ los campos
+    // personalizados DE ESTA organización. Nada más entra.
+    const allowedCodes = new Set([
+      ...Object.keys(EXPORT_AND_IMPORT_FIELD_MAP),
+      ...(await getFields(db)).map((field) => field.code),
+    ])
 
     for (const row of rowsToProcess) {
       const transactionData: Record<string, unknown> = {}
       for (const [fieldCode, value] of Object.entries(row)) {
         const fieldDef = EXPORT_AND_IMPORT_FIELD_MAP[fieldCode]
-        if (fieldDef?.import) {
-          transactionData[fieldCode] = await fieldDef.import(db, value)
-        } else {
-          transactionData[fieldCode] = value as string
-        }
+        // E8 · T19 (cierre de G-08). Sólo las columnas del mapa de import entran.
+        // Antes, cualquier cabecera del CSV se copiaba tal cual al objeto que
+        // acaba en `createTransaction`: bastaba una columna llamada
+        // `organizationId` o `journalEntryId` para intentar escribir fuera del
+        // tenant o enganchar una operación a un asiento ajeno. Lo que no está
+        // mapeado no se importa; se declara y se ignora.
+        if (!allowedCodes.has(fieldCode)) continue
+        transactionData[fieldCode] = fieldDef?.import ? await fieldDef.import(db, value) : (value as string)
+      }
+      if (!transactionData.currencyCode) {
+        transactionData.currencyCode = fallbackCurrency
       }
 
       const shouldForceSave = forceSave && currentIndex === startIndex

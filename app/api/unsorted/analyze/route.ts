@@ -1,100 +1,82 @@
-import { analyzeTransaction, AnalysisResult } from "@/ai/analyze"
-import { loadAttachmentsForAI } from "@/ai/attachments"
-import { buildLLMPrompt } from "@/ai/prompt"
-import { fieldsToJsonSchema } from "@/ai/schema"
+/**
+ * E8 · T12 — `POST /api/unsorted/analyze`.
+ *
+ * Ya no devuelve «los campos del formulario»: devuelve el **`runId`** de un
+ * `ExtractionRun` inmutable. La diferencia no es de forma. Antes la respuesta
+ * era la cifra, y la cifra viajaba al formulario sin que nadie supiera qué
+ * modelo la produjo ni sobre cuántas páginas; ahora la respuesta es el
+ * identificador de la evidencia, y las cifras se leen de ella con su
+ * `reconcile`, su confianza campo a campo y su cadena de intentos.
+ *
+ * El endpoint se conserva —la cola del cliente sigue llamándolo— pero el
+ * trabajo real está en `enqueueExtraction` (límite, saldo, concurrencia por
+ * organización) y en `runExtraction` (evidencia). Las server actions completas
+ * llegan en T13.
+ */
+
+import { DocumentAlteredError, ExtractionFailedError } from "@/ai/analyze"
+import {
+  AiBalanceExhaustedError,
+  ExtractionRateLimitedError,
+  SubscriptionExpiredError,
+  enqueueExtraction,
+} from "@/ai/queue"
 import { ActionState } from "@/lib/actions"
-import { isAiBalanceExhausted, isSubscriptionExpired } from "@/lib/auth"
 import { requireOrg } from "@/lib/authz"
-import { DEFAULT_PROMPT_ANALYSE_NEW_FILE } from "@/models/defaults"
-import { getFileById } from "@/models/files"
-import { getCategories } from "@/models/categories"
-import { getFields } from "@/models/fields"
-import { updateOrganization } from "@/models/organizations"
-import { getProjects } from "@/models/projects"
-import { getSettings } from "@/models/settings"
 import { NextRequest, NextResponse } from "next/server"
 
+export type AnalyzeResponse = {
+  runId: string
+  reconcileStatus: string | null
+  partial: boolean
+  pagesSent: number
+  pagesTotal: number
+  provider: string
+  model: string
+}
+
+const fail = (error: string, status: number) =>
+  NextResponse.json<ActionState<AnalyzeResponse>>({ success: false, error }, { status })
+
 export async function POST(request: NextRequest) {
-  // Analizar con IA consume saldo de la organización y escribe en el fichero → EDITOR
-  const { db, org } = await requireOrg("EDITOR")
+  // Analizar consume saldo y escribe evidencia → EDITOR.
+  const { db, org, user } = await requireOrg("EDITOR")
 
   let fileId: unknown
   try {
-    const body = await request.json()
-    fileId = body?.fileId
+    fileId = (await request.json())?.fileId
   } catch {
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      { success: false, error: "Invalid request body" },
-      { status: 400 }
-    )
+    return fail("Cuerpo de la petición no válido", 400)
   }
-
   if (typeof fileId !== "string" || fileId.length === 0) {
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      { success: false, error: "fileId is required" },
-      { status: 400 }
-    )
+    return fail("Falta el fileId", 400)
   }
 
-  const file = await getFileById(db, fileId)
-  if (!file) {
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      { success: false, error: "File not found or does not belong to the organization" },
-      { status: 404 }
-    )
-  }
-
-  if (isAiBalanceExhausted(org)) {
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      {
-        success: false,
-        error: "You used all of your pre-paid AI scans, please upgrade your account or buy new subscription plan",
-      },
-      { status: 402 }
-    )
-  }
-
-  if (isSubscriptionExpired(org)) {
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      {
-        success: false,
-        error: "Your subscription has expired, please upgrade your account or buy new subscription plan",
-      },
-      { status: 402 }
-    )
-  }
-
-  let attachments
   try {
-    attachments = await loadAttachmentsForAI(db, org, file)
+    const run = await enqueueExtraction(db, org, fileId, { id: user.id })
+    return NextResponse.json<ActionState<AnalyzeResponse>>({
+      success: true,
+      data: {
+        runId: run.id,
+        reconcileStatus: run.reconcileStatus,
+        partial: run.partial,
+        pagesSent: run.pagesSent,
+        pagesTotal: run.pagesTotal,
+        provider: run.provider,
+        model: run.model,
+      },
+    })
   } catch (error) {
-    console.error("Failed to retrieve files:", error)
-    return NextResponse.json<ActionState<AnalysisResult>>(
-      { success: false, error: "Failed to retrieve files: " + error },
-      { status: 500 }
-    )
+    if (error instanceof ExtractionRateLimitedError) return fail(error.message, 429)
+    if (error instanceof AiBalanceExhaustedError || error instanceof SubscriptionExpiredError) {
+      return fail(error.message, 402)
+    }
+    if (error instanceof DocumentAlteredError) return fail(error.message, 409)
+    if (error instanceof ExtractionFailedError) {
+      const rateLimited = error.attempts.some((attempt) => attempt.errorCode === "HTTP_429")
+      return fail(error.message, rateLimited ? 429 : 502)
+    }
+    console.error("Extracción fallida:", error)
+    return fail(error instanceof Error ? error.message : "La extracción ha fallado", 500)
   }
-
-  const settings = await getSettings(db)
-  const fields = await getFields(db)
-  const categories = await getCategories(db)
-  const projects = await getProjects(db)
-
-  const prompt = buildLLMPrompt(
-    settings.prompt_analyse_new_file || DEFAULT_PROMPT_ANALYSE_NEW_FILE,
-    fields,
-    categories,
-    projects
-  )
-
-  const schema = fieldsToJsonSchema(fields)
-
-  const results = await analyzeTransaction(db, prompt, schema, attachments, file.id)
-
-  if (results.data?.tokensUsed && results.data.tokensUsed > 0) {
-    await updateOrganization(org.id, { aiBalance: { decrement: 1 } })
-  }
-
-  const isRateLimited = !results.success && /\(HTTP 429\)/.test(results.error || "")
-  return NextResponse.json(results, { status: isRateLimited ? 429 : 200 })
 }
