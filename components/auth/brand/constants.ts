@@ -1,21 +1,12 @@
-/**
- * E13 · T5 — Constantes del kit de marca CFOnomic para `app/(auth)/`.
- *
- * `docs/design/E13-autenticacion.md` §4.1 prevé `config.brand = { product: "NOMIC", company: "CFOnomic" }`
- * en `lib/config.ts`, a cargo de `dev-backend` (T1), en paralelo a esta tarea. Como T1 todavía no lo ha
- * añadido, este fichero mantiene las mismas constantes en local para no bloquear T5.
- *
- * DEUDA (anotar en `docs/ESTADO.md` si sigue así al cerrar E13): en cuanto `lib/config.ts` exponga
- * `config.brand`, **T6** (que consume estos componentes en `/enter`) debe importar de ahí y este fichero
- * puede quedar sólo como reexport o eliminarse.
- */
+import config from "@/lib/config"
 
-export const BRAND = {
-  /** Nombre visible del producto en las pantallas de acceso (nunca `config.app.title`, que no se toca). */
-  product: "NOMIC",
-  /** Pie bajo el logo: "de CFOnomic". */
-  company: "CFOnomic",
-} as const
+/**
+ * E13 · T5/T6 — Constantes del kit de marca CFOnomic para `app/(auth)/`.
+ *
+ * `lib/config.ts` ya expone `config.brand = { product: "NOMIC", company: "CFOnomic" }` (T1), así que
+ * `BRAND` es un simple reexport tipado en vez de duplicar los literales (deuda de T5 cerrada en T6).
+ */
+export const BRAND = config.brand
 
 /**
  * Tokens de color de marca — sólo estos cinco (§6.2). No añadir colores fuera de esta lista dentro de
