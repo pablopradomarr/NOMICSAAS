@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { Client } from "pg"
-import { appMaintenancePassword, appRuntimePassword, ownerDatabaseUrl } from "./tests/support/env"
+import { appAuthPassword, appMaintenancePassword, appRuntimePassword, ownerDatabaseUrl } from "./tests/support/env"
 
 /**
  * Aplica las migraciones con el rol propietario y da credencial al rol de
@@ -44,6 +44,19 @@ export default async function setup() {
     )
     await client.query(`ALTER ROLE app_maintenance WITH LOGIN BYPASSRLS PASSWORD '${appMaintenancePassword()}'`)
     await client.query(`GRANT USAGE ON SCHEMA public, app TO app_maintenance`)
+
+    // E7 · T14 (ADR-0015 D5): rol del camino de autenticación. Lo CREA la
+    // migración 20260916130000 sin LOGIN y con sus GRANT sobre las cuatro tablas
+    // de auth; aquí sólo se le da credencial, como a los otros dos.
+    await client.query(
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_auth') THEN
+           CREATE ROLE app_auth NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+         END IF;
+       END $$;`
+    )
+    await client.query(`ALTER ROLE app_auth WITH LOGIN NOBYPASSRLS PASSWORD '${appAuthPassword()}'`)
+    await client.query(`GRANT USAGE ON SCHEMA public, app TO app_auth`)
     // Los privilegios de tabla los conceden LAS MIGRACIONES (E1 sobre todas las
     // tablas + `ALTER DEFAULT PRIVILEGES` para las que nazcan después). El
     // `GRANT … ON ALL TABLES` que había aquí volvía a conceder UPDATE y DELETE

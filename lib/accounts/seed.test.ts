@@ -159,7 +159,8 @@ describe("I-plan-1 · el mapa de sistema resuelve en ambas variantes y con ambos
         const check = validateAccountMap(entries, plan, REQUIRED_ACCOUNT_KEYS)
         expect(check.ok, check.ok ? "" : JSON.stringify(check.errors)).toBe(true)
         // E8 · T2: 15 opcionales desde `PROVEEDORES_INMOVILIZADO` (523).
-        expect(entries.length).toBe(REQUIRED_ACCOUNT_KEYS.length + 15)
+        // E7 · ADR-0015 (m1): 18 con 662, 669 y 665.
+        expect(entries.length).toBe(REQUIRED_ACCOUNT_KEYS.length + 18)
       })
     }
   }

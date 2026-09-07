@@ -133,7 +133,12 @@ export const cashflowAction = withOrg(
     const { periodStart, periodEnd, fiscalYearId, ...params } = parsed.data
     try {
       const run = await getOrCreateReportRun(org.id, {
-        type: params.method === "INDIRECTO" ? ReportType.CASHFLOW_INDIRECTO : ReportType.CASHFLOW_DIRECTO,
+        // **ADR-0015 D4.** UN solo tipo: el método es un PARÁMETRO del mismo
+        // informe sobre el mismo periodo y el mismo `ledgerHash`, y entra en
+        // `paramsHash` como cualquier otro (igual que la foto del balance y la
+        // variante del PGC en ADR-0012). Dos tipos duplicaban `scope`, caché y
+        // UI para una sola lectura del diario.
+        type: ReportType.CASHFLOW,
         periodStart,
         periodEnd,
         ...(fiscalYearId ? { fiscalYearId } : {}),
@@ -250,7 +255,13 @@ export const exportReportAction = withOrg(
 /** Notas al pie obligatorias por tipo de informe. */
 function notesFor(type: ReportType): string[] {
   if (type === ReportType.BALANCE) return [NOTA_NO_COMPENSACION]
-  if (type === ReportType.CASHFLOW_DIRECTO || type === ReportType.CASHFLOW_INDIRECTO) return [CASHFLOW_HEADER_NOTE]
+  // E7 · ADR-0015 D4: `CASHFLOW` unificado (el método viaja en `params`). Los
+  // dos tipos viejos siguen declarados en el enum —PostgreSQL no permite
+  // retirar un valor— y aquí se conservan para que un `ReportRun` histórico que
+  // aún no haya migrado siga exportándose con su nota al pie.
+  if (type === ReportType.CASHFLOW || type === ReportType.CASHFLOW_DIRECTO || type === ReportType.CASHFLOW_INDIRECTO) {
+    return [CASHFLOW_HEADER_NOTE]
+  }
   if (type === ReportType.DASHBOARD) return [AGING_GROUPING_NOTE]
   return []
 }

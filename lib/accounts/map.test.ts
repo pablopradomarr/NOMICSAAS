@@ -32,16 +32,24 @@ function account(code: string, extra: Partial<PlanAccount> = {}): PlanAccount {
   }
 }
 
-// E8 · T2: `PROVEEDORES_INMOVILIZADO` (523) sube el enum de 57 a 58 claves. Es
-// OPCIONAL —una organización cuyo plan no tenga 523 postable no debe fallar la
-// migración—, así que las 43 obligatorias no se mueven.
-describe("AccountKey — 58 claves, 43 obligatorias (D2-7, E-4, E8·T2)", () => {
-  it("43 obligatorias + 15 declaradas, sin solapes ni duplicados", () => {
+// E8 · T2: `PROVEEDORES_INMOVILIZADO` (523) subió el enum de 57 a 58 claves.
+// E7 · ADR-0015 (m1): `INTERESES_DEUDAS` (662), `OTROS_GASTOS_FINANCIEROS` (669)
+// e `INTERESES_DESCUENTO_EFECTOS` (665) lo suben a 61. Las cuatro son
+// OPCIONALES —una organización cuyo plan no tenga la cuenta postable no debe
+// fallar la migración—, así que las 43 obligatorias no se mueven.
+describe("AccountKey — 61 claves, 43 obligatorias (D2-7, E-4, E8·T2, E7·ADR-0015)", () => {
+  it("43 obligatorias + 18 declaradas, sin solapes ni duplicados", () => {
     expect(REQUIRED_ACCOUNT_KEYS).toHaveLength(43)
-    expect(OPTIONAL_ACCOUNT_KEYS).toHaveLength(15)
+    expect(OPTIONAL_ACCOUNT_KEYS).toHaveLength(18)
     const todas = [...REQUIRED_ACCOUNT_KEYS, ...OPTIONAL_ACCOUNT_KEYS]
-    expect(new Set(todas).size).toBe(58)
-    expect(Object.keys(ACCOUNT_KEY_DEFAULT_CODE)).toHaveLength(58)
+    expect(new Set(todas).size).toBe(61)
+    expect(Object.keys(ACCOUNT_KEY_DEFAULT_CODE)).toHaveLength(61)
+  })
+
+  it("E7 · ADR-0015 (m1): las tres claves nuevas resuelven a 662, 669 y 665", () => {
+    expect(ACCOUNT_KEY_DEFAULT_CODE.INTERESES_DEUDAS).toBe("662")
+    expect(ACCOUNT_KEY_DEFAULT_CODE.OTROS_GASTOS_FINANCIEROS).toBe("669")
+    expect(ACCOUNT_KEY_DEFAULT_CODE.INTERESES_DESCUENTO_EFECTOS).toBe("665")
   })
 
   it("E8 · ADR-0014 D6: `PROVEEDORES_INMOVILIZADO` resuelve a 523, no a 173", () => {
@@ -59,7 +67,7 @@ describe("defaultAccountMap — resolución a hoja postable", () => {
   it("plan vacío: ninguna clave resuelve", () => {
     const { entries, unresolved } = defaultAccountMap(buildPlan([]), { useSubaccounts: true })
     expect(entries).toEqual([])
-    expect(unresolved).toHaveLength(58)
+    expect(unresolved).toHaveLength(61)
   })
 
   it("un solo registro: la clave cae en su cuenta y el resto queda sin resolver", () => {

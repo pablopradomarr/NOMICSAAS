@@ -29,8 +29,12 @@ const TYPE_LABELS: Partial<Record<ReportType, string>> = {
   BALANCE: "Balance de situación",
   PYG: "Pérdidas y ganancias",
   PYG_ANALITICA: "PyG analítica",
-  CASHFLOW_DIRECTO: "Cashflow directo",
-  CASHFLOW_INDIRECTO: "Cashflow indirecto",
+  // E7 · ADR-0015 D4: un solo tipo; el método va en `params`. Los dos viejos se
+  // conservan en la tabla de etiquetas para que un run histórico siga teniendo
+  // nombre en la lista.
+  CASHFLOW: "Cashflow",
+  CASHFLOW_DIRECTO: "Cashflow directo (histórico)",
+  CASHFLOW_INDIRECTO: "Cashflow indirecto (histórico)",
   DASHBOARD: "Panel",
   DIARIO: "Libro diario",
   MAYOR: "Mayor",

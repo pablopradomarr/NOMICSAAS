@@ -147,7 +147,7 @@ export default tenantPage<SearchParamsProps>(async ({ db, org, searchParams }) =
         header={runHeader(run, org.baseCurrency)}
         checksTitle="Validación del estado de flujos de efectivo"
         checksDescription="Invariantes del diario más I6: saldo inicial de 57x + flujos = saldo final, directo = indirecto y acumulado mensual = saldo de tesorería a fin de mes."
-        actions={<ExportLinks type="cashflow_directo" runId={run.id} />}
+        actions={<ExportLinks type="cashflow" runId={run.id} />}
       />
 
       <ReportToolbar basePath="/reports/cashflow" fields={toolbar} />

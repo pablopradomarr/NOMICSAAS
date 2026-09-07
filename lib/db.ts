@@ -123,6 +123,16 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "PromptVersion",
   "InvoiceSeries",
   "Counterparty",
+  // E7 — auditoría y conciliación bancaria (docs/design/E7-auditoria.md §2.2).
+  // Las siete nacen con `SELECT app.enforce_tenant_rls('<tabla>')` en M2/M3: o
+  // están aquí o la barrera 1 no las acota.
+  "InvariantRun",
+  "StoreSweep",
+  "BankAccount",
+  "BankStatement",
+  "BankStatementLine",
+  "BankMatchGroup",
+  "BankReconciliation",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */

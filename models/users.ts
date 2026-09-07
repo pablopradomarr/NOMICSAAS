@@ -1,6 +1,14 @@
-// NOTA: usa el cliente sin tenant a propósito (auth y perfil son pre-tenant).
-// Excepción legítima a la regla ESLint no-restricted-imports.
-import { prisma, tenantDb } from "@/lib/db"
+// NOTA: `users` es pre-tenant a propósito (auth y perfil). Excepción legítima a
+// la regla ESLint no-restricted-imports.
+//
+// **E7 · T14 (ADR-0015 D5).** Desde que `users` lleva RLS con políticas POR ROL,
+// este modelo escribe con el cliente del camino de autenticación (`app_auth`),
+// no con el de runtime: `app_runtime` ya no tiene INSERT ni DELETE sobre `users`
+// y su SELECT está acotado a uno mismo y a quien comparte la organización
+// activa. Las LECTURAS por identidad (`getUserById`, `getUserByEmail`) también
+// van por ahí porque ocurren ANTES de haber sesión y organización.
+import { tenantDb } from "@/lib/db"
+import { authPrisma } from "@/lib/auth-db"
 import { Prisma } from "@/prisma/client"
 import { cache } from "react"
 import { createOrganizationDefaults, isDatabaseEmpty } from "./defaults"
@@ -19,13 +27,13 @@ export const getSelfHostedUser = cache(async () => {
     return null // fix for CI, do not remove
   }
 
-  return await prisma.user.findFirst({
+  return await authPrisma.user.findFirst({
     where: { email: SELF_HOSTED_USER.email },
   })
 })
 
 export const getOrCreateSelfHostedUser = cache(async () => {
-  const user = await prisma.user.upsert({
+  const user = await authPrisma.user.upsert({
     where: { email: SELF_HOSTED_USER.email },
     update: SELF_HOSTED_USER,
     create: SELF_HOSTED_USER,
@@ -46,7 +54,7 @@ export async function getOrCreateCloudUser(
   data: Prisma.UserCreateInput,
   organizationData: Prisma.OrganizationUpdateInput = {}
 ) {
-  const user = await prisma.user.upsert({
+  const user = await authPrisma.user.upsert({
     where: { email: email.toLowerCase() },
     update: data,
     create: data,
@@ -74,31 +82,31 @@ export async function getOrCreateCloudUser(
  */
 export async function getOrCreateInvitedUser(email: string, name?: string) {
   const normalizedEmail = email.toLowerCase()
-  const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+  const existing = await authPrisma.user.findUnique({ where: { email: normalizedEmail } })
   if (existing) return existing
 
   // E1-fix (#14): la cuenta nace SIN verificar. better-auth marcará
   // `emailVerified` al validar el OTP; hasta entonces no es utilizable.
-  return await prisma.user.create({
+  return await authPrisma.user.create({
     data: { email: normalizedEmail, name: name || normalizedEmail.split("@")[0], emailVerified: false },
   })
 }
 
 export const getUserById = cache(async (id: string) => {
-  return await prisma.user.findUnique({
+  return await authPrisma.user.findUnique({
     where: { id },
   })
 })
 
 export const getUserByEmail = cache(async (email: string) => {
-  return await prisma.user.findUnique({
+  return await authPrisma.user.findUnique({
     where: { email: email.toLowerCase() },
   })
 })
 
 /** Sólo auth/perfil: la facturación y las cuotas viven en Organization (T11). */
 export function updateUser(userId: string, data: Prisma.UserUpdateInput) {
-  return prisma.user.update({
+  return authPrisma.user.update({
     where: { id: userId },
     data,
   })

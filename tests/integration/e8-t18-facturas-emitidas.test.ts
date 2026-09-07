@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
+// E7 · ADR-0015 D1: el diario es `bigint` en la base; leído en crudo hay que
+// cruzar el borde, igual que hace `models/ledger.ts`.
+import { centsFromDb } from "@/lib/money"
+
 /**
  * E8 · T18/T19 — facturas emitidas contra Postgres de verdad.
  *
@@ -121,8 +125,9 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 · T18 · facturas emitidas", () => {
       where: { entry: { sourceId: "F-2026-00001" } },
       orderBy: { lineNo: "asc" },
     })
-    const debit = lines.reduce((a, l) => a + l.debitCents, 0)
-    const credit = lines.reduce((a, l) => a + l.creditCents, 0)
+    // E7 · ADR-0015 D1: en crudo, `bigint`.
+    const debit = lines.reduce((a, l) => a + centsFromDb(l.debitCents), 0)
+    const credit = lines.reduce((a, l) => a + centsFromDb(l.creditCents), 0)
     expect(debit).toBe(credit)
     expect(debit).toBe(13_613)
 

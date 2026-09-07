@@ -60,6 +60,9 @@ import {
 import { checkDraft, type CheckDraftOptions } from "@/lib/ledger/post"
 import { buildFromTemplate, isTemplateCode, TEMPLATES, type TemplateCode } from "@/lib/ledger/templates"
 import { buildReversal, type VoidOptions } from "@/lib/ledger/void"
+// E7 · ADR-0015 D1 — el borde `bigint` ↔ `number` del diario. `models/ledger.ts`
+// es el ÚNICO sitio donde `journal_lines` cruza de la base al motor y al revés.
+import { centsFromDb, centsFromDbNullable, centsToDb, centsToDbNullable } from "@/lib/money"
 import type {
   Cents,
   EntryDraft,
@@ -486,11 +489,18 @@ export function toPostedEntry(row: EntryWithLines): PostedEntry {
       id: l.id,
       lineNo: l.lineNo,
       accountCode: l.accountCode,
-      debitCents: l.debitCents,
-      creditCents: l.creditCents,
+      // ─────────────────────────────────────────────────────────────────────
+      // **EL BORDE** de ADR-0015 D1. `journal_lines` es `bigint` en la base
+      // desde E7; el motor (`lib/ledger/**`), los informes y la UI siguen en
+      // `number`. Aquí y sólo aquí se cruza, con `Number.isSafeInteger` de por
+      // medio: por encima de 2^53 − 1 se LANZA, no se pierde precisión en
+      // silencio (aserción (b) del criterio de aceptación 24).
+      // ─────────────────────────────────────────────────────────────────────
+      debitCents: centsFromDb(l.debitCents, "debe"),
+      creditCents: centsFromDb(l.creditCents, "haber"),
       description: l.description,
       taxRateId: l.taxRateId,
-      taxBaseCents: l.taxBaseCents,
+      taxBaseCents: centsFromDbNullable(l.taxBaseCents, "base imponible"),
       counterpartyId: l.counterpartyId,
       dueDate: l.dueDate ? fromUtcDate(l.dueDate) : null,
       analyticType: l.analyticType,
@@ -498,7 +508,7 @@ export function toPostedEntry(row: EntryWithLines): PostedEntry {
       costCenterId: l.costCenterId,
       businessLineId: l.businessLineId,
       originalCurrency: l.originalCurrency,
-      originalAmountCents: l.originalAmountCents,
+      originalAmountCents: centsFromDbNullable(l.originalAmountCents, "importe en divisa"),
       exchangeRateId: l.exchangeRateId,
       entryDate: fromUtcDate(l.entryDate),
       fiscalYearId: l.fiscalYearId,
@@ -631,8 +641,11 @@ type LineRow = {
   fiscal_year_id: string
   line_no: number
   account_code: string
-  debit_cents: number
-  credit_cents: number
+  /// E7 · ADR-0015 D1: `journal_lines` es `bigint` en la base y `$queryRaw` NO
+  /// convierte. Tiparlo `number` habría sido la mentira más cara de la épica:
+  /// TypeScript callado y `BigInt` corriendo por el motor. Cruza en el mapeo.
+  debit_cents: bigint
+  credit_cents: bigint
   description: string | null
   due_date: Date | null
   tax_rate_id: string | null
@@ -670,8 +683,8 @@ export async function getLinesForPeriod(tx: TenantTransactionClient, filter: Per
     fiscalYearId: r.fiscal_year_id,
     lineNo: r.line_no,
     accountCode: r.account_code,
-    debitCents: r.debit_cents,
-    creditCents: r.credit_cents,
+    debitCents: centsFromDb(r.debit_cents, "debe"),
+    creditCents: centsFromDb(r.credit_cents, "haber"),
     description: r.description,
     dueDate: r.due_date ? fromUtcDate(r.due_date) : null,
     taxRateId: r.tax_rate_id,
@@ -718,12 +731,14 @@ export async function getAccountBalanceRows(
      GROUP BY l.account_code
      ORDER BY l.account_code`
 
-  return rows.map((r) => ({
-    accountCode: r.account_code,
-    debitCents: Number(r.d),
-    creditCents: Number(r.c),
-    balanceCents: Number(r.d) - Number(r.c),
-  }))
+  // Los `SUM()` sobre `bigint` devuelven `numeric`: los `::bigint` de arriba son
+  // los que mantienen el agregado entero, y `centsFromDb` es el que se niega a
+  // perder precisión al bajarlo a `number` (ADR-0015 D1, aserción (c)).
+  return rows.map((r) => {
+    const debitCents = centsFromDb(r.d, `Σdebe de ${r.account_code}`)
+    const creditCents = centsFromDb(r.c, `Σhaber de ${r.account_code}`)
+    return { accountCode: r.account_code, debitCents, creditCents, balanceCents: debitCents - creditCents }
+  })
 }
 
 /**
@@ -1042,11 +1057,15 @@ export async function postEntryTx(
         entryId: entry.id,
         lineNo: index + 1,
         accountCode: l.accountCode,
-        debitCents: l.debitCents,
-        creditCents: l.creditCents,
+        // **EL BORDE, lado escritura** (ADR-0015 D1). `centsToDb` valida con
+        // `assertCents` ANTES de escribir: un `NaN` o un decimal colado llegaría
+        // a la base como un importe cualquiera. Prisma aceptaría el `number` sin
+        // rechistar, y ahí está justo el peligro.
+        debitCents: centsToDb(l.debitCents, "debe"),
+        creditCents: centsToDb(l.creditCents, "haber"),
         description: l.description ?? null,
         taxRateId: l.taxRateId ?? null,
-        taxBaseCents: l.taxBaseCents ?? null,
+        taxBaseCents: centsToDbNullable(l.taxBaseCents, "base imponible"),
         counterpartyId: l.counterpartyId ?? null,
         dueDate: l.dueDate ? toUtcDate(l.dueDate) : null,
         // E4: el tipo EFECTIVO y las tres dimensiones ya resueltas por
@@ -1058,7 +1077,7 @@ export async function postEntryTx(
         // E8 · T2b (ADR-0014 D2): columnas INMUTABLES; se escriben aquí y nunca
         // se actualizan (no entran en el GRANT UPDATE acotado de ADR-0010).
         originalCurrency: l.originalCurrency ?? null,
-        originalAmountCents: l.originalAmountCents ?? null,
+        originalAmountCents: centsToDbNullable(l.originalAmountCents, "importe en divisa"),
         exchangeRateId: l.exchangeRateId ?? null,
         entryDate: toUtcDate(draft.entryDate),
         fiscalYearId: draft.fiscalYearId,

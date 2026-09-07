@@ -139,6 +139,31 @@ const nullable = (v: string | number | null | undefined): string =>
   v === null || v === undefined || v === "" ? NULL_TOKEN : String(v)
 
 /**
+ * **E7 · ADR-0015 D1, aserción (a) del criterio de aceptación 24.**
+ *
+ * Desde M4, `journal_lines.debit_cents` y compañía son `bigint` en PostgreSQL y
+ * Prisma los devuelve como `BigInt`. La forma canónica NO puede recibirlos:
+ * `String(1234n)` daría hoy el mismo `"1234"`, sí, pero el arreglo apresurado
+ * del error contiguo —`JSON.stringify` LANZA sobre `BigInt`, y alguien lo
+ * "arregla" serializando como cadena `"1234"`— cambiaría el hash sin cambiar
+ * una sola cifra. Un `number` que no es entero seguro es igual de inaceptable:
+ * `String(1e21)` sería `"1e+21"`.
+ *
+ * Por eso el importe entra por aquí y sólo por aquí. La conversión vive en el
+ * borde (`models/ledger.ts`, `lib/money.ts::centsFromDb`); si algo se salta el
+ * borde, esto lo dice en vez de sellar un hash distinto en silencio.
+ */
+function centsToken(v: unknown, field: string): string {
+  if (typeof v !== "number" || !Number.isSafeInteger(v)) {
+    throw new TypeError(
+      `forma canónica: ${field} debe ser un entero seguro en céntimos (number), recibido ` +
+        `${typeof v} ${String(v)}. ADR-0015 D1: la conversión vive en el borde, no aquí.`
+    )
+  }
+  return String(v)
+}
+
+/**
  * Orden canónico: `(entryDate, entryNumber, lineNo)`. Con `entryNumber` ausente
  * (borrador) se usa 0, de modo que el orden lo fija `lineNo`, que es lo único
  * conocido antes de postear.
@@ -165,8 +190,8 @@ export function canonicalForm(lines: readonly HashableLine[]): string {
         String(l.entryNumber ?? 0),
         String(l.lineNo),
         l.accountCode,
-        String(l.debitCents),
-        String(l.creditCents),
+        centsToken(l.debitCents, "debitCents"),
+        centsToken(l.creditCents, "creditCents"),
         l.entryKind,
       ].join("\t")
     )
@@ -186,8 +211,8 @@ export function canonicalEntryForm(lines: readonly HashableLine[]): string {
         String(l.entryNumber ?? 0),
         String(l.lineNo),
         l.accountCode,
-        String(l.debitCents),
-        String(l.creditCents),
+        centsToken(l.debitCents, "debitCents"),
+        centsToken(l.creditCents, "creditCents"),
         l.entryDate,
         nullable(l.fiscalYearId),
         l.entryKind,
@@ -223,8 +248,8 @@ export function canonicalEntryFormV3(lines: readonly HashableLine[]): string {
         String(l.entryNumber ?? 0),
         String(l.lineNo),
         l.accountCode,
-        String(l.debitCents),
-        String(l.creditCents),
+        centsToken(l.debitCents, "debitCents"),
+        centsToken(l.creditCents, "creditCents"),
         l.entryDate,
         nullable(l.fiscalYearId),
         l.entryKind,

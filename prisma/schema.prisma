@@ -140,6 +140,15 @@ model Organization {
   invoiceSeries  InvoiceSeries[]
   counterparties Counterparty[]
 
+  // E7 — auditoría y conciliación bancaria
+  invariantRuns       InvariantRun[]
+  storeSweeps         StoreSweep[]
+  bankAccounts        BankAccount[]
+  bankStatements      BankStatement[]
+  bankStatementLines  BankStatementLine[]
+  bankMatchGroups     BankMatchGroup[]
+  bankReconciliations BankReconciliation[]
+
   @@map("organizations")
 }
 
@@ -305,8 +314,8 @@ model Counterparty {
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  code String @db.VarChar(24)
-  name String @db.VarChar(255)
+  code  String  @db.VarChar(24)
+  name  String  @db.VarChar(255)
   /// NIF/CIF nacional. RC-11 rama ES: módulo 23 / letra de CIF, FAIL si es inválido.
   taxId String? @map("tax_id") @db.VarChar(20)
 
@@ -432,25 +441,25 @@ model Field {
 }
 
 model File {
-  id                String       @id @default(uuid()) @db.Uuid
-  organizationId    String       @map("organization_id") @db.Uuid
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  uploadedById      String?      @map("uploaded_by_id") @db.Uuid // ex user_id: autoría, NO tenancy
-  filename          String
-  path              String
-  mimetype          String
-  metadata          Json?
-  isReviewed        Boolean      @default(false) @map("is_reviewed")
-  isSplitted        Boolean      @default(false) @map("is_splitted")
-  createdAt         DateTime     @default(now()) @map("created_at")
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedById   String?      @map("uploaded_by_id") @db.Uuid // ex user_id: autoría, NO tenancy
+  filename       String
+  path           String
+  mimetype       String
+  metadata       Json?
+  isReviewed     Boolean      @default(false) @map("is_reviewed")
+  isSplitted     Boolean      @default(false) @map("is_splitted")
+  createdAt      DateTime     @default(now()) @map("created_at")
 
   /// E8 · G-11 — sha256 de los BYTES del fichero. Es el eslabón que ata el
   /// asiento al documento (I-E8-2) y la clave de deduplicación (I-E8-13).
   /// Nullable hasta que `scripts/backfill-file-sha256.ts` reporta 0 pendientes;
   /// entonces `20260914090000_e8_file_sha256_not_null` lo endurece.
   /// `cachedParseResult` DESAPARECE (G-03): la evidencia vive en `ExtractionRun`.
-  sha256    String  @db.Char(64)
-  sizeBytes Int?    @map("size_bytes")
+  sha256    String @db.Char(64)
+  sizeBytes Int?   @map("size_bytes")
 
   extractionRuns ExtractionRun[]
   journalEntries JournalEntry[]
@@ -499,20 +508,20 @@ model Transaction {
   // ── E8 (ADR-0014 D1/D2) ────────────────────────────────────────────────────
   /// Tasa COPIADA al confirmar: un cambio retroactivo en `exchange_rates` no
   /// puede mover una cifra ya contabilizada (D2).
-  exchangeRateMicro BigInt?   @map("exchange_rate_micro")
-  rateDate          DateTime? @map("rate_date") @db.Date
-  rateSource        String?   @map("rate_source") @db.VarChar(32)
+  exchangeRateMicro            BigInt?   @map("exchange_rate_micro")
+  rateDate                     DateTime? @map("rate_date") @db.Date
+  rateSource                   String?   @map("rate_source") @db.VarChar(32)
   /// `convertedTotal` forzado: motivo ≥ 10 caracteres (CHECK), campo a
   /// `no_verificado` y sello `TASA_FORZADA`.
-  convertedTotalOverrideReason String? @map("converted_total_override_reason") @db.VarChar(512)
-  extractionRunId              String? @map("extraction_run_id") @db.Uuid
+  convertedTotalOverrideReason String?   @map("converted_total_override_reason") @db.VarChar(512)
+  extractionRunId              String?   @map("extraction_run_id") @db.Uuid
   /// D1 (O-9): al anular, `journalEntryId` se TRASLADA aquí y el estado pasa a
   /// VOID. Permite `VOID → PROPOSED → POSTED` sin volver a subir el fichero.
-  voidedEntryId  String?  @map("voided_entry_id") @db.Uuid
+  voidedEntryId                String?   @map("voided_entry_id") @db.Uuid
   /// Histórico completo de vueltas. Append-only por trigger.
-  voidedEntryIds String[] @map("voided_entry_ids") @db.Uuid
+  voidedEntryIds               String[]  @map("voided_entry_ids") @db.Uuid
   /// O-9.iii: el split crea N Transaction, una por asiento, sobre el mismo File.
-  splitParentTransactionId String? @map("split_parent_transaction_id") @db.Uuid
+  splitParentTransactionId     String?   @map("split_parent_transaction_id") @db.Uuid
 
   @@unique([organizationId, id])
   @@index([organizationId, status])
@@ -684,6 +693,15 @@ enum AccountKey {
   // ── E8 (ADR-0014 D6): 523 SIEMPRE en el alta de inmovilizado; la separación
   //    523 → 173 se mide desde el CIERRE y es un asiento de E9.
   PROVEEDORES_INMOVILIZADO
+  // ── E7 (ADR-0015, m1): tres claves nuevas para la propuesta de asiento desde
+  //    el extracto. `COMISIONES_BANCARIAS` (626) y las dos de diferencias de
+  //    cambio (668/768) YA existen arriba y no se tocan.
+  /// 662 — intereses de deudas.
+  INTERESES_DEUDAS
+  /// 669 — otros gastos financieros.
+  OTROS_GASTOS_FINANCIEROS
+  /// 665 — intereses por descuento de efectos y operaciones de factoring.
+  INTERESES_DESCUENTO_EFECTOS
 
   @@map("account_key")
 }
@@ -774,6 +792,7 @@ model LedgerAccount {
   taxRatesMain    TaxRate[]                @relation("TaxRateAccount")
   taxRatesCounter TaxRate[]                @relation("TaxRateCounterAccount")
   journalLines    JournalLine[]
+  bankAccounts    BankAccount[]
 
   @@unique([organizationId, code])
   @@index([organizationId, parentCode])
@@ -891,6 +910,10 @@ enum SourceType {
   /// E8: compra que entra por el flujo documental (`postFromProposal`).
   INVOICE_IN
   BANK_IMPORT
+  /// **E7 · O-4.** El asiento propuesto desde un movimiento de extracto guarda
+  /// su origen y el `statementLineId` en `sourceId`. `BANK_IMPORT` ya existía y
+  /// significa otra cosa (import masivo).
+  BANK_RECONCILIATION
   CSV_IMPORT
   RECURRING
   SYSTEM
@@ -999,9 +1022,9 @@ model JournalEntry {
 
   /// Enganches de trazabilidad. `extractionRunId` es texto hasta que E8 cree la
   /// tabla; entonces pasa a FK sin migración de datos (hoy siempre NULL).
-  transactionId   String?      @map("transaction_id") @db.Uuid
-  transaction     Transaction? @relation("TransactionEntry", fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
-  fileId          String?      @map("file_id") @db.Uuid
+  transactionId   String?        @map("transaction_id") @db.Uuid
+  transaction     Transaction?   @relation("TransactionEntry", fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
+  fileId          String?        @map("file_id") @db.Uuid
   /// E8: FK COMPUESTA por tenant (patrón de E4), `ON DELETE RESTRICT`.
   file            File?          @relation(fields: [organizationId, fileId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
   extractionRunId String?        @map("extraction_run_id") @db.Uuid
@@ -1067,8 +1090,12 @@ model JournalLine {
   account     LedgerAccount @relation(fields: [organizationId, accountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
 
   /// Exactamente uno > 0 (CHECK). Nunca negativos: el signo lo da el lado.
-  debitCents  Int     @default(0) @map("debit_cents")
-  creditCents Int     @default(0) @map("credit_cents")
+  /// **E7 · ADR-0015 D1**: `bigint`. El techo de `integer` eran 21 474 836,47 €
+  /// y el producto se vende a empresas de 1 a 100 M€. El motor y la interfaz
+  /// SIGUEN en `number`: la conversión vive en el borde (`models/ledger.ts`),
+  /// con `Number.isSafeInteger` (2^53−1 ≈ 90 mil millones de euros).
+  debitCents  BigInt  @default(0) @map("debit_cents")
+  creditCents BigInt  @default(0) @map("credit_cents")
   description String? @db.VarChar(512)
 
   /// Destino analítico (E4). Las tres columnas llevan **FK COMPUESTA por
@@ -1086,8 +1113,8 @@ model JournalLine {
   taxRateId      String?   @map("tax_rate_id") @db.Uuid
   taxRate        TaxRate?  @relation(fields: [taxRateId], references: [id], onDelete: Restrict)
   /// Base sobre la que se calculó la cuota de esta línea. Null si no es de
-  /// impuesto. Hace reproducible R-IVA-5.
-  taxBaseCents   Int?      @map("tax_base_cents")
+  /// impuesto. Hace reproducible R-IVA-5. **`bigint` desde E7** (ADR-0015 D1).
+  taxBaseCents   BigInt?   @map("tax_base_cents")
   counterpartyId String?   @map("counterparty_id") @db.Uuid
   dueDate        DateTime? @map("due_date") @db.Date
 
@@ -1099,7 +1126,8 @@ model JournalLine {
   /// **INMUTABLES**: no entran en el `GRANT UPDATE` acotado de ADR-0010, y
   /// forman parte de `canonicalEntryFormV3` (`hashVersion = 3`).
   originalCurrency    String?       @map("original_currency") @db.VarChar(3)
-  originalAmountCents Int?          @map("original_amount_cents")
+  /// **`bigint` desde E7** (ADR-0015 D1).
+  originalAmountCents BigInt?       @map("original_amount_cents")
   exchangeRateId      String?       @map("exchange_rate_id") @db.Uuid
   exchangeRate        ExchangeRate? @relation(fields: [exchangeRateId], references: [id], onDelete: Restrict)
 
@@ -1110,7 +1138,12 @@ model JournalLine {
 
   createdAt DateTime @default(now()) @map("created_at")
 
+  /// E7: la conciliación bancaria apunta a la LÍNEA, no al asiento.
+  bankMatches BankReconciliation[]
+
   @@unique([entryId, lineNo])
+  /// E7: destino de la FK compuesta por tenant de `bank_reconciliations`.
+  @@unique([organizationId, id])
   @@index([organizationId, entryDate])
   @@index([organizationId, accountCode, entryDate])
   @@index([organizationId, entryId])
@@ -1262,7 +1295,15 @@ enum ReportType {
   BALANCE
   PYG
   PYG_ANALITICA
+  /// **E7 · ADR-0015 D4.** El método es un PARÁMETRO (`params.method ∈
+  /// {DIRECTO, INDIRECTO}`), que entra en `paramsHash` como cualquier otro.
+  CASHFLOW
+  /// @deprecated ADR-0015 D4 — sustituidos por `CASHFLOW`. PostgreSQL no permite
+  /// retirar un valor de un enum sin recrear el tipo, así que siguen declarados
+  /// y quedan PROHIBIDOS para filas nuevas por el CHECK
+  /// `report_runs_no_cashflow_legacy` / `manual_review_flags_no_cashflow_legacy`.
   CASHFLOW_DIRECTO
+  /// @deprecated ADR-0015 D4 — ver `CASHFLOW_DIRECTO`.
   CASHFLOW_INDIRECTO
   PRESUPUESTO_REAL
   DASHBOARD
@@ -1366,6 +1407,14 @@ model ManualReviewFlag {
   scope       ReportType?
   reason      String      @db.VarChar(1000)
 
+  /// **E7 · §2.7.** El barrido que destapó el problema, y la familia de checks a
+  /// la que la revisión acota. `checkFamily` es un ENUM y no texto libre (O-21):
+  /// con texto, una errata acota la revisión a nada y el periodo queda sellado
+  /// como si se hubiera revisado.
+  invariantRunId String?       @map("invariant_run_id") @db.Uuid
+  invariantRun   InvariantRun? @relation(fields: [organizationId, invariantRunId], references: [organizationId, id], onDelete: Restrict)
+  checkFamily    CheckFamily?  @map("check_family")
+
   createdById String    @map("created_by_id") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at")
   clearedAt   DateTime? @map("cleared_at")
@@ -1373,6 +1422,7 @@ model ManualReviewFlag {
   clearReason String?   @map("clear_reason") @db.VarChar(1000)
 
   @@index([organizationId, periodStart, periodEnd])
+  @@index([organizationId, invariantRunId])
   @@map("manual_review_flags")
 }
 
@@ -1533,15 +1583,15 @@ model AllocationRun {
 
   /// Los TRES sellos + el del código. `analyticsHash` aquí es el de DIMENSIONES
   /// (§3.5): se calcula con `allocationRunSetHash = ∅` para no ser circular.
-  ledgerHash    String @map("ledger_hash") @db.Char(64)
-  analyticsHash String @map("analytics_hash") @db.Char(64)
-  rulesHash     String @map("rules_hash") @db.Char(64)
+  ledgerHash    String  @map("ledger_hash") @db.Char(64)
+  analyticsHash String  @map("analytics_hash") @db.Char(64)
+  rulesHash     String  @map("rules_hash") @db.Char(64)
   /// Auditoría E5, hallazgo 1 — sello de la SALIDA: sha256 de las líneas del run
   /// en forma canónica. Sin él, un `UPDATE` que mueva el céntimo de remanente
   /// entre dos receptores del mismo (run, regla, nivel) es indetectable: Σ,
   /// cierre a 0, cota de I-E5-4 y total se mantienen. NULL en runs previos.
   linesHash     String? @map("lines_hash") @db.Char(64)
-  gitSha        String @map("git_sha") @db.VarChar(64)
+  gitSha        String  @map("git_sha") @db.VarChar(64)
 
   /// Resumen denormalizado. `lineCount = 0` es legítimo: un run vacío es la
   /// PRUEBA de que el periodo se liquidó y no había nada que repartir.
@@ -1550,7 +1600,7 @@ model AllocationRun {
   totalAllocatedCents BigInt @default(0) @map("total_allocated_cents")
   /// `[{code, rule, period, targets?, detail}]` — W-E5-ZERO-BASE, W-E5-NEG-BASE,
   /// W-E5-ARCHIVED-TARGET. Es la memoria de por qué el reparto salió así.
-  warnings            Json @default("[]")
+  warnings            Json   @default("[]")
 
   runById String?  @map("run_by_id") @db.Uuid
   runAt   DateTime @default(now()) @map("run_at")
@@ -1567,6 +1617,9 @@ model AllocationRun {
   /// UN solo run vigente por periodo: índice único PARCIAL
   /// `allocation_runs_one_sealed_per_period` (`WHERE status = 'SEALED'`), en la
   /// migración: un `@@unique` con `status` dentro permitiría dos SEALED.
+  /// **E7**: `allocation_runs_sin_lines_hash` (`WHERE lines_hash IS NULL AND
+  /// status = 'SEALED'`) enumera barato los sellados sin sello de salida
+  /// (I-E7-9). También parcial, también sólo en la migración.
   @@unique([organizationId, id])
   @@index([organizationId, periodStart, periodEnd, status])
   @@index([organizationId, fiscalYearId, periodKind, periodStart])
@@ -1610,7 +1663,7 @@ model AllocationLine {
   driverBase      BigInt @map("driver_base")
   driverBaseTotal BigInt @map("driver_base_total")
   /// **O-E5-3** — bps, no milésimas. Informativo (el importe manda).
-  driverShareBps  Int @map("driver_share_bps")
+  driverShareBps  Int    @map("driver_share_bps")
 
   /// O-E5-4: el fallback REALMENTE aplicado a esta línea, no el declarado.
   fallbackApplied   ZeroBaseFallback? @map("fallback_applied")
@@ -1643,13 +1696,13 @@ model ExtractionRun {
   organizationId String       @map("organization_id") @db.Uuid
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  fileId String @map("file_id") @db.Uuid
-  file   File   @relation(fields: [organizationId, fileId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
+  fileId     String @map("file_id") @db.Uuid
+  file       File   @relation(fields: [organizationId, fileId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
   /// sha256 de los bytes que VIO esta extracción. RC-10 lo contrasta con
   /// `files.sha256`: si difieren, el documento se alteró (`DOCUMENTO_ALTERADO`).
   fileSha256 String @map("file_sha256") @db.Char(64)
 
-  kind ExtractionKind
+  kind        ExtractionKind
   /// ADR-0014 D5: la revisión humana es un run NUEVO colgado del run del LLM.
   parentRunId String?         @map("parent_run_id") @db.Uuid
   parent      ExtractionRun?  @relation("RunRevision", fields: [parentRunId], references: [id], onDelete: Restrict)
@@ -1659,7 +1712,7 @@ model ExtractionRun {
   model          String @db.VarChar(128)
   temperatureBps Int    @default(0) @map("temperature_bps")
   /// G-09: cadena de intentos, `[{provider, model, ok, errorCode?, ms}]`.
-  attempts Json @default("[]")
+  attempts       Json   @default("[]")
 
   promptCode      String       @map("prompt_code") @db.VarChar(64)
   promptSource    PromptSource @map("prompt_source")
@@ -1797,4 +1850,417 @@ enum InvoiceSeriesKind {
   SIMPLIFICADA
 
   @@map("invoice_series_kind")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E7 — Auditoría y conciliación bancaria
+// (docs/design/E7-auditoria.md §2.2, ADR-0015 D1…D6 APROBADO)
+//
+// Convenciones aplicadas (§2.1): `@@map`/`@map` en snake_case en todo modelo y
+// columna nuevos; `organizationId` en toda tabla de negocio con FK compuesta por
+// tenant `(organization_id, <id>)`; dinero en céntimos y **`bigint` desde el día
+// 1**; fechas de negocio `@db.Date` y `DateTime` sólo para auditoría técnica;
+// toda tabla nueva entra a la vez en `TENANT_MODELS` (`lib/db.ts`) y en
+// `SELECT app.enforce_tenant_rls('<tabla>')`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// El barrido de invariantes, sellado y comparable. **APPEND-ONLY**.
+model InvariantRun {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  scopeKind    AuditScopeKind @map("scope_kind")
+  fiscalYearId String?        @map("fiscal_year_id") @db.Uuid
+  periodStart  DateTime?      @map("period_start") @db.Date
+  periodEnd    DateTime?      @map("period_end") @db.Date
+
+  trigger AuditTrigger
+  /// La fecha de referencia que decidió I8. Sin ella el run no es reproducible.
+  refDate DateTime     @map("ref_date") @db.Date
+
+  /// Los sellos del estado sobre el que se calculó: la clave de comparación
+  /// entre dos runs. Si coinciden y los checks difieren, el motor cambió.
+  ledgerHash     String @map("ledger_hash") @db.Char(64)
+  analyticsKey   String @default("∅") @map("analytics_key") @db.VarChar(210)
+  planHash       String @map("plan_hash") @db.Char(64)
+  accountMapHash String @map("account_map_hash") @db.Char(64)
+  /// **O-20 (ADR-0015 D6.5).** sha256 de la forma canónica de TODA la
+  /// configuración que puede mover un check sin mover un dato: umbrales de
+  /// revisión, `MAX_MATERIALIZED_ENTRIES`, `matchToleranceDays` por cuenta,
+  /// umbral de tránsito, umbral de materialidad de ignorados y variante del
+  /// plan. Sin él, bajar un umbral servía el barrido cacheado —justo cuando hay
+  /// que rebarrer— y `diffRuns` concluía `cause: "NINGUNA"` con deltas.
+  configHash     String @map("config_hash") @db.Char(64)
+  gitSha         String @map("git_sha") @db.VarChar(64)
+
+  /// sha256 de la forma canónica de `checks` (id + status + evidencia), para que
+  /// **I-E7-7** demuestre que la fila no se ha tocado por SQL.
+  checksHash String @map("checks_hash") @db.Char(64)
+
+  /// [{ id, family, status, evidencia, query?, provenance? }]
+  checks   Json
+  /// { PASS, WARN, FAIL, INFO } global y por familia.
+  counts   Json
+  /// Qué se evaluó de verdad y qué se declaró INFO, y por qué.
+  coverage Json
+  /// **O-19.** Las cuatro cifras de cierre derivadas de este estado, para que el
+  /// diff sea legible por quien firma: { activo, pnMasPasivo, resultado,
+  /// tesoreria } con su provenance. Derivadas por SQL del mismo `ledgerHash`: no
+  /// es una cifra de informe almacenada (ADR-0003), es la foto del sello.
+  headline Json
+
+  seal        Seal
+  sealReasons Json @default("[]") @map("seal_reasons")
+
+  storeSweepId String?  @map("store_sweep_id") @db.Uuid
+  durationMs   Int      @map("duration_ms")
+  runById      String?  @map("run_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  reviewFlags ManualReviewFlag[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, scopeKind, fiscalYearId, createdAt(sort: Desc)])
+  @@index([organizationId, ledgerHash])
+  @@map("invariant_runs")
+}
+
+enum AuditScopeKind {
+  ORGANIZATION
+  FISCAL_YEAR
+  PERIOD
+
+  @@map("audit_scope_kind")
+}
+
+enum AuditTrigger {
+  MANUAL
+  SCHEDULED
+  POST_CLOSE
+  POST_IMPORT
+
+  @@map("audit_trigger")
+}
+
+/// **O-21.** Las siete familias como ENUM, no como texto: con texto libre una
+/// errata en `ManualReviewFlag.checkFamily` acota la revisión a nada y el
+/// periodo queda sellado como si se hubiera revisado.
+enum CheckFamily {
+  PARTIDA_DOBLE
+  ESTADOS
+  ANALITICA
+  LIQUIDACION
+  DOCUMENTAL
+  CONCILIACION
+  INTEGRIDAD
+
+  @@map("check_family")
+}
+
+/// Barrido del almacén de ficheros (cierra la deuda de I-E8-2). **APPEND-ONLY**.
+model StoreSweep {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  status       SweepStatus @default(RUNNING)
+  filesTotal   Int         @default(0) @map("files_total")
+  filesOk      Int         @default(0) @map("files_ok")
+  filesMissing Int         @default(0) @map("files_missing")
+  filesAltered Int         @default(0) @map("files_altered")
+  bytesRead    BigInt      @default(0) @map("bytes_read")
+
+  /// SÓLO los hallazgos, con cota dura de 1000 + `findingsOverflow`.
+  findings         Json @default("[]")
+  findingsOverflow Int  @default(0) @map("findings_overflow")
+
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  runById    String?   @map("run_by_id") @db.Uuid
+
+  @@unique([organizationId, id])
+  @@index([organizationId, startedAt(sort: Desc)])
+  @@map("store_sweeps")
+}
+
+enum SweepStatus {
+  RUNNING
+  DONE
+  FAILED
+  CANCELLED
+
+  @@map("sweep_status")
+}
+
+model BankAccount {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code        String        @db.VarChar(24)
+  name        String        @db.VarChar(200)
+  /// **O-7.** La subcuenta 57x contra la que se puntea. CHECK: `572`/`573`/`574`/
+  /// `575` (o subcuenta suya). Quedan FUERA `570`/`571` (caja: no tiene extracto
+  /// y no es conciliable jamás) y `576`. Y `@@unique` por `accountCode`: dos
+  /// cuentas bancarias contra la misma subcuenta computarían `B` dos veces y
+  /// I-E7-1 descuadraría por diseño.
+  accountCode String        @map("account_code") @db.VarChar(12)
+  account     LedgerAccount @relation(fields: [organizationId, accountCode], references: [organizationId, code], onDelete: Restrict, onUpdate: Cascade)
+
+  iban     String? @db.VarChar(34)
+  bic      String? @db.VarChar(11)
+  currency String  @default("EUR") @db.VarChar(3)
+
+  /// **O-1 · el anclaje (ADR-0015 D6.3).** Punto desde el que la cuenta está
+  /// conciliada, fijado por un ADMIN al darla de alta y no editable sin
+  /// `AuditLog`. Sin anclaje, I-E7-1 sale **INFO**: no se puede afirmar que un
+  /// saldo cuadra si no se sabe desde dónde.
+  reconciledFromDate            DateTime? @map("reconciled_from_date") @db.Date
+  reconciledOpeningBalanceCents BigInt?   @map("reconciled_opening_balance_cents")
+
+  /// Mapeo de columnas del CSV de ESTE banco, versionado como configuración.
+  /// Norma 43 no lo usa.
+  csvMapping         Json? @map("csv_mapping")
+  /// **O-10.** Sólo alimenta la SUGERENCIA. No entra en ningún invariante: es
+  /// configuración editable, y un invariante que dependa de ella daría
+  /// resultados distintos sobre el mismo `ledgerHash` y el mismo `gitSha` (P7).
+  /// Sí entra en `configHash`.
+  matchToleranceDays Int   @default(3) @map("match_tolerance_days")
+  /// **O-8.** Antigüedad a partir de la cual una partida en tránsito deja de ser
+  /// normal. Configuración, nunca constante en el código.
+  transitWarnDays    Int   @default(90) @map("transit_warn_days")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  statements BankStatement[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, accountCode])
+  @@unique([organizationId, id])
+  @@map("bank_accounts")
+}
+
+/// **APPEND-ONLY.** No se purga nunca (ADR-0015 D3, art. 30 CCom).
+model BankStatement {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bankAccountId  String       @map("bank_account_id") @db.Uuid
+  bankAccount    BankAccount  @relation(fields: [organizationId, bankAccountId], references: [organizationId, id], onDelete: Restrict)
+
+  format     StatementFormat
+  /// sha256 de los BYTES importados: clave de idempotencia (I-E7-5).
+  fileSha256 String          @map("file_sha256") @db.Char(64)
+  fileName   String          @map("file_name") @db.VarChar(255)
+  /// El `File` original. Es la «fuente» del badge P6 y tiene que poder
+  /// enseñarse; **no se purga nunca**. La FK compuesta por tenant vive en la
+  /// migración (no se declara la relación aquí para no obligar a `File` a
+  /// arrastrar una colección que nadie recorre).
+  fileId     String?         @map("file_id") @db.Uuid
+
+  /// **O-5.** Divisa del extracto. La importación exige
+  /// `statement.currency = bankAccount.currency` y rechaza el fichero entero si
+  /// no coincide.
+  currency String @default("EUR") @db.VarChar(3)
+
+  /// **O-6.** Los periodos se acotan por FECHA DE OPERACIÓN.
+  periodStart         DateTime @map("period_start") @db.Date
+  periodEnd           DateTime @map("period_end") @db.Date
+  /// Saldos DECLARADOS POR EL BANCO (registros 11 y 33 de la N43), no calculados
+  /// por nosotros: I-E7-6a compara contra ellos.
+  openingBalanceCents BigInt   @map("opening_balance_cents")
+  closingBalanceCents BigInt   @map("closing_balance_cents")
+  /// Registro 33: número de apuntes declarado por el banco (O-11).
+  declaredLineCount   Int?     @map("declared_line_count")
+  lineCount           Int      @default(0) @map("line_count")
+
+  importedById String?  @map("imported_by_id") @db.Uuid
+  importedAt   DateTime @default(now()) @map("imported_at")
+
+  lines BankStatementLine[]
+
+  @@unique([organizationId, bankAccountId, fileSha256])
+  @@unique([organizationId, id])
+  @@index([organizationId, bankAccountId, periodStart])
+  @@map("bank_statements")
+}
+
+enum StatementFormat {
+  CSV
+  N43
+  MANUAL
+
+  @@map("statement_format")
+}
+
+/// **APPEND-ONLY** salvo la marca de ignorado (semi, §2.4).
+model BankStatementLine {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  statementId    String        @map("statement_id") @db.Uuid
+  statement      BankStatement @relation(fields: [organizationId, statementId], references: [organizationId, id], onDelete: Restrict)
+  bankAccountId  String        @map("bank_account_id") @db.Uuid
+
+  /// Orden en el extracto, 1..n, sin huecos (I-E7-5).
+  lineNo Int @map("line_no")
+
+  /// **O-6.** `operationDate` es la fecha CONTABLE del banco y la ÚNICA que
+  /// corta periodos. `valueDate` es dato financiero (intereses, descubiertos):
+  /// se guarda, se enseña y **está prohibida en toda agregación de cuadre**.
+  operationDate DateTime @map("operation_date") @db.Date
+  valueDate     DateTime @map("value_date") @db.Date
+
+  /// CON SIGNO: negativo = cargo, positivo = abono. En la **divisa de la cuenta**.
+  /// **m2 (ADR-0015 D6.6).** El CHECK es `amount_cents IS NOT NULL`, **no**
+  /// `<> 0`: los bancos emiten apuntes de 0,00 € y rechazarlos partiría el
+  /// extracto —`lineNo` con hueco (I-E7-5 FAIL) y `lineCount` distinto del
+  /// registro 33 (I-E7-6a FAIL)— por un movimiento que el banco sí declaró.
+  amountCents         BigInt  @map("amount_cents")
+  /// **O-5.** Divisa de la línea e importe en divisa original cuando el banco lo
+  /// declara (**registro 24** de la N43).
+  currency            String  @db.VarChar(3)
+  originalCurrency    String? @map("original_currency") @db.VarChar(3)
+  originalAmountCents BigInt? @map("original_amount_cents")
+  balanceCents        BigInt? @map("balance_cents")
+
+  description      String  @db.VarChar(512)
+  /// **O-15.** El registro 22 lleva DOS referencias, y la **referencia 1** es la
+  /// que identifica la REMESA: colapsarlas dejaba el emparejamiento N-a-1 sin
+  /// ninguna clave determinista con la que agrupar.
+  reference1       String? @map("reference_1") @db.VarChar(12)
+  reference2       String? @map("reference_2") @db.VarChar(16)
+  conceptCommon    String? @map("concept_common") @db.VarChar(2)
+  conceptOwn       String? @map("concept_own") @db.VarChar(3)
+  counterpartyName String? @map("counterparty_name") @db.VarChar(200)
+
+  /// sha256 de la forma canónica de la línea (§2.4, `lib/bank/hash.ts`).
+  sha256 String @db.Char(64)
+
+  status           BankLineStatus @default(UNMATCHED)
+  /// **O-4/O-12.** Vocabulario CERRADO, con dato asociado obligatorio.
+  ignoreReason     IgnoreReason?  @map("ignore_reason")
+  ignoreEvidenceId String?        @map("ignore_evidence_id") @db.Uuid
+  ignoredById      String?        @map("ignored_by_id") @db.Uuid
+  ignoredAt        DateTime?      @map("ignored_at")
+
+  matches BankReconciliation[]
+
+  @@unique([organizationId, statementId, lineNo])
+  @@unique([organizationId, bankAccountId, sha256])
+  @@unique([organizationId, id])
+  @@index([organizationId, bankAccountId, status, operationDate])
+  @@map("bank_statement_lines")
+}
+
+/// `SUGGESTED` NO se persiste: una sugerencia es un cálculo sobre el estado de
+/// hoy, no un hecho.
+enum BankLineStatus {
+  UNMATCHED
+  MATCHED
+  IGNORED
+
+  @@map("bank_line_status")
+}
+
+/// **O-4.** `ERROR_BANCO_REVERSADO` exige la línea de extracto que lo revierte;
+/// `YA_CONTABILIZADO_EN_OTRA_CUENTA` exige el `journalLineId` concreto;
+/// `NO_ES_NUESTRA_CUENTA` no exige nada; **`IMPORTE_CERO`** (m2) lo pone la
+/// importación sola y su evidencia es el propio importe. **Cualquier otro caso
+/// no es ignorable.**
+enum IgnoreReason {
+  ERROR_BANCO_REVERSADO
+  NO_ES_NUESTRA_CUENTA
+  YA_CONTABILIZADO_EN_OTRA_CUENTA
+  IMPORTE_CERO
+
+  @@map("ignore_reason")
+}
+
+/// **O-3 · el grupo de conciliación (ADR-0015 D6.1).** El 1:1 no representa una
+/// remesa (14 recibos contra un abono), una nómina pagada en un cargo global, un
+/// descuento de efectos ni una devolución parcial. **SEMI-APPEND-ONLY**: sólo se
+/// pueden escribir las tres columnas de desconciliación (§2.4).
+model BankMatchGroup {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bankAccountId  String       @map("bank_account_id") @db.Uuid
+
+  kind MatchGroupKind
+  note String?        @db.VarChar(500)
+
+  createdById   String?   @map("created_by_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at")
+  /// Desconciliar es del GRUPO, con motivo ≥ 10 caracteres (CHECK).
+  unmatchedAt   DateTime? @map("unmatched_at")
+  unmatchedById String?   @map("unmatched_by_id") @db.Uuid
+  unmatchReason String?   @map("unmatch_reason") @db.VarChar(1000)
+
+  members BankReconciliation[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, bankAccountId, unmatchedAt])
+  @@map("bank_match_groups")
+}
+
+enum MatchGroupKind {
+  SIMPLE
+  N_A_1
+  UNO_A_N
+  N_A_N
+
+  @@map("match_group_kind")
+}
+
+/// Fila de PERTENENCIA a un grupo. Un grupo `SIMPLE` tiene una línea y un apunte.
+model BankReconciliation {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  groupId        String         @map("group_id") @db.Uuid
+  group          BankMatchGroup @relation(fields: [organizationId, groupId], references: [organizationId, id], onDelete: Restrict)
+
+  statementLineId String            @map("statement_line_id") @db.Uuid
+  statementLine   BankStatementLine @relation(fields: [organizationId, statementLineId], references: [organizationId, id], onDelete: Restrict)
+  /// **Una `JournalLine` de una cuenta 57x**, no un asiento: un traspaso mueve
+  /// dos bancos y conciliar el asiento cruzaría las dos cuentas.
+  journalLineId   String            @map("journal_line_id") @db.Uuid
+  journalLine     JournalLine       @relation(fields: [organizationId, journalLineId], references: [organizationId, id], onDelete: Restrict)
+
+  method      MatchMethod
+  scoreBps    Int         @default(0) @map("score_bps")
+  /// **O-10 (ADR-0015 D6.4).** Desfase en días entre `operationDate` y
+  /// `entryDate` **sellado en el momento del punteo**: es un dato del hecho,
+  /// inmune a que alguien cambie `matchToleranceDays` después. Alimenta la
+  /// métrica `DESFASE_FECHA_ALTO` (WARN), nunca un FAIL.
+  dateGapDays Int         @map("date_gap_days")
+
+  /// **Espejo de `group.unmatchedAt`, denormalizado y escrito SÓLO por trigger.**
+  /// Los dos índices únicos parciales de I-E7-3 son `WHERE unmatched_at IS NULL`
+  /// y un índice parcial no puede mirar la columna de OTRA tabla: la aliveness
+  /// del grupo tiene que estar aquí para que la unicidad viva EN LA BASE y no en
+  /// un trigger con carrera. Nadie la escribe a mano: el guard la rechaza.
+  groupUnmatchedAt DateTime? @map("group_unmatched_at")
+
+  matchedById String?  @map("matched_by_id") @db.Uuid
+  matchedAt   DateTime @default(now()) @map("matched_at")
+
+  @@unique([organizationId, id])
+  @@index([organizationId, groupId])
+  @@index([organizationId, journalLineId])
+  @@index([organizationId, statementLineId])
+  @@map("bank_reconciliations")
+}
+
+/// No hay `AUTO`: E7 no puntea solo. El valor se añadiría en E12, con ADR.
+enum MatchMethod {
+  MANUAL
+  SUGGESTION_ACCEPTED
+
+  @@map("match_method")
 }

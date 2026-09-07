@@ -1,6 +1,11 @@
 import { Client } from "pg"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
+// E7 · ADR-0015 D1: `journal_lines` es `bigint` en la base. Este fichero lee
+// filas EN CRUDO de Prisma (no por `models/ledger.ts`), así que tiene que
+// cruzar el borde igual que lo cruza la aplicación.
+import { centsFromDb } from "@/lib/money"
+
 /**
  * E4 · T16 — Integración de la analítica contra Postgres de verdad
  * (`docs/design/E4-analitica.md` §8.1, criterios 1–7 y 11–16).
@@ -401,8 +406,10 @@ describe.skipIf(!TEST_DATABASE_URL)("E4 · analítica en base de datos", () => {
           entryNumber: entry.entryNumber,
           lineNo: l.lineNo,
           accountCode: l.accountCode,
-          debitCents: l.debitCents,
-          creditCents: l.creditCents,
+          // E7 · ADR-0015 D1: leído en crudo de Prisma llega como `BigInt`;
+          // el motor sólo admite `number` y el borde es quien convierte.
+          debitCents: centsFromDb(l.debitCents),
+          creditCents: centsFromDb(l.creditCents),
           entryDate: l.entryDate.toISOString().slice(0, 10),
           fiscalYearId: l.fiscalYearId,
           entryKind: l.entryKind,
@@ -689,8 +696,8 @@ describe.skipIf(!TEST_DATABASE_URL)("E4 · analítica en base de datos", () => {
       lines: e.lines.map((l) => ({
         lineNo: l.lineNo,
         accountCode: l.accountCode,
-        debitCents: l.debitCents,
-        creditCents: l.creditCents,
+        debitCents: centsFromDb(l.debitCents),
+        creditCents: centsFromDb(l.creditCents),
         analyticType: l.analyticType,
         projectId: l.projectId,
         costCenterId: l.costCenterId,
@@ -726,8 +733,10 @@ describe.skipIf(!TEST_DATABASE_URL)("E4 · analítica en base de datos", () => {
           entryNumber: e.entryNumber,
           lineNo: l.lineNo,
           accountCode: l.accountCode,
-          debitCents: l.debitCents,
-          creditCents: l.creditCents,
+          // E7 · ADR-0015 D1: leído en crudo de Prisma llega como `BigInt`;
+          // el motor sólo admite `number` y el borde es quien convierte.
+          debitCents: centsFromDb(l.debitCents),
+          creditCents: centsFromDb(l.creditCents),
           entryDate: l.entryDate.toISOString().slice(0, 10),
           fiscalYearId: l.fiscalYearId,
           entryKind: l.entryKind,

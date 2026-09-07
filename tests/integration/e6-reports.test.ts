@@ -303,7 +303,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
       { userId: USER, role: "ADMIN" }
     )
     const run = await getOrCreateReportRun(ORG, {
-      type: "CASHFLOW_DIRECTO",
+      type: "CASHFLOW",
       ...PERIOD,
       fiscalYearId,
       params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },
@@ -315,7 +315,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
     // Levantado con motivo, el SIGUIENTE run vuelve a validado.
     await clearManualReviewFlag(ORG, { id: flag.id, reason: "revisado por el asesor el 15 de enero" }, { userId: USER, role: "ADMIN" })
     const after = await getOrCreateReportRun(ORG, {
-      type: "CASHFLOW_DIRECTO",
+      type: "CASHFLOW",
       ...PERIOD,
       fiscalYearId,
       params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },
@@ -594,7 +594,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
       actor,
     })
     const cashRun = await getOrCreateReportRun(ORG, {
-      type: "CASHFLOW_DIRECTO",
+      type: "CASHFLOW",
       ...PERIOD,
       fiscalYearId,
       params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },
@@ -799,7 +799,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
 
   it("#6: el cashflow guarda RESUMEN y el detalle se pide aparte", async () => {
     const run = await getOrCreateReportRun(ORG, {
-      type: "CASHFLOW_DIRECTO",
+      type: "CASHFLOW",
       ...PERIOD,
       fiscalYearId,
       params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },
@@ -860,7 +860,9 @@ describe.skipIf(!TEST_DATABASE_URL)("E6 · informes financieros en base de datos
     })
     try {
       const run = await getOrCreateReportRun(ORG_MUT, {
-        type: "CASHFLOW_DIRECTO",
+        // E7 · ADR-0015 D4: un solo `ReportType.CASHFLOW`; el método ya viajaba
+        // en `params` y ahora entra en `paramsHash` como cualquier otro.
+        type: "CASHFLOW",
         ...PERIOD,
         fiscalYearId: fiscalYearIdMut,
         params: { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" },

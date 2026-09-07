@@ -21,6 +21,8 @@ import type {
 import type { ExtractionProposal } from "@/lib/extraction/types"
 import { getOrFetchRate, newRateMemo, type RateMemo } from "@/lib/fx/rates"
 import { fromUtcDate } from "@/lib/ledger/dates"
+// E7 · ADR-0015 D1: el borde `bigint` → `number` del diario.
+import { centsFromDb } from "@/lib/money"
 import { getAccountMapByKey } from "@/models/account-map"
 import { listAccounts } from "@/models/accounts"
 import { findFilesBySha256 } from "@/models/files"
@@ -256,8 +258,12 @@ async function resolveRectifiedEntry(
     if (!line.taxRateId) continue
     const code = codeById.get(line.taxRateId)
     if (!code) continue
-    if (line.taxBaseCents !== null) baseByRate[code] = (baseByRate[code] ?? 0) + line.taxBaseCents
-    quotaByRate[code] = (quotaByRate[code] ?? 0) + line.debitCents + line.creditCents
+    // E7 · ADR-0015 D1: borde `bigint` → `Cents`.
+    if (line.taxBaseCents !== null) {
+      baseByRate[code] = (baseByRate[code] ?? 0) + centsFromDb(line.taxBaseCents, "base imponible")
+    }
+    quotaByRate[code] =
+      (quotaByRate[code] ?? 0) + centsFromDb(line.debitCents, "debe") + centsFromDb(line.creditCents, "haber")
   }
   return { id: entry.id, baseByRate, quotaByRate }
 }
@@ -277,7 +283,7 @@ async function resolveAdvanceEntry(
   if (!entry) return null
   const taxCents = entry.lines
     .filter((l) => l.accountCode === outputVatAccount)
-    .reduce((acc, l) => acc + l.creditCents - l.debitCents, 0)
+    .reduce((acc, l) => acc + centsFromDb(l.creditCents, "haber") - centsFromDb(l.debitCents, "debe"), 0)
   return { id: entry.id, taxCents }
 }
 

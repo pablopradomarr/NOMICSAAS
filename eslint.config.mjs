@@ -13,6 +13,9 @@ const TENANT_FREE_FILES = [
   "lib/db.ts",
   "lib/db.test.ts",
   "lib/auth.ts",
+  // E7 · T14 (ADR-0015 D5): el cliente del camino de autenticación (`app_auth`).
+  // Es pre-tenant por definición: no hay organización que acotar todavía.
+  "lib/auth-db.ts",
   "lib/email-sync/ingest.ts",
   "lib/email-sync/ingest.test.ts",
   "models/users.ts",
@@ -66,6 +69,14 @@ const BUSINESS_DELEGATES = [
   "promptVersion",
   "invoiceSeries",
   "counterparty",
+  // E7: las siete tablas de auditoría y conciliación bancaria.
+  "invariantRun",
+  "storeSweep",
+  "bankAccount",
+  "bankStatement",
+  "bankStatementLine",
+  "bankMatchGroup",
+  "bankReconciliation",
 ];
 
 const NO_BARE_PRISMA_DELEGATE = {

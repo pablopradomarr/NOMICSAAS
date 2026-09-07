@@ -51,6 +51,9 @@ import {
   type LedgerResult,
 } from "@/models/ledger"
 import { entryHash, HASH_VERSION, type HashableLine, isHashVersion } from "@/lib/ledger/hash"
+// E7 · ADR-0015 D1: el borde `bigint` → `number`. Los agregados y las líneas del
+// diario llegan de Prisma como `BigInt`; el motor y la UI siguen en `number`.
+import { centsFromDb, centsFromDbNullable } from "@/lib/money"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import type { CostCenterKind, MarginLevel, ProjectStatus, Role } from "@/prisma/client"
@@ -237,7 +240,13 @@ export async function listProjects(db: AnyClient, filter: DimensionFilter = {}):
     _sum: { debitCents: true, creditCents: true },
   })
   const imputed = new Map(
-    lines.map((l) => [l.projectId, (l._sum.creditCents ?? 0) - (l._sum.debitCents ?? 0)] as const)
+    lines.map(
+      (l) =>
+        [
+          l.projectId,
+          centsFromDb(l._sum.creditCents ?? 0, "imputado (haber)") - centsFromDb(l._sum.debitCents ?? 0, "imputado (debe)"),
+        ] as const
+    )
   )
   return rows.map((p) => ({
     id: p.id,
@@ -266,7 +275,13 @@ export async function listCostCenters(db: AnyClient, filter: DimensionFilter = {
     _sum: { debitCents: true, creditCents: true },
   })
   const imputed = new Map(
-    lines.map((l) => [l.costCenterId, (l._sum.creditCents ?? 0) - (l._sum.debitCents ?? 0)] as const)
+    lines.map(
+      (l) =>
+        [
+          l.costCenterId,
+          centsFromDb(l._sum.creditCents ?? 0, "imputado (haber)") - centsFromDb(l._sum.debitCents ?? 0, "imputado (debe)"),
+        ] as const
+    )
   )
   return rows.map((c) => ({
     id: c.id,
@@ -740,8 +755,9 @@ type AnalyticLineRow = {
   fiscal_year_id: string
   line_no: number
   account_code: string
-  debit_cents: number
-  credit_cents: number
+  /// E7 · ADR-0015 D1: `bigint` en la base y `$queryRaw` no convierte.
+  debit_cents: bigint
+  credit_cents: bigint
   analytic_type: AnalyticType | null
   project_id: string | null
   cost_center_id: string | null
@@ -785,8 +801,8 @@ export async function getAnalyticLines(
         fiscalYearId: r.fiscal_year_id,
         lineNo: r.line_no,
         accountCode: r.account_code,
-        debitCents: r.debit_cents,
-        creditCents: r.credit_cents,
+        debitCents: centsFromDb(r.debit_cents, "debe"),
+        creditCents: centsFromDb(r.credit_cents, "haber"),
         analyticType: r.analytic_type,
         projectId: r.project_id,
         costCenterId: r.cost_center_id,
@@ -890,13 +906,16 @@ export async function reclassifyLines(
         entryNumber: entry.entryNumber,
         lineNo: l.lineNo,
         accountCode: l.accountCode,
-        debitCents: l.debitCents,
-        creditCents: l.creditCents,
+        // ADR-0015 D1, aserción (a) del criterio 24: `canonicalEntryForm` recibe
+        // `number`, NUNCA `BigInt` ni `string`. Serializarlo como cadena
+        // cambiaría el hash sin cambiar una cifra.
+        debitCents: centsFromDb(l.debitCents, "debe"),
+        creditCents: centsFromDb(l.creditCents, "haber"),
         entryDate: fromUtcDate(l.entryDate),
         fiscalYearId: l.fiscalYearId,
         entryKind: l.entryKind,
         taxRateId: l.taxRateId,
-        taxBaseCents: l.taxBaseCents,
+        taxBaseCents: centsFromDbNullable(l.taxBaseCents, "base imponible"),
         counterpartyId: l.counterpartyId,
         dueDate: l.dueDate ? fromUtcDate(l.dueDate) : null,
         description: l.description,
@@ -905,7 +924,7 @@ export async function reclassifyLines(
         costCenterId: l.costCenterId,
         businessLineId: l.businessLineId,
         originalCurrency: l.originalCurrency,
-        originalAmountCents: l.originalAmountCents,
+        originalAmountCents: centsFromDbNullable(l.originalAmountCents, "importe en divisa"),
         exchangeRateId: l.exchangeRateId,
       }))
       // E8 · T2b: se REHACE con LA MISMA forma canónica con la que se selló. Una
@@ -1032,8 +1051,8 @@ export async function getAnalyticAggregates(
     projectId: r.project_id,
     costCenterId: r.cost_center_id,
     businessLineId: r.business_line_id,
-    debitCents: Number(r.d),
-    creditCents: Number(r.c),
+    debitCents: centsFromDb(r.d, `Σdebe de ${r.account_code}`),
+    creditCents: centsFromDb(r.c, `Σhaber de ${r.account_code}`),
     lineCount: Number(r.n),
   }))
 }

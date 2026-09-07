@@ -19,7 +19,7 @@ import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { retencion, selectRate } from "@/lib/ledger/tax"
 import type { LedgerContext, LocalDate, PostedEntry } from "@/lib/ledger/types"
 import type { Cents } from "@/lib/money"
-import { sumCents } from "@/lib/money"
+import { centsFromDb, sumCents } from "@/lib/money"
 import type { InvoiceSeriesKind } from "@/prisma/client"
 import type { Actor } from "@/models/accounts"
 import {
@@ -313,7 +313,8 @@ async function originalBasesByRate(
     if (!line.taxRateId || line.taxBaseCents === null) continue
     const rate = ctx.rates.find((r) => r.id === line.taxRateId)
     if (!rate) continue
-    byCode.set(rate.code, (byCode.get(rate.code) ?? 0) + line.taxBaseCents)
+    // E7 · ADR-0015 D1: borde `bigint` → `Cents`.
+    byCode.set(rate.code, (byCode.get(rate.code) ?? 0) + centsFromDb(line.taxBaseCents, "base imponible"))
   }
   const out = [...byCode.entries()].map(([taxRateCode, baseCents]) => ({ taxRateCode, baseCents }))
   if (out.length === 0) {

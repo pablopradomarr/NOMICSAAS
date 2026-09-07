@@ -19,6 +19,7 @@ set -euo pipefail
 DATABASE_URL="${DATABASE_URL:-${DIRECT_URL:-postgresql://postgres@localhost:5432/erp}}"
 APP_RUNTIME_PASSWORD="${APP_RUNTIME_PASSWORD:-app_runtime}"
 APP_MAINTENANCE_PASSWORD="${APP_MAINTENANCE_PASSWORD:-app_maintenance}"
+APP_AUTH_PASSWORD="${APP_AUTH_PASSWORD:-app_auth}"
 
 echo "· Configurando app_runtime en ${DATABASE_URL%%\?*}"
 psql -v ON_ERROR_STOP=1 -q "$DATABASE_URL" <<SQL
@@ -47,6 +48,19 @@ ALTER ROLE app_maintenance WITH LOGIN BYPASSRLS PASSWORD '${APP_MAINTENANCE_PASS
 GRANT USAGE ON SCHEMA public, app TO app_maintenance;
 -- Ídem: los privilegios de tabla de app_maintenance los conceden las migraciones
 -- 20260906090000 / 20260906100000.
+
+-- E7 · T14 (ADR-0015 D5): rol del camino de autenticación. Lo CREA la migración
+-- 20260916130000 sin LOGIN, con sus GRANT sobre las cuatro tablas de auth;
+-- aquí sólo se le da credencial, igual que a los otros dos.
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_auth') THEN
+    CREATE ROLE app_auth NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+  END IF;
+END \$\$;
+ALTER ROLE app_auth WITH LOGIN NOBYPASSRLS PASSWORD '${APP_AUTH_PASSWORD}';
+GRANT USAGE ON SCHEMA public, app TO app_auth;
 SQL
 echo "· Listo. DATABASE_URL de la app: postgresql://app_runtime:***@…"
 echo "·        DATABASE_URL_MAINTENANCE (scripts de operador e I10): postgresql://app_maintenance:***@…"
+echo "·        AUTH_DATABASE_URL (better-auth, ADR-0015 D5): postgresql://app_auth:***@…"

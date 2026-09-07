@@ -33,8 +33,10 @@ const REPORT_SCOPES = [
   { value: "", label: "Todos los informes del periodo" },
   { value: "BALANCE", label: "Sólo el balance" },
   { value: "PYG", label: "Sólo la cuenta de pérdidas y ganancias" },
-  { value: "CASHFLOW_DIRECTO", label: "Sólo el cashflow directo" },
-  { value: "CASHFLOW_INDIRECTO", label: "Sólo el cashflow indirecto" },
+  // E7 · ADR-0015 D4: el método del cashflow es un parámetro, no un tipo, así
+  // que la revisión se fuerza sobre EL cashflow (los dos métodos son la misma
+  // lectura del mismo diario y no tiene sentido revisar sólo uno).
+  { value: "CASHFLOW", label: "Sólo el cashflow" },
   { value: "DASHBOARD", label: "Sólo el panel" },
 ] as const
 

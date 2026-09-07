@@ -171,12 +171,15 @@ describe.skipIf(!OWNER_URL)("QA E4 · ataques adicionales como app_runtime", () 
     ).rejects.toMatchObject({ code: "42501" })
 
     const after = await owner(async (client) =>
-      client.query<{ debit_cents: number; project_id: string | null }>(
+      // E7 · ADR-0015 D1: `debit_cents` es `bigint` desde M4 y el driver `pg`
+      // devuelve `int8` como CADENA de dígitos. El valor es el mismo; sólo
+      // cambia su representación al salir del driver crudo.
+      client.query<{ debit_cents: string; project_id: string | null }>(
         `SELECT debit_cents, project_id FROM journal_lines WHERE id = $1::uuid`,
         [lineId]
       )
     )
-    expect(after.rows[0].debit_cents).toBe(debitBefore)
+    expect(Number(after.rows[0].debit_cents)).toBe(debitBefore)
   })
 
   it("el informe analítico (getAnalyticPnl) con app_runtime y GUC de A no ve el proyecto ni el importe de B", async () => {

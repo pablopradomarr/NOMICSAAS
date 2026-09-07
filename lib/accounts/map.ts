@@ -87,6 +87,14 @@ export const OPTIONAL_ACCOUNT_KEYS: readonly AccountKey[] = [
   // organización cuyo plan tenga 523 postable. No es obligatoria porque una
   // organización sin 523 no debe fallar la migración: queda como WARN.
   "PROVEEDORES_INMOVILIZADO",
+  // E7 (ADR-0015, m1): las tres claves que la propuesta de asiento desde el
+  // extracto necesita para no sacar una cuenta del código ni del texto del
+  // movimiento. La siembra la hace `20260916100000_e7_auditoria` en toda
+  // organización cuyo plan tenga la cuenta postable; como 523, no son
+  // obligatorias y su ausencia es WARN de Auditoría, no un fallo de migración.
+  "INTERESES_DEUDAS",
+  "OTROS_GASTOS_FINANCIEROS",
+  "INTERESES_DESCUENTO_EFECTOS",
 ] as const
 
 /** Código PGC "de libro" de cada clave (§3.1 y §3.2 de la validación contable). */
@@ -155,6 +163,11 @@ export const ACCOUNT_KEY_DEFAULT_CODE: Readonly<Record<AccountKey, string>> = {
   // corriente / no corriente (523 → 173) se mide desde el CIERRE, no desde la
   // fecha del documento, y es un asiento de reclasificación de E9.
   PROVEEDORES_INMOVILIZADO: "523",
+  // E7 · ADR-0015 (m1). `COMISIONES_BANCARIAS` (626) y las dos de diferencias de
+  // cambio (668/768) ya estaban arriba desde E2/E8 y no se tocan.
+  INTERESES_DEUDAS: "662",
+  OTROS_GASTOS_FINANCIEROS: "669",
+  INTERESES_DESCUENTO_EFECTOS: "665",
 }
 
 /**

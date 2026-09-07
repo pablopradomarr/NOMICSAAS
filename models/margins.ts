@@ -22,6 +22,8 @@ import type { AnalyticLine, AnalyticPeriod, AnalyticsConfig, ColumnKey, LocalDat
 import type { CheckResult } from "@/lib/ledger/invariants-types"
 import type { ProvenanceContext } from "@/lib/ledger/provenance"
 import type { TenantTransactionClient } from "@/lib/db"
+// E7 · ADR-0015 D1: el borde `bigint` → `number` del diario.
+import { centsFromDb } from "@/lib/money"
 import { computeLedgerHash } from "@/models/ledger"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
 import { getAllocationRuleSpecs, getAppliedAllocations, getSealedRunRefs, type AppliedRunRef } from "@/models/allocations"
@@ -326,8 +328,9 @@ export async function getCellDetail(
       project_code: string | null
       cost_center_code: string | null
       description: string | null
-      debit_cents: number
-      credit_cents: number
+      /// E7 · ADR-0015 D1: `bigint` en la base y `$queryRawUnsafe` no convierte.
+      debit_cents: bigint
+      credit_cents: bigint
     }[]
   >(
     `SELECT l.id, l.entry_id, e.entry_number, l.line_no, l.entry_date, l.account_code,
@@ -359,16 +362,18 @@ export async function getCellDetail(
     projectCode: r.project_code,
     costCenterCode: r.cost_center_code,
     description: r.description,
-    debitCents: r.debit_cents,
-    creditCents: r.credit_cents,
-    amountCents: r.credit_cents - r.debit_cents,
+    debitCents: centsFromDb(r.debit_cents, "debe"),
+    creditCents: centsFromDb(r.credit_cents, "haber"),
+    amountCents: centsFromDb(r.credit_cents, "haber") - centsFromDb(r.debit_cents, "debe"),
   }))
 
   return {
     level: request.level,
     column: request.column,
     query,
-    amountCents: rows.slice(0, DETAIL_LIMIT).reduce((a, r) => a + r.credit_cents - r.debit_cents, 0),
+    amountCents: rows
+      .slice(0, DETAIL_LIMIT)
+      .reduce((a, r) => a + centsFromDb(r.credit_cents, "haber") - centsFromDb(r.debit_cents, "debe"), 0),
     lines,
     truncated,
   }

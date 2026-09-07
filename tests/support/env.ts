@@ -45,3 +45,20 @@ export function appMaintenanceDatabaseUrl(base: string = ownerDatabaseUrl()): st
   url.password = appMaintenancePassword()
   return url.toString()
 }
+
+/** Contraseña del rol de autenticación (E7 · T14, ADR-0015 D5). */
+export function appAuthPassword(): string {
+  return process.env.APP_AUTH_PASSWORD || "app_auth"
+}
+
+/**
+ * Misma base que `ownerDatabaseUrl()` pero con el rol `app_auth` (NOBYPASSRLS,
+ * privilegio sólo sobre las cuatro tablas del camino de autenticación). Es lo
+ * que consume `AUTH_DATABASE_URL`: better-auth y `models/users.ts`.
+ */
+export function appAuthDatabaseUrl(base: string = ownerDatabaseUrl()): string {
+  const url = new URL(base)
+  url.username = "app_auth"
+  url.password = appAuthPassword()
+  return url.toString()
+}

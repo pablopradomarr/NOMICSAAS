@@ -25,7 +25,13 @@ import { ReportType, Role } from "@/prisma/client"
 
 function notesFor(type: ReportType): string[] {
   if (type === ReportType.BALANCE) return [NOTA_NO_COMPENSACION]
-  if (type === ReportType.CASHFLOW_DIRECTO || type === ReportType.CASHFLOW_INDIRECTO) return [CASHFLOW_HEADER_NOTE]
+  // E7 · ADR-0015 D4: `CASHFLOW` unificado (el método viaja en `params`). Los
+  // dos tipos viejos siguen declarados en el enum —PostgreSQL no permite
+  // retirar un valor— y aquí se conservan para que un `ReportRun` histórico que
+  // aún no haya migrado siga exportándose con su nota al pie.
+  if (type === ReportType.CASHFLOW || type === ReportType.CASHFLOW_DIRECTO || type === ReportType.CASHFLOW_INDIRECTO) {
+    return [CASHFLOW_HEADER_NOTE]
+  }
   if (type === ReportType.DASHBOARD) return [AGING_GROUPING_NOTE]
   return []
 }

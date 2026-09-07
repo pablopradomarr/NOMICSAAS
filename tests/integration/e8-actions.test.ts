@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
+// E7 · ADR-0015 D1: el diario es `bigint` en la base; leído en crudo hay que
+// cruzar el borde, igual que hace `models/ledger.ts`.
+import { centsFromDb } from "@/lib/money"
+
 /**
  * E8 · T13 — las server actions del camino documental contra Postgres de
  * verdad, con la matriz de roles puesta y la RLS activa.
@@ -238,12 +242,13 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 · T13 · server actions del camino docu
     })
     expect(entry.fileId).toBe(fileId)
     expect(entry.extractionRunId).toBe(runId)
-    const debit = entry.lines.reduce((a, l) => a + l.debitCents, 0)
-    const credit = entry.lines.reduce((a, l) => a + l.creditCents, 0)
+    // E7 · ADR-0015 D1: leídas en crudo, las cifras del diario llegan en `BigInt`.
+    const debit = entry.lines.reduce((a, l) => a + centsFromDb(l.debitCents), 0)
+    const credit = entry.lines.reduce((a, l) => a + centsFromDb(l.creditCents), 0)
     expect(debit).toBe(credit)
     expect(debit).toBe(121_000)
     // La cuota del documento va a 472 tal cual (ADR-0014 D3), sin línea de 669.
-    expect(entry.lines.find((l) => l.accountCode === "472")?.debitCents).toBe(21_000)
+    expect(centsFromDb(entry.lines.find((l) => l.accountCode === "472")?.debitCents ?? 0)).toBe(21_000)
     expect(entry.lines.map((l) => l.accountCode)).not.toContain("669")
 
     const log = await db.auditLog.findFirst({ where: { action: "CONFIRM_PROPOSAL", entityId: runId } })
@@ -407,7 +412,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 · T13 · server actions del camino docu
     expect(entries.every((e) => e.fileId === fileId)).toBe(true)
     // Σ de los dos asientos = el documento entero, sin perder un céntimo.
     const lines = await db.journalLine.findMany({ where: { entryId: { in: entries.map((e) => e.id) } } })
-    expect(lines.reduce((a, l) => a + l.debitCents, 0)).toBe(121_000)
+    expect(lines.reduce((a, l) => a + centsFromDb(l.debitCents), 0)).toBe(121_000)
   }, 180_000)
 
   it("forzar un campo y marcar un ticket cualificado crean run de revisión con AuditLog", async () => {
@@ -603,7 +608,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E8 · T13 · server actions del camino docu
     const entryId = (confirmed.data as { entryId: string }).entryId
     const lines = await db.journalLine.findMany({ where: { entryId }, select: { accountCode: true, debitCents: true } })
     const iva = lines.find((l) => l.accountCode === "472")
-    expect(iva?.debitCents).toBe(112)
+    expect(centsFromDb(iva?.debitCents ?? 0)).toBe(112)
   }, 180_000)
 
   it("revisor #3 · con campos `no_verificado`, el SERVIDOR exige motivo aunque el navegador no lo mande", async () => {

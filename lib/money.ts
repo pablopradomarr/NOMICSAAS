@@ -165,3 +165,65 @@ export function formatBps(bps: number): string {
   const abs = Math.abs(n)
   return `${n < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El borde `bigint` ↔ `number` (E7 · ADR-0015 D1)
+//
+// Desde E7, `journal_lines.debit_cents`, `credit_cents`, `tax_base_cents` y
+// `original_amount_cents` son `bigint` en PostgreSQL (el techo de `integer`
+// eran 21 474 836,47 € y el producto se vende a empresas de 1 a 100 M€). El
+// motor contable y la interfaz SIGUEN en `number`: la conversión vive en el
+// borde (`models/ledger.ts`, `models/analytics.ts`), igual que en
+// `models/allocations.ts` desde E5.
+//
+// **El riesgo real está aquí, no en el DDL** (ADR-0015 D1, O-23): Prisma
+// devuelve `BigInt`, `JSON.stringify(BigInt)` LANZA, y el arreglo apresurado
+// —serializar como cadena `"1234"`— SÍ cambiaría `entryHash` y `ledgerHash` sin
+// cambiar una sola cifra. Por eso el borde es explícito y ruidoso:
+// `Number.isSafeInteger` o excepción, nunca una pérdida de precisión callada.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Techo del borde: 2^53 − 1 céntimos ≈ 90 mil millones de euros. */
+export const MAX_SAFE_CENTS: Cents = Number.MAX_SAFE_INTEGER
+
+/**
+ * `bigint` de la base → `Cents` del motor. **Lanza** por encima de 2^53 − 1 en
+ * vez de perder precisión en silencio (ADR-0015 D1, aserción (b) del criterio
+ * de aceptación 24).
+ */
+export function centsFromDb(value: bigint | number | string, label = "importe"): Cents {
+  // El driver `pg` devuelve `int8` y `numeric` como CADENA de dígitos; Prisma,
+  // con el adaptador, como `BigInt`. Los dos caminos existen en el repositorio
+  // (`$queryRaw` y `Client.query`) y los dos pasan por aquí.
+  if (typeof value === "string" && !/^-?\d+$/.test(value.trim())) {
+    throw new RangeError(`${label}: «${value}» no es un entero en céntimos`)
+  }
+  const n = typeof value === "number" ? value : Number(value)
+  if (!Number.isSafeInteger(n)) {
+    throw new RangeError(
+      `${label}: ${String(value)} céntimos supera el entero seguro de JavaScript (${MAX_SAFE_CENTS}); ` +
+        "convertirlo perdería precisión. ADR-0015 D1."
+    )
+  }
+  return n
+}
+
+/** Igual que `centsFromDb`, conservando el `null` de una columna opcional. */
+export function centsFromDbNullable(value: bigint | number | string | null | undefined, label = "importe"): Cents | null {
+  return value === null || value === undefined ? null : centsFromDb(value, label)
+}
+
+/**
+ * `Cents` del motor → `bigint` de la base. Rechaza lo que no es un entero
+ * seguro ANTES de escribirlo: un `NaN` o un decimal colado llegaría a la base
+ * como un importe cualquiera.
+ */
+export function centsToDb(value: Cents, label = "importe"): bigint {
+  assertCents(value, label)
+  return BigInt(value)
+}
+
+/** Igual que `centsToDb`, conservando el `null` de una columna opcional. */
+export function centsToDbNullable(value: Cents | null | undefined, label = "importe"): bigint | null {
+  return value === null || value === undefined ? null : centsToDb(value, label)
+}

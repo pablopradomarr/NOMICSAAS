@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config"
 import path from "path"
-import { appMaintenanceDatabaseUrl, appRuntimeDatabaseUrl, ownerDatabaseUrl } from "./tests/support/env"
+import { appAuthDatabaseUrl, appMaintenanceDatabaseUrl, appRuntimeDatabaseUrl, ownerDatabaseUrl } from "./tests/support/env"
 
 /**
  * Suite de RLS EFECTIVA (ronda 2, hallazgo #6).
@@ -24,6 +24,8 @@ export default defineConfig({
       DATABASE_URL_OWNER: ownerDatabaseUrl(),
       // Rol de mantenimiento (BYPASSRLS): scripts de operador e I10, ADR-0009 §6.
       DATABASE_URL_MAINTENANCE: appMaintenanceDatabaseUrl(),
+      // E7 · T14 (ADR-0015 D5): el camino de autenticación conecta con `app_auth`.
+      AUTH_DATABASE_URL: appAuthDatabaseUrl(),
     },
     include: ["tests/integration-rls/**/*.test.ts"],
     globalSetup: ["./vitest.integration.rls.setup.ts"],

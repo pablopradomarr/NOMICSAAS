@@ -146,6 +146,9 @@ const SUMMARY_TYPES: ReadonlySet<ReportType> = new Set([
   // #6: el `lineDetail` del cashflow y los pares del drill-down crecen con el
   // diario; con un ejercicio grande revientan la cota de 1 MB del `result`. El
   // run guarda las cifras y el detalle se recalcula bajo demanda.
+  // E7 · ADR-0015 D4: `CASHFLOW` unificado. Los dos viejos siguen aquí para que
+  // un run histórico sin migrar se lea igual que siempre.
+  ReportType.CASHFLOW,
   ReportType.CASHFLOW_DIRECTO,
   ReportType.CASHFLOW_INDIRECTO,
 ])
@@ -970,6 +973,9 @@ function buildReport(
       )
       return { kind: "PYG", module: "lib/ledger/reports/pyg.ts", result: pyg, pyg }
     }
+    // E7 · ADR-0015 D4: el informe es UNO; `params.method` decide qué vista
+    // presenta la pantalla, y las tres se calculan igual que antes.
+    case ReportType.CASHFLOW:
     case ReportType.CASHFLOW_DIRECTO:
     case ReportType.CASHFLOW_INDIRECTO: {
       const cfParams = { ...period, incomeTaxAccountCodes: ctx.incomeTaxAccountCodes }

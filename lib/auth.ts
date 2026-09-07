@@ -8,7 +8,10 @@ import { nextCookies } from "better-auth/next-js"
 import { emailOTP } from "better-auth/plugins/email-otp"
 import { headers } from "next/headers"
 import { redirect } from "next/navigation"
-import { prisma } from "./db"
+// E7 · T14 (ADR-0015 D5): better-auth escribe `users`, `sessions`, `account` y
+// `verification` SIN sesión; con RLS en `users` eso ya no lo puede hacer
+// `app_runtime`. El adaptador pasa a usar el cliente de `app_auth`.
+import { authPrisma } from "./auth-db"
 import { resend, sendOTPCodeEmail } from "./email"
 
 /** Datos que el sidebar pinta: identidad del usuario + plan/cuota de la organización activa. */
@@ -25,7 +28,7 @@ export type UserProfile = {
 }
 
 export const auth = betterAuth({
-  database: prismaAdapter(prisma, { provider: "postgresql" }),
+  database: prismaAdapter(authPrisma, { provider: "postgresql" }),
   appName: config.app.title,
   baseURL: config.app.baseURL,
   secret: config.auth.secret,
