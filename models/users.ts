@@ -111,3 +111,13 @@ export function updateUser(userId: string, data: Prisma.UserUpdateInput) {
     data,
   })
 }
+
+/**
+ * E13 · T12 — Cuántas sesiones de este usuario van a caer al cambiar la contraseña
+ * (`revokeOtherSessions`), EXCLUYENDO la que hace el cambio. Sólo para el número que
+ * queda en `AuditLog User/password_changed` (§7): nunca se borra desde aquí, eso lo
+ * hace better-auth con `revokeOtherSessions: true`.
+ */
+export async function countOtherSessions(userId: string, excludeToken: string): Promise<number> {
+  return await prisma.session.count({ where: { userId, token: { not: excludeToken } } })
+}

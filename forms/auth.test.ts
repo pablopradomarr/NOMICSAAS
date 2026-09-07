@@ -1,6 +1,7 @@
 // E13 · T3 — Tests de la política de contraseña (docs/design/E13-autenticacion.md §3, §8.1 criterio 4).
 import { describe, expect, it } from "vitest"
 import {
+  changePasswordFormSchema,
   forgotPasswordFormSchema,
   isPasswordTooObvious,
   newPasswordFormSchema,
@@ -89,6 +90,38 @@ describe("setInvitedPasswordFormSchema", () => {
       setInvitedPasswordFormSchema.safeParse({ name: "Pablo", password, confirm: password }).success
     ).toBe(true)
     expect(setInvitedPasswordFormSchema.safeParse({ name: "", password, confirm: password }).success).toBe(false)
+  })
+})
+
+describe("changePasswordFormSchema", () => {
+  const password = "a".repeat(PASSWORD_MIN_LENGTH)
+
+  it("exige la contraseña actual", () => {
+    expect(
+      changePasswordFormSchema.safeParse({ currentPassword: "", password, confirm: password }).success
+    ).toBe(false)
+  })
+
+  it("rechaza cuando la confirmación no coincide", () => {
+    expect(
+      changePasswordFormSchema.safeParse({
+        currentPassword: "vieja",
+        password,
+        confirm: "b".repeat(PASSWORD_MIN_LENGTH),
+      }).success
+    ).toBe(false)
+  })
+
+  it("acepta actual + nueva válida + confirmación igual", () => {
+    expect(
+      changePasswordFormSchema.safeParse({ currentPassword: "vieja", password, confirm: password }).success
+    ).toBe(true)
+  })
+
+  it("no exige a la contraseña actual la política de longitud (es la de antes, no la nueva)", () => {
+    expect(
+      changePasswordFormSchema.safeParse({ currentPassword: "x", password, confirm: password }).success
+    ).toBe(true)
   })
 })
 

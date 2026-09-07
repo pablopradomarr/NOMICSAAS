@@ -53,10 +53,23 @@ export const setInvitedPasswordFormSchema = z
     path: ["confirm"],
   })
 
+/** E13 · T12 — cambiar la propia contraseña desde el perfil (§4.2). */
+export const changePasswordFormSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Introduce tu contraseña actual"),
+    password: passwordSchema,
+    confirm: z.string(),
+  })
+  .refine((data) => data.password === data.confirm, {
+    message: "Las contraseñas no coinciden",
+    path: ["confirm"],
+  })
+
 export type NewPasswordForm = z.infer<typeof newPasswordFormSchema>
 export type SignInForm = z.infer<typeof signInFormSchema>
 export type ForgotPasswordForm = z.infer<typeof forgotPasswordFormSchema>
 export type SetInvitedPasswordForm = z.infer<typeof setInvitedPasswordFormSchema>
+export type ChangePasswordForm = z.infer<typeof changePasswordFormSchema>
 
 /**
  * Rechaza como contraseña la parte local del correo (antes de la `@`), en minúsculas y sin
