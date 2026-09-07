@@ -8,16 +8,20 @@ import { Separator } from "@/components/ui/separator"
 import { Organization, User } from "@/prisma/client"
 import { CircleCheckBig } from "lucide-react"
 import { useActionState } from "react"
+import { ChangePasswordForm } from "./change-password-form"
 import { SubscriptionPlan } from "./subscription-plan"
 
 export default function ProfileSettingsForm({
   user,
   organization,
   canEditBusiness,
+  showPasswordSection,
 }: {
   user: User
   organization: Organization
   canEditBusiness: boolean
+  /** E13 · T12 — false en self-hosted: no hay contraseña que cambiar (§8.2 T12). */
+  showPasswordSection: boolean
 }) {
   const [saveState, saveAction, pending] = useActionState(saveProfileAction, null)
   const [businessState, businessAction, businessPending] = useActionState(saveBusinessSettingsAction, null)
@@ -51,6 +55,13 @@ export default function ProfileSettingsForm({
 
         {saveState?.error && <FormError>{saveState.error}</FormError>}
       </form>
+
+      {showPasswordSection && (
+        <>
+          <Separator />
+          <ChangePasswordForm />
+        </>
+      )}
 
       <Separator />
 
