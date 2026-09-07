@@ -88,6 +88,17 @@ export type ProposalFromLineInput = {
    * huella ya está sellada en `bank_statement_lines.sha256` (§2.4).
    */
   lineSha256: string
+  /**
+   * **Destino analítico** de la línea de gasto (E7 · T16).
+   *
+   * Las cuentas 6/7 llevan destino obligatorio en toda organización que lo
+   * exija (R-A1 de E4), y una comisión bancaria es una cuenta 626: sin destino,
+   * `reconcile()` bloquea con `ANALYTIC_DEST_MISSING` y la propuesta desde el
+   * extracto no se puede confirmar en ninguna organización con analítica. Lo
+   * elige **una persona** en la pantalla; el motor no lo deduce del concepto del
+   * movimiento, que sería auto-punteo por patrón.
+   */
+  analyticDestination?: { projectId?: string | null; costCenterId?: string | null }
 }
 
 export type ProposalFromLineError =
@@ -157,6 +168,8 @@ export function proposalFromStatementLine(
           accountCodeOrigin: "usuario",
           description,
           deductibility: "NONE",
+          ...(input.analyticDestination?.projectId ? { projectId: input.analyticDestination.projectId } : {}),
+          ...(input.analyticDestination?.costCenterId ? { costCenterId: input.analyticDestination.costCenterId } : {}),
         },
       ],
       taxes: [{ taxRateCode: input.exemptTaxRateCode, baseCents: amount, quotaCents: 0, operationKey: "GENERAL" }],

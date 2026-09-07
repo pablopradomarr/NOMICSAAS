@@ -44,6 +44,7 @@ import {
   ReceiptText,
   Scale,
   ScrollText,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Split,
@@ -311,6 +312,33 @@ export function AppSidebar({
                   // aplicación (runs). Ambas se LEEN con cualquier rol.
                   { title: "Reglas de liquidación", href: "/analytics/allocations", icon: Split },
                   { title: "Liquidaciones", href: "/analytics/allocations/runs", icon: History },
+                ].map((item) => (
+                  <SidebarMenuItemWithHighlight key={item.href} href={item.href}>
+                    <SidebarMenuButton asChild>
+                      <Link href={item.href}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItemWithHighlight>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          {/* E7 · T12/T16 — Auditoría. La pestaña y la conciliación bancaria las
+              LEE cualquier rol: el sello, el semáforo y el cuadre son
+              información de auditoría, no de edición. Barrer, importar y
+              conciliar son de EDITOR; el barrido del almacén, el alta de cuentas
+              y el registro son de ADMIN, y lo exigen las acciones, no el menú.
+              El bloque `AuditLog` de `/audit` sólo se pinta para ADMIN. */}
+          <SidebarGroup>
+            <SidebarGroupLabel>Auditoría</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {[
+                  { title: "Auditoría", href: "/audit", icon: ShieldCheck },
+                  { title: "Conciliación bancaria", href: "/audit/bank", icon: Banknote },
                 ].map((item) => (
                   <SidebarMenuItemWithHighlight key={item.href} href={item.href}>
                     <SidebarMenuButton asChild>

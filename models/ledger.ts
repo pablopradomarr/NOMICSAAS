@@ -2259,8 +2259,14 @@ export async function runLedgerInvariants(
         scope: {
           kind: opts.persist.scopeKind,
           fiscalYearId: opts.fiscalYearId ?? null,
-          periodStart: opts.persist.periodStart ?? (opts.persist.scopeKind === "ORGANIZATION" ? null : auditFrom),
-          periodEnd: opts.persist.periodEnd ?? (opts.persist.scopeKind === "ORGANIZATION" ? null : auditTo),
+          // El CHECK `invariant_runs_scope_coherent` es estricto y tiene razón:
+          // `ORGANIZATION` va sin nada, `FISCAL_YEAR` **con ejercicio y SIN
+          // fechas** —las fechas ya están en el ejercicio, y repetirlas permite
+          // que digan otra cosa— y sólo `PERIOD` lleva las dos. Rellenarlas
+          // siempre que no fuera ORGANIZATION hacía que ningún barrido de
+          // ejercicio se pudiera persistir (E7 · T12).
+          periodStart: opts.persist.scopeKind === "PERIOD" ? (opts.persist.periodStart ?? auditFrom) : null,
+          periodEnd: opts.persist.scopeKind === "PERIOD" ? (opts.persist.periodEnd ?? auditTo) : null,
         },
         trigger: opts.persist.trigger,
         hashes: { ledgerHash: hash, analyticsKey: analyticsKeyForRun, planHash, accountMapHash, configHash },

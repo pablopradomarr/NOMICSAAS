@@ -5,6 +5,7 @@ import { fileExists, fullPathForFile } from "@/lib/files"
 import { ProposalForm } from "@/components/unsorted/proposal-form"
 import { RevoidRedoDialog } from "@/components/unsorted/revoid-redo-dialog"
 import { RunSelector } from "@/components/unsorted/run-selector"
+import { SplitDialog, type SplitLineView } from "@/components/unsorted/split-dialog"
 import type {
   AccountNameMap,
   DocumentFileView,
@@ -120,6 +121,33 @@ export default tenantPage<{
   const categories = await db.category.findMany({ select: { code: true, name: true }, orderBy: { code: "asc" } })
   const currencies = await db.currency.findMany({ select: { code: true }, orderBy: { code: "asc" } })
 
+  /**
+   * E7 · T17 — lo que el diálogo de split necesita: las líneas del documento tal
+   * como están en la propuesta sellada, y si el documento es divisible. La razón
+   * de la negativa se dice aquí y el servidor la vuelve a comprobar
+   * (`SPLIT_NOT_SPLITTABLE`): un control que sólo vive en el navegador no es un
+   * control.
+   */
+  const proposalForSplit = preview && preview.success && preview.data ? preview.data.proposal : null
+  const splitLines: SplitLineView[] = (proposalForSplit?.lines ?? []).map((line, index) => ({
+    index,
+    description: line.description ?? "",
+    baseCents: line.baseCents,
+    discountCents: line.discountCents ?? 0,
+    taxRateCode: line.taxRateCode,
+  }))
+  const notSplittableReason =
+    proposalForSplit === null
+      ? "No hay propuesta que dividir."
+      : proposalForSplit.withholding
+        ? "Un documento con retención no se divide: la base de la retención (art. 99 LIRPF) es la del documento entero."
+        : (proposalForSplit.appliedAdvanceCents ?? 0) !== 0
+          ? "Un documento con anticipo aplicado no se divide: el anticipo es del documento entero."
+          : proposalForSplit.rectifies
+            ? "Una rectificativa no se divide: rectifica una factura, no un tercio de ella."
+            : null
+  const splittable = notSplittableReason === null
+
   const accountNameMap: AccountNameMap = Object.fromEntries(names)
   const options: ProposalFormOptions = {
     taxRateCodes: rates.map((rate) => ({ code: rate.code, label: rate.label })),
@@ -154,6 +182,18 @@ export default tenantPage<{
               transactionId={transaction.id}
               status={transaction.status}
               entryNumber={postedEntry?.entryNumber ?? null}
+            />
+          )}
+          {/* E7 · T17 — split N-a-1 (deuda de E8). Sólo sobre una propuesta
+              existente y sólo si el documento es divisible: con retención,
+              anticipo aplicado o rectificación el diálogo no se abre y lo
+              explica, porque la base de la retención es del documento entero. */}
+          {canEdit && splitLines.length > 1 && (
+            <SplitDialog
+              runId={selectedRun?.id ?? ""}
+              lines={splitLines}
+              splittable={splittable}
+              notSplittableReason={notSplittableReason}
             />
           )}
           {canEdit && <AnalyzeDocumentButton fileId={file.id} hasRuns={runs.length > 0} />}

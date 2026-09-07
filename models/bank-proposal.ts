@@ -64,6 +64,14 @@ export type ProposeFromLineInput = {
   accountKey: ProposalAccountKey
   description?: string
   refDate: LocalDate
+  /**
+   * **Destino analítico** de la línea de gasto (E7 · T16). Una comisión es una
+   * 626 y las cuentas 6/7 llevan destino obligatorio (R-A1 de E4): sin él,
+   * `reconcile()` bloquea con `ANALYTIC_DEST_MISSING`. Lo elige una persona en
+   * la pantalla; el motor no lo deduce del concepto del movimiento.
+   */
+  projectId?: string | null
+  costCenterId?: string | null
 }
 
 export type ProposalPreviewFromLine = {
@@ -276,6 +284,9 @@ async function prepare(
     accountCode,
     accountKey: input.accountKey,
     ...(input.description ? { description: input.description } : {}),
+    ...(input.projectId || input.costCenterId
+      ? { analyticDestination: { projectId: input.projectId ?? null, costCenterId: input.costCenterId ?? null } }
+      : {}),
   })
   if (!built.ok) return fail(built.error.code, built.error.message)
 

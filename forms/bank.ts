@@ -152,13 +152,37 @@ export const proposalAccountKeySchema = z.enum([
   "DIFERENCIA_CAMBIO_POSITIVA",
 ])
 
-export const proposeEntryFromLineSchema = z.object({
-  statementLineId: z.string().uuid(),
-  accountKey: proposalAccountKeySchema,
-  description: z.string().trim().max(255).optional(),
+const proposeEntryFromLineBase = z
+  .object({
+    statementLineId: z.string().uuid(),
+    accountKey: proposalAccountKeySchema,
+    description: z.string().trim().max(255).optional(),
+    /**
+     * **Destino analítico** (E7 · T16). Una comisión bancaria es una 626, y las
+     * cuentas 6/7 llevan destino obligatorio: sin él la propuesta se bloquea con
+     * `ANALYTIC_DEST_MISSING`. Es **exactamente uno** —proyecto o centro de
+     * coste—, la misma regla que el resto del diario (R-A1 de E4).
+     */
+    projectId: z.string().uuid().nullish(),
+    costCenterId: z.string().uuid().nullish(),
+  })
+
+/** Un destino y sólo uno, como en cualquier otra línea 6/7 del diario. */
+const unSoloDestino = {
+  check: (v: { projectId?: string | null; costCenterId?: string | null }): boolean =>
+    !((v.projectId ?? null) !== null && (v.costCenterId ?? null) !== null),
+  message: "El destino analítico es uno solo: o proyecto o centro de coste, nunca los dos",
+  path: ["costCenterId"] as const,
+}
+
+export const proposeEntryFromLineSchema = proposeEntryFromLineBase.refine(unSoloDestino.check, {
+  message: unSoloDestino.message,
+  path: [...unSoloDestino.path],
 })
 
-export const confirmEntryFromLineSchema = proposeEntryFromLineSchema.extend({
-  /** Idempotencia de formulario: el doble clic no contabiliza dos veces. */
-  idempotencyKey: z.string().trim().min(8).max(120).optional(),
-})
+export const confirmEntryFromLineSchema = proposeEntryFromLineBase
+  .extend({
+    /** Idempotencia de formulario: el doble clic no contabiliza dos veces. */
+    idempotencyKey: z.string().trim().min(8).max(120).optional(),
+  })
+  .refine(unSoloDestino.check, { message: unSoloDestino.message, path: [...unSoloDestino.path] })

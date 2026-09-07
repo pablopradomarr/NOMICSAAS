@@ -413,6 +413,76 @@ const splitProposalActionImpl = withOrg(
   }
 )
 
+/**
+ * **E7 · T17 — vista previa del split, SIN escribir nada.**
+ *
+ * El diálogo de reparto necesita los totales de cada grupo antes de contabilizar
+ * nada, y esos totales llevan el reparto de la cuota por **mayor resto**
+ * (`Σ cuotas de los grupos = cuota del documento`, tolerancia 0). Repartir la
+ * cuota es aritmética contable, así que la hace `splitProposal()` **en el
+ * servidor** —el mismo módulo puro que usa la confirmación—: el navegador no
+ * suma una cuota ni para enseñarla.
+ *
+ * Devuelve además los errores tipados tal cual (`SPLIT_NOT_A_PARTITION`,
+ * `SPLIT_NOT_SPLITTABLE`…), que es lo que la pantalla tiene que explicar.
+ */
+const previewSplitActionImpl = withOrg(
+  "VIEWER",
+  async (
+    { db },
+    rawInput: unknown
+  ): Promise<
+    ActionState<{
+      ok: boolean
+      errors: { code: string; message: string }[]
+      groups: { index: number; description: string | null; lineCount: number; baseCents: number; quotaCents: number; totalCents: number }[]
+      documentQuotaCents: number
+    }>
+  > => {
+    const parsed = splitProposalSchema.safeParse(rawInput)
+    if (!parsed.success) return { success: false, error: formatZodError(parsed.error) }
+
+    const loaded = await loadRun(db, parsed.data.runId)
+    if ("error" in loaded) return { success: false, error: loaded.error }
+    if (!loaded.proposal) return { success: false, error: "El run no tiene propuesta que dividir" }
+
+    const documentQuotaCents = loaded.proposal.taxes.reduce((total, tax) => total + tax.quotaCents, 0)
+    const split = splitProposal(loaded.proposal, parsed.data.groups)
+    if (!split.ok) {
+      return {
+        success: true,
+        data: {
+          ok: false,
+          errors: split.errors.map((error) => ({ code: error.code, message: error.message })),
+          groups: [],
+          documentQuotaCents,
+        },
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        ok: true,
+        errors: [],
+        groups: split.proposals.map((proposal, index) => {
+          const baseCents = proposal.lines.reduce((total, line) => total + line.baseCents - (line.discountCents ?? 0), 0)
+          const quotaCents = proposal.taxes.reduce((total, tax) => total + tax.quotaCents, 0)
+          return {
+            index,
+            description: parsed.data.groups[index]?.description ?? null,
+            lineCount: proposal.lines.length,
+            baseCents,
+            quotaCents,
+            totalCents: baseCents + quotaCents,
+          }
+        }),
+        documentQuotaCents,
+      },
+    }
+  }
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Anular y rehacer (ADR-0014 D1, O-9)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -611,6 +681,10 @@ export async function confirmBatchAction(input: unknown): Promise<Awaited<Return
 
 export async function splitProposalAction(input: unknown): Promise<Awaited<ReturnType<typeof splitProposalActionImpl>>> {
   return await guardingRates(() => splitProposalActionImpl(input))
+}
+
+export async function previewSplitAction(input: unknown): Promise<Awaited<ReturnType<typeof previewSplitActionImpl>>> {
+  return await guardingRates(() => previewSplitActionImpl(input))
 }
 
 export async function revoidAndRedoAction(input: unknown): Promise<Awaited<ReturnType<typeof revoidAndRedoActionImpl>>> {

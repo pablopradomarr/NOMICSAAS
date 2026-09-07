@@ -98,7 +98,8 @@ import {
   runLedgerInvariants,
   todayLocalDate,
 } from "@/models/ledger"
-import { clearManualReviewFlag, setManualReviewFlag } from "@/models/reports"
+import { getAccountMapByKey } from "@/models/account-map"
+import { clearManualReviewFlag, getStatementAccounts, setManualReviewFlag } from "@/models/reports"
 import { getSweep, latestSweep, requestCancel, type StoreSweepRow } from "@/models/store-sweep"
 import { Role } from "@/prisma/client"
 import { revalidatePath } from "next/cache"
@@ -358,8 +359,14 @@ export async function updateBankAccountAction(input: unknown): Promise<ActionSta
 // Extractos
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Tamaño máximo del extracto. Un N43 de un año no llega a 5 MB. */
-export const MAX_STATEMENT_BYTES = 8 * 1024 * 1024
+/**
+ * Tamaño máximo del extracto. Un N43 de un año no llega a 5 MB.
+ *
+ * **No se exporta** (E7 · T16): un fichero `"use server"` sólo puede exportar
+ * funciones asíncronas, y en cuanto un componente de cliente importa de aquí,
+ * exportar una constante rompe la pantalla entera en tiempo de ejecución.
+ */
+const MAX_STATEMENT_BYTES = 8 * 1024 * 1024
 
 /**
  * Importa un extracto. **EDITOR.** Valida tamaño, calcula el `sha256` en
@@ -657,6 +664,44 @@ export async function detectionTestAction(input: unknown = {}): Promise<ActionSt
           (a) => ({ ...a, organizationId: org.id })
         )
 
+        /**
+         * **E7 · T12/T13 — cierra la deuda de la ola B.** Sin el bloque de
+         * informes, la prueba demostraba la detección con I1 y el sello de fila
+         * I-E3-7, pero **I2 no participaba**: el balance no se construía, así
+         * que un céntimo de más en el activo no se veía descuadrar. El bloque se
+         * arma con las MISMAS líneas que el motor ya tiene delante —una
+         * `ReportLine` es una línea de asiento con su cabecera—, de modo que la
+         * alteración de la copia se propaga a los dos bloques a la vez y no hay
+         * una segunda lectura que pudiera discrepar.
+         */
+        const statementAccounts = await getStatementAccounts(tx)
+        const accountMap = await getAccountMapByKey(tx)
+        const resultAccountCode = accountMap.get("RESULTADO_EJERCICIO") ?? "129"
+        const dates = entries.map((entry) => entry.entryDate).sort()
+        const { baseCurrency } = await tx.organization.findFirstOrThrow({ select: { baseCurrency: true } })
+        const reportsOf = (source: readonly (typeof entries)[number][]) => ({
+          lines: source.flatMap((entry) =>
+            entry.lines.map((line) => ({
+              entryId: entry.id,
+              entryNumber: entry.entryNumber,
+              entryDate: entry.entryDate,
+              entryKind: entry.kind,
+              fiscalYearId: entry.fiscalYearId,
+              lineNo: line.lineNo,
+              accountCode: line.accountCode,
+              debitCents: line.debitCents,
+              creditCents: line.creditCents,
+              description: line.description ?? null,
+            }))
+          ),
+          accounts: statementAccounts,
+          resultAccountCode,
+          organizationId: org.id,
+          from: dates[0] ?? refDate,
+          to: dates[dates.length - 1] ?? refDate,
+          baseCurrency,
+        })
+
         const base = {
           runId: "prueba-de-deteccion",
           gitSha: process.env.GIT_SHA ?? "desconocido",
@@ -666,7 +711,7 @@ export async function detectionTestAction(input: unknown = {}): Promise<ActionSt
           periodLocks,
           accounts,
         }
-        const before = runInvariantsPure({ ...base, entries }, refDate).checks
+        const before = runInvariantsPure({ ...base, entries, reports: reportsOf(entries) }, refDate).checks
 
         // La copia: se ordena de forma determinista y se altera UN céntimo.
         const sorted = [...entries].sort((a, b) =>
@@ -683,7 +728,7 @@ export async function detectionTestAction(input: unknown = {}): Promise<ActionSt
               }
             : entry
         )
-        const after = runInvariantsPure({ ...base, entries: copy }, refDate).checks
+        const after = runInvariantsPure({ ...base, entries: copy, reports: reportsOf(copy) }, refDate).checks
 
         const beforeById = new Map(before.map((c) => [c.id, c.status]))
         const detectedBy = after
