@@ -22,6 +22,13 @@
  * Uso:
  *   DATABASE_URL_MAINTENANCE=… npx tsx scripts/run-invariants.ts [--org <uuid>]
  *                                     [--out <fichero>] [--ref-date AAAA-MM-DD]
+ *                                     [--persist] [--trigger SCHEDULED]
+ *
+ * `--persist` (E7 · T18) sella la foto y la escribe en `invariant_runs`, que es
+ * append-only: el barrido programado deja historial comparable en vez de un
+ * fichero que se pisa a sí mismo. `--trigger` declara quién lo pidió
+ * (`MANUAL`/`SCHEDULED`/`POST_CLOSE`/`POST_IMPORT`; por defecto `SCHEDULED`
+ * cuando se persiste). **El formato de `validacion.json` no cambia.**
  *
  * `--ref-date` es «hoy» para I8 (`entryDate ≤ refDate`). Por defecto, la fecha
  * de hoy en Europe/Madrid. Se declara explícitamente cuando el resultado tiene
@@ -66,7 +73,17 @@ function todayIso(): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Madrid" }).format(new Date())
 }
 
-function parseArgs(argv: string[]): { organizationId: string | null; out: string; refDate: string | null } {
+type AuditTriggerArg = "MANUAL" | "SCHEDULED" | "POST_CLOSE" | "POST_IMPORT"
+
+const AUDIT_TRIGGERS: readonly AuditTriggerArg[] = ["MANUAL", "SCHEDULED", "POST_CLOSE", "POST_IMPORT"]
+
+function parseArgs(argv: string[]): {
+  organizationId: string | null
+  out: string
+  refDate: string | null
+  persist: boolean
+  trigger: AuditTriggerArg
+} {
   const value = (flag: string): string | null => {
     const index = argv.indexOf(flag)
     return index >= 0 ? (argv[index + 1] ?? null) : null
@@ -75,10 +92,23 @@ function parseArgs(argv: string[]): { organizationId: string | null; out: string
   if (refDate && !/^\d{4}-\d{2}-\d{2}$/.test(refDate)) {
     throw new Error(`--ref-date debe ser AAAA-MM-DD, no ${refDate}`)
   }
+  // E7 · T18. `--persist` sella la foto en `invariant_runs`; `--trigger` dice
+  // QUIÉN la pidió, y el programado es `SCHEDULED`. El FORMATO de
+  // `validacion.json` no cambia: quien lo consume hoy no se entera de nada.
+  const persist = argv.includes("--persist")
+  const trigger = (value("--trigger") ?? (persist ? "SCHEDULED" : "MANUAL")) as AuditTriggerArg
+  if (!AUDIT_TRIGGERS.includes(trigger)) {
+    throw new Error(`--trigger debe ser uno de ${AUDIT_TRIGGERS.join(", ")}, no ${trigger}`)
+  }
+  if (persist && !value("--org")) {
+    throw new Error("--persist necesita --org: un InvariantRun es la foto de UNA organización")
+  }
   return {
     organizationId: value("--org"),
     out: value("--out") ?? "validacion.json",
     refDate,
+    persist,
+    trigger,
   }
 }
 
@@ -147,7 +177,7 @@ async function refDateFromFiscalYears(organizationId: string): Promise<string> {
 }
 
 async function main() {
-  const { organizationId, out, refDate: refDateArg } = parseArgs(process.argv.slice(2))
+  const { organizationId, out, refDate: refDateArg, persist, trigger } = parseArgs(process.argv.slice(2))
   // A4 (auditor): «hoy» por defecto era el RELOJ, así que auditar un ejercicio
   // cerrado de 2026 desde 2028 hacía pasar I8 por pura suerte, y auditar uno
   // futuro lo marcaba entero como asientos por venir. Cuando no se pasa
@@ -162,6 +192,7 @@ async function main() {
   let ledgerHash: string | null = null
   let gitSha = process.env.GIT_SHA ?? "desconocido"
   let sello: { sello: string; motivos: string[] } | undefined
+  let persistedRunId: string | null = null
   const checks: Check[] = []
 
   if (organizationId) {
@@ -169,7 +200,19 @@ async function main() {
     // I-E8-2 lee los BYTES del almacén (auditor H-3): sin este lector el check
     // se quedaría en «el almacén no expuso los bytes», que es lo que pasaba.
     const { sha256OfStoredFile } = await import("@/lib/files-integrity")
-    const run = await runLedgerInvariants(organizationId, { refDate, noCache: true, readStoredFile: sha256OfStoredFile })
+    const run = await runLedgerInvariants(organizationId, {
+      refDate,
+      noCache: true,
+      readStoredFile: sha256OfStoredFile,
+      // E7 · T18: con `--persist`, el mismo barrido se SELLA y se escribe en
+      // `invariant_runs` (append-only) dentro de su transacción. Sin él, el
+      // script se comporta exactamente como hasta ahora.
+      audit: true,
+      ...(persist
+        ? { persist: { trigger, scopeKind: "ORGANIZATION" as const, runById: null } }
+        : {}),
+    })
+    persistedRunId = run.persistedRunId ?? null
     ledgerHash = run.validacion.ledgerHash
     gitSha = run.validacion.gitSha
     sello = { sello: run.sello.sello, motivos: run.sello.motivos }
@@ -209,6 +252,7 @@ async function main() {
     console.log(`${check.status.padEnd(7)} ${check.id.padEnd(8)} ${check.evidencia}`)
   }
   if (sello) console.log(`\n· ${sello.sello}${sello.motivos.length ? ` — ${sello.motivos.join("; ")}` : ""}`)
+  if (persistedRunId) console.log(`· InvariantRun ${persistedRunId} (trigger ${trigger})`)
   console.log(`· Escrito ${out}`)
 
   if (checks.some((check) => check.status === "FAIL")) {

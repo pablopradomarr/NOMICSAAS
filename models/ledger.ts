@@ -31,6 +31,11 @@ import type { AccountKey } from "@/lib/accounts/types"
 // E5 · auditoría hallazgo 2: la base liquidable de I5.a, reconstruida por un
 // camino independiente del que emitió las líneas. Módulo PURO.
 import { reconstructBalances } from "@/lib/analytics/allocate"
+// E7 · T9: el sello analítico del `InvariantRun` se compone con las MISMAS
+// funciones que la clave de un `ReportRun`; dos composiciones distintas del
+// mismo sello acaban divergiendo (E5 · O-E5-7).
+import { allocationRunSetHash, analyticsHash as analyticsHashOf, marginConfigHash } from "@/lib/analytics/hash"
+import { analyticsKeyOf } from "@/lib/ledger/report-run"
 import { fromUtcDate, resolveReversalDate, toUtcDate } from "@/lib/ledger/dates"
 import { entryHash, HASH_VERSION_CURRENT, HashableLine, ledgerHash } from "@/lib/ledger/hash"
 import {
@@ -1447,6 +1452,29 @@ export type InvariantRun = {
   sello: Seal
   /** De dónde salió: `sql` (agregados), `full` (motor puro) o `cache`. */
   origen: "full" | "sql" | "cache"
+  /**
+   * E7 · T9 — id del `InvariantRun` **persistido**, cuando se pidió `persist`.
+   * Sin `persist` no se escribe nada: un run por render sería ruido (P3).
+   */
+  persistedRunId?: string
+  /** Los motivos propios de E7, ya agregados (§5.3). */
+  auditReasons?: readonly string[]
+}
+
+/**
+ * E7 · T9 — lo que convierte un barrido en una **foto sellada** (§3.7).
+ *
+ * Sin `persist`, `runLedgerInvariants` se comporta exactamente como hasta ahora
+ * y la caché por `ledgerHash` sigue sirviendo a las cabeceras de informe, que no
+ * deben escribir una fila por render. Con `persist`, el mismo cálculo se sella y
+ * se escribe **en la misma transacción**.
+ */
+export type PersistInvariantRun = {
+  trigger: "MANUAL" | "SCHEDULED" | "POST_CLOSE" | "POST_IMPORT"
+  scopeKind: "ORGANIZATION" | "FISCAL_YEAR" | "PERIOD"
+  periodStart?: LocalDate | null
+  periodEnd?: LocalDate | null
+  runById?: string | null
 }
 
 /**
@@ -1487,6 +1515,20 @@ function cachePut(key: string, run: InvariantRun): void {
 }
 
 /** Lee el diario por páginas, sin un `include` gigante (#9). */
+/**
+ * E7 · T11 — los asientos del alcance, en la forma que consume el motor puro.
+ *
+ * Existe para la **prueba de detección** (§7): el error se inyecta en una COPIA
+ * en memoria de esta entrada, jamás en `journal_lines`.
+ */
+export async function readInvariantEntries(
+  tx: TenantTransactionClient,
+  fiscalYearId?: string
+): Promise<PostedEntry[]> {
+  const total = await countEntries(tx, fiscalYearId)
+  return await readEntriesPaged(tx, fiscalYearId, total)
+}
+
 async function readEntriesPaged(
   tx: TenantTransactionClient,
   fiscalYearId: string | undefined,
@@ -1935,14 +1977,28 @@ export async function runLedgerInvariants(
      * `@/lib/files-integrity`; sin él, I-E8-2 se queda en WARN y lo dice.
      */
     readStoredFile?: StoredFileReader
+    /**
+     * E7 · T9 — corre además el bloque **I-E7-1…17** (conciliación, almacén,
+     * liquidaciones y cuadres de cierre). Cuesta cuatro lecturas agregadas más,
+     * así que **no** se activa en la cabecera de un informe: lo piden el barrido
+     * explícito, el programado y el script.
+     */
+    audit?: boolean
+    /** Sella y persiste la foto (`invariant_runs`, append-only). Implica `audit`. */
+    persist?: PersistInvariantRun
   }
 ): Promise<InvariantRun> {
   return await tenantTransaction(organizationId, opts.actor?.userId ?? undefined, async (tx) => {
+    const startedAt = Date.now()
+    const withAudit = opts.audit === true || opts.persist !== undefined
     const gitSha = opts.gitSha ?? process.env.GIT_SHA ?? "desconocido"
     const hash = await computeLedgerHash(tx, opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {})
-    const cacheKey = `${organizationId}|${opts.fiscalYearId ?? "*"}|${opts.refDate}|${gitSha}|${hash}`
+    // El bloque E7 forma parte del resultado: un run cacheado SIN él no puede
+    // servir a quien lo pide (y al revés), o `checksHash` diría una cosa y los
+    // checks otra.
+    const cacheKey = `${organizationId}|${opts.fiscalYearId ?? "*"}|${opts.refDate}|${gitSha}|${hash}|${withAudit ? "audit" : "base"}`
 
-    if (!opts.noCache) {
+    if (!opts.noCache && opts.persist === undefined) {
       const cached = cacheGet(cacheKey)
       if (cached) return { ...cached, origen: "cache" as const }
     }
@@ -1958,6 +2014,13 @@ export async function runLedgerInvariants(
 
     let validacion: Validacion
     let origen: "full" | "sql"
+    /**
+     * E7 · T9 — el **sello analítico** del run, con la misma composición que la
+     * clave de un `ReportRun` (E5 · O-E5-7). Se rellena sólo cuando el barrido
+     * materializa el bloque analítico; si no, queda en el centinela y el diff lo
+     * dirá en vez de fingir que no cambió nada.
+     */
+    let analyticsKeyForRun = analyticsKeyOf({})
 
     if (total > MAX_MATERIALIZED_ENTRIES) {
       origen = "sql"
@@ -2066,6 +2129,23 @@ export async function runLedgerInvariants(
               runLinesHashes: applied.runs.map((r) => ({ id: r.id, linesHash: r.linesHash })),
             }
 
+      analyticsKeyForRun = analyticsKeyOf({
+        analyticsHash: analyticsHashOf(
+          analyticLines.map((l) => ({
+            entryId: l.entryId,
+            lineNo: l.lineNo,
+            projectId: l.projectId,
+            costCenterId: l.costCenterId,
+            businessLineId: l.businessLineId,
+            analyticType: l.analyticType,
+          })),
+          marginConfigHash(analyticsConfig),
+          allocationRunSetHash(applied.runIds)
+        ),
+        marginConfigHash: marginConfigHash(analyticsConfig),
+        allocationRunSetHash: applied.runIds.length === 0 ? null : allocationRunSetHash(applied.runIds),
+      })
+
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),
         gitSha,
@@ -2103,6 +2183,37 @@ export async function runLedgerInvariants(
       validacion.checks = validacion.checks.map((c) => (c.id === "I1" ? i1 : c.id === "I7" ? i7 : c))
     }
 
+    // ── E7 · T9: el bloque I-E7-1…17 sobre datos reales ───────────────────────
+    //
+    // Se añade ANTES del sello: un FAIL de conciliación o de cuadre de cierre
+    // sella el periodo `REQUIERE REVISIÓN` como cualquier otro (§5.3).
+    // Nada de esto se lee cuando no se pide el bloque: una cabecera de informe
+    // no paga por lo que no usa.
+    const organizationRow = withAudit
+      ? await tx.organization.findFirstOrThrow({ select: { baseCurrency: true } })
+      : { baseCurrency: "EUR" }
+    const fiscalYearsForAudit = withAudit ? await listFiscalYearRefs(tx) : []
+    const scopeYear = opts.fiscalYearId ? fiscalYearsForAudit.find((fy) => fy.id === opts.fiscalYearId) : undefined
+    const auditFrom = scopeYear ? scopeYear.startDate : "0001-01-01"
+    const auditTo = scopeYear ? scopeYear.endDate : opts.refDate
+    let audit: Awaited<ReturnType<typeof import("@/models/audit").auditBlock>> | null = null
+
+    if (withAudit) {
+      // Importación DINÁMICA: `models/audit.ts` lee `models/bank.ts`, que a su
+      // vez importa de este módulo. Con `import()` el ciclo no existe en tiempo
+      // de carga (mismo patrón que `models/allocations.ts`).
+      const { auditBlock } = await import("@/models/audit")
+      audit = await auditBlock(tx, {
+        refDate: opts.refDate,
+        from: auditFrom,
+        to: auditTo,
+        ...(opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {}),
+        baseCurrency: organizationRow.baseCurrency,
+        ...(scopeYear && scopeYear.endDate === auditTo ? { isFiscalYearEnd: true } : {}),
+      })
+      validacion.checks = [...validacion.checks, ...audit.checks]
+    }
+
     // ADR-0014 D7: los seis motivos de sello del camino documental. Los aporta
     // `reconcile()` documento a documento y se agregan aquí, porque el sello es
     // del PERIODO y no de la factura.
@@ -2112,8 +2223,82 @@ export async function runLedgerInvariants(
       ...(opts.lastGitSha !== undefined ? { lastGitSha: opts.lastGitSha } : {}),
       ...(documentReasons.length > 0 ? { documentReasons } : {}),
     })
-    const run: InvariantRun = { validacion, sello, origen }
-    if (!opts.noCache) cachePut(cacheKey, run)
+
+    let persistedRunId: string | undefined
+    if (opts.persist) {
+      const { auditConfigSnapshot, createInvariantRun, headlineFigures } = await import("@/models/audit")
+      const { buildInvariantRun, configHashOf } = await import("@/lib/audit/run")
+      const { computeAccountMapHash, computePlanHash } = await import("@/models/reports")
+      const { listManualReviewFlags } = await import("@/models/reports")
+
+      const planHash = await computePlanHash(tx)
+      const accountMapHash = await computeAccountMapHash(tx)
+      const flags = await listManualReviewFlags(tx, { activeOnly: true })
+      const configHash = configHashOf(
+        await auditConfigSnapshot(tx, {
+          warnThreshold: 0,
+          forceReview: flags.length > 0,
+          maxMaterializedEntries: MAX_MATERIALIZED_ENTRIES,
+        })
+      )
+      const runId = validacion.run_id
+      const headline = await headlineFigures(tx, {
+        from: auditFrom,
+        to: auditTo,
+        ...(opts.fiscalYearId ? { fiscalYearId: opts.fiscalYearId } : {}),
+        ledgerHash: hash,
+        runId,
+        gitSha,
+        baseCurrency: organizationRow.baseCurrency,
+      })
+
+      const draft = buildInvariantRun({
+        organizationId,
+        runId,
+        checks: validacion.checks,
+        scope: {
+          kind: opts.persist.scopeKind,
+          fiscalYearId: opts.fiscalYearId ?? null,
+          periodStart: opts.persist.periodStart ?? (opts.persist.scopeKind === "ORGANIZATION" ? null : auditFrom),
+          periodEnd: opts.persist.periodEnd ?? (opts.persist.scopeKind === "ORGANIZATION" ? null : auditTo),
+        },
+        trigger: opts.persist.trigger,
+        hashes: { ledgerHash: hash, analyticsKey: analyticsKeyForRun, planHash, accountMapHash, configHash },
+        headline,
+        gitSha,
+        lastGitSha: opts.lastGitSha ?? null,
+        refDate: opts.refDate,
+        manualFlags: flags.map((f) => ({
+          id: f.id,
+          scope: f.scope,
+          reason: f.reason,
+          periodStart: fromUtcDate(f.periodStart),
+          periodEnd: fromUtcDate(f.periodEnd),
+          clearedAt: f.clearedAt ? f.clearedAt.toISOString() : null,
+        })),
+        coverage: {
+          evaluated: audit?.coverage.evaluated ?? [],
+          skipped: audit?.coverage.skipped ?? [],
+          entriesConsidered: total,
+          maxMaterializedEntries: MAX_MATERIALIZED_ENTRIES,
+        },
+        durationMs: Date.now() - startedAt,
+        ...(audit ? { auditReasons: audit.reasons } : {}),
+        storeSweepId: audit?.storeSweepId ?? null,
+        runById: opts.persist.runById ?? opts.actor?.userId ?? null,
+      })
+      const persisted = await createInvariantRun(tx, draft)
+      persistedRunId = persisted.id
+    }
+
+    const run: InvariantRun = {
+      validacion,
+      sello,
+      origen,
+      ...(persistedRunId ? { persistedRunId } : {}),
+      ...(audit ? { auditReasons: audit.reasons } : {}),
+    }
+    if (!opts.noCache && opts.persist === undefined) cachePut(cacheKey, run)
     return run
   })
 }

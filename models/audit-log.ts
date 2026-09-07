@@ -44,6 +44,13 @@ export type AuditEntity =
   /// La operación heredada de TaxHacker: anular-y-rehacer y duplicado forzado
   /// se registran sobre ella, que es lo que el usuario ve en `/transactions`.
   | "Transaction"
+  // E7 · T9/T10/T11 — auditoría y conciliación bancaria (§4.3).
+  | "BankAccount"
+  | "BankStatement"
+  | "BankStatementLine"
+  | "BankMatchGroup"
+  | "InvariantRun"
+  | "StoreSweep"
 
 export type AuditAction =
   | "create"
@@ -90,6 +97,20 @@ export type AuditAction =
   | "SET_PROMPT_VERSION"
   | "SET_REGIME"
   | "EMIT_INVOICE"
+  // E7 · T9/T10/T11 — actos de la pestaña Auditoría y de la conciliación.
+  /** Conciliar un grupo N-a-M: quién, qué ids, qué suma y con qué método. */
+  | "MATCH"
+  /** Desconciliar el GRUPO, con motivo ≥ 10 caracteres. */
+  | "UNMATCH"
+  /** `IGNORED` del vocabulario cerrado, con su evidencia. */
+  | "IGNORE_LINE"
+  | "RUN_INVARIANTS"
+  | "SWEEP_STORE"
+  | "cancel"
+  /** Prueba de detección: no escribe en el diario, pero deja constancia (§9). */
+  | "DETECTION_TEST"
+  /** Propuesta de asiento desde un movimiento del extracto (T23). */
+  | "PROPOSE_ENTRY_FROM_LINE"
 
 export type AuditLogInput = {
   entity: AuditEntity
@@ -105,14 +126,23 @@ export type AuditLogInput = {
 type AuditWriter = Pick<TenantTransactionClient, "auditLog" | "$organizationId">
 
 /**
- * Serializa a JSON almacenable: `Date` → ISO, `undefined` → ausente. Sin esto,
- * Prisma rechaza un `Date` dentro de un `Json` y el log se pierde por un detalle
- * de tipos.
+ * Serializa a JSON almacenable: `Date` → ISO, `BigInt` → **cadena decimal**,
+ * `undefined` → ausente. Sin esto, Prisma rechaza un `Date` dentro de un `Json`
+ * y el log se pierde por un detalle de tipos.
+ *
+ * **`BigInt` como cadena y no como `number`** (E7, ADR-0015 D1): desde que el
+ * diario y las tablas de conciliación son `bigint`, una fila cruda que va al
+ * `before`/`after` trae `BigInt`, y `JSON.stringify` lanza «Do not know how to
+ * serialize a BigInt» — es decir, la mutación se abortaba por culpa del log.
+ * La cadena conserva el céntimo exacto; el `number` podría no hacerlo, y un
+ * registro de auditoría que redondea no vale para auditar.
  */
 export function toAuditJson(value: unknown): Prisma.InputJsonValue | undefined {
   if (value === undefined || value === null) return undefined
   return JSON.parse(
-    JSON.stringify(value, (_key, v) => (v instanceof Date ? v.toISOString() : v))
+    JSON.stringify(value, (_key, v) =>
+      v instanceof Date ? v.toISOString() : typeof v === "bigint" ? v.toString() : v
+    )
   ) as Prisma.InputJsonValue
 }
 

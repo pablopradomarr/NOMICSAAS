@@ -2247,10 +2247,21 @@ model BankReconciliation {
   /// un trigger con carrera. Nadie la escribe a mano: el guard la rechaza.
   groupUnmatchedAt DateTime? @map("group_unmatched_at")
 
+  /// **M6 · el anclaje de la pertenencia.** Un grupo N-a-M se escribe como una
+  /// ESTRELLA (la línea pivote con cada apunte y el apunte pivote con cada
+  /// línea): cada línea y cada apunte quedan anclados **exactamente una vez** en
+  /// su grupo, y sobre las filas ancla viven los dos índices únicos parciales de
+  /// I-E7-3 (`WHERE group_unmatched_at IS NULL AND line_anchor`). Sin ellos, la
+  /// unicidad «una fila» impedía representar una remesa; con ellos, la unicidad
+  /// es la que el invariante pide: **un grupo vivo**.
+  lineAnchor Boolean @default(true) @map("line_anchor")
+  cashAnchor Boolean @default(true) @map("cash_anchor")
+
   matchedById String?  @map("matched_by_id") @db.Uuid
   matchedAt   DateTime @default(now()) @map("matched_at")
 
   @@unique([organizationId, id])
+  @@unique([organizationId, groupId, statementLineId, journalLineId], map: "bank_reconciliations_pair_per_group")
   @@index([organizationId, groupId])
   @@index([organizationId, journalLineId])
   @@index([organizationId, statementLineId])

@@ -59,7 +59,7 @@ import { getSealedRunRefs } from "@/models/allocations"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
 import { EMPTY_RUN_SET_HASH, allocationRunSetHash, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { getEntries, getLinesForPeriod, computeLedgerHash } from "@/models/ledger"
-import { ComparativeBasis, PgcVariant, Prisma, ReportType, ResultKind, Seal } from "@/prisma/client"
+import { CheckFamily, ComparativeBasis, PgcVariant, Prisma, ReportType, ResultKind, Seal } from "@/prisma/client"
 
 export type AnyClient = TenantClient | TenantTransactionClient
 
@@ -1224,6 +1224,43 @@ export async function listReportRuns(db: AnyClient, filter: ReportRunFilter = {}
   return rows.map((r) => toView(r, "cache"))
 }
 
+/**
+ * E7 · T9 (I-E7-10) — los informes **vigentes apoyados en liquidaciones**, con
+ * el conjunto de `AllocationRun` sobre el que se sellaron.
+ *
+ * El `ReportRun` guarda el `allocationRunSetHash` pero no la lista de ids: la
+ * lista se reconstruye **igual que se compuso** (`getSealedRunRefs` del periodo
+ * del informe), y el invariante comprueba que el hash del conjunto coincide.
+ * Si alguien sella una liquidación nueva del periodo, el hash deja de coincidir
+ * y el informe **caduca**, que es exactamente la deuda que E5 dejó abierta.
+ *
+ * Una consulta por informe **no** significa N+1 de líneas: `getSealedRunRefs` es
+ * un agregado sobre `allocation_runs`, sin tocar `allocation_lines`.
+ */
+export async function listStaleAllocationBackedRuns(
+  db: AnyClient,
+  filter: { take?: number } = {}
+): Promise<{ id: string; reportType: string; allocationRunSetHash: string; allocationRunIds: string[] }[]> {
+  const rows = await db.reportRun.findMany({
+    where: { allocationRunSetHash: { not: null } },
+    select: { id: true, type: true, periodStart: true, periodEnd: true, allocationRunSetHash: true },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(filter.take ?? 50, 200),
+  })
+  const out: { id: string; reportType: string; allocationRunSetHash: string; allocationRunIds: string[] }[] = []
+  for (const row of rows) {
+    // En SERIE: dentro de una transacción se comparte una sola conexión (E6-perf).
+    const refs = await getSealedRunRefs(db, { from: fromUtcDate(row.periodStart), to: fromUtcDate(row.periodEnd) })
+    out.push({
+      id: row.id,
+      reportType: row.type,
+      allocationRunSetHash: row.allocationRunSetHash ?? "",
+      allocationRunIds: refs.map((r) => r.id),
+    })
+  }
+  return out
+}
+
 export async function getReportRun(db: AnyClient, id: string): Promise<ReportRunView | null> {
   const row = await db.reportRun.findFirst({ where: { id } })
   return row ? toView(row, "cache") : null
@@ -1341,6 +1378,14 @@ export type ManualReviewInput = {
   /** `null` = afecta a TODOS los informes del periodo. */
   scope?: ReportType | null
   reason: string
+  /**
+   * E7 · T11 — de qué barrido salió el hallazgo y **qué familia** hay que
+   * revisar (O-21). `checkFamily` es un ENUM: con texto libre, una errata
+   * acotaba la revisión a nada y el periodo quedaba sellado como si se hubiera
+   * revisado.
+   */
+  invariantRunId?: string | null
+  checkFamily?: CheckFamily | null
 }
 
 async function activeManualReviewFlag(tx: TenantTransactionClient, request: ReportRequest) {
@@ -1381,6 +1426,8 @@ export async function setManualReviewFlag(
         periodEnd: toUtcDate(input.periodEnd),
         scope: input.scope ?? null,
         reason: input.reason.trim(),
+        invariantRunId: input.invariantRunId ?? null,
+        checkFamily: input.checkFamily ?? null,
         createdById: actor.userId,
       },
     })

@@ -1251,3 +1251,61 @@ export async function getAppliedAllocations(
 
 /** Utilidad de la UI y de los seeds: los límites canónicos de un periodo. */
 export const allocationPeriodBounds = periodBounds
+
+/**
+ * E7 · T9 — los `AllocationRun` sellados con su `linesHash` **sellado** y el
+ * **recomputado hoy** sobre sus líneas (I-E7-9 e I-E7-10).
+ *
+ * El recomputo usa `linesHash()` de `lib/analytics/allocate` —la MISMA función
+ * que firmó el run—, nunca una segunda implementación en SQL: ésa es la deriva
+ * que ADR-0011 corrigió. Un run con `lines_hash` NULL sale con
+ * `linesHashExpected` relleno para que la pantalla pueda enseñar qué firma
+ * tendría si se re-liquidara, pero **el script no lo escribe jamás** (§2.5): una
+ * firma sobre lo que haya hoy no es un sello.
+ *
+ * Una sola lectura de líneas para todos los runs: nada de N+1.
+ */
+export async function listAllocationRunsWithLinesHash(
+  db: TenantClient | TenantTransactionClient,
+  filter: { from?: LocalDate; to?: LocalDate; runIds?: readonly string[] } = {}
+): Promise<
+  {
+    id: string
+    status: string
+    periodStart: LocalDate
+    periodEnd: LocalDate
+    sealedAt: string | null
+    linesHash: string | null
+    linesHashExpected: string | null
+  }[]
+> {
+  const runs = await db.allocationRun.findMany({
+    where: {
+      status: "SEALED",
+      ...(filter.runIds ? { id: { in: [...filter.runIds] } } : {}),
+      ...(filter.from ? { periodStart: { gte: toUtcDate(filter.from) } } : {}),
+      ...(filter.to ? { periodEnd: { lte: toUtcDate(filter.to) } } : {}),
+    },
+    select: { id: true, status: true, periodStart: true, periodEnd: true, runAt: true, linesHash: true },
+    orderBy: { periodStart: "asc" },
+  })
+  if (runs.length === 0) return []
+
+  const lines = await readAllocationLines(db, { runIds: runs.map((r) => r.id) })
+  const byRun = new Map<string, AppliedAllocation[]>()
+  for (const line of lines) {
+    const list = byRun.get(line.runId) ?? []
+    list.push(line)
+    byRun.set(line.runId, list)
+  }
+
+  return runs.map((r) => ({
+    id: r.id,
+    status: r.status,
+    periodStart: fromUtcDate(r.periodStart),
+    periodEnd: fromUtcDate(r.periodEnd),
+    sealedAt: r.runAt.toISOString(),
+    linesHash: r.linesHash,
+    linesHashExpected: computeLinesHash(byRun.get(r.id) ?? []),
+  }))
+}
