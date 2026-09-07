@@ -243,15 +243,21 @@ export async function listInvariantRunIntegrityRefs(
 const HEADLINE_QUERY =
   "SELECT a.statement, l.entry_kind, l.account_code, SUM(l.debit_cents - l.credit_cents) " +
   "FROM journal_lines l JOIN accounts a ON a.organization_id = l.organization_id AND a.code = l.account_code " +
-  "WHERE l.organization_id = $1 AND l.entry_date <= $2 GROUP BY 1, 2, 3"
+  "WHERE l.organization_id = $1 AND l.entry_date <= $2 AND l.entry_kind <> 'CLOSING' GROUP BY 1, 2, 3"
 
 type HeadlineRow = { activo: bigint; pn_mas_pasivo: bigint; resultado: bigint; tesoreria: bigint }
 
 /**
  * Las cuatro cifras del cierre, derivadas del MISMO diario que sella el run.
  *
- * · **Activo** y **PN + pasivo**: acumulados hasta la fecha de corte, todas las
- *   clases de asiento (una apertura es saldo y un cierre también).
+ * · **Activo** y **PN + pasivo**: acumulados hasta la fecha de corte con
+ *   `kind ∉ {CLOSING}` — la MISMA foto `PRE_REGULARIZACION` que sella el
+ *   balance de E6, no una segunda definición. Es el hallazgo **H-1 (ALTA)** de
+ *   la auditoría de E7: incluir el asiento de cierre dejaba las dos cifras en
+ *   **0,00 €** justo el 31-12, que es el día en que se firman, y hacía que
+ *   `I2` («Activo = PN + Pasivo») se cumpliera trivialmente (0 = 0) y que el
+ *   diff de O-19 no moviera nunca dos de sus cuatro cifras. La apertura **sí**
+ *   entra: una apertura es saldo; un cierre es su cancelación.
  * · **Resultado**: sólo el periodo, y **excluyendo `CLOSING`, `OPENING` y
  *   `REGULARIZATION`** — es la definición de I3, escrita una vez.
  * · **Tesorería**: las 57x hasta el corte, sin el asiento de cierre.
@@ -274,9 +280,9 @@ export async function headlineFigures(
   const fiscalYearId = opts.fiscalYearId ?? null
   const rows = await tx.$queryRaw<HeadlineRow[]>`
     SELECT
-      COALESCE(SUM(CASE WHEN a.statement = 'BALANCE_ACTIVO'
+      COALESCE(SUM(CASE WHEN a.statement = 'BALANCE_ACTIVO' AND l.entry_kind <> 'CLOSING'
                         THEN l.debit_cents - l.credit_cents END), 0)::bigint AS activo,
-      COALESCE(SUM(CASE WHEN a.statement IN ('BALANCE_PASIVO', 'BALANCE_PN')
+      COALESCE(SUM(CASE WHEN a.statement IN ('BALANCE_PASIVO', 'BALANCE_PN') AND l.entry_kind <> 'CLOSING'
                         THEN l.credit_cents - l.debit_cents END), 0)::bigint AS pn_mas_pasivo,
       COALESCE(SUM(CASE WHEN a.statement = 'PYG'
                          AND l.entry_date >= ${toUtcDate(opts.from)}::date
@@ -410,7 +416,7 @@ export async function auditBlock(tx: TenantTransactionClient, opts: AuditBlockOp
   const { readStoreCoverage } = await import("@/models/store-sweep")
   const { listStaleAllocationBackedRuns } = await import("@/models/reports")
   const { getLinesForPeriod, listFiscalYearRefs } = await import("@/models/ledger")
-  const { runAuditInvariants, reconciliationSummary } = await import("@/lib/audit/invariants-e7")
+  const { runAuditInvariants, reconciliationSummary, nextDay: nextDayOf } = await import("@/lib/audit/invariants-e7")
 
   const evaluated: string[] = []
   const skipped: { block: string; reason: string }[] = []
@@ -442,6 +448,22 @@ export async function auditBlock(tx: TenantTransactionClient, opts: AuditBlockOp
     from: "0001-01-01",
     to: opts.to,
   })
+  /**
+   * **H-6 de la auditoría.** I-E7-14 compara el cierre de N con la APERTURA de
+   * N+1, y esa apertura está fechada **después** del corte: en el alcance
+   * `FISCAL_YEAR` —el alcance con el que se sella un ejercicio, justo cuando la
+   * continuidad importa— la lectura anterior no la traía nunca y el invariante
+   * salía `INFO · ningún ejercicio con asiento de apertura`. Se añade una
+   * segunda lectura **acotada a `OPENING`** posterior al corte: son unas pocas
+   * decenas de líneas, no mueve ningún otro check (I-E7-15/16 filtran por
+   * `entryDate <= to` e I-E7-17 por `[from, to]`) y hace que I-E7-14 se pueda
+   * evaluar de verdad.
+   */
+  const laterOpenings = await getLinesForPeriod(tx, {
+    from: nextDayOf(opts.to),
+    to: "9999-12-31",
+    kinds: ["OPENING"],
+  })
   evaluated.push("closing")
 
   const checks = runAuditInvariants({
@@ -451,7 +473,7 @@ export async function auditBlock(tx: TenantTransactionClient, opts: AuditBlockOp
     allocationRuns,
     reportRuns,
     closing: {
-      lines,
+      lines: [...lines, ...laterOpenings],
       fiscalYears: fiscalYears.map((fy) => ({ id: fy.id, startDate: fy.startDate, endDate: fy.endDate })),
       from: opts.from,
       to: opts.to,

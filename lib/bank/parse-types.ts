@@ -48,8 +48,17 @@ export type ParsedStatement = {
   currency: string
   /** Cuenta que declara el fichero, para cotejarla con la `BankAccount` (T9). */
   accountHint: string | null
+  /**
+   * Periodo del extracto. **Lo declara el banco** (registro 11 de la Norma 43,
+   * posiciones 21-32; cabecera declarada del CSV): un extracto mensual sin
+   * movimiento el día 1 ni el día 31 sigue cubriendo el mes entero. Cuando el
+   * fichero no lo declara —`periodDeclared: false`— se deduce de la primera y
+   * la última fecha de operación, que es lo único que hay.
+   */
   periodStart: LocalDate
   periodEnd: LocalDate
+  /** ¿El periodo viene del fichero o se ha deducido de los movimientos? (H-7) */
+  periodDeclared: boolean
   openingBalanceCents: Cents | null
   closingBalanceCents: Cents | null
   declaredLineCount: number | null

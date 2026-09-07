@@ -9,6 +9,14 @@ import nextConfig from "eslint-config-next";
 const TENANT_FREE_MESSAGE =
   "Usa tenantDb(orgId) / requireOrg(). El cliente sin tenant sólo se permite en lib/db.ts, lib/auth.ts, lib/email-sync/ingest.ts, models/{users,organizations,memberships,invitations}.ts y scripts.";
 
+/**
+ * E7 · ronda 1 (revisor PUEDE 4). El cliente de autenticación (`app_auth`,
+ * ADR-0015 D5) sólo tiene `GRANT` sobre cuatro tablas de auth y ninguna de
+ * negocio. Fuera de `lib/auth.ts` y `models/users.ts` no hay razón para tocarlo.
+ */
+const AUTH_DB_MESSAGE =
+  "`authPrisma` es el cliente del camino de autenticación (rol app_auth, ADR-0015 D5): sólo lib/auth.ts y models/users.ts. Para datos de negocio, tenantDb(orgId).";
+
 const TENANT_FREE_FILES = [
   "lib/db.ts",
   "lib/db.test.ts",
@@ -141,6 +149,17 @@ const eslintConfig = [
               importNames: ["prisma"],
               message: TENANT_FREE_MESSAGE,
             },
+            {
+              // E7 · ronda 1 (revisor PUEDE 4). `authPrisma` es el OTRO cliente
+              // sin tenant —el del rol `app_auth` de ADR-0015 D5— y no estaba
+              // cubierto: un `import { authPrisma }` en un modelo de negocio
+              // pasaba el lint. El daño estaba acotado por los `GRANT` de
+              // `app_auth` (da 42501, no vacío silencioso), pero la barrera 1 no
+              // se apoya en que el `GRANT` esté bien puesto.
+              name: "@/lib/auth-db",
+              importNames: ["authPrisma"],
+              message: AUTH_DB_MESSAGE,
+            },
           ],
           // `import * as db from "@/lib/db"` esquivaba la regla por nombre:
           // el patrón la cierra (#20).
@@ -149,6 +168,11 @@ const eslintConfig = [
               group: ["@/lib/db", "**/lib/db"],
               importNamePattern: "^prisma$",
               message: TENANT_FREE_MESSAGE,
+            },
+            {
+              group: ["@/lib/auth-db", "**/lib/auth-db"],
+              importNamePattern: "^authPrisma$",
+              message: AUTH_DB_MESSAGE,
             },
           ],
         },

@@ -30,7 +30,7 @@ const ORG_B = "e7c00000-0000-4000-8000-00000000000b"
 const USER_A = "e7c00000-0000-4000-8000-0000000000a1"
 const USER_B = "e7c00000-0000-4000-8000-0000000000b1"
 
-/** Las SIETE tablas de tenant que E7 añade. */
+/** Las OCHO tablas de tenant que E7 añade (la última, en la ronda 1: H-5). */
 const TABLES = [
   "invariant_runs",
   "store_sweeps",
@@ -39,6 +39,7 @@ const TABLES = [
   "bank_statement_lines",
   "bank_match_groups",
   "bank_reconciliations",
+  "bank_pending_kinds",
 ] as const
 
 const SHA = (c: string) => c.repeat(64)
@@ -166,6 +167,16 @@ async function seed(client: Client, organizationId: string, userId: string): Pro
        (id, organization_id, group_id, statement_line_id, journal_line_id, method, date_gap_days, matched_by_id)
      VALUES (gen_random_uuid(), $1, $2, $3, $4, 'MANUAL', 0, $5)`,
     [organizationId, group.rows[0].id, line.rows[0].id, journalLine.rows[0].id, userId]
+  )
+  // E7 · ronda 1 (H-5): el tipado del pendiente es tan sensible como el resto
+  // —dice qué es un movimiento de una cuenta bancaria— y lleva la misma RLS.
+  // Se tipa el apunte de LIBROS, que es el lado que no se puede tipar en el
+  // diario porque `journal_lines` es append-only.
+  await client.query(
+    `INSERT INTO "bank_pending_kinds"
+       (id, organization_id, bank_account_id, journal_line_id, kind, declared_by_id)
+     VALUES (gen_random_uuid(), $1, $2, $3, 'CHEQUE_EMITIDO_NO_CARGADO', $4)`,
+    [organizationId, account.rows[0].id, journalLine.rows[0].id, userId]
   )
 }
 

@@ -148,6 +148,7 @@ model Organization {
   bankStatementLines  BankStatementLine[]
   bankMatchGroups     BankMatchGroup[]
   bankReconciliations BankReconciliation[]
+  bankPendingKinds    BankPendingKind[]
 
   @@map("organizations")
 }
@@ -209,6 +210,8 @@ model User {
   progress      Progress[]
   /// E3 (#2): asientos que este usuario ha contabilizado.
   postedEntries JournalEntry[] @relation("EntryPostedBy")
+  /// E7 (H-5): tipados de pendiente que ha declarado.
+  pendingKinds  BankPendingKind[]
 
   // E1 (T11): facturación (stripe_*, membership_*, storage_*, ai_balance) y datos
   // de emisor (business_*) viven ahora en Organization. `users` queda con
@@ -1139,7 +1142,8 @@ model JournalLine {
   createdAt DateTime @default(now()) @map("created_at")
 
   /// E7: la conciliación bancaria apunta a la LÍNEA, no al asiento.
-  bankMatches BankReconciliation[]
+  bankMatches  BankReconciliation[]
+  pendingKinds BankPendingKind[]
 
   @@unique([entryId, lineNo])
   /// E7: destino de la FK compuesta por tenant de `bank_reconciliations`.
@@ -2036,7 +2040,8 @@ model BankAccount {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  statements BankStatement[]
+  statements   BankStatement[]
+  pendingKinds BankPendingKind[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, accountCode])
@@ -2148,7 +2153,8 @@ model BankStatementLine {
   ignoredById      String?        @map("ignored_by_id") @db.Uuid
   ignoredAt        DateTime?      @map("ignored_at")
 
-  matches BankReconciliation[]
+  matches      BankReconciliation[]
+  pendingKinds BankPendingKind[]
 
   @@unique([organizationId, statementId, lineNo])
   @@unique([organizationId, bankAccountId, sha256])
@@ -2266,6 +2272,59 @@ model BankReconciliation {
   @@index([organizationId, journalLineId])
   @@index([organizationId, statementLineId])
   @@map("bank_reconciliations")
+}
+
+/// **E7 · ronda 1 (H-5) — el TIPADO de un pendiente** (O-8, §3.5).
+///
+/// El tipo de una partida en tránsito lo **declara una persona**, nunca lo
+/// deduce el motor de un texto (eso sería auto-punteo por patrón, E12). Vive en
+/// su propia tabla y no en una columna del apunte porque el tipado es de los dos
+/// lados y `journal_lines` es append-only: `app_runtime` sólo tiene
+/// `SELECT, INSERT` sobre el diario y el tipo de un pendiente no es un dato del
+/// asiento —no entra en `entry_hash`—, es un dato de la conciliación.
+///
+/// Se **borra** cuando el pendiente deja de serlo (se concilia o se ignora): un
+/// tipado huérfano haría que `explainPending` explicara algo que ya no existe.
+model BankPendingKind {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  bankAccountId String      @map("bank_account_id") @db.Uuid
+  bankAccount   BankAccount @relation(fields: [organizationId, bankAccountId], references: [organizationId, id], onDelete: Cascade)
+
+  /// **Exactamente uno** de los dos (CHECK `bank_pending_kinds_one_side`).
+  statementLineId String?            @map("statement_line_id") @db.Uuid
+  statementLine   BankStatementLine? @relation(fields: [organizationId, statementLineId], references: [organizationId, id], onDelete: Cascade)
+  journalLineId   String?            @map("journal_line_id") @db.Uuid
+  journalLine     JournalLine?       @relation(fields: [organizationId, journalLineId], references: [organizationId, id], onDelete: Cascade)
+
+  kind PendingKind
+  note String? @db.VarChar(512)
+
+  declaredById String?   @map("declared_by_id") @db.Uuid
+  declaredBy   User?     @relation(fields: [declaredById], references: [id], onDelete: SetNull)
+  declaredAt   DateTime  @default(now()) @map("declared_at")
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, statementLineId], map: "bank_pending_kinds_one_per_statement_line")
+  @@unique([organizationId, journalLineId], map: "bank_pending_kinds_one_per_journal_line")
+  @@index([organizationId, bankAccountId])
+  @@map("bank_pending_kinds")
+}
+
+/// Vocabulario CERRADO de partidas en tránsito (§3.5).
+/// `EFECTO_EN_GESTION_DE_COBRO` **no es conciliable**: vive en `4312`/`4311`, no
+/// en 57x, y queda excluido del cuadre.
+enum PendingKind {
+  CHEQUE_EMITIDO_NO_CARGADO
+  REMESA_NO_ABONADA
+  TRASPASO_ENTRE_CUENTAS_EN_CAMINO
+  MOVIMIENTO_BANCO_SIN_ASIENTO
+  APUNTE_SIN_MOVIMIENTO
+  EFECTO_EN_GESTION_DE_COBRO
+
+  @@map("pending_kind")
 }
 
 /// No hay `AUTO`: E7 no puntea solo. El valor se añadiría en E12, con ADR.

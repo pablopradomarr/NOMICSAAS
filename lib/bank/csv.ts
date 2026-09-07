@@ -61,6 +61,15 @@ export type CsvMapping = {
   creditValues?: readonly string[]
   /** Divisa del extracto cuando el fichero no la trae en ninguna columna. */
   defaultCurrency?: string
+  /**
+   * **Periodo declarado en la cabecera del fichero** (H-7). Un CSV no tiene
+   * registro 11, pero muchos bancos anteponen «Extracto de DD/MM a DD/MM»: quien
+   * importa lo transcribe aquí y el extracto conserva el periodo que el banco
+   * cubre, no el del primer y el último movimiento. Sin él, un extracto mensual
+   * sin movimiento el día 1 abría un hueco falso en la cadena de I-E7-6b.
+   */
+  periodStart?: LocalDate | null
+  periodEnd?: LocalDate | null
   /** Saldos declarados por el banco, cuando el CSV no los trae (I-E7-6a). */
   openingBalanceCents?: Cents | null
   closingBalanceCents?: Cents | null
@@ -260,12 +269,16 @@ export function parseBankCsv(content: string, mapping: CsvMapping): ParseResult 
   })
   const dates = lines.map((l) => l.operationDate).sort()
 
+  // H-7: si el mapeo del banco declara el periodo de la cabecera del fichero, ese
+  // es el periodo del extracto; si no, lo único que hay son los movimientos.
+  const declared = mapping.periodStart && mapping.periodEnd ? { start: mapping.periodStart, end: mapping.periodEnd } : null
   const statement: ParsedStatement = {
     format: "CSV",
     currency: [...currencies][0] ?? mapping.defaultCurrency ?? "EUR",
     accountHint: null,
-    periodStart: dates[0] as LocalDate,
-    periodEnd: dates[dates.length - 1] as LocalDate,
+    periodStart: declared ? declared.start : (dates[0] as LocalDate),
+    periodEnd: declared ? declared.end : (dates[dates.length - 1] as LocalDate),
+    periodDeclared: declared !== null,
     openingBalanceCents: mapping.openingBalanceCents ?? null,
     closingBalanceCents: mapping.closingBalanceCents ?? null,
     declaredLineCount: mapping.declaredLineCount ?? null,

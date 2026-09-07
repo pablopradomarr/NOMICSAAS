@@ -333,6 +333,37 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
     await client.query(`DELETE FROM allocation_runs WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM allocation_rule_targets WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM allocation_rules WHERE organization_id = $1::uuid`, [organizationId])
+    // E7 (BUG-E7-1) — la conciliación bancaria y el barrido, ANTES del diario y
+    // de los ejercicios, en orden estricto de FK:
+    //
+    //  · `bank_reconciliations.(statement_line_id, journal_line_id)` son
+    //    `RESTRICT`: mientras exista una conciliación viva no se puede borrar
+    //    ni la línea de extracto ni el apunte, y el reset entero revienta con
+    //    `bank_reconciliations_journal_line_fkey`.
+    //  · `bank_match_groups` cae después de sus pertenencias; `bank_statements`
+    //    después de sus líneas; `bank_accounts` después de sus extractos.
+    //  · `invariant_runs.fiscal_year_id` es `RESTRICT`: un barrido sellado
+    //    impide borrar el ejercicio (`invariant_runs_fiscal_year_fkey`).
+    //  · `store_sweeps` no ata a nada del diario, pero es estado de la
+    //    organización y un reset que lo deja vivo hace que I-E7-8 mienta sobre
+    //    un almacén que ya no existe.
+    //
+    // Sin esto, un `npm run test:e2e` completo se rompía: `auditoria.spec.ts`
+    // deja conciliaciones y barridos en la organización compartida de fixtures
+    // y `liquidacion.spec.ts`, que corre después por orden alfabético, llama a
+    // `--reset-org`.
+    for (const table of [
+      "bank_reconciliations",
+      "bank_match_groups",
+      "bank_pending_kinds",
+      "bank_statement_lines",
+      "bank_statements",
+      "bank_accounts",
+      "invariant_runs",
+      "store_sweeps",
+    ]) {
+      await client.query(`DELETE FROM ${table} WHERE organization_id = $1::uuid`, [organizationId])
+    }
     // E8 — el camino documental, en el ÚNICO orden que las restricciones
     // admiten, y por eso se explica:
     //

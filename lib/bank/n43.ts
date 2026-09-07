@@ -341,8 +341,10 @@ export function parseN43(content: string): ParseResult {
     format: "N43",
     currency: header.currency,
     accountHint: header.account,
+    // **Registro 11, posiciones 21-32** (H-7): el periodo lo declara el banco.
     periodStart: header.periodStart,
     periodEnd: header.periodEnd,
+    periodDeclared: true,
     openingBalanceCents: header.opening,
     closingBalanceCents: footer.closing,
     declaredLineCount: footer.declaredLineCount,

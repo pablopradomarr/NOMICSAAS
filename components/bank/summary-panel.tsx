@@ -1,7 +1,8 @@
 import { Amount } from "@/components/ledger/amount"
 import { ConfidenceBadge } from "@/components/ui/confidence-badge"
 
-import { PENDING_KIND_LABEL, type PendingView, type SummaryView } from "./types"
+import { PendingKindSelect } from "./pending-kind-select"
+import { type PendingView, type SummaryView } from "./types"
 
 /**
  * E7 · T16 — El panel de cuadre de una cuenta bancaria (I-E7-1).
@@ -30,7 +31,17 @@ import { PENDING_KIND_LABEL, type PendingView, type SummaryView } from "./types"
  * la misma derivación que usa el invariante.
  */
 
-function PendingList({ items, title, testId }: { items: readonly PendingView[]; title: string; testId: string }) {
+function PendingList({
+  items,
+  title,
+  testId,
+  bankAccountId,
+}: {
+  items: readonly PendingView[]
+  title: string
+  testId: string
+  bankAccountId: string
+}) {
   return (
     <div data-testid={testId}>
       <p className="text-xs font-medium">
@@ -45,9 +56,8 @@ function PendingList({ items, title, testId }: { items: readonly PendingView[]; 
               <span className="tabular-nums">{item.date}</span>
               <Amount cents={item.amountCents} zeroAsDash={false} />
               <span className="text-muted-foreground">{item.description}</span>
-              <span className={item.kind ? "" : "text-[#8a6100]"}>
-                {item.kind ? PENDING_KIND_LABEL[item.kind] : "sin tipar"}
-              </span>
+              {/* H-5: el tipo lo declara una persona; el motor sólo lo envejece. */}
+              <PendingKindSelect bankAccountId={bankAccountId} side={item.side} id={item.id} value={item.kind} />
               <span className="text-muted-foreground">{item.ageDays} día(s)</span>
               <span className={item.explicado ? "text-muted-foreground" : "text-[#8a6100]"}>
                 {item.explicado ? "explicado" : "sin explicar"}: {item.motivo}
@@ -137,8 +147,18 @@ export function ReconciliationSummaryPanel({ summary }: { summary: SummaryView }
       </p>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <PendingList items={summary.pendientesBanco} title="Pendientes del banco (Ue)" testId="pendientes-banco" />
-        <PendingList items={summary.pendientesLibros} title="Pendientes de los libros (Ub)" testId="pendientes-libros" />
+        <PendingList
+          items={summary.pendientesBanco}
+          title="Pendientes del banco (Ue)"
+          testId="pendientes-banco"
+          bankAccountId={summary.bankAccountId}
+        />
+        <PendingList
+          items={summary.pendientesLibros}
+          title="Pendientes de los libros (Ub)"
+          testId="pendientes-libros"
+          bankAccountId={summary.bankAccountId}
+        />
       </div>
 
       <div className="rounded border px-3 py-2 text-sm" data-testid="ignorados">

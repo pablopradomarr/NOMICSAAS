@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-06 (**E8 CERRADA**; siguiente: E7 Auditoría) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-07 (**E7 ronda 1 de corrección aplicada**: H-1…H-7, 3 DEBE, 3 PUEDE, BUG-E7-1 y BUG-E7-2) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
 ## Hecho
 | Épica | Estado | Commits |
@@ -241,6 +241,36 @@ seguimiento. Las decisiones de fondo están en `docs/adr/0014-estados-transaccio
 | **`HEAD` a `/files/preview` en cada carga de la ficha** (introducido por mí en la ronda 1) | El visor preguntaba desde el cliente si el documento estaba en el almacén con un `HEAD`, y Next atiende un `HEAD` **ejecutando el `GET` entero**: cada carga de la pantalla de revisión regeneraba la vista previa (sharp/pdf2pic) para responder algo que el servidor ya sabía. Ahora lo decide el servidor con un `access()` y viaja como prop (`unavailable`), en `/unsorted/[fileId]` y en la pestaña Documento de `/ledger/[entryId]` |
 | **e2e: los diálogos se pulsaban antes de la hidratación** | `page.click()` comprueba visibilidad y estabilidad, no que React haya enganchado el `onClick`: el botón se pulsaba, recibía el foco y no pasaba nada. `abrirDialogo()` reintenta la pulsación hasta que el contenido del diálogo aparece — el mismo patrón que `libro-diario.spec.ts` ya usaba para los `fill`. **No se relaja ninguna aserción**: sólo se espera a que la pantalla esté viva |
 | **R2-3** · el import de `settings/actions` seguía costando 2,4 s | `lib/uploads` (1,2 s) pasa a importación perezosa: sólo lo usa el avatar y el logotipo. **2 449 → 1 151 ms**. Lo que queda es la pila de autenticación (`lib/auth` → better-auth, ~1,6 s en frío) y el cliente de Prisma (~0,6 s), inevitables en una acción que empieza por `requireOrg`; no se retuerce más |
+
+## E7 — deuda y decisiones (ronda 1 de corrección, 2026-09-07)
+
+Entradas: `docs/design/E7-auditoria-informe.md` (auditor, **DISCREPANCIA**, H-1…H-7),
+`docs/design/E7-revision.md` (revisor, 3 DEBE + 3 PUEDE) y el QA de E7
+(BUG-E7-1, BUG-E7-2). **Todo cerrado en E7**; no queda deuda diferida de esta ronda.
+
+| Hallazgo | Qué era | Cómo se ha cerrado |
+|---|---|---|
+| **H-1** (ALTA) | Una cuenta bancaria en divisa cuadraba **mezclando monedas**: `E`/`Ue` del extracto (divisa) contra `B`/`Ub` del diario (moneda base). I-E7-1 daba PASS por vacuidad mientras nada estuviera conciliado, y en cuanto se intentaba puntear el servidor lo rechazaba: sólo se podía conciliar a paridad 1:1 | `B`/`Ub` salen de `journal_lines.original_amount_cents`/`original_currency` (`hashVersion = 3`) cuando la cuenta no es en moneda base; `comparableAmountOf` en I-E7-2 e I-E7-11; `createMatchGroup` compara en la divisa de la cuenta; y **los dos guardias de la base** (`app.bank_reconciliations_guard`, `app.bank_match_groups_balanced`) también, con `app.bank_line_amount_in_currency`. Un apunte sin importe en la divisa deja el cuadre **no evaluable**, nunca en un PASS mezclado |
+| **H-2** (ALTA) | `headline.activo` y `headline.pn_mas_pasivo` no filtraban `entry_kind`: a 31-12 —el día en que se firman— el asiento de cierre las dejaba en **0,00 €** e I2 se cumplía por vacuidad | `kind ∉ {CLOSING}` en las dos, la misma foto `PRE_REGULARIZACION` de E6. Test sobre el fixture completo: 13 673 820 / 13 673 820 (PN 8 307 322 + pasivo 5 366 498) |
+| **H-3** (ALTA) | `BankInvariantInput.fx` no lo rellenaba nadie: I-E7-12 salía siempre `INFO`, el panel enseñaba `null` y `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER` era inalcanzable. El único test que lo ejercía era **autocontradictorio** (paridad 1:1) y encubría H-1 | `readFxCloses` en `models/bank.ts` (tasa de cierre publicada, contravalor histórico y lo ya reconocido en 768/668 por asientos que tocan esa 57x), `fxDifferenceCents` derivado por el motor y enseñado por el panel sin recalcularlo, y el test reescrito con tasa de contabilización 0,92 ≠ tasa de cierre 0,90 |
+| **H-4** | `computedSeal` se calculaba **antes** de componer los motivos de E7: un periodo con ocho pendientes de hasta 183 días se firmaba `VALIDADO_AUTOMATICAMENTE` con los AVISOS listados al lado | Los cuatro motivos entran en `seal()` por `auditReasons`, igual que los seis de E8 por `documentReasons`. `seal` y `sealReasons` dicen lo mismo. **`docs/design/E7-auditoria.md` §5.3 corregido**: la redacción original invitaba al error |
+| **H-5** | «Explicado» era código muerto: `resolvedLaterIds` se pasaba fijo a `new Set()` y `pendingKind` no lo escribía nadie. El badge sólo se concedía con CERO pendientes | Tabla nueva **`bank_pending_kinds`** (el diario es append-only y el tipo de un pendiente no es un dato del asiento), acción `typePendingAction` y selector en el panel; el tipado se borra al conciliar y al ignorar. `resolvedLaterIds` lo **deriva el cuadre**: un grupo sólo cancela si TODOS sus miembros caen dentro del corte, y los que quedan dentro son exactamente los «recogidos por una conciliación posterior» de §3.6 |
+| **H-6** | I-E7-14 era inevaluable justo en el alcance `FISCAL_YEAR`, con el que se sella un ejercicio: necesita las líneas `OPENING` del ejercicio **siguiente** | `auditBlock` hace una segunda lectura acotada a `OPENING` posterior al corte. No mueve ningún otro check (I-E7-15/16 filtran por `entryDate <= to`, I-E7-17 por `[from, to]`) |
+| **H-7** | El periodo del extracto salía del primer y el último movimiento: un extracto mensual sin movimiento el día 1 abría un hueco falso y en una cartera real I-E7-6b salía FAIL casi siempre | El periodo lo **declara el banco** (registro 11 de la N43; `periodStart`/`periodEnd` del mapeo CSV), y se ensancha —nunca se recorta— hasta cubrir los apuntes nuevos |
+| **DEBE 1** | El diff de E7 no tocaba un solo documento, contra ADR-0015 §Consecuencias y contra `CLAUDE.md` §Principio 4 | `.claude/skills/fiabilidad/SKILL.md` (bloque **I-E7-1…17**, los cuatro motivos de sello y la regla del badge P6 por composición: **es la definición única**), `docs/MODELO-DATOS.md` (las ocho tablas de E7, `ReportType.CASHFLOW` unificado, el borde `bigint`) y `docs/ARQUITECTURA.md` (§`lib/audit`, `lib/bank`, rutas `/audit`, medición por cargador) |
+| **DEBE 3 / BUG-E7-2** | Las dos pantallas nuevas más pesadas entraron sin test de rendimiento | `tests/integration/perf-audit.test.ts` con los **cinco techos de §8** (ms y conexiones) y `perf-pages.test.ts` extendido con `/audit` y `/audit/bank` |
+| **BUG-E7-1** | `--reset-org` no limpiaba las tablas de E7: `auditoria.spec.ts` dejaba conciliaciones y `liquidacion.spec.ts` reventaba con una FK | Las ocho tablas en el orden de las FK, antes del diario. Tres casos de QA en verde y la suite e2e completa, en orden alfabético, sin limpiar a mano |
+| **PUEDE 4** | `authPrisma` no estaba bajo `no-restricted-imports` | Cubierto por nombre y por patrón, con lista blanca `lib/auth.ts` + `models/users.ts` |
+| **PUEDE 5** | El `CONSTRAINT TRIGGER` de I-E7-11 era `AFTER INSERT` sobre las pertenencias: un grupo vivo sin ninguna nunca se comprobaba | `bank_match_groups_not_empty`, constraint trigger **diferido** sobre el grupo |
+| **PUEDE 6** | `e4-qa-attack.test.ts` flaky por timeout de 5 s en la suite completa | Timeout del caso a 120 s con el motivo escrito. **No es de E7** (el test no toca `bigint`, ni el borde, ni la conciliación): es contención del pool, misma causa que el criterio 15 de E6. De paso, `e4-analytics #7` dejó de depender de un `findFirstOrThrow` sin `orderBy` que en la suite completa tocaba un asiento anulado |
+
+**Decisión de diseño registrada (H-5).** Un grupo de conciliación **sólo cancela
+en la identidad `E − B = Ue − Ub` si TODOS sus miembros caen dentro del corte**.
+Es I-E7-11 (`Σ líneas = Σ apuntes`) lo que los cancela, y esa igualdad vale
+entera o no vale: el cheque contabilizado el 20-12 y cargado por el banco el
+15-01 **sigue siendo un pendiente a 31-12** —y tiene que serlo, o la identidad
+falla por su importe exacto— aunque ya esté punteado. Lo que sí queda es
+**explicado**, que es para lo que existen los criterios 1 y 2 de §3.6.
 
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
 

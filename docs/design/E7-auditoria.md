@@ -992,8 +992,20 @@ Un FAIL de I-E7-* entra en `validacion.json` como cualquier otro y sella el
 periodo `REQUIERE REVISIÓN` con motivo `INVARIANTE_FAIL`. Los cuatro motivos
 nuevos —`CONCILIACION_PENDIENTE`, `ALMACEN_NO_BARRIDO`,
 `PARTIDA_EN_TRANSITO_ANTIGUA`, `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER`— son de tipo
-`AVISO`/`ENTORNO`: **no** convierten un informe correcto en sospechoso, pero
-impiden que una cifra suba a `✓ validado contra fuente`.
+`AVISO`/`ENTORNO` e impiden que una cifra suba a `✓ validado contra fuente`.
+
+> **Corregido en la ronda 1 (hallazgo H-4 del auditor).** La redacción original
+> añadía «no convierten un informe correcto en sospechoso», y la implementación
+> la tomó al pie de la letra: `seal` se calculaba ANTES de componer los motivos y
+> éstos sólo se concatenaban en `sealReasons`. El resultado, sobre datos reales,
+> era un periodo firmado `VALIDADO_AUTOMATICAMENTE` con ocho pendientes de hasta
+> 183 días listados al lado. **Un AVISO que no mueve el sello es decorativo**, y
+> firmar un periodo con la conciliación abierta es exactamente lo que §3.2 quería
+> evitar. Los cuatro motivos entran ahora en `seal()` por `auditReasons`, igual
+> que los seis de E8 por `documentReasons`: `seal` y `sealReasons` dicen lo
+> mismo, y la equivalencia «sin razones ⇔ VALIDADO AUTOMÁTICAMENTE» se conserva.
+> Lo que siguen sin hacer es **cambiar una cifra**: el informe es correcto, y por
+> eso el motivo es `AVISO`/`ENTORNO` y no `INVARIANTE`.
 
 ---
 

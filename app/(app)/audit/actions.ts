@@ -50,6 +50,7 @@ import {
   createBankAccountSchema,
   createMatchGroupSchema,
   ignoreLineSchema,
+  typePendingSchema,
   importStatementSchema,
   proposeEntryFromLineSchema,
   unmatchGroupSchema,
@@ -78,6 +79,7 @@ import {
   createMatchGroup,
   getBankAccount,
   ignoreLine,
+  typePending,
   importStatement,
   listBankAccounts,
   listStatementLines,
@@ -563,6 +565,38 @@ export async function ignoreLineAction(input: unknown): Promise<ActionState<{ id
       )
       revalidatePath("/audit/bank")
       return { success: true, data: { id: validated.data.id } }
+    } catch (error) {
+      return failed(error)
+    }
+  })()
+}
+
+/**
+ * **Tipar —o destipar— una partida en tránsito** (O-8, H-5). Lo declara una
+ * persona: el motor no lo deduce de un texto. Sin este camino, la taxonomía de
+ * pendientes de §3.5 era código muerto y el badge P6 sólo se concedía con CERO
+ * pendientes, aunque todos estuvieran explicados.
+ */
+export async function typePendingAction(input: unknown): Promise<ActionState<{ id: string; kind: string | null }>> {
+  return await withOrg(Role.EDITOR, async ({ org, user }) => {
+    const validated = typePendingSchema.safeParse(input)
+    if (!validated.success) return invalid(validated.error)
+    try {
+      const result = await tenantTransaction(org.id, user.id, async (tx) =>
+        typePending(
+          tx,
+          {
+            bankAccountId: validated.data.bankAccountId,
+            side: validated.data.side,
+            id: validated.data.id,
+            kind: validated.data.kind,
+            note: validated.data.note ?? null,
+          },
+          { userId: user.id }
+        )
+      )
+      revalidatePath("/audit/bank")
+      return { success: true, data: result }
     } catch (error) {
       return failed(error)
     }

@@ -58,12 +58,20 @@ export const E7_SEAL_REASON_TEXT: Readonly<Record<E7SealReason, string>> = {
   DIFERENCIA_DE_CAMBIO_SIN_RECONOCER: "hay diferencias de cambio medidas y no reconocidas a fecha de cierre (768/668)",
 }
 
-const E7_SEAL_REASON_KIND: Readonly<Record<E7SealReason, SealReason["kind"]>> = {
+export const E7_SEAL_REASON_KIND: Readonly<Record<E7SealReason, SealReason["kind"]>> = {
   CONCILIACION_PENDIENTE: "AVISO",
   ALMACEN_NO_BARRIDO: "ENTORNO",
   PARTIDA_EN_TRANSITO_ANTIGUA: "AVISO",
   DIFERENCIA_DE_CAMBIO_SIN_RECONOCER: "AVISO",
 }
+
+/** Los motivos de E7 en la forma que `seal()` concatena (H-4). */
+export const e7Reasons = (codes: readonly E7SealReason[] | undefined): SealReason[] =>
+  [...new Set(codes ?? [])].sort().map((code) => ({
+    kind: E7_SEAL_REASON_KIND[code],
+    code,
+    message: `${code} · ${E7_SEAL_REASON_TEXT[code]}`,
+  }))
 
 /**
  * Forma canónica de `checks`: una fila TSV por check, ordenada por
@@ -137,11 +145,13 @@ export type AuditRunInput = {
  * Compone el `InvariantRun` que el borde persiste. No lee nada, no escribe nada
  * y no consulta el reloj: la `refDate` y la duración entran por parámetro.
  *
- * **`seal` y `sealReasons` no son lo mismo a propósito.** `seal` es exactamente
- * lo que devuelve `seal()` —el sello es uno—; `sealReasons` es esa lista **más**
- * los motivos propios de E7, que se registran y se pintan pero no convierten un
- * informe correcto en sospechoso (§5.3). Mezclarlos rompería la equivalencia
- * «sin razones ⇔ VALIDADO AUTOMÁTICAMENTE» de `seal()`.
+ * **`seal` y `sealReasons` dicen lo mismo** (H-4 de la auditoría, ronda 1). Los
+ * cuatro motivos propios de E7 entran en `seal()` por `auditReasons`, igual que
+ * los seis de E8 entran por `documentReasons`: un AVISO que no mueve el sello es
+ * decorativo, y la ronda 1 dejaba `seal = VALIDADO_AUTOMATICAMENTE` con ocho
+ * pendientes de hasta 183 días listados en `sealReasons`. La equivalencia «sin
+ * razones ⇔ VALIDADO AUTOMÁTICAMENTE» se conserva: es `seal()` quien las
+ * concatena, y `sealReasons` es exactamente `computedSeal.razones`.
  */
 export function buildInvariantRun(input: AuditRunInput): InvariantRunDraft {
   const checks = [...input.checks]
@@ -160,14 +170,9 @@ export function buildInvariantRun(input: AuditRunInput): InvariantRunDraft {
       lastGitSha: input.lastGitSha,
       warnThreshold: input.warnThreshold ?? 0,
       forceReview: activeFlags.length > 0,
+      auditReasons: e7Reasons(input.auditReasons),
     }
   )
-
-  const auditReasons: SealReason[] = [...new Set(input.auditReasons ?? [])].sort().map((code) => ({
-    kind: E7_SEAL_REASON_KIND[code],
-    code,
-    message: `${code} · ${E7_SEAL_REASON_TEXT[code]}`,
-  }))
 
   return {
     organizationId: input.organizationId,
@@ -189,7 +194,7 @@ export function buildInvariantRun(input: AuditRunInput): InvariantRunDraft {
     coverage: input.coverage,
     headline: input.headline,
     seal: computedSeal,
-    sealReasons: [...computedSeal.razones, ...auditReasons],
+    sealReasons: computedSeal.razones,
     storeSweepId: input.storeSweepId ?? null,
     durationMs: input.durationMs,
     runById: input.runById ?? null,

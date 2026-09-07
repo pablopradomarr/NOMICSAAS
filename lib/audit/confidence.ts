@@ -161,10 +161,13 @@ export function badgeForFigure(input: BadgeInput): BadgeResult {
       motivos.push(`${code} no cuadra: I-E7-1 no está en PASS`)
       continue
     }
+    // Los pendientes que el propio cuadre declara recogidos por un grupo a
+    // caballo del corte cuentan siempre, aunque el llamante no los pase (H-5).
+    const resolvedHere = new Set([...resolved, ...summary.resolvedLaterIds])
     for (const pending of [...summary.pendientesBanco, ...summary.pendientesLibros]) {
       const explained = explainPending(pending, {
         transitWarnDays: account.transitWarnDays,
-        resolvedLaterIds: resolved,
+        resolvedLaterIds: resolvedHere,
       })
       if (!explained.explicado) pendientesSinExplicar.push(explained)
     }

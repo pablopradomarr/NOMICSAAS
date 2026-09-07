@@ -142,12 +142,35 @@ describe("buildInvariantRun", () => {
     expect(draft.seal.razones[0]?.kind).toBe("ENTORNO")
   })
 
-  it("los cuatro motivos de E7 se registran **sin** convertir un informe correcto en sospechoso (§5.3)", () => {
+  /**
+   * **H-4 de la auditoría (ronda 1).** La ronda 1 calculaba `seal` ANTES de
+   * componer los motivos de E7 y sólo los concatenaba en `sealReasons`: un
+   * periodo con ocho pendientes de hasta 183 días se firmaba «VALIDADO
+   * AUTOMÁTICAMENTE» con la conciliación abierta y los dos AVISOS listados al
+   * lado, decorativos. Ahora entran en `seal()` por `auditReasons`, igual que
+   * los seis de E8 por `documentReasons`, y `seal` y `sealReasons` dicen lo
+   * mismo.
+   */
+  it("los cuatro motivos de E7 **entran en el sello**: con conciliación pendiente el periodo REQUIERE REVISIÓN (H-4)", () => {
     const draft = buildInvariantRun({ ...INPUT, auditReasons: ["CONCILIACION_PENDIENTE", "ALMACEN_NO_BARRIDO"] })
-    expect(draft.seal.sello).toBe("VALIDADO AUTOMÁTICAMENTE")
+    expect(draft.seal.sello).toBe("REQUIERE REVISIÓN")
     expect(draft.sealReasons.map((r) => r.code)).toEqual(["ALMACEN_NO_BARRIDO", "CONCILIACION_PENDIENTE"])
     expect(draft.sealReasons.map((r) => r.kind)).toEqual(["ENTORNO", "AVISO"])
+    // `sealReasons` es exactamente lo que el sello vio: no hay dos listas.
+    expect(draft.sealReasons).toEqual(draft.seal.razones)
     expect(E7_SEAL_REASONS).toHaveLength(4)
+  })
+
+  it("`PARTIDA_EN_TRANSITO_ANTIGUA` sola también baja el sello (H-4)", () => {
+    const draft = buildInvariantRun({ ...INPUT, auditReasons: ["PARTIDA_EN_TRANSITO_ANTIGUA"] })
+    expect(draft.seal.sello).toBe("REQUIERE REVISIÓN")
+    expect(draft.sealReasons.map((r) => r.code)).toEqual(["PARTIDA_EN_TRANSITO_ANTIGUA"])
+  })
+
+  it("sin motivos de E7 el sello sigue siendo VALIDADO AUTOMÁTICAMENTE", () => {
+    const draft = buildInvariantRun({ ...INPUT })
+    expect(draft.seal.sello).toBe("VALIDADO AUTOMÁTICAMENTE")
+    expect(draft.sealReasons).toEqual([])
   })
 
   it("declara los ids sin familia en vez de tragárselos", () => {

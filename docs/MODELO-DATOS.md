@@ -203,12 +203,74 @@ model ReportRun { id; organizationId; type ReportType; periodStart Date; periodE
   durationMs Int; createdById?; createdAt
   @@unique([organizationId,type,periodStart,periodEnd,paramsHash,ledgerHash,analyticsKey,gitSha])
   @@index([organizationId,type,periodStart,periodEnd,createdAt(desc)]) @@index([organizationId,type,ledgerHash]) @@map("report_runs") }
-enum ReportType { DIARIO MAYOR SUMAS_SALDOS BALANCE PYG PYG_ANALITICA CASHFLOW_DIRECTO CASHFLOW_INDIRECTO PRESUPUESTO_REAL DASHBOARD }
+enum ReportType { DIARIO MAYOR SUMAS_SALDOS BALANCE PYG PYG_ANALITICA CASHFLOW PRESUPUESTO_REAL DASHBOARD CASHFLOW_DIRECTO CASHFLOW_INDIRECTO }
+// **E7**: `CASHFLOW` UNIFICADO. El método (directo/indirecto) es un PARÁMETRO
+// (`params.method`), no un tipo: con dos tipos, la clave única dejaba emitir dos
+// informes del mismo periodo que se contradecían y el selector de revisión manual
+// sólo acotaba a uno de los dos. `CASHFLOW_DIRECTO`/`CASHFLOW_INDIRECTO` se
+// CONSERVAN en el enum para que los `ReportRun` históricos sigan siendo legibles;
+// `scripts/migrate-cashflow-report-type.ts` los migra (operador, `--apply`, marca
+// antes del backfill, `NO FORCE` → DML → `FORCE`).
 enum Seal { VALIDADO_AUTOMATICAMENTE REQUIERE_REVISION }   enum ResultKind { FULL SUMMARY }   enum ComparativeBasis { SAME_PERIOD_PREVIOUS_YEAR PREVIOUS_FISCAL_YEAR_CLOSE PREVIOUS_PERIOD NONE }
 // **Append-only en RLS** como `audit_logs` (RESTRICTIVE … USING(false) en UPDATE y DELETE + REVOKE): un informe emitido no se corrige, se emite otro.
 // `params` OBLIGATORIOS por tipo: BALANCE {snapshot: PRE_REGULARIZACION|POST_REGULARIZACION|POST_CIERRE, variant, currency, comparative} · PYG {variant, currency, comparative} · CASHFLOW {method, granularity, view, currency} · DASHBOARD {refDate, agingBuckets, currency}. `gitSha` va DENTRO de la clave: si no, tras un cambio de motor se serviría la caché vieja y el motivo «primer run tras cambio» no se emitiría nunca.
 // `resultKind = SUMMARY` en DIARIO/MAYOR/SUMAS_SALDOS (D-E6-4): el resultado guarda el resumen y la consulta, no cientos de miles de filas.
-model BankStatementLine { id; organizationId; accountCode; date Date; amountCents Int; description; reference?; sha256; matchedLineId?; importedAt }
+// ── E7 · auditoría y conciliación bancaria (`docs/design/E7-auditoria.md` §2, ADR-0015) ──
+// Ocho tablas nuevas, todas con `organization_id`, `enforce_tenant_rls` y FK COMPUESTAS por tenant.
+// El esbozo de una sola `BankStatementLine` con `matchedLineId` no representaba
+// ni una remesa ni un extracto: se sustituye por el modelo de abajo.
+model InvariantRun { id; organizationId; scopeKind AuditScopeKind; fiscalYearId?; periodStart Date?; periodEnd Date?
+  trigger AuditTrigger; refDate Date
+  ledgerHash; analyticsKey; planHash; accountMapHash; configHash          // los CINCO hashes del sello (O-20)
+  gitSha; checksHash String @db.Char(64); checks Json; counts Json; coverage Json
+  headline Json                                                           // O-19: ACTIVO, PN_MAS_PASIVO, RESULTADO, TESORERIA con su provenance
+  seal Seal; sealReasons Json; storeSweepId?; durationMs Int; runById?; createdAt
+  @@map("invariant_runs") }
+// **APPEND-ONLY DURO**: `REVOKE UPDATE, DELETE` + dos políticas RESTRICTIVE. I-E7-7 recomputa `checksHash`.
+// `headline` se DERIVA por SQL del mismo estado que sella el run (O-19, ADR-0003), con `kind ∉ {CLOSING}`
+// en activo, PN+pasivo y tesorería: incluir el cierre dejaba activo y PN+pasivo en 0,00 € justo el 31-12.
+model StoreSweep { id; organizationId; status SweepStatus; filesTotal; filesOk; filesMissing; filesAltered
+  bytesRead BigInt; findings Json; findingsOverflow Int; startedAt; finishedAt?; runById?; @@map("store_sweeps") }
+model BankAccount { id; organizationId; code; name; accountCode                    // la 57x contra la que se puntea (O-7)
+  currency String @db.VarChar(3); iban?; bic?; csvMapping Json?
+  reconciledFromDate Date?; reconciledOpeningBalanceCents BigInt?                  // **el anclaje** (O-1): sin él, I-E7-1 sale INFO
+  matchToleranceDays Int 3; transitWarnDays Int 90; ignoredMaterialityCents BigInt?; isActive
+  @@unique([organizationId,code]) @@map("bank_accounts") }
+model BankStatement { id; organizationId; bankAccountId; format StatementFormat; fileSha256; fileName; fileId?
+  currency; periodStart Date; periodEnd Date                                       // **declarados por el banco**: registro 11 de la N43 o cabecera del CSV, NO el primer y el último movimiento
+  openingBalanceCents BigInt?; closingBalanceCents BigInt?; declaredLineCount Int?; lineCount Int; importedById?
+  @@map("bank_statements") }
+model BankStatementLine { id; organizationId; statementId; bankAccountId; lineNo Int
+  operationDate Date; valueDate Date                                               // el corte SIEMPRE por `operationDate` (O-6)
+  amountCents BigInt                                                               // CON SIGNO, en la divisa de la cuenta
+  currency; originalCurrency?; originalAmountCents BigInt?; balanceCents BigInt?
+  description; reference1?; reference2?; conceptCommon?; conceptOwn?; counterpartyName?
+  sha256; status BankLineStatus; ignoreReason IgnoreReason?; ignoreEvidenceId?; ignoredById?; ignoredAt?
+  @@map("bank_statement_lines") }
+model BankMatchGroup { id; organizationId; bankAccountId; kind MatchGroupKind; note?
+  unmatchedAt?; unmatchedById?; unmatchReason?; createdById?; createdAt; @@map("bank_match_groups") }
+model BankReconciliation { id; organizationId; groupId; statementLineId; journalLineId                 // **una `JournalLine`**, no un asiento
+  method MatchMethod; scoreBps Int; dateGapDays Int                                // O-10: el desfase se SELLA, no se juzga
+  groupUnmatchedAt?                                                                // espejo del grupo, lo escribe el trigger: los índices únicos parciales de I-E7-3 no pueden mirar otra tabla
+  lineAnchor Boolean; cashAnchor Boolean; matchedById?; matchedAt; @@map("bank_reconciliations") }
+model BankPendingKind { id; organizationId; bankAccountId; statementLineId?; journalLineId?             // CHECK: exactamente uno
+  kind PendingKind; note?; declaredById?; declaredAt; @@map("bank_pending_kinds") }
+enum AuditScopeKind { ORGANIZATION FISCAL_YEAR PERIOD }   enum AuditTrigger { MANUAL SCHEDULED POST_CLOSE POST_IMPORT }
+enum SweepStatus { RUNNING DONE FAILED CANCELLED }        enum StatementFormat { CSV N43 MANUAL }
+enum BankLineStatus { UNMATCHED MATCHED IGNORED }         enum MatchGroupKind { SIMPLE N_A_1 UNO_A_N N_A_N }
+enum MatchMethod { MANUAL SUGGESTION_ACCEPTED }           // no hay AUTO: E7 no puntea solo
+enum IgnoreReason { ERROR_BANCO_REVERSADO NO_ES_NUESTRA_CUENTA YA_CONTABILIZADO_EN_OTRA_CUENTA IMPORTE_CERO }
+enum PendingKind { CHEQUE_EMITIDO_NO_CARGADO REMESA_NO_ABONADA TRASPASO_ENTRE_CUENTAS_EN_CAMINO
+  MOVIMIENTO_BANCO_SIN_ASIENTO APUNTE_SIN_MOVIMIENTO EFECTO_EN_GESTION_DE_COBRO }
+// `BankPendingKind` es tabla y no una columna del apunte porque el tipado es de los DOS lados y
+// `journal_lines` es append-only (`app_runtime` sólo tiene SELECT, INSERT): el tipo de un pendiente es un
+// dato de CONCILIACIÓN, no del asiento, y no entra en `entry_hash`. Se BORRA cuando el pendiente deja de serlo.
+// **`bigint` en el diario (ADR-0015 D1)**: `journal_lines.debit_cents`/`credit_cents`/`tax_base_cents`/
+// `original_amount_cents` pasan de `integer` a `bigint` — el techo de `integer` eran 21 474 836,47 € y el
+// producto se vende a empresas de 1 a 100 M€. El motor y la interfaz SIGUEN en `number`: la conversión vive
+// en el borde (`centsFromDb`/`centsToDb` de `lib/money.ts`), con `Number.isSafeInteger` y **excepción** por
+// encima de 2^53−1 en vez de perder precisión en silencio. Los `entry_hash` no se mueven (`::text` es
+// idéntico para `integer` y `bigint`).
 model AuditLog { id; organizationId; userId?; entity String; entityId String; action String; before Json?; after Json?; reason String?; ts; @@index([organizationId,ts]) @@index([organizationId,entity,entityId,ts]) @@map("audit_logs") }   // E2: append-only también en RLS (FOR UPDATE/DELETE USING(false)); se escribe en la MISMA transacción que la mutación
 model ManualReviewFlag { id; organizationId; periodStart Date; periodEnd Date; scope ReportType?; reason; createdById; createdAt; clearedAt?; clearedById?; clearReason?; @@index([organizationId,periodStart,periodEnd]) @@map("manual_review_flags") }
 // E6: ADMIN fuerza `REQUIERE REVISIÓN` sobre todos los informes que solapen el periodo (`scope` null = todos). Semi-append-only: sin DELETE, y `UPDATE` sólo de las tres columnas de limpieza (GRANT de columna + trigger, patrón ADR-0010). Único flag activo por (org, periodo, scope) con dos índices únicos PARCIALES (`WHERE cleared_at IS NULL`), porque NULL<>NULL.
@@ -263,4 +325,12 @@ enum InvoiceSeriesKind { ORDINARIA RECTIFICATIVA SIMPLIFICADA }   // `kind` INMU
 | El libro registro de IVA cuadra con el diario, y el documento cuadra con el asiento | **I-E8-15a/b/c** (los tres puentes al 303) + **I-E8-7a** (documento ↔ asiento, tolerancia 0) |
 | Divisa: residuo de conversión CERO por construcción; tres columnas por línea monetaria | `lib/fx/convert.convertDocumentToBase` (Hamilton sobre las cuotas, ADR-0014 D2) + CHECK + I-E8-19 |
 | Series de facturación sin huecos y con `kind` inmutable | trigger + **I-E8-20** |
+| `invariant_runs` append-only duro; su `checksHash` recomputable | `REVOKE UPDATE, DELETE` + dos políticas RESTRICTIVE + **I-E7-7** |
+| Extracto, líneas, grupos y pertenencias SEMI-append-only: sólo las columnas de punteo, ignorado y desconciliación | `GRANT` de columna (patrón ADR-0010) + política `no_delete` por tabla |
+| Nada pertenece a dos grupos de conciliación VIVOS | dos índices únicos PARCIALES sobre las filas ancla (`WHERE group_unmatched_at IS NULL`) + **I-E7-3** |
+| El grupo cuadra **en la divisa de la cuenta**, tolerancia 0; un grupo vivo tiene ≥ 1 pertenencia | `app.bank_reconciliations_guard()` (SIMPLE) + constraint triggers diferidos `bank_match_groups_balanced` y `bank_match_groups_not_empty` + **I-E7-2/I-E7-11** |
+| El extracto está en la divisa de la cuenta y la línea en la del extracto | trigger `bank_statements_currency_guard` (rechaza el fichero entero) |
+| El importe de una línea de extracto es inmutable: sólo cambia su estado | `app.bank_statement_lines_only_status()` + `GRANT` de columna |
+| El `File` de un extracto no se borra nunca | FK `RESTRICT` + comprobación en `scripts/prune-runs.ts` |
+| Importes del diario en `bigint`, sin pérdida silenciosa en el borde | `centsFromDb`/`centsToDb` con `Number.isSafeInteger` y excepción |
 | Tenant | `tenantDb` + RLS |

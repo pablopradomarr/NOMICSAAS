@@ -30,8 +30,12 @@ export const toAccountView = (account: BankAccountRow): BankAccountView => ({
   hasCsvMapping: account.csvMapping !== null && account.csvMapping !== undefined,
 })
 
-const toPendingView = (item: PendingItem, transitWarnDays: number): PendingView => {
-  const explained = explainPending(item, { transitWarnDays, resolvedLaterIds: new Set() })
+const toPendingView = (
+  item: PendingItem,
+  transitWarnDays: number,
+  resolvedLaterIds: ReadonlySet<string>
+): PendingView => {
+  const explained = explainPending(item, { transitWarnDays, resolvedLaterIds })
   return {
     side: item.side,
     id: item.id,
@@ -54,13 +58,22 @@ const toPendingView = (item: PendingItem, transitWarnDays: number): PendingView 
 export function toSummaryView(
   summary: BankReconciliationSummary,
   account: BankAccountRow,
-  opts: { invariantsPass: boolean; fxDifferenceCents?: number | null }
+  opts: { invariantsPass: boolean }
 ): SummaryView {
+  /**
+   * **H-5.** `resolvedLaterIds` sale del propio cuadre: son los pendientes que
+   * un grupo vivo **a caballo del corte** ya recoge —el cheque de diciembre
+   * punteado contra su cargo de enero—. La ronda 1 pasaba aquí un `new Set()`
+   * fijo, de modo que los criterios 1 y 2 de «explicado» (§3.6) eran código
+   * muerto y la pantalla llamaba «sin explicar» a pendientes que sí lo estaban.
+   */
+  const resolvedLaterIds = new Set(summary.resolvedLaterIds)
   const badge = badgeForFigure({
     accountCodes: [summary.accountCode],
     bankAccounts: [account],
     summaries: [summary],
     invariantsPass: opts.invariantsPass,
+    resolvedLaterIds: summary.resolvedLaterIds,
   }).badge
 
   return {
@@ -76,8 +89,8 @@ export function toSummaryView(
     ueCents: summary.ue,
     ubCents: summary.ub,
     diferenciaCents: summary.diferencia,
-    pendientesBanco: summary.pendientesBanco.map((item) => toPendingView(item, account.transitWarnDays)),
-    pendientesLibros: summary.pendientesLibros.map((item) => toPendingView(item, account.transitWarnDays)),
+    pendientesBanco: summary.pendientesBanco.map((item) => toPendingView(item, account.transitWarnDays, resolvedLaterIds)),
+    pendientesLibros: summary.pendientesLibros.map((item) => toPendingView(item, account.transitWarnDays, resolvedLaterIds)),
     ignoradosCents: summary.ignoradosCents,
     ignoradosCount: summary.ignoradosCount,
     importeCeroCount: summary.importeCeroCount,
@@ -86,6 +99,7 @@ export function toSummaryView(
     evaluable: summary.evaluable,
     motivoNoEvaluable: summary.motivoNoEvaluable,
     badge,
-    diferenciaDeCambioCents: opts.fxDifferenceCents ?? null,
+    // H-3: la mide el motor con la tasa de cierre; la pantalla sólo la enseña.
+    diferenciaDeCambioCents: summary.fxDifferenceCents,
   }
 }

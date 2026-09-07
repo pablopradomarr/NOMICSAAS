@@ -46,6 +46,15 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | `lib/analytics/margins.ts` | PyG analítica por nivel/proyecto/LN/CECO | Puro |
 | `lib/analytics/allocate.ts` | Liquidación de CECOs (drivers, cascada, Hamilton) | Puro |
 | `lib/ledger/hash.ts` | `ledgerHash(lines)` sha256 canónico | Puro |
+| `lib/audit/invariants-e7.ts` | **I-E7-1…17**: la identidad del cuadre bancario `E − B = Ue − Ub` (una sola derivación, `reconciliationSummary`, que consumen el invariante, el panel y el badge), los cuadres de cierre y la divisa (NRV 11ª.2.2) | Puro |
+| `lib/audit/run.ts` | La foto del barrido y su sello: `checksHash` (I-E7-7), `configHash` (O-20) y los **cuatro motivos de sello** de E7, que entran en `seal()` como los seis de E8 | Puro |
+| `lib/audit/confidence.ts` | El badge **`✓ validado contra fuente`** por COMPOSICIÓN y el criterio verificable de «pendiente explicado» (§3.6) | Puro |
+| `lib/audit/{families,diff,bank-match}.ts` | Las siete familias de checks (una familia sin evaluar sale `SIN_EVALUAR`, jamás en verde), el diff entre dos barridos con su `cause`, y las sugerencias de punteo **deterministas** (nunca producto cartesiano; una sugerencia es un cálculo, no un hecho) | Puro |
+| `lib/bank/{n43,csv}.ts` | Parsers de extracto: Norma 43 por posiciones y CSV con **mapeo por banco**. Un fichero que no cuadra se rechaza **entero**; el periodo es el que DECLARA el banco | Puro |
+| `lib/bank/{types,hash,proposal}.ts` | Tipos planos del dominio bancario y el borde `bigint` (`centsFromBigInt`), `sha256` de línea con ordinal del día, y la propuesta de asiento desde un movimiento sin libros | Puro |
+| `models/audit.ts` | `InvariantRun` **append-only**, `headlineFigures` (las cuatro cifras por agregado SQL, `kind ∉ {CLOSING}`), `auditConfigSnapshot` y `auditBlock` (corre I-E7-1…17 con lecturas en serie y sin N+1) | IO, tenant |
+| `models/bank.ts` | Cuentas bancarias con **anclaje**, importación idempotente por `fileSha256`, grupos N-a-M revalidados en servidor **en la divisa de la cuenta**, ignorado con vocabulario cerrado, tipado de pendientes y el cierre en divisa para I-E7-12 | IO, tenant |
+| `models/store-sweep.ts`, `ai/store-sweep.ts` | Barrido del almacén **en cola** (lotes de 50, `sha256` en streaming, cancelación entre lotes, un barrido por organización): nunca en la petición | IO |
 | `lib/money.ts` | parse/format céntimos, redondeo half-even, reparto mayor resto (creado en E0) | Puro |
 | `lib/fx/rates.ts` | Tasa del `documentDate` desde el BCE (Frankfurter), persistida con su fecha REAL; sin tasa **lanza** (RC-14), nunca aproxima | IO |
 | `models/ledger.ts` | lectura de líneas por periodo (SQL agregado), persistencia transaccional de asientos con numeración | IO, tenant |
@@ -54,6 +63,7 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | `ai/*` | Extracción LLM → `ExtractionRun` (modelo, proveedor, prompt sha256, schema version, tokens, raw, partial) | IO; nunca cifras finales |
 | `ai/prompts/*.md` | Prompts base versionados en git; overrides por organización con `version` | — |
 | `app/(app)/{unsorted,transactions,apps,dashboard,settings}` (heredadas) + `app/(app)/{ledger,reports,analytics,audit}` (nuevas); configuración contable bajo `settings/` | Rutas y server actions | `requireOrg(role)` |
+| `app/(app)/audit/` | **La pestaña Auditoría**: `/audit` (sello con sus motivos y los cinco hashes, las siete familias con drill-down en ≤ 3 clics, calidad del dato, barrido del almacén, §Registro paginado por cursor), `/audit/runs/[id]` y `/audit/runs/diff` (dos barridos comparados con su `cause`), `/audit/bank` (cuadre por cuenta) y `/audit/bank/[id]` (dos columnas enfrentadas, selección múltiple N-a-M, sugerencias marcadas como tales, conciliar/desconciliar/ignorar con motivo, tipar pendientes y **Proponer asiento**) | `requireOrg(role)`; VIEWER lee, EDITOR concilia, ADMIN barre y fuerza revisión |
 | `components/reports/*`, `components/ledger/*`, `components/ui/{money-cell,confidence-badge,check-status}.tsx` | UI financiera | Sin cálculo contable |
 | `scripts/run-invariants.ts`, `scripts/report.ts` | CLI para CI/auditor | — |
 | `tests/fixtures/*.json`, `tests/e2e/*` | Fixtures inmutables, e2e Playwright | — |
@@ -110,7 +120,8 @@ sellos del run recomputados) y **I-E8-15a/b/c** (los tres puentes al 303). Un FA
 | C1 snapshot | `ledgerHash` + `ReportRun` inmutable; `files.sha256` NOT NULL y **comparado con los bytes del almacén** (I-E8-2); `ExtractionRun` append-only con sus sellos recomputados (I-E8-11) |
 | C2 motor | `lib/ledger`, `lib/analytics` puros; hook PreToolUse `.claude/hooks/guard.sh` bloquea impurezas antes de escribir; mismo check en CI; tests con casos fijos |
 | C3 provenance | Cada celda de informe: `{valor, metrica, run_id, ledgerHash, calculado_por, registros_origen(query), confianza}` |
-| C4 validación | Capa 1 `invariants.ts`; Capa 2 agente `auditor-fiabilidad` + pestaña Auditoría; Capa 3 revisión por excepción (sello) |
+| C4 validación | Capa 1 `invariants.ts` (I1–I10), `invariants-e8.ts` (camino documental) y `lib/audit/invariants-e7.ts` (**I-E7-1…17**: conciliación bancaria, integridad de los propios barridos y cuadres de cierre); Capa 2 agente `auditor-fiabilidad` + pestaña Auditoría; Capa 3 revisión por excepción (sello) |
+| C4b conciliación | El cuadre `E − B = Ue − Ub` con **una sola derivación** para el invariante, el panel y el badge. Las cuatro cifras, en la moneda de la cuenta. Un grupo sólo cancela si TODOS sus miembros caen dentro del corte |
 | C5 confianza | `ConfidenceBadge` en toda cifra no derivada del diario; en el camino documental, **cuatro niveles por CAMPO** (`calculado`/`verificado`/`interpretacion_ia`/`no_verificado`) sellados en `fieldOrigins`, y motivo obligatorio **en servidor** para confirmar con algún `no_verificado` |
 | C6 memoria | Ninguna cifra en memoria de agentes ni `cachedParseResult`; `AuditLog` y `runs/registro.jsonl` estructurados |
 | C7 versionado | prompts en git + `PromptVersion` append-only por organización, `ReportRun.gitSha`, `ExtractionRun.{model, promptSha, schemaSha, proposalSha, gitSha}`, `runs/registro.jsonl` |
@@ -120,6 +131,8 @@ better-auth (sesión con `activeOrganizationId`), `requireOrg(minRole)` en toda 
 
 ## 8. Rendimiento
 Índices `(organization_id, entry_date)`, `(organization_id, account_code, entry_date)`, `(organization_id, project_id)`, `(organization_id, cost_center_id)`. Agregados en SQL con `BIGINT`. `ReportRun` cachea por hash. Vistas materializadas opcionales para saldos mensuales (refresco al postear) — v1.1.
+
+**Medición por cargador**, sobre el fixture completo y con volumen real, en `tests/integration/perf-pages.test.ts` (todas las pantallas: ≤ 2 conexiones simultáneas y **una** transacción por render) y `tests/integration/perf-audit.test.ts` (los cinco techos de E7 §8: `/audit` < 500 ms · barrido de un ejercicio < 3 s · `/audit/bank/[id]` con 5 000 líneas y 5 000 apuntes < 800 ms · `suggestMatches` 5 000 × 5 000 < 700 ms · §Registro con 100 000 `audit_logs` < 300 ms).
 
 ## 9. Despliegue
 Local: `docker compose` (app + Postgres 17). Cloud: Vercel/Docker + Supabase (pooler para runtime, `DIRECT_URL` para migraciones); branch de Supabase por PR. CI: lint + test + invariantes sobre fixtures + `get_advisors(security)`.

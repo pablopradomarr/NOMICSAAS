@@ -313,12 +313,22 @@ describe.skipIf(!TEST_DATABASE_URL)("QA E4 · ataques dirigidos", () => {
       expect(draft.ok, "se esperaba ANALYTIC_PROJECT_CLOSED, no un draft válido").toBe(false)
       if (draft.ok) return
       expect(draft.errors.map((e) => e.code)).toContain("ANALYTIC_PROJECT_CLOSED")
-    }
+    },
+    // **Flaky documentado (E7 · ronda 1, revisor PUEDE 6).** El caso abre cuatro
+    // `tenantTransaction` seguidas y, en la suite COMPLETA, la espera por una
+    // conexión libre del pool se comía los 5 s por defecto de vitest. Aislado
+    // pasa siempre (14 ✓ en 11,7 s). No es una regresión de E7 —el test no toca
+    // nada de la épica: ni `bigint`, ni el borde, ni la conciliación—: es
+    // contención del pool, la misma causa por la que E6 subió el timeout de su
+    // criterio 15. Se sube el techo del caso, no se relaja ninguna aserción.
+    120_000
   )
 
   // ── MarginLevelConfig: vigencias solapadas — EXCLUDE de BD ───────────────
 
-  it("MarginLevelConfig: dos vigencias solapadas para el mismo nivel las rechaza el EXCLUDE de BD", async () => {
+  it(
+    "MarginLevelConfig: dos vigencias solapadas para el mismo nivel las rechaza el EXCLUDE de BD",
+    async () => {
     await owner(async (client) => {
       const row = await client.query<{ id: string }>(
         `SELECT id FROM margin_level_configs WHERE organization_id = $1::uuid AND level = 'EBIT' LIMIT 1`,
@@ -337,7 +347,10 @@ describe.skipIf(!TEST_DATABASE_URL)("QA E4 · ataques dirigidos", () => {
         )
       ).rejects.toMatchObject({ code: "23P01" })
     })
-  })
+    },
+    // Mismo motivo que el caso anterior: contención del pool en la suite completa.
+    120_000
+  )
 
   it("MarginLevelConfig: una vigencia que NO solapa (empieza tras cerrar la anterior) se acepta", async () => {
     await owner(async (client) => {

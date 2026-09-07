@@ -714,7 +714,26 @@ describe("I-E7-12 · **cuenta en USD** (criterio 20)", () => {
       currency: "USD",
       status: "MATCHED",
     })
-    const c1 = cash({ id: "jl-usd", accountCode: "5730001", debitCents: 100000, creditCents: 0 })
+    /**
+     * **H-1/H-3 de la auditoría.** La versión de la ronda 1 ponía
+     * `debitCents: 100000` —el mismo número que los 100 000 céntimos de USD de
+     * la línea— y a la vez declaraba `baseBalanceCents: 95000`: la MISMA línea
+     * del diario valía como dólares para I-E7-1 y como euros para I-E7-12, y esa
+     * paridad 1:1 encubierta era justamente lo que impedía ver H-1.
+     *
+     * Aquí el apunte es el de verdad: 1 000,00 USD contabilizados a 0,92, o sea
+     * **920,00 € de contravalor**, con su divisa original. `B` sale de
+     * `original_amount_cents` (1 000,00 USD) y cuadra con `E` en USD; el euro
+     * sólo aparece en I-E7-12, y con la tasa de CIERRE (0,90), que es distinta.
+     */
+    const c1 = cash({
+      id: "jl-usd",
+      accountCode: "5730001",
+      debitCents: 92000,
+      creditCents: 0,
+      originalCurrency: "USD",
+      originalAmountCents: 100000,
+    })
     return {
       organizationId: ORG,
       cutoff: "2026-01-31",
@@ -733,7 +752,37 @@ describe("I-E7-12 · **cuenta en USD** (criterio 20)", () => {
   it("el cuadre se hace **en la divisa de la cuenta**, con tolerancia 0", () => {
     const input = usdInput()
     expect(checkIE71(input).status).toBe("PASS")
-    expect(reconciliationSummary(input.accounts[0] as BankAccountRef, input).currency).toBe("USD")
+    const summary = reconciliationSummary(input.accounts[0] as BankAccountRef, input)
+    expect(summary.currency).toBe("USD")
+    // **H-1**: las cuatro cifras en la MISMA moneda, la de la cuenta. `B` sale
+    // de `original_amount_cents` (1 000,00 USD), no del contravalor (920,00 €).
+    expect(summary.enDivisa).toBe(true)
+    expect(summary.moneda).toBe("USD")
+    expect(summary.saldoContable).toBe(100000)
+    expect(summary.saldoExtracto).toBe(100000)
+    expect(summary.diferencia).toBe(0)
+  })
+
+  it("**H-1** · un apunte sin importe en divisa deja el cuadre NO EVALUABLE, no en un PASS mezclando monedas", () => {
+    const input = usdInput()
+    const cashLines = [{ ...(input.cashLines[0] as LedgerCashLineRef), originalCurrency: null, originalAmountCents: null }]
+    const summary = reconciliationSummary(input.accounts[0] as BankAccountRef, { ...input, cashLines })
+    expect(summary.evaluable).toBe(false)
+    expect(summary.divisaCompleta).toBe(false)
+    expect(summary.motivoNoEvaluable).toContain("no llevan su importe en USD")
+    expect(checkIE71({ ...input, cashLines }).status).toBe("INFO")
+  })
+
+  it("**H-1** · I-E7-11 cuadra el grupo en la divisa de la cuenta, no en el contravalor", () => {
+    // El grupo de `usdInput()` empareja 1 000,00 USD de extracto con un apunte
+    // de 920,00 € de contravalor y 1 000,00 USD de importe original: cuadra.
+    expect(checkIE711(usdInput()).status).toBe("PASS")
+    expect(checkIE72(usdInput()).status).toBe("PASS")
+    // Sin el importe en divisa no hay nada que comparar, y se dice.
+    const input = usdInput()
+    const cashLines = [{ ...(input.cashLines[0] as LedgerCashLineRef), originalCurrency: null, originalAmountCents: null }]
+    expect(checkIE711({ ...input, cashLines }).status).toBe("FAIL")
+    expect(checkIE711({ ...input, cashLines }).evidencia).toContain("mezclar monedas")
   })
 
   it("una línea en otra divisa significa que el cuadre está en la divisa equivocada", () => {
@@ -750,8 +799,10 @@ describe("I-E7-12 · **cuenta en USD** (criterio 20)", () => {
         {
           bankAccountId: "acc-usd",
           closingDate: "2026-01-31",
-          rateMicro: BigInt(900000), // 1 USD = 0,90 EUR
-          baseBalanceCents: 95000, // contravalores históricos
+          // Tasa de CIERRE 0,90, **distinta** de la de contabilización (0,92):
+          // sin esa diferencia el invariante no mide nada (H-3).
+          rateMicro: BigInt(900000),
+          baseBalanceCents: 92000, // contravalores históricos: 1 000,00 × 0,92
           recognizedDifferenceCents: 0,
         },
       ],
@@ -759,9 +810,13 @@ describe("I-E7-12 · **cuenta en USD** (criterio 20)", () => {
     const result = checkIE712(input)
     expect(result.status).toBe("WARN")
     expect(result.evidencia).toContain("diferencia de cambio")
-    expect(result.evidencia).toContain("-50,00 €")
+    // 1 000,00 USD × 0,90 = 900,00 € frente a 920,00 € contabilizados.
+    expect(result.evidencia).toContain("-20,00 €")
     // Y no se cuela como partida en tránsito.
-    expect(reconciliationSummary(input.accounts[0] as BankAccountRef, input).pendientesBanco).toEqual([])
+    const summary = reconciliationSummary(input.accounts[0] as BankAccountRef, input)
+    expect(summary.pendientesBanco).toEqual([])
+    // **H-3**: la misma cifra que el invariante, para el panel.
+    expect(summary.fxDifferenceCents).toBe(-2000)
   })
 
   it("reconocida en 768/668, ya no avisa", () => {
@@ -771,12 +826,13 @@ describe("I-E7-12 · **cuenta en USD** (criterio 20)", () => {
           bankAccountId: "acc-usd",
           closingDate: "2026-01-31",
           rateMicro: BigInt(900000),
-          baseBalanceCents: 95000,
-          recognizedDifferenceCents: -5000,
+          baseBalanceCents: 92000,
+          recognizedDifferenceCents: -2000,
         },
       ],
     })
     expect(checkIE712(input).status).toBe("PASS")
+    expect(reconciliationSummary(input.accounts[0] as BankAccountRef, input).fxDifferenceCents).toBe(0)
   })
 
   it("sin cuentas en divisa, INFO", () => {

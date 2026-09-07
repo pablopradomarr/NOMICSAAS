@@ -783,8 +783,28 @@ describe.skipIf(!TEST_DATABASE_URL)("E4 · analítica en base de datos", () => {
   })
 
   it("#7 · una línea NO_ANALITICO con dimensión la corta el CHECK de la BD", async () => {
+    /**
+     * **Determinismo (E7 · ronda 1).** `findFirstOrThrow` sin `orderBy` deja que
+     * Postgres devuelva la fila que quiera, y el orden físico cambia según lo
+     * que haya hecho el resto de la suite: en una ejecución completa podía tocar
+     * la línea de un asiento ANULADO, cuyo `UPDATE` bloquea otro trigger
+     * («reclasificarlo rompería el espejo con su contra-asiento», I-E4-11) y el
+     * test fallaba con un mensaje que no era el que buscaba. Se elige la línea
+     * de forma determinista y sobre un asiento vivo, que es lo que el CHECK que
+     * se quiere ejercer necesita.
+     */
+    const reversals = await prisma.journalEntry.findMany({
+      where: { organizationId: ORG, reversesEntryId: { not: null } },
+      select: { id: true, reversesEntryId: true },
+    })
+    const excluded = [...reversals.map((r) => r.id), ...reversals.map((r) => r.reversesEntryId as string)]
     const line = await prisma.journalLine.findFirstOrThrow({
-      where: { organizationId: ORG, accountCode: "4300" },
+      where: {
+        organizationId: ORG,
+        accountCode: "4300",
+        entry: { voidedAt: null, id: { notIn: excluded } },
+      },
+      orderBy: [{ entryDate: "asc" }, { lineNo: "asc" }, { id: "asc" }],
     })
     await expect(
       owner(async (client) =>

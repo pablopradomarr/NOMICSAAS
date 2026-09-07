@@ -26,6 +26,7 @@ import {
   reconciliationSummary,
   type BankInvariantInput,
   type BankReconciliationSummary,
+  type FxCloseRef,
 } from "@/lib/audit/invariants-e7"
 import { assignDayOrdinals, bankLineSha256, sha256OfBytes } from "@/lib/bank/hash"
 import { parseBankCsv, type CsvMapping } from "@/lib/bank/csv"
@@ -43,6 +44,7 @@ import {
   type IgnoreReason,
   type LedgerCashLineRef,
   type MatchGroupKind,
+  type PendingKind,
   type StatementFormat,
 } from "@/lib/bank/types"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
@@ -345,6 +347,7 @@ const toLineRef = (row: {
   status: string
   ignoreReason: string | null
   ignoreEvidenceId: string | null
+  pendingKinds?: readonly { kind: string }[]
 }): BankLineRef => ({
   id: row.id,
   statementId: row.statementId,
@@ -367,6 +370,9 @@ const toLineRef = (row: {
   status: row.status as BankLineRef["status"],
   ignoreReason: row.ignoreReason as IgnoreReason | null,
   ignoreEvidenceId: row.ignoreEvidenceId,
+  // **H-5**: el tipado del pendiente, declarado por una persona (O-8). Sin él,
+  // `explainPending` sólo podía decir «sin tipar: nadie ha dicho qué es».
+  pendingKind: (row.pendingKinds?.[0]?.kind as BankLineRef["pendingKind"]) ?? null,
 })
 
 export async function listStatementLines(
@@ -380,6 +386,7 @@ export async function listStatementLines(
       ...(filter.status ? { status: filter.status } : {}),
       ...(filter.to ? { operationDate: { lte: toUtcDate(filter.to) } } : {}),
     },
+    include: { pendingKinds: { select: { kind: true } } },
     orderBy: [{ operationDate: "asc" }, { lineNo: "asc" }],
     ...(filter.take ? { take: filter.take } : {}),
   })
@@ -518,6 +525,27 @@ export async function importStatement(
       )
     }
 
+    /**
+     * **H-7 de la auditoría.** El periodo del extracto es el que **declara el
+     * banco** —registro 11 de la Norma 43, cabecera declarada del CSV—, no el
+     * de su primer y su último movimiento. Un extracto mensual sin movimiento
+     * el día 1 ni el día 31 se guardaba antes como 07-06…07-22 y la cadena de
+     * I-E7-6b denunciaba un hueco 07-01…07-06 que el banco sí cubre; en una
+     * cartera real I-E7-6b salía FAIL casi siempre, I-E7-1 quedaba en INFO y el
+     * badge P6 no se concedía jamás.
+     *
+     * El periodo declarado se **ensancha** —nunca se recorta— hasta cubrir los
+     * apuntes nuevos: si el banco declara un periodo que no contiene sus
+     * propios movimientos, el hecho manda sobre la cabecera.
+     */
+    const min = (a: LocalDate, b: LocalDate): LocalDate => (a < b ? a : b)
+    const max = (a: LocalDate, b: LocalDate): LocalDate => (a > b ? a : b)
+    const firstMovement = fresh[0].operationDate
+    const lastMovement = fresh[fresh.length - 1].operationDate
+    const periodo = parsed.periodDeclared
+      ? { start: min(parsed.periodStart, firstMovement), end: max(parsed.periodEnd, lastMovement) }
+      : { start: firstMovement, end: lastMovement }
+
     const repeatedSum = repeated.reduce((a, l) => a + l.amountCents, 0)
     const openingCents = (parsed.openingBalanceCents ?? 0) + repeatedSum
     const closingCents = parsed.closingBalanceCents ?? openingCents + fresh.reduce((a, l) => a + l.amountCents, 0)
@@ -531,8 +559,8 @@ export async function importStatement(
         fileName: input.fileName.slice(0, 255),
         fileId: input.fileId ?? null,
         currency: parsed.currency.toUpperCase(),
-        periodStart: toUtcDate(fresh[0].operationDate),
-        periodEnd: toUtcDate(fresh[fresh.length - 1].operationDate),
+        periodStart: toUtcDate(periodo.start),
+        periodEnd: toUtcDate(periodo.end),
         openingBalanceCents: BigInt(openingCents),
         closingBalanceCents: BigInt(closingCents),
         declaredLineCount: parsed.declaredLineCount === null ? null : parsed.declaredLineCount - repeated.length,
@@ -599,8 +627,8 @@ export async function importStatement(
         description: l.description,
       })),
       zeroAmount,
-      periodStart: fresh[0].operationDate,
-      periodEnd: fresh[fresh.length - 1].operationDate,
+      periodStart: periodo.start,
+      periodEnd: periodo.end,
     }
   })
 }
@@ -630,8 +658,11 @@ type CashLineRow = {
   account_code: string
   debit_cents: bigint
   credit_cents: bigint
+  original_currency: string | null
+  original_amount_cents: bigint | null
   description: string | null
   source_id: string | null
+  pending_kind: string | null
 }
 
 /**
@@ -647,9 +678,12 @@ export async function listCashLines(
   const patterns = filter.accountCodes.map((code) => `${code}%`)
   const rows = await db.$queryRaw<CashLineRow[]>`
     SELECT l.id, l.entry_id, e.entry_number, l.entry_date, l.entry_kind, l.fiscal_year_id, l.line_no,
-           l.account_code, l.debit_cents, l.credit_cents, l.description, e.source_id
+           l.account_code, l.debit_cents, l.credit_cents, l.original_currency, l.original_amount_cents,
+           l.description, e.source_id, k.kind AS pending_kind
       FROM journal_lines l
       JOIN journal_entries e ON e.id = l.entry_id AND e.organization_id = l.organization_id
+      LEFT JOIN bank_pending_kinds k
+        ON k.organization_id = l.organization_id AND k.journal_line_id = l.id
      WHERE l.organization_id = ${db.$organizationId}::uuid
        AND l.account_code LIKE ANY(${patterns}::text[])
        AND l.entry_date <= ${toUtcDate(filter.to)}::date
@@ -668,8 +702,13 @@ export async function listCashLines(
     accountCode: r.account_code,
     debitCents: centsFromDb(r.debit_cents, "debe"),
     creditCents: centsFromDb(r.credit_cents, "haber"),
+    // **H-1**: sin estas dos columnas una cuenta en divisa no se puede cuadrar
+    // en su divisa (`original_amount_cents` es el importe SIN signo, ADR-0014 D2).
+    originalCurrency: r.original_currency,
+    originalAmountCents: r.original_amount_cents === null ? null : centsFromBigInt(r.original_amount_cents, "importe en divisa"),
     description: r.description,
     reference: r.source_id,
+    pendingKind: (r.pending_kind as LedgerCashLineRef["pendingKind"]) ?? null,
   }))
 }
 
@@ -764,7 +803,16 @@ export async function createMatchGroup(
 
   const journalLines = await tx.journalLine.findMany({
     where: { id: { in: [...input.journalLineIds] } },
-    select: { id: true, accountCode: true, debitCents: true, creditCents: true, entryDate: true, entryKind: true },
+    select: {
+      id: true,
+      accountCode: true,
+      debitCents: true,
+      creditCents: true,
+      entryDate: true,
+      entryKind: true,
+      originalCurrency: true,
+      originalAmountCents: true,
+    },
   })
   if (journalLines.length !== input.journalLineIds.length) {
     throw bankErr("JOURNAL_LINE_NOT_FOUND", "Algún apunte no existe en esta organización")
@@ -794,16 +842,40 @@ export async function createMatchGroup(
     )
   }
 
+  /**
+   * **H-1 · el grupo cuadra en la moneda de la CUENTA**, no en la base
+   * (ADR-0015 D6.2). `debitCents`/`creditCents` están siempre en moneda base:
+   * comparar el extracto en dólares contra el contravalor en euros hacía que una
+   * cuenta en divisa sólo se pudiera conciliar a paridad 1:1, es decir, nunca.
+   * En una cuenta en divisa la comparación se hace contra
+   * `original_amount_cents` (`hashVersion = 3`), que es el importe SIN signo: el
+   * signo lo da el lado del apunte, exactamente como en moneda base.
+   */
+  const organization = await tx.organization.findFirstOrThrow({ select: { baseCurrency: true } })
+  const enDivisa = account.currency.toUpperCase() !== organization.baseCurrency.toUpperCase()
   const sumLines = lines.reduce((a, l) => a + centsFromDb(l.amountCents, "importe del extracto"), 0)
-  const sumCash = journalLines.reduce(
-    (a, l) => a + signedAmountOf({ debitCents: centsFromDb(l.debitCents, "debe"), creditCents: centsFromDb(l.creditCents, "haber") }),
-    0
-  )
+  const cashAmounts = journalLines.map((l) => {
+    const base = signedAmountOf({
+      debitCents: centsFromDb(l.debitCents, "debe"),
+      creditCents: centsFromDb(l.creditCents, "haber"),
+    })
+    if (!enDivisa) return base
+    if ((l.originalCurrency ?? "").toUpperCase() !== account.currency.toUpperCase() || l.originalAmountCents === null) {
+      throw bankErr(
+        "MATCH_CURRENCY_MISSING",
+        `El apunte ${l.id} no lleva su importe en ${account.currency} (original_amount_cents) y la cuenta está en ${account.currency}: ` +
+          "conciliar comparando el contravalor en moneda base sería cuadrar mezclando monedas (ADR-0015 D6.2)"
+      )
+    }
+    const magnitude = centsFromDb(l.originalAmountCents, "importe en divisa")
+    return base === 0 ? 0 : base < 0 ? -Math.abs(magnitude) : Math.abs(magnitude)
+  })
+  const sumCash = cashAmounts.reduce((a, b) => a + b, 0)
   if (sumLines !== sumCash) {
     throw bankErr(
       "MATCH_NOT_BALANCED",
-      `El grupo no cuadra: Σ extracto ${sumLines} céntimos ≠ Σ (debe − haber) ${sumCash} céntimos. ` +
-        "La conciliación es una igualdad con tolerancia 0 (I-E7-11/I-E7-2)"
+      `El grupo no cuadra: Σ extracto ${sumLines} céntimos ≠ Σ (debe − haber) ${sumCash} céntimos ` +
+        `en ${account.currency}. La conciliación es una igualdad con tolerancia 0 (I-E7-11/I-E7-2)`
     )
   }
 
@@ -870,6 +942,8 @@ export async function createMatchGroup(
     where: { id: { in: [...input.statementLineIds] } },
     data: { status: "MATCHED" },
   })
+  // H-5: lo conciliado ya no es una partida en tránsito.
+  await clearPendingKinds(tx, { statementLineIds: input.statementLineIds, journalLineIds: input.journalLineIds })
 
   await writeAuditLog(tx, {
     entity: "BankMatchGroup",
@@ -964,6 +1038,8 @@ export async function ignoreLine(
       ignoredAt: new Date(),
     },
   })
+  // H-5: lo ignorado tampoco es una partida en tránsito.
+  await clearPendingKinds(tx, { statementLineIds: [input.id] })
   await writeAuditLog(tx, {
     entity: "BankStatementLine",
     entityId: input.id,
@@ -976,6 +1052,114 @@ export async function ignoreLine(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// El TIPADO de un pendiente (O-8, H-5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TypePendingInput = {
+  bankAccountId: string
+  side: "BANCO" | "LIBROS"
+  /** Id de la línea de extracto (`BANCO`) o del apunte de 57x (`LIBROS`). */
+  id: string
+  /** `null` **destipa**: alguien se equivocó y lo retira. */
+  kind: PendingKind | null
+  note?: string | null
+}
+
+/**
+ * Declara —o retira— el tipo de una partida en tránsito. **Lo declara una
+ * persona**: el motor no lo deduce de un texto (eso sería auto-punteo por
+ * patrón, E12); lo que hace el motor es **envejecerlo** y decidir con él si el
+ * pendiente está explicado (§3.6, criterio 3).
+ *
+ * Sólo se puede tipar lo que está pendiente: una línea conciliada o ignorada ya
+ * no es una partida en tránsito y tiparla sería describir algo que no existe.
+ */
+export async function typePending(
+  tx: TenantTransactionClient,
+  input: TypePendingInput,
+  actor: { userId: string }
+): Promise<{ id: string; kind: PendingKind | null }> {
+  const account = await tx.bankAccount.findFirst({ where: { id: input.bankAccountId } })
+  if (!account) throw bankErr("BANK_ACCOUNT_NOT_FOUND", "La cuenta bancaria no existe en esta organización")
+
+  const where =
+    input.side === "BANCO"
+      ? { statementLineId: input.id }
+      : { journalLineId: input.id }
+
+  if (input.side === "BANCO") {
+    const line = await tx.bankStatementLine.findFirst({ where: { id: input.id }, select: { id: true, status: true, bankAccountId: true } })
+    if (!line) throw bankErr("STATEMENT_LINE_NOT_FOUND", "La línea de extracto no existe en esta organización")
+    if (line.bankAccountId !== input.bankAccountId) {
+      throw bankErr("STATEMENT_LINE_OTHER_ACCOUNT", `La línea ${input.id} es de otra cuenta bancaria`)
+    }
+    if (line.status !== "UNMATCHED" && input.kind !== null) {
+      throw bankErr("PENDING_NOT_PENDING", "Sólo se tipa lo que está pendiente: esa línea ya está conciliada o ignorada")
+    }
+  } else {
+    const cash = await tx.journalLine.findFirst({ where: { id: input.id }, select: { id: true, accountCode: true } })
+    if (!cash) throw bankErr("JOURNAL_LINE_NOT_FOUND", "El apunte no existe en esta organización")
+    if (cash.accountCode !== account.accountCode) {
+      throw bankErr(
+        "JOURNAL_LINE_OTHER_ACCOUNT",
+        `El apunte ${input.id} es de la cuenta ${cash.accountCode} y esta cuenta bancaria puntea contra la ${account.accountCode}`
+      )
+    }
+    const live = await tx.bankReconciliation.findFirst({ where: { journalLineId: input.id, groupUnmatchedAt: null } })
+    if (live && input.kind !== null) {
+      throw bankErr("PENDING_NOT_PENDING", "Sólo se tipa lo que está pendiente: ese apunte ya está conciliado")
+    }
+  }
+
+  const existing = await tx.bankPendingKind.findFirst({ where })
+  if (input.kind === null) {
+    if (existing) await tx.bankPendingKind.delete({ where: { id: existing.id } })
+  } else if (existing) {
+    await tx.bankPendingKind.update({
+      where: { id: existing.id },
+      data: { kind: input.kind, note: input.note ?? null, declaredById: actor.userId, declaredAt: new Date() },
+    })
+  } else {
+    await tx.bankPendingKind.create({
+      data: {
+        organizationId: tx.$organizationId,
+        bankAccountId: input.bankAccountId,
+        ...(input.side === "BANCO" ? { statementLineId: input.id } : { journalLineId: input.id }),
+        kind: input.kind,
+        note: input.note ?? null,
+        declaredById: actor.userId,
+      },
+    })
+  }
+
+  await writeAuditLog(tx, {
+    entity: input.side === "BANCO" ? "BankStatementLine" : "JournalLine",
+    entityId: input.id,
+    action: "TYPE_PENDING",
+    before: existing ? { kind: existing.kind } : null,
+    after: { kind: input.kind, note: input.note ?? null },
+    userId: actor.userId,
+  })
+  return { id: input.id, kind: input.kind }
+}
+
+/**
+ * **Un pendiente que deja de serlo deja de estar tipado.** Se llama al conciliar
+ * y al ignorar: un tipado huérfano haría que `explainPending` explicara algo que
+ * ya no existe, y el badge P6 se concedería sobre una descripción caducada.
+ */
+async function clearPendingKinds(
+  tx: TenantTransactionClient,
+  ids: { statementLineIds?: readonly string[]; journalLineIds?: readonly string[] }
+): Promise<void> {
+  const or: { statementLineId?: { in: string[] }; journalLineId?: { in: string[] } }[] = []
+  if (ids.statementLineIds && ids.statementLineIds.length > 0) or.push({ statementLineId: { in: [...ids.statementLineIds] } })
+  if (ids.journalLineIds && ids.journalLineIds.length > 0) or.push({ journalLineId: { in: [...ids.journalLineIds] } })
+  if (or.length === 0) return
+  await tx.bankPendingKind.deleteMany({ where: { OR: or } })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lectura compuesta: el bloque de conciliación del barrido y el panel
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -983,6 +1167,80 @@ export async function ignoreLine(
  * Todo lo que I-E7-1/2/3/5/6a/6b/11/12/13 necesitan, leído **en serie** y sin
  * N+1: cuatro consultas para toda la organización, no cuatro por cuenta.
  */
+type FxRow = {
+  bank_account_id: string
+  rate_micro: bigint | null
+  base_balance_cents: bigint
+  recognized_cents: bigint
+}
+
+/**
+ * **H-3 · el cierre en divisa de cada cuenta**, para que I-E7-12 pueda medir de
+ * verdad la diferencia de cambio (NRV 11ª.2.2). Sin esto, `BankInvariantInput.fx`
+ * no lo rellenaba nadie, I-E7-12 salía siempre `INFO · sin tasa de cierre`, el
+ * panel enseñaba `null` y el motivo de sello `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER`
+ * era inalcanzable.
+ *
+ * Tres cifras por cuenta, en **una sola consulta** para todas:
+ *
+ *  · `rateMicro`: la **última tasa publicada hasta el corte** para
+ *    `divisa → base` (`exchange_rates`). Sin tasa no hay medición: la cuenta
+ *    sale del bloque y I-E7-12 lo dice.
+ *  · `baseBalanceCents`: Σ contravalores históricos en moneda base de los
+ *    apuntes de la 57x hasta el corte, `kind ∉ {CLOSING}` — la misma exclusión
+ *    que `B`.
+ *  · `recognizedDifferenceCents`: lo ya reconocido en **768/668** por asientos
+ *    que tocan ESA 57x. Es la única atribución posible desde el diario: una
+ *    diferencia de cambio de una cuenta bancaria se contabiliza contra ella.
+ */
+async function readFxCloses(
+  tx: TenantTransactionClient,
+  accounts: readonly BankAccountRef[],
+  opts: { cutoff: LocalDate; baseCurrency: string }
+): Promise<FxCloseRef[]> {
+  const foreign = accounts.filter((a) => a.currency.toUpperCase() !== opts.baseCurrency.toUpperCase())
+  if (foreign.length === 0) return []
+  const ids = foreign.map((a) => a.id)
+  const codes = foreign.map((a) => `${a.accountCode}%`)
+  const currencies = foreign.map((a) => a.currency.toUpperCase())
+
+  const rows = await tx.$queryRaw<FxRow[]>`
+    WITH cuentas AS (
+      SELECT * FROM unnest(${ids}::uuid[], ${codes}::text[], ${currencies}::text[])
+        AS t(bank_account_id, code_pattern, currency)
+    )
+    SELECT c.bank_account_id,
+           (SELECT r.rate_micro FROM exchange_rates r
+             WHERE r."from" = c.currency AND r."to" = ${opts.baseCurrency.toUpperCase()}
+               AND r.date <= ${toUtcDate(opts.cutoff)}::date
+             ORDER BY r.date DESC LIMIT 1) AS rate_micro,
+           COALESCE((SELECT SUM(l.debit_cents - l.credit_cents) FROM journal_lines l
+                      WHERE l.organization_id = ${tx.$organizationId}::uuid
+                        AND l.account_code LIKE c.code_pattern
+                        AND l.entry_date <= ${toUtcDate(opts.cutoff)}::date
+                        AND l.entry_kind <> 'CLOSING'), 0)::bigint AS base_balance_cents,
+           COALESCE((SELECT SUM(d.credit_cents - d.debit_cents) FROM journal_lines d
+                      WHERE d.organization_id = ${tx.$organizationId}::uuid
+                        AND (left(d.account_code, 3) = '768' OR left(d.account_code, 3) = '668')
+                        AND d.entry_date <= ${toUtcDate(opts.cutoff)}::date
+                        AND d.entry_kind <> 'CLOSING'
+                        AND EXISTS (SELECT 1 FROM journal_lines b
+                                     WHERE b.organization_id = d.organization_id
+                                       AND b.entry_id = d.entry_id
+                                       AND b.account_code LIKE c.code_pattern)), 0)::bigint AS recognized_cents
+      FROM cuentas c`
+
+  return rows
+    .filter((r) => r.rate_micro !== null)
+    .map((r) => ({
+      bankAccountId: r.bank_account_id,
+      closingDate: opts.cutoff,
+      rateMicro: r.rate_micro as bigint,
+      baseBalanceCents: centsFromDb(r.base_balance_cents, "contravalor histórico"),
+      recognizedDifferenceCents: centsFromDb(r.recognized_cents, "diferencia de cambio reconocida"),
+    }))
+}
+
 export async function readBankInvariantInput(
   tx: TenantTransactionClient,
   opts: { cutoff: LocalDate; baseCurrency: string; isFiscalYearEnd?: boolean }
@@ -996,6 +1254,7 @@ export async function readBankInvariantInput(
     accountCodes: [...new Set(accounts.map((a) => a.accountCode))],
     to: opts.cutoff,
   })
+  const fx = await readFxCloses(tx, accounts, opts)
   return {
     organizationId: tx.$organizationId,
     cutoff: opts.cutoff,
@@ -1005,6 +1264,7 @@ export async function readBankInvariantInput(
     lines,
     groups,
     cashLines,
+    ...(fx.length > 0 ? { fx } : {}),
     ...(opts.isFiscalYearEnd ? { isFiscalYearEnd: true } : {}),
   }
 }

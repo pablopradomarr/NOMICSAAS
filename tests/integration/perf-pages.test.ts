@@ -46,6 +46,11 @@ const { computeLedgerHash, getEntries, getLinesForPeriod } = await import("@/mod
 const { clearMarginCache, getAnalyticPnl } = await import("@/models/margins")
 const { getDashboard } = await import("@/models/reports")
 const { countUnpostedTransactions } = await import("@/models/transactions")
+const { latestInvariantRun, listInvariantRuns, listAllocationRunIntegrityRefs } = await import("@/models/audit")
+const { latestSweep } = await import("@/models/store-sweep")
+const { readDataQuality } = await import("@/app/(app)/audit/shared")
+const { listAuditLog } = await import("@/models/audit-log")
+const { listBankAccounts, pendingItems } = await import("@/models/bank")
 const { accountNames, entryExtras, postableAccounts } = await import("@/app/(app)/ledger/shared")
 const {
   listAllocationRules,
@@ -298,6 +303,49 @@ const loaders: Loader[] = [
         })
         const names = await accountNames(tenantDb(ORG))
         return { report, names }
+      }),
+  },
+  {
+    /**
+     * **E7 · ronda 1 (revisor DEBE 3 / BUG-E7-2).** `/audit` entró en E7 sin
+     * medición y es la pantalla nueva más pesada: siete lecturas en serie y
+     * `readDataQuality` con tres `take: 5000`. Los techos propios de §8 —y con
+     * volumen de verdad— viven en `perf-audit.test.ts`; aquí entra en la lista
+     * común para que una regresión de N+1 o de conexiones se vea junto a las
+     * demás pantallas.
+     */
+    route: "/audit",
+    run: async () =>
+      await runWithRequestTenant(
+        ORG,
+        USER,
+        async () => {
+          const db = tenantDb(ORG)
+          const fiscalYears = await listFiscalYears(db)
+          const run = await latestInvariantRun(db)
+          const history = await listInvariantRuns(db, { take: 25 })
+          const sweep = await latestSweep(db)
+          const dataQuality = await readDataQuality(db)
+          const allocationRuns = await listAllocationRunIntegrityRefs(db)
+          const logs = await listAuditLog(db, { take: 50 })
+          return { fiscalYears, run, history, sweep, dataQuality, allocationRuns, logs }
+        },
+        { readOnly: true }
+      ),
+  },
+  {
+    /**
+     * `/audit/bank`: el listado de cuentas bancarias con su cuadre. `pendingItems`
+     * resuelve TODAS las cuentas en cuatro consultas agregadas; una regresión
+     * que volviera a una consulta por cuenta se vería aquí.
+     */
+    route: "/audit/bank",
+    run: async () =>
+      await runWithRequestTenant(ORG, USER, async (tx) => {
+        const accounts = await listBankAccounts(tx)
+        const summaries = accounts.length > 0 ? await pendingItems(tx, { cutoff: PERIOD.to, baseCurrency: "EUR" }) : []
+        const run = await latestInvariantRun(tx)
+        return { accounts, summaries, run }
       }),
   },
   {

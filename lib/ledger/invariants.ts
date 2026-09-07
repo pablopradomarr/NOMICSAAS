@@ -586,6 +586,16 @@ export type SealOptions = {
    * periodo, no de la factura.
    */
   documentReasons?: readonly E8SealReason[]
+  /**
+   * E7 (H-4 de la auditoría, ronda 1): motivos que aporta la **auditoría** del
+   * periodo —conciliación pendiente, partida en tránsito antigua, diferencia de
+   * cambio sin reconocer, almacén no barrido—. Llegan de `auditBlock()` ya
+   * decididos por el borde y **mueven el sello**, como los de E8: un AVISO que
+   * no mueve el sello es decorativo, y firmar «validado automáticamente» un
+   * periodo con la conciliación abierta es exactamente lo que §3.2 del diseño
+   * quería evitar. El texto de cada código lo pone el llamante.
+   */
+  auditReasons?: readonly SealReason[]
 }
 
 /**
@@ -633,6 +643,9 @@ export function seal(validacion: Validacion, opts: SealOptions): Seal {
   }
   for (const code of [...new Set(opts.documentReasons ?? [])].sort()) {
     razones.push({ kind: "DOCUMENTO", code, message: `${code} · ${E8_SEAL_REASON_TEXT[code]}` })
+  }
+  for (const reason of opts.auditReasons ?? []) {
+    razones.push(reason)
   }
 
   const motivos = razones.map((r) => r.message)

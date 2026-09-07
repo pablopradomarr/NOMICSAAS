@@ -2218,10 +2218,18 @@ export async function runLedgerInvariants(
     // `reconcile()` documento a documento y se agregan aquí, porque el sello es
     // del PERIODO y no de la factura.
     const documentReasons = await readDocumentSealReasons(tx)
+    // **H-4 de la auditoría de E7.** Los cuatro motivos propios de E7 entran en
+    // el sello, igual que los seis de E8: la ronda 1 los calculaba DESPUÉS del
+    // sello y sólo los concatenaba en `sealReasons`, de modo que un periodo con
+    // ocho pendientes de hasta 183 días se firmaba «VALIDADO AUTOMÁTICAMENTE»
+    // con la conciliación abierta. `sello` y `sealReasons` dicen ahora lo mismo.
+    const { e7Reasons } = await import("@/lib/audit/run")
+    const auditSealReasons = e7Reasons(audit?.reasons)
     const sello = sealPure(validacion, {
       gitSha,
       ...(opts.lastGitSha !== undefined ? { lastGitSha: opts.lastGitSha } : {}),
       ...(documentReasons.length > 0 ? { documentReasons } : {}),
+      ...(auditSealReasons.length > 0 ? { auditReasons: auditSealReasons } : {}),
     })
 
     let persistedRunId: string | undefined

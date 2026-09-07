@@ -130,6 +130,28 @@ export const ignoreLineSchema = z
     }
   )
 
+/**
+ * **El tipado de un pendiente** (O-8, H-5). Vocabulario CERRADO: los seis tipos
+ * de partida en tránsito de §3.5. `kind: null` **destipa** —alguien se equivocó
+ * y lo retira—, y por eso es explícitamente nulo y no opcional.
+ */
+export const pendingKindSchema = z.enum([
+  "CHEQUE_EMITIDO_NO_CARGADO",
+  "REMESA_NO_ABONADA",
+  "TRASPASO_ENTRE_CUENTAS_EN_CAMINO",
+  "MOVIMIENTO_BANCO_SIN_ASIENTO",
+  "APUNTE_SIN_MOVIMIENTO",
+  "EFECTO_EN_GESTION_DE_COBRO",
+])
+
+export const typePendingSchema = z.object({
+  bankAccountId: z.string().uuid(),
+  side: z.enum(["BANCO", "LIBROS"]),
+  id: z.string().uuid(),
+  kind: pendingKindSchema.nullable(),
+  note: z.string().trim().max(512).nullish(),
+})
+
 export const acceptSuggestionsSchema = z.object({
   bankAccountId: z.string().uuid(),
   /** Ids ELEGIDOS explícitamente: nunca «acepta todas» (R2). */

@@ -104,6 +104,8 @@ export type AuditAction =
   | "UNMATCH"
   /** `IGNORED` del vocabulario cerrado, con su evidencia. */
   | "IGNORE_LINE"
+  /** Tipar —o destipar— una partida en tránsito (O-8, H-5). Lo hace una persona. */
+  | "TYPE_PENDING"
   | "RUN_INVARIANTS"
   | "SWEEP_STORE"
   | "cancel"

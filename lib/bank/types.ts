@@ -162,6 +162,13 @@ export type LedgerCashLineRef = {
   /** Referencia de remesa del apunte, cuando el documento la trae (O-15). */
   reference?: string | null
   pendingKind?: PendingKind | null
+  /**
+   * Divisa e importe ORIGINALES de la partida (ADR-0014 D2, `hashVersion = 3`).
+   * Son lo que hace posible cuadrar una cuenta bancaria en divisa **en su
+   * divisa** (H-1): `debitCents`/`creditCents` están siempre en moneda base.
+   */
+  originalCurrency?: string | null
+  originalAmountCents?: Cents | null
 }
 
 /** Fila de pertenencia a un grupo de conciliación. */
@@ -182,9 +189,34 @@ export type BankMatchGroupRef = {
   members: readonly BankMatchMemberRef[]
 }
 
-/** Importe con signo de un apunte de 57x: `debe − haber`. */
+/** Importe con signo de un apunte de 57x **en moneda base**: `debe − haber`. */
 export const signedAmountOf = (line: Pick<LedgerCashLineRef, "debitCents" | "creditCents">): Cents =>
   line.debitCents - line.creditCents
+
+/**
+ * Importe con signo de un apunte **en su divisa original** (ADR-0015 D6.2,
+ * hallazgo H-1 de la auditoría de E7).
+ *
+ * `original_amount_cents` se guarda en **valor absoluto** —igual que `debe` y
+ * `haber`, que nunca son negativos: el signo lo da el lado— y la columna forma
+ * parte de `canonicalEntryFormV3` (`hashVersion = 3`), de modo que es inmutable
+ * y auditable. El signo se toma del lado del apunte, exactamente como en
+ * `signedAmountOf`: un cargo del banco es un HABER de la 57x, esté en euros o en
+ * dólares.
+ *
+ * Devuelve `null` cuando el apunte no lleva el importe en divisa: sin él **no se
+ * puede** cuadrar la cuenta en su moneda, y el cuadre sale «no evaluable» en vez
+ * de mezclar monedas (que es lo que la ronda 1 hacía).
+ */
+export const signedOriginalAmountOf = (
+  line: Pick<LedgerCashLineRef, "debitCents" | "creditCents" | "originalAmountCents">
+): Cents | null => {
+  const magnitude = line.originalAmountCents
+  if (magnitude === null || magnitude === undefined) return null
+  const base = signedAmountOf(line)
+  if (base === 0) return 0
+  return base < 0 ? -Math.abs(magnitude) : Math.abs(magnitude)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fechas y el borde de `bigint`

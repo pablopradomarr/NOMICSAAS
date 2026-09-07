@@ -41,6 +41,7 @@ import {
   isReconcilableAccount,
   isUnderAccount,
   signedAmountOf,
+  signedOriginalAmountOf,
   type BankAccountRef,
   type BankLineRef,
   type BankMatchGroupRef,
@@ -215,21 +216,82 @@ export type BankReconciliationSummary = {
   evaluable: boolean
   /** Por qué no se puede evaluar, cuando no se puede. */
   motivoNoEvaluable: string | null
+  /**
+   * **En qué moneda están las cuatro cifras** (H-1). Es siempre la de la cuenta:
+   * `E`/`Ue` salen del extracto y `B`/`Ub`, cuando la cuenta no es en moneda
+   * base, de `original_amount_cents` del diario. Nunca se mezclan.
+   */
+  moneda: string
+  /** ¿`B`/`Ub` han salido de la divisa original en vez de la moneda base? */
+  enDivisa: boolean
+  /**
+   * **La diferencia de cambio de la NRV 11ª.2.2** (H-3), cuando la cuenta está
+   * en divisa y hay tasa de cierre. `null` = no hay tasa o no es en divisa. La
+   * calcula la MISMA derivación que I-E7-12; el panel no recalcula nada, y por
+   * eso la pantalla no puede discrepar del invariante.
+   */
+  fxDifferenceCents: Cents | null
+  /**
+   * En una cuenta en divisa, ¿TODOS los apuntes de la 57x llevan su importe en
+   * esa divisa? Si no, `B` y `Ub` no son computables y el cuadre no se evalúa.
+   */
+  divisaCompleta: boolean
+  /**
+   * Pendientes que una conciliación **posterior al corte** ya recoge (§3.6,
+   * criterios 1 y 2 de «explicado»): el cheque de diciembre que el banco carga
+   * en enero y que ya está punteado contra su línea de enero. A `D` el apunte
+   * sigue pendiente —y tiene que estarlo, o la identidad `E − B = Ue − Ub` se
+   * rompe por su importe—, pero **está explicado**.
+   */
+  resolvedLaterIds: readonly string[]
 }
 
 const liveGroups = (groups: readonly BankMatchGroupRef[]): readonly BankMatchGroupRef[] =>
   groups.filter((g) => g.unmatchedAt === null || g.unmatchedAt === undefined)
 
-const matchedIds = (groups: readonly BankMatchGroupRef[]): { lines: Set<string>; cash: Set<string> } => {
+/**
+ * Qué está conciliado **a la fecha de corte**, y qué está conciliado por un
+ * grupo que asoma más allá del corte.
+ *
+ * Un grupo sólo **cancela** en la identidad `E − B = Ue − Ub` si TODOS sus
+ * miembros caen dentro del corte: es I-E7-11 (`Σ líneas = Σ apuntes`) lo que
+ * hace que se cancelen, y esa igualdad sólo vale entera. Un grupo a caballo del
+ * corte —el cheque contabilizado el 20-12 y cargado por el banco el 15-01—
+ * aporta al corte su apunte y no su línea; darlo por conciliado dejaba fuera de
+ * `Ub` un apunte que `B` sí contaba, y la identidad fallaba por su importe
+ * exacto.
+ *
+ * Los miembros de un grupo a caballo que **sí** están dentro del corte siguen
+ * siendo pendientes, y son exactamente los `resolvedLaterIds` de §3.6: la
+ * contrapartida ya existe y ya está punteada, sólo que del otro lado del corte.
+ */
+const matchedAtCutoff = (
+  groups: readonly BankMatchGroupRef[],
+  bankLineDate: ReadonlyMap<string, LocalDate>,
+  cashLineDate: ReadonlyMap<string, LocalDate>,
+  cutoff: LocalDate
+): { lines: Set<string>; cash: Set<string>; resolvedLater: Set<string> } => {
   const lines = new Set<string>()
   const cash = new Set<string>()
+  const resolvedLater = new Set<string>()
   for (const group of liveGroups(groups)) {
+    const dates = group.members.flatMap((m) => [bankLineDate.get(m.statementLineId), cashLineDate.get(m.journalLineId)])
+    // Un miembro cuya fecha no conocemos (fuera del alcance leído) se trata como
+    // fuera del corte: nunca se da por conciliado lo que no se ha visto.
+    const dentro = dates.every((d) => d !== undefined && d <= cutoff)
     for (const member of group.members) {
-      lines.add(member.statementLineId)
-      cash.add(member.journalLineId)
+      if (dentro) {
+        lines.add(member.statementLineId)
+        cash.add(member.journalLineId)
+        continue
+      }
+      const lineDate = bankLineDate.get(member.statementLineId)
+      const cashDate = cashLineDate.get(member.journalLineId)
+      if (lineDate !== undefined && lineDate <= cutoff) resolvedLater.add(member.statementLineId)
+      if (cashDate !== undefined && cashDate <= cutoff) resolvedLater.add(member.journalLineId)
     }
   }
-  return { lines, cash }
+  return { lines, cash, resolvedLater }
 }
 
 /**
@@ -312,7 +374,7 @@ export function chainCoverage(
 }
 
 /** Día siguiente sin `Date`: las fechas contables son cadenas ordenables. */
-function nextDay(date: LocalDate): LocalDate {
+export function nextDay(date: LocalDate): LocalDate {
   const [y, m, d] = [Number(date.slice(0, 4)), Number(date.slice(5, 7)), Number(date.slice(8, 10))]
   const days = new Map([
     [1, 31],
@@ -339,7 +401,7 @@ function nextDay(date: LocalDate): LocalDate {
  */
 export function reconciliationSummary(
   account: BankAccountRef,
-  input: Pick<BankInvariantInput, "statements" | "lines" | "groups" | "cashLines" | "cutoff">
+  input: Pick<BankInvariantInput, "statements" | "lines" | "groups" | "cashLines" | "cutoff" | "baseCurrency" | "fx">
 ): BankReconciliationSummary {
   const cutoff = input.cutoff
   const statements = input.statements.filter((s) => s.bankAccountId === account.id)
@@ -347,11 +409,44 @@ export function reconciliationSummary(
   const cashLines = input.cashLines.filter(
     (l) => isUnderAccount(l.accountCode, account.accountCode) && l.entryDate <= cutoff
   )
-  const matched = matchedIds(input.groups.filter((g) => g.bankAccountId === account.id))
+  const matched = matchedAtCutoff(
+    input.groups.filter((g) => g.bankAccountId === account.id),
+    new Map(input.lines.map((l) => [l.id, l.operationDate])),
+    new Map(input.cashLines.map((l) => [l.id, l.entryDate])),
+    cutoff
+  )
 
-  // `B` con la MISMA función de la foto de E6, cuenta a cuenta (§3.7).
+  /**
+   * **H-1 · las cuatro cifras, en la MISMA moneda** (ADR-0015 D6.2, §3.5).
+   *
+   * `E` y `Ue` salen del extracto, que está en la divisa de la cuenta. `B` y
+   * `Ub` salían de `debe − haber`, que está en moneda **base**: en una cuenta en
+   * dólares la identidad comparaba dólares con euros y salía PASS por vacuidad
+   * mientras nada estuviera conciliado. Cuando la cuenta no es en moneda base,
+   * `B` y `Ub` se toman de `original_amount_cents` (`hashVersion = 3`).
+   *
+   * La diferencia entre el contravalor histórico en euros y `saldo en divisa ×
+   * tasa de cierre` **no es un pendiente**: es la diferencia de cambio de la
+   * NRV 11ª.2.2, y la mide I-E7-12 (768/668), no este cuadre.
+   */
+  const enDivisa = account.currency.toUpperCase() !== input.baseCurrency.toUpperCase()
+  const moneda = account.currency.toUpperCase()
+  const sinDivisa = enDivisa
+    ? cashLines.filter(
+        (l) =>
+          l.entryKind !== "CLOSING" &&
+          (signedOriginalAmountOf(l) === null || (l.originalCurrency ?? "").toUpperCase() !== moneda)
+      )
+    : []
+  const amountOf = (l: LedgerCashLineRef): Cents => (enDivisa ? (signedOriginalAmountOf(l) ?? 0) : signedAmountOf(l))
+
+  // `B` con la MISMA función de la foto de E6, cuenta a cuenta (§3.7). En divisa
+  // no hay foto de E6 que reutilizar —E6 es en moneda base— y se suma aquí con
+  // exactamente el mismo criterio de exclusión (`kind ∉ {CLOSING}`).
   const codes = [...new Set(cashLines.map((l) => l.accountCode))].sort()
-  const saldoContable = sum(codes.map((code) => balanceOfAccount(cashLines, code, B_EXCLUDED_KINDS)))
+  const saldoContable = enDivisa
+    ? sum(cashLines.filter((l) => !B_EXCLUDED_KINDS.includes(l.entryKind)).map(amountOf))
+    : sum(codes.map((code) => balanceOfAccount(cashLines, code, B_EXCLUDED_KINDS)))
 
   const extract = statementBalanceAt(statements, input.lines, cutoff)
   const chain = chainCoverage(account, statements, cutoff)
@@ -369,7 +464,7 @@ export function reconciliationSummary(
         l.pendingKind === undefined ||
         !PENDING_KINDS_OUT_OF_RECONCILIATION.includes(l.pendingKind))
   )
-  const ub = sum(unmatchedCash.map(signedAmountOf))
+  const ub = sum(unmatchedCash.map(amountOf))
 
   const pendientesBanco: PendingItem[] = unmatchedBank.map((l) => ({
     side: "BANCO" as const,
@@ -387,7 +482,7 @@ export function reconciliationSummary(
     side: "LIBROS" as const,
     id: l.id,
     date: l.entryDate,
-    amountCents: signedAmountOf(l),
+    amountCents: amountOf(l),
     kind: l.pendingKind ?? null,
     ageDays: ageInDays(l.entryDate, cutoff),
     description: l.description ?? "",
@@ -396,9 +491,27 @@ export function reconciliationSummary(
   const pendientesAntiguos = [...pendientesBanco, ...pendientesLibros].filter((p) => p.ageDays > account.transitWarnDays)
   const regularizationLineIds = cashLines.filter((l) => l.entryKind === "REGULARIZATION").map((l) => l.id)
 
+  // H-3: la diferencia de cambio, con la tasa de cierre que aporte el borde.
+  const fx = (input.fx ?? []).find((f) => f.bankAccountId === account.id)
+  const fxDifference =
+    fx === undefined || !enDivisa || sinDivisa.length > 0
+      ? null
+      : convertWithRateMicro(
+          sum(cashLines.filter((l) => !B_EXCLUDED_KINDS.includes(l.entryKind)).map(amountOf)),
+          fx.rateMicro
+        ) -
+        fx.baseBalanceCents -
+        fx.recognizedDifferenceCents
+
   const motivoNoEvaluable = !chain.anchored
     ? "la cuenta no tiene anclaje (`reconciledFromDate`): no se puede afirmar desde dónde está conciliada"
-    : !chain.covered
+    : sinDivisa.length > 0
+      ? `la cuenta está en ${moneda} y ${sinDivisa.length} apunte(s) de ${account.accountCode} no llevan su importe en ${moneda} ` +
+        `(original_amount_cents): el cuadre en divisa no se puede hacer sin mezclar monedas — ${sinDivisa
+          .slice(0, 5)
+          .map((l) => `${l.entryDate} #${l.entryNumber}/${l.lineNo}`)
+          .join(", ")}`
+      : !chain.covered
       ? `la cadena de extractos no cubre [${account.reconciledFromDate}, ${cutoff}]: ${chain.gaps
           .map((g) => `hueco ${g.from}…${g.to}`)
           .join(", ")}${chain.contradictoryOverlaps.length > 0 ? ` · solape contradictorio` : ""}`
@@ -427,6 +540,11 @@ export function reconciliationSummary(
     regularizationLineIds,
     evaluable: motivoNoEvaluable === null,
     motivoNoEvaluable,
+    moneda,
+    enDivisa,
+    divisaCompleta: sinDivisa.length === 0,
+    fxDifferenceCents: fxDifference,
+    resolvedLaterIds: [...matched.resolvedLater].sort(),
   }
 }
 
@@ -490,6 +608,23 @@ export function describeSignEvidence(bankAmount: Cents, signedLedger: Cents): st
   return `${side} de ${eur(bankAmount)} contra ${ledgerSide} de ${eur(Math.abs(signedLedger))}`
 }
 
+/**
+ * El importe con signo de un apunte **en la moneda de la cuenta bancaria**
+ * (H-1). Es lo único contra lo que se puede comparar `bankLine.amountCents`, que
+ * está siempre en la divisa del extracto. `null` = el apunte no lleva su importe
+ * en esa divisa y la comparación **no se puede hacer**: se delata, no se
+ * aproxima.
+ */
+export const comparableAmountOf = (
+  line: LedgerCashLineRef,
+  account: BankAccountRef,
+  baseCurrency: string
+): Cents | null => {
+  if (account.currency.toUpperCase() === baseCurrency.toUpperCase()) return signedAmountOf(line)
+  if ((line.originalCurrency ?? "").toUpperCase() !== account.currency.toUpperCase()) return null
+  return signedOriginalAmountOf(line)
+}
+
 export function checkIE72(input: BankInvariantInput): CheckResult {
   const groups = liveGroups(input.groups)
   if (groups.length === 0) return info("I-E7-2", "no hay grupos de conciliación vivos que comprobar")
@@ -529,8 +664,13 @@ export function checkIE72(input: BankInvariantInput): CheckResult {
         failures.push(`grupo ${group.id}: la línea ${line.id} está en ${line.currency} y la cuenta en ${account.currency}`)
       }
       if (simple) {
-        const signed = signedAmountOf(cash)
-        if (line.amountCents !== signed) {
+        const signed = comparableAmountOf(cash, account, input.baseCurrency)
+        if (signed === null) {
+          failures.push(
+            `grupo ${group.id}: la cuenta está en ${account.currency} y el apunte ${cash.id} no lleva su importe en ${account.currency} ` +
+              "(original_amount_cents): no hay nada que comparar sin mezclar monedas"
+          )
+        } else if (line.amountCents !== signed) {
           failures.push(
             `grupo ${group.id}: ${describeSignEvidence(line.amountCents, signed)} — diferencia ${eur(
               line.amountCents - signed
@@ -805,6 +945,7 @@ export function checkIE711(input: BankInvariantInput): CheckResult {
   if (groups.length === 0) return info("I-E7-11", "no hay grupos de conciliación vivos que comprobar")
   const linesById = new Map(input.lines.map((l) => [l.id, l]))
   const cashById = new Map(input.cashLines.map((l) => [l.id, l]))
+  const accountsById = new Map(input.accounts.map((a) => [a.id, a]))
   const failures: string[] = []
 
   for (const group of groups) {
@@ -815,8 +956,24 @@ export function checkIE711(input: BankInvariantInput): CheckResult {
       failures.push(`grupo ${group.id}: miembros fuera del alcance (${missing.join(", ")})`)
       continue
     }
+    const account = accountsById.get(group.bankAccountId)
+    if (account === undefined) {
+      failures.push(`grupo ${group.id}: la cuenta bancaria ${group.bankAccountId} no existe en el alcance`)
+      continue
+    }
     const sumLines = sum(lineIds.map((id) => (linesById.get(id) as BankLineRef).amountCents))
-    const sumCash = sum(cashIds.map((id) => signedAmountOf(cashById.get(id) as LedgerCashLineRef)))
+    // **H-1**: el grupo cuadra en la moneda de la CUENTA, no en la base.
+    const cashAmounts = cashIds.map((id) =>
+      comparableAmountOf(cashById.get(id) as LedgerCashLineRef, account, input.baseCurrency)
+    )
+    if (cashAmounts.some((a) => a === null)) {
+      failures.push(
+        `grupo ${group.id}: la cuenta está en ${account.currency} y algún apunte no lleva su importe en ${account.currency} ` +
+          "(original_amount_cents): el grupo no se puede cuadrar sin mezclar monedas"
+      )
+      continue
+    }
+    const sumCash = sum(cashAmounts as number[])
     if (sumLines !== sumCash) {
       failures.push(
         `grupo ${group.id} (${group.kind}, ${lineIds.length} línea(s) contra ${cashIds.length} apunte(s)): Σ extracto ${eur(
@@ -833,6 +990,18 @@ export function checkIE711(input: BankInvariantInput): CheckResult {
 // ─────────────────────────────────────────────────────────────────────────────
 // I-E7-12 — divisa (NRV 11ª.2.2)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * La **diferencia de cambio** de una cuenta en divisa a la fecha de cierre
+ * (NRV 11ª.2.2): `saldo en divisa × tasa de cierre − Σ contravalores históricos
+ * − lo ya reconocido en 768/668`. Una sola definición, que consumen I-E7-12 y el
+ * panel de `/audit/bank/[id]` (H-3): la pantalla no recalcula nada.
+ */
+export function fxDifferenceOf(summary: BankReconciliationSummary, fx: FxCloseRef): Cents | null {
+  if (!summary.enDivisa || !summary.divisaCompleta) return null
+  return convertWithRateMicro(summary.saldoContable, fx.rateMicro) - fx.baseBalanceCents - fx.recognizedDifferenceCents
+}
+
 
 export function checkIE712(input: BankInvariantInput): CheckResult {
   const foreign = input.accounts.filter((a) => a.currency.toUpperCase() !== input.baseCurrency.toUpperCase())
@@ -859,8 +1028,16 @@ export function checkIE712(input: BankInvariantInput): CheckResult {
     const fx = fxByAccount.get(account.id)
     if (fx === undefined) continue
     const summary = reconciliationSummary(account, { ...input, cutoff: fx.closingDate })
+    if (!summary.divisaCompleta) {
+      failures.push(
+        `${account.accountCode}: hay apuntes de la 57x sin importe en ${account.currency} — ${summary.motivoNoEvaluable}`
+      )
+      continue
+    }
+    // `saldoContable` está YA en la divisa de la cuenta (H-1): éste es el único
+    // sitio donde se cruza a moneda base, y se cruza con la tasa de CIERRE.
     const expectedBase = convertWithRateMicro(summary.saldoContable, fx.rateMicro)
-    const difference = expectedBase - fx.baseBalanceCents - fx.recognizedDifferenceCents
+    const difference = fxDifferenceOf(summary, fx) ?? 0
     evaluated.push(`${account.accountCode} (${account.currency})`)
     if (difference !== 0) {
       warnings.push(
