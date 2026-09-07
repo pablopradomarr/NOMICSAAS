@@ -1,6 +1,6 @@
 # ADR-0015 — Autenticación con email + contraseña sobre better-auth
 
-- **Estado**: PROPUESTO
+- **Estado**: ACEPTADO (Pablo, 2026-09-07 — encargo directo de la épica E13; Nivel 1)
 - **Fecha**: 2026-09-07
 - **Nivel**: 1 (informativo — no toca motor contable, invariantes, esquema de asientos, reglas de imputación
   ni RLS; no requiere migración). Se escribe porque cambia el **modo de despliegue del preview** y retira un

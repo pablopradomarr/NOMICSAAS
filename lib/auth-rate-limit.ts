@@ -53,6 +53,11 @@ export function checkAuthAttempt(
   const limits = LIMITS[kind]
 
   const ipResult = consumeRateLimit(`auth:${kind}:ip:${ip}`, limits.ipLimit, limits.ipWindowMs, now, buckets)
+  // Revisión E13 #3: si la IP ya está agotada no se consume el cubo del email, para que un
+  // atacante con muchas IPs no pueda vaciar el cubo de una víctima a base de peticiones denegadas.
+  if (!ipResult.allowed) {
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((ipResult.resetAt - now) / 1000)) }
+  }
   const emailResult = consumeRateLimit(
     `auth:${kind}:email:${subjectHash}`,
     limits.emailLimit,
