@@ -16,6 +16,8 @@ const envSchema = z.object({
     .min(16, "Auth secret must be at least 16 characters")
     .default("please-set-your-key-here"),
   DISABLE_SIGNUP: z.enum(["true", "false"]).default("false"),
+  // E13 · T1 — duración de la sesión en días, configurable (docs/design/E13-autenticacion.md §4.1, D-1).
+  AUTH_SESSION_DAYS: z.coerce.number().int().positive().default(30),
   RESEND_API_KEY: z.string().default("please-set-your-resend-api-key-here"),
   RESEND_FROM_EMAIL: z.string().default("TaxHacker <user@localhost>"),
   RESEND_AUDIENCE_ID: z.string().default(""),
@@ -65,6 +67,17 @@ const config = {
     secret: env.BETTER_AUTH_SECRET,
     loginUrl: "/enter",
     disableSignup: env.DISABLE_SIGNUP === "true" || env.SELF_HOSTED_MODE === "true",
+    // E13 · T1 (docs/design/E13-autenticacion.md §3, §4.1).
+    minPasswordLength: 12,
+    maxPasswordLength: 128,
+    resetTokenTtlSeconds: 60 * 60, // 1 hora
+    sessionDays: env.AUTH_SESSION_DAYS,
+  },
+  // E13 · T1 — identidad visible sólo en las pantallas de acceso (§6.2, D-3).
+  // `config.app.title` no se toca: el resto de la aplicación sigue siendo TaxHacker.
+  brand: {
+    product: "NOMIC",
+    company: "CFOnomic",
   },
   stripe: {
     secretKey: env.STRIPE_SECRET_KEY,

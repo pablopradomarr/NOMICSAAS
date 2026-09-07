@@ -16,6 +16,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:rls": "vitest run --config vitest.integration.rls.config.ts",
     "test:e2e": "playwright test --config playwright.config.ts",
+    "test:e2e:auth": "playwright test --config playwright.auth.config.ts",
     "test:all": "npm run test && npm run test:integration && npm run test:integration:rls",
     "test:watch": "vitest"
   },

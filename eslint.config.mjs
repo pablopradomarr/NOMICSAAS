@@ -7,7 +7,7 @@ import nextConfig from "eslint-config-next";
  * usar `tenantDb(orgId)` — barrera 1 de aislamiento multi-tenant (ADR-0002).
  */
 const TENANT_FREE_MESSAGE =
-  "Usa tenantDb(orgId) / requireOrg(). El cliente sin tenant sólo se permite en lib/db.ts, lib/auth.ts, lib/email-sync/ingest.ts, models/{users,organizations,memberships,invitations}.ts y scripts.";
+  "Usa tenantDb(orgId) / requireOrg(). El cliente sin tenant sólo se permite en lib/db.ts, lib/auth.ts, lib/auth-password.ts, lib/email-sync/ingest.ts, models/{users,organizations,memberships,invitations}.ts y scripts.";
 
 /**
  * E7 · ronda 1 (revisor PUEDE 4). El cliente de autenticación (`app_auth`,
@@ -15,7 +15,7 @@ const TENANT_FREE_MESSAGE =
  * negocio. Fuera de `lib/auth.ts` y `models/users.ts` no hay razón para tocarlo.
  */
 const AUTH_DB_MESSAGE =
-  "`authPrisma` es el cliente del camino de autenticación (rol app_auth, ADR-0015 D5): sólo lib/auth.ts y models/users.ts. Para datos de negocio, tenantDb(orgId).";
+  "`authPrisma` es el cliente del camino de autenticación (rol app_auth, ADR-0015 D5): sólo lib/auth.ts, lib/auth-password.ts y models/users.ts. Para datos de negocio, tenantDb(orgId).";
 
 const TENANT_FREE_FILES = [
   "lib/db.ts",
@@ -24,6 +24,9 @@ const TENANT_FREE_FILES = [
   // E7 · T14 (ADR-0015 D5): el cliente del camino de autenticación (`app_auth`).
   // Es pre-tenant por definición: no hay organización que acotar todavía.
   "lib/auth-db.ts",
+  // E13 · T3 — `sessions` es pre-tenant (sin `organization_id`), igual que `users`/`account`
+  // (docs/design/E13-autenticacion.md §3): `revokeAllSessions` necesita el cliente sin acotar.
+  "lib/auth-password.ts",
   "lib/email-sync/ingest.ts",
   "lib/email-sync/ingest.test.ts",
   "models/users.ts",

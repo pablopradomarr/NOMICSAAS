@@ -62,4 +62,6 @@ pgdata
 
 # E2 · T13 — artefactos de Playwright (trazas, capturas de fallos)
 tests/e2e/.artifacts/
+tests/e2e/auth/.artifacts/
+tests/e2e/auth/.seed.json
 playwright-report/

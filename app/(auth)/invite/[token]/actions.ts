@@ -1,8 +1,10 @@
 "use server"
 
 import { invitationTokenSchema } from "@/forms/invitations"
+import { isPasswordTooObvious, setInvitedPasswordFormSchema } from "@/forms/auth"
 import { ActionState } from "@/lib/actions"
 import { getSession } from "@/lib/auth"
+import { hasPassword, setUserPassword } from "@/lib/auth-password"
 import { setActiveOrg } from "@/lib/authz"
 import {
   INVITE_ATTEMPT_LIMIT,
@@ -11,6 +13,7 @@ import {
   pruneRateLimitBuckets,
 } from "@/lib/rate-limit"
 import { tenantDb } from "@/lib/db"
+import { recordAuditLog } from "@/models/audit-log"
 import {
   acceptInvitation,
   getInvitationByToken,
@@ -20,7 +23,7 @@ import {
   markInvitationExpired,
   registerFailedInvitationAttempt,
 } from "@/models/invitations"
-import { getOrCreateInvitedUser } from "@/models/users"
+import { getOrCreateInvitedUser, updateUser } from "@/models/users"
 import { InvitationStatus } from "@/prisma/client"
 import { revalidatePath } from "next/cache"
 import { headers } from "next/headers"
@@ -80,6 +83,72 @@ export async function prepareInvitedAccountAction(token: string): Promise<Action
   }
 
   await getOrCreateInvitedUser(invitation.email)
+  return { success: true, data: { email: invitation.email } }
+}
+
+/**
+ * E13 · T8 — Fija la contraseña de un invitado (§4.2). Reutiliza el guardado de
+ * E1 (token, `attempts`, rate limit por IP y por hash del token) y termina con
+ * `getOrCreateInvitedUser` + `setUserPassword`; el cliente hace después
+ * `signIn.email` y `acceptInvitationAction(token)` — este action NO inicia
+ * sesión ni acepta la invitación, sólo prepara la cuenta con contraseña.
+ *
+ * D-3: la invitación autoriza el alta aunque `DISABLE_SIGNUP=true` — el
+ * endpoint público de alta sigue cerrado en todos los modos.
+ */
+export async function setInvitedPasswordAction(
+  token: string,
+  formData: FormData
+): Promise<ActionState<{ email: string }>> {
+  const validatedToken = invitationTokenSchema.safeParse(token)
+  if (!validatedToken.success) {
+    return { success: false, error: GENERIC_INVITE_ERROR }
+  }
+
+  if (!(await checkInviteRateLimit(validatedToken.data))) {
+    return { success: false, error: "Demasiados intentos. Vuelve a probar dentro de unos minutos." }
+  }
+
+  const validatedForm = setInvitedPasswordFormSchema.safeParse(Object.fromEntries(formData))
+  if (!validatedForm.success) {
+    return { success: false, error: validatedForm.error.issues[0]?.message ?? "Datos inválidos" }
+  }
+
+  const invitation = await getInvitationByToken(validatedToken.data)
+  if (!invitation || invitation.status !== InvitationStatus.PENDING) {
+    return { success: false, error: GENERIC_INVITE_ERROR }
+  }
+  if (isInvitationLocked(invitation)) {
+    return { success: false, error: "Esta invitación se ha bloqueado por intentos fallidos. Pide una nueva." }
+  }
+  if (isInvitationExpired(invitation, new Date())) {
+    return { success: false, error: "Esta invitación ha caducado" }
+  }
+
+  if (isPasswordTooObvious(validatedForm.data.password, invitation.email)) {
+    return { success: false, error: "Elige una contraseña que no se parezca a tu correo" }
+  }
+
+  const user = await getOrCreateInvitedUser(invitation.email, validatedForm.data.name)
+
+  // Nunca se pisa la credencial de quien ya tiene cuenta: el enlace de
+  // invitación no es una vía de toma de control (§4.2 punto 2).
+  if (await hasPassword(user.id)) {
+    return { success: false, error: "Ya tienes una cuenta; entra con tu contraseña" }
+  }
+
+  // El enlace llegó al buzón del invitado: eso ya prueba la posesión del correo.
+  await updateUser(user.id, { name: validatedForm.data.name, emailVerified: true })
+  await setUserPassword(user.id, validatedForm.data.password)
+
+  await recordAuditLog(invitation.organizationId, {
+    entity: "User",
+    entityId: user.id,
+    action: "password_set",
+    after: { invitationId: invitation.id },
+    userId: user.id,
+  })
+
   return { success: true, data: { email: invitation.email } }
 }
 
