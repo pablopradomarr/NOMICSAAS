@@ -1,6 +1,10 @@
 "use client"
 
-import { changeMemberRoleAction, removeMemberAction } from "@/app/(app)/settings/members/actions"
+import {
+  changeMemberRoleAction,
+  removeMemberAction,
+  sendMemberPasswordResetAction,
+} from "@/app/(app)/settings/members/actions"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -133,23 +137,78 @@ function MemberTableRow({ member, canManage }: { member: MemberRow; canManage: b
       <TableCell className="text-muted-foreground tabular-nums">{member.memberSince}</TableCell>
       {canManage && (
         <TableCell className="text-right">
-          {locked ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="inline-block">
-                  <Button variant="outline" size="sm" disabled>
-                    Quitar
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{LAST_ADMIN_HINT}</TooltipContent>
-            </Tooltip>
-          ) : (
-            <RemoveMemberDialog member={member} />
-          )}
+          <div className="flex flex-row items-center justify-end gap-2">
+            <SendPasswordResetButton member={member} />
+            {locked ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-block">
+                    <Button variant="outline" size="sm" disabled>
+                      Quitar
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{LAST_ADMIN_HINT}</TooltipContent>
+              </Tooltip>
+            ) : (
+              <RemoveMemberDialog member={member} />
+            )}
+          </div>
         </TableCell>
       )}
     </TableRow>
+  )
+}
+
+/**
+ * E13 · T11 — Enlace de restablecimiento por fila (docs/design/E13-autenticacion.md §6.1, §8.2 T11).
+ * Sólo se renderiza cuando `canManage` (ADMIN); la protección real está en
+ * `sendMemberPasswordResetAction` (`withOrg(Role.ADMIN)`, T10). Confirmación ligera con `Dialog`
+ * (estilo shadcn de la app, no el kit de marca de `app/(auth)`) y resultado por `toast`.
+ */
+function SendPasswordResetButton({ member }: { member: MemberRow }) {
+  const [open, setOpen] = useState(false)
+  const [pending, startTransition] = useTransition()
+
+  const onConfirm = () => {
+    const formData = new FormData()
+    formData.set("userId", member.userId)
+    startTransition(async () => {
+      const result = await sendMemberPasswordResetAction(null, formData)
+      if (!result.success) {
+        toast.error(result.error ?? "No se ha podido enviar el enlace")
+      } else {
+        setOpen(false)
+        toast.success(`Enlace de restablecimiento enviado a ${member.email}`)
+      }
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          Enviar enlace de restablecimiento
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Enviar enlace de restablecimiento</DialogTitle>
+          <DialogDescription>
+            Se enviará un correo a {member.email} para que fije una contraseña nueva. Nunca verás ni fijarás su
+            contraseña.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={pending}>
+            Cancelar
+          </Button>
+          <Button type="button" onClick={onConfirm} disabled={pending}>
+            {pending ? "Enviando…" : "Enviar enlace"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
