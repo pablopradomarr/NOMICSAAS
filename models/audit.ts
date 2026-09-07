@@ -252,7 +252,7 @@ type HeadlineRow = { activo: bigint; pn_mas_pasivo: bigint; resultado: bigint; t
  *
  * · **Activo** y **PN + pasivo**: acumulados hasta la fecha de corte con
  *   `kind ∉ {CLOSING}` — la MISMA foto `PRE_REGULARIZACION` que sella el
- *   balance de E6, no una segunda definición. Es el hallazgo **H-1 (ALTA)** de
+ *   balance de E6, no una segunda definición. Es el hallazgo **H-2 (ALTA)** de
  *   la auditoría de E7: incluir el asiento de cierre dejaba las dos cifras en
  *   **0,00 €** justo el 31-12, que es el día en que se firman, y hacía que
  *   `I2` («Activo = PN + Pasivo») se cumpliera trivialmente (0 = 0) y que el

@@ -819,7 +819,42 @@ describe("I-E7-12 · **cuenta en USD** (criterio 20)", () => {
     expect(summary.fxDifferenceCents).toBe(-2000)
   })
 
-  it("reconocida en 768/668, ya no avisa", () => {
+  /**
+   * **N-1 de la re-auditoría.** El test de la ronda 1 fabricaba
+   * `baseBalanceCents: 92000` **sin mover** por el reconocimiento y a la vez
+   * `recognizedDifferenceCents: −2000`: una combinación que `readFxCloses` no
+   * puede producir NUNCA, porque el asiento que reconoce la diferencia mueve la
+   * 57x y por tanto mueve el saldo base. Con datos irrealizables el test daba
+   * PASS y tapaba una doble resta que, sobre datos reales, dejaba una cuenta
+   * correctamente regularizada en `REQUIERE REVISIÓN` para siempre.
+   *
+   * El fixture de abajo es el que `readFxCloses` SÍ produce: reconocer 20,00 €
+   * en `768` con contrapartida en la 57x lleva el contravalor contabilizado de
+   * 920,00 € a 900,00 €, que es exactamente el valorado. El caso de verdad,
+   * de punta a punta, está en `tests/integration/e7-ronda2.test.ts`.
+   */
+  it("N-1 · reconocida en 768/668, el invariante pasa a PASS: el asiento mueve la 57x y el saldo base ya la contiene", () => {
+    const input = usdInput({
+      fx: [
+        {
+          bankAccountId: "acc-usd",
+          closingDate: "2026-01-31",
+          rateMicro: BigInt(900000),
+          // 920,00 € históricos − 20,00 € reconocidos en el asiento de 768 que
+          // abona la 57x: el saldo contable de la cuenta ES 900,00 €.
+          baseBalanceCents: 90000,
+          recognizedDifferenceCents: -2000,
+        },
+      ],
+    })
+    expect(checkIE712(input).status).toBe("PASS")
+    expect(reconciliationSummary(input.accounts[0] as BankAccountRef, input).fxDifferenceCents).toBe(0)
+  })
+
+  it("N-1 · lo ya reconocido es EVIDENCIA, no un sumando: no vuelve a restarse", () => {
+    // Mismo estado que el WARN de arriba (nada reconocido todavía) pero
+    // declarando 20,00 € ya reconocidos: la diferencia NO puede cambiar por eso,
+    // porque `baseBalanceCents` es quien manda.
     const input = usdInput({
       fx: [
         {
@@ -831,8 +866,11 @@ describe("I-E7-12 · **cuenta en USD** (criterio 20)", () => {
         },
       ],
     })
-    expect(checkIE712(input).status).toBe("PASS")
-    expect(reconciliationSummary(input.accounts[0] as BankAccountRef, input).fxDifferenceCents).toBe(0)
+    const summary = reconciliationSummary(input.accounts[0] as BankAccountRef, input)
+    expect(summary.fxDifferenceCents).toBe(-2000)
+    expect(checkIE712(input).status).toBe("WARN")
+    // Y la evidencia enseña lo reconocido sin sumarlo a la diferencia.
+    expect(checkIE712(input).evidencia).toContain("ya reconocidos")
   })
 
   it("sin cuentas en divisa, INFO", () => {

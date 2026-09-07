@@ -108,7 +108,12 @@ export type FxCloseRef = {
   rateMicro: bigint
   /** Σ contravalores históricos en moneda base de los apuntes de la cuenta. */
   baseBalanceCents: Cents
-  /** Diferencia de cambio ya reconocida en 768/668 a la fecha de cierre. */
+  /**
+   * Diferencia de cambio **ya reconocida** en 768/668 a la fecha de cierre.
+   * **Es evidencia, no un sumando** (N-1): el asiento que la reconoce mueve la
+   * 57x, así que `baseBalanceCents` ya la contiene y restarla otra vez
+   * duplicaría la diferencia.
+   */
   recognizedDifferenceCents: Cents
 }
 
@@ -456,10 +461,23 @@ export function reconciliationSummary(
   const unmatchedBank = bankLines.filter((l) => l.status !== "MATCHED" && !matched.lines.has(l.id) && l.status !== "IGNORED")
   const ue = sum(unmatchedBank.map((l) => l.amountCents)) + ignoradosCents
 
+  /**
+   * **La regla negativa de §3.5, en el sitio en el que muerde.** *Una diferencia
+   * de cambio jamás aparece en `Ue` ni en `Ub`.* El asiento que la reconoce
+   * (`5740001 (D) / 768 (H)`, NRV 11ª.2.2) mueve la 57x **en moneda base y no en
+   * divisa**: en la moneda de la cuenta vale 0,00, y el banco no va a enseñar
+   * nunca un movimiento por ese importe. Un apunte que no mueve NADA en la
+   * moneda del cuadre no es una partida en tránsito: no entra en la lista de
+   * pendientes (a `Ub` suma 0 de todas formas, así que la identidad no se toca).
+   *
+   * En moneda base el caso no existe —el CHECK del diario exige que exactamente
+   * uno de debe/haber sea > 0—, así que la regla sólo actúa donde tiene sentido.
+   */
   const unmatchedCash = cashLines.filter(
     (l) =>
       !matched.cash.has(l.id) &&
       l.entryKind !== "CLOSING" &&
+      amountOf(l) !== 0 &&
       (l.pendingKind === null ||
         l.pendingKind === undefined ||
         !PENDING_KINDS_OUT_OF_RECONCILIATION.includes(l.pendingKind))
@@ -493,15 +511,15 @@ export function reconciliationSummary(
 
   // H-3: la diferencia de cambio, con la tasa de cierre que aporte el borde.
   const fx = (input.fx ?? []).find((f) => f.bankAccountId === account.id)
+  // **N-1**: sólo `baseBalanceCents`, que ya contiene el asiento de
+  // reconocimiento (mueve la 57x). Restar además lo reconocido lo duplicaba.
   const fxDifference =
     fx === undefined || !enDivisa || sinDivisa.length > 0
       ? null
       : convertWithRateMicro(
           sum(cashLines.filter((l) => !B_EXCLUDED_KINDS.includes(l.entryKind)).map(amountOf)),
           fx.rateMicro
-        ) -
-        fx.baseBalanceCents -
-        fx.recognizedDifferenceCents
+        ) - fx.baseBalanceCents
 
   const motivoNoEvaluable = !chain.anchored
     ? "la cuenta no tiene anclaje (`reconciledFromDate`): no se puede afirmar desde dónde está conciliada"
@@ -993,13 +1011,30 @@ export function checkIE711(input: BankInvariantInput): CheckResult {
 
 /**
  * La **diferencia de cambio** de una cuenta en divisa a la fecha de cierre
- * (NRV 11ª.2.2): `saldo en divisa × tasa de cierre − Σ contravalores históricos
- * − lo ya reconocido en 768/668`. Una sola definición, que consumen I-E7-12 y el
- * panel de `/audit/bank/[id]` (H-3): la pantalla no recalcula nada.
+ * (NRV 11ª.2.2):
+ *
+ * > `saldo en divisa × tasa de cierre − Σ contravalores contabilizados`
+ *
+ * Una sola definición, que consumen I-E7-12 y el panel de `/audit/bank/[id]`: la
+ * pantalla no recalcula nada.
+ *
+ * **N-1 de la re-auditoría (ALTA).** La versión de la ronda 1 restaba además
+ * `recognizedDifferenceCents`, y eso **duplicaba la diferencia**: el asiento que
+ * reconoce la diferencia de cambio mueve la 57x (`5740001 (D) 10,50 € / 768 (H)
+ * 10,50 €`, NRV 11ª.2.2), de modo que `baseBalanceCents` —el saldo contable
+ * COMPLETO de la cuenta— **ya lo contiene**. Restarlo otra vez daba, sobre una
+ * cuenta correctamente regularizada, un `WARN` de −10,50 € cuya propia evidencia
+ * se contradecía («332,50 € valorados frente a 332,50 € contabilizados» y a la
+ * vez «diferencia −10,50 €»). Y como H-4 hizo que el motivo
+ * `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER` **sí** mueva el sello, la cuenta quedaba
+ * en `REQUIERE REVISIÓN` para siempre justo por haber hecho lo correcto.
+ *
+ * `recognizedDifferenceCents` se conserva como **evidencia**, no como sumando:
+ * dice cuánto se ha reconocido ya, que es lo que quien firma quiere leer.
  */
 export function fxDifferenceOf(summary: BankReconciliationSummary, fx: FxCloseRef): Cents | null {
   if (!summary.enDivisa || !summary.divisaCompleta) return null
-  return convertWithRateMicro(summary.saldoContable, fx.rateMicro) - fx.baseBalanceCents - fx.recognizedDifferenceCents
+  return convertWithRateMicro(summary.saldoContable, fx.rateMicro) - fx.baseBalanceCents
 }
 
 
@@ -1043,10 +1078,11 @@ export function checkIE712(input: BankInvariantInput): CheckResult {
       warnings.push(
         `${account.accountCode}: saldo ${eur(summary.saldoContable)} ${account.currency} × tasa de cierre = ${eur(
           expectedBase
-        )} ${input.baseCurrency} frente a ${eur(fx.baseBalanceCents)} contabilizados y ${eur(
-          fx.recognizedDifferenceCents
-        )} reconocidos: diferencia de cambio ${eur(difference)} sin asiento de 768/668 a ${fx.closingDate} ` +
-          "(E7 la mide y avisa; reconocerla es E9). No es —ni puede ser— una partida en tránsito"
+        )} ${input.baseCurrency} frente a ${eur(fx.baseBalanceCents)} contabilizados: diferencia de cambio ${eur(
+          difference
+        )} sin reconocer a ${fx.closingDate} (ya reconocidos ${eur(fx.recognizedDifferenceCents)} en 768/668). ` +
+          "E7 la mide y avisa; el asiento que la recoge mueve la 57x y, en cuanto existe, este invariante pasa a PASS. " +
+          "No es —ni puede ser— una partida en tránsito"
       )
     }
   }

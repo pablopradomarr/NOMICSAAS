@@ -310,3 +310,115 @@ importe, `sha256`) → `bank_statements` (`file_name`, `file_sha256`, periodo) �
 3. Todo lo demás —la identidad del cuadre, la append-only, los cuatro errores
    inyectados, el `bigint`, el diff, el tenant y la trazabilidad— **está bien y
    se ha reconstruido por camino independiente**.
+
+---
+
+# Re-auditoría (ronda 1) — diff `34f2802…f227f1a`
+
+Mismo método y contexto limpio: base aislada clonada de `erp_test` (44
+migraciones), fixture en dos organizaciones, reconstrucción por SQL crudo +
+Python (`scratchpad/reconstruct.py`), sin reutilizar `lib/audit/**` ni
+`lib/bank/**`. Escenario ampliado: tercera cuenta bancaria «limpia», cuenta USD
+con tasa histórica **0,92** y tasa de **cierre 0,95**, extracto de enero de 2027
+y dos pendientes tipados.
+
+**Veredicto: DISCREPANCIA** — seis de los siete hallazgos están cerrados y
+verificados; queda **uno nuevo de severidad ALTA** introducido por el propio
+arreglo de H-3.
+
+## Estado de los siete hallazgos
+
+| # | Estado | Evidencia |
+|---|---|---|
+| **H-1** divisa | **CERRADO** | `E`, `B`, `Ue`, `Ub` de `5740001` salen los cuatro en **USD** (`moneda: "USD"`, `enDivisa: true`, `divisaCompleta: true`). Punteo **100,00 USD ↔ 92,00 EUR** (con `original_amount_cents = 10000`) **ACEPTADO** (`SIMPLE`, `Σ = 10000`); punteo **100,00 USD ↔ 100,00 EUR base** (sin importe en divisa) **RECHAZADO**: «El apunte … no lleva su importe en USD … conciliar comparando el contravalor en moneda base sería cuadrar mezclando monedas» |
+| **H-2** headline | **CERRADO** | Sobre el fixture intacto a 31-12-2026: motor `ACTIVO 13.673.820`, `PN_MAS_PASIVO 13.673.820`, `RESULTADO 1.497.322`, `TESORERIA 2.943.920`; mi SQL da lo mismo, con `PN 8.307.322 + PASIVO 5.366.498 = 13.673.820`. **Δ = 0 en las cuatro** |
+| **H-3** 768/668 | **PARCIAL — ver N-1** | `readFxCloses` ya puebla `fx` y I-E7-12 mide: `WARN · diferencia de cambio 10,50 €`, exactamente mi cifra. Pero **reconocerla no lleva a PASS** |
+| **H-4** sello | **CERRADO** | El run con ocho partidas en tránsito de 91–183 días (`transitWarnDays 90`) sale **`REQUIERE REVISIÓN`**, con `CONCILIACION_PENDIENTE`, `PARTIDA_EN_TRANSITO_ANTIGUA` y `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER` en `motivos` |
+| **H-5** explicado | **CERRADO** | Cheque de 2026-08-20 (−330,00 €) conciliado contra la línea de **2027-01-15**: a 31-12 **sigue pendiente** —entra en `Ub` y la identidad se mantiene— y sale **explicado** («lo recoge una línea de extracto posterior ya conciliada»). Cheque de 2026-12-20 tipado `CHEQUE_EMITIDO_NO_CARGADO` (11 días < 90): **explicado** por el criterio 3, y su cuenta conserva el badge **`validado`** con un pendiente vivo |
+| **H-6** I-E7-14 | **CERRADO** | Sobre el fixture intacto, alcance `FISCAL_YEAR` 2026: `PASS · 1 apertura(s) cuadran cuenta a cuenta` (antes `INFO`) |
+| **H-7** periodo N43 | **CERRADO** | `eur5.n43` declara 2027-01-01…01-31 con un único movimiento el 15: se almacena con el **periodo declarado**, no con `01-15…01-15` |
+
+## N-1 · ALTA (nuevo) — Reconocer la diferencia de cambio en 768/668 la duplica
+
+`fxDifferenceOf = convert(saldoContable, tasa) − baseBalanceCents −
+recognizedDifferenceCents` (`lib/audit/invariants-e7.ts:1000-1003`), pero
+`readFxCloses` (`models/bank.ts`) calcula `baseBalanceCents` como el saldo
+**completo** de la 57x —que ya incluye el apunte del asiento de reconocimiento— y
+`recognizedDifferenceCents` a partir del 768/668 de **ese mismo asiento**. La
+reconocida se resta dos veces. Y no hay forma de evitarlo: la subconsulta de
+`recognized_cents` sólo cuenta un 768/668 cuyo asiento **contenga una línea de la
+cuenta bancaria** (`EXISTS … b.account_code LIKE c.code_pattern`), así que el
+asiento tiene que mover la 57x por narices.
+
+Comprobado de punta a punta (contravalor histórico 322,00 €, cierre 0,95):
+
+```
+antes    I-E7-12 WARN · … = 332,50 € EUR frente a 322,00 € contabilizados
+                            y 0,00 € reconocidos: diferencia de cambio  10,50 €
+reconozco 5740001 (D) 10,50 € / 768 (H) 10,50 €   ← asiento correcto, NRV 11ª.2.2
+después  I-E7-12 WARN · … = 332,50 € EUR frente a 332,50 € contabilizados
+                            y 10,50 € reconocidos: diferencia de cambio −10,50 €
+```
+
+La propia evidencia se contradice: 332,50 € valorados **= 332,50 €
+contabilizados**, luego la diferencia es 0 y el invariante dice −10,50 €.
+Consecuencia agravada por el arreglo de H-4: `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER`
+ya **sí** mueve el sello, de modo que una cuenta en divisa correctamente
+regularizada queda en **`REQUIERE REVISIÓN` para siempre**.
+
+Como en la ronda 0, lo tapa un test con datos irrealizables:
+`lib/audit/invariants-e7.test.ts:822` («reconocida en 768/668, ya no avisa»)
+fabrica `baseBalanceCents: 92000` **sin mover** por el reconocimiento y
+`recognizedDifferenceCents: −2000` a la vez — una combinación que
+`readFxCloses` no puede producir nunca.
+
+**Arreglo**: restar sólo `baseBalanceCents` (que ya contiene el reconocimiento),
+o excluir del saldo base la línea del asiento de reconocimiento. Y sustituir el
+fixture del test unitario por uno que salga de `readFxCloses`.
+
+## Observaciones menores
+
+- **O-1.** La cuenta USD luce badge **`validado`** con I-E7-12 en `WARN` por
+  10,50 € sin reconocer: la cifra está conciliada contra fuente en USD, pero su
+  contravalor en euros no. Merece, al menos, que el badge lo diga.
+- **O-2.** `createMatchGroup` → `clearPendingKinds` borra el tipado de un
+  pendiente **a caballo del corte**, que a la fecha de corte sigue siendo
+  pendiente: se enseña con `kind: null` aunque esté explicado por el criterio 1.
+
+## Cifras y pruebas repetidas de la ronda 0 (todas Δ = 0)
+
+| Métrica | Motor | Reconstrucción | Δ |
+|---|---:|---:|---:|
+| `5730001` EUR · `E` / `B` | 885 950 / 869 000 | 885 950 / 869 000 | 0 |
+| `5730001` EUR · `Ue` / `Ub` | −16 050 / −33 000 | −16 050 / −33 000 | 0 |
+| `5730001` EUR · Σ ignorados | −12 500 | −12 500 | 0 |
+| `5740001` **USD** · `E` / `B` / `Ue` / `Ub` | 35 000 / 35 000 / 0 / 0 | ídem, desde `original_amount_cents` | 0 |
+| `5750001` EUR · `E` / `B` / `Ue` / `Ub` | 500 000 / 495 000 / 0 / −5 000 | ídem | 0 |
+| Diferencia de cambio | 1 050 | 350,00 USD × 0,95 − 322,00 € = 1 050 | 0 |
+| `headline` × 4 (fixture) | 13 673 820 / 13 673 820 / 1 497 322 / 2 943 920 | ídem | 0 |
+
+- **Inyecciones**: (a) importe de una línea conciliada → **rechazado por trigger
+  incluso como superusuario**; forzado, `I-E7-1/2/6a/11` en FAIL y sello
+  `REQUIERE REVISIÓN`. (b) `UPDATE`/`DELETE` de `invariant_runs` como
+  `app_runtime` → **42501**; alterado un `check` como propietario → `I-E7-7 FAIL`.
+  (c) borrado del extracto de septiembre → `I-E7-6b FAIL` e `I-E7-1 INFO`.
+  (d) `allocation_lines` alterada bajo un `ReportRun` vigente → `I-E7-10`
+  PASS → **FAIL**. (e) prueba de detección sin escribir en `journal_lines` y con
+  `ledgerHash` idéntico: verde en la suite.
+- **`bigint`**: 25 000 000,00 € por `postEntry`, almacenados exactos; el
+  `ledgerHash` del fixture sigue siendo `cb9c8744…60769e`, el literal congelado.
+- **Diff**: sólo `gitSha` → `MOTOR` con las cuatro Δ a 0; sólo diario →
+  `DATOS` con **ΔTESORERÍA = +2 500 000 000** exacta. Ahora `ACTIVO` y
+  `PN_MAS_PASIVO` leen 13 673 820 en vez de 0.
+- **Tenant**: desde la organización B, 0 filas en las **siete** tablas de E7
+  (incluida la nueva `bank_pending_kinds`). **Trazabilidad**: del grupo al fichero
+  N43 (`file_sha256`) y al asiento (`entry_hash`), con el importe en divisa, en
+  una consulta de 0,06 s.
+- **Suite**: `e7-conciliacion`, `e7-ronda1`, `e7-esquema` y `e7-qa` → **57 tests
+  en verde**; `lib/ledger/{fixtures,hash,hash.e7-bigint}` → 63 en verde.
+
+## Recomendación
+
+Un solo bloqueante: **N-1**. Corregir la doble resta de
+`recognizedDifferenceCents` y su test unitario; con eso E7 queda cerrable.
+O-1 y O-2, a `ESTADO.md` con fecha.

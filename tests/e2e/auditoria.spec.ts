@@ -409,7 +409,15 @@ test("historial: dos barridos comparados, con causa y Δ de las cuatro cifras", 
   await page.reload()
   const filas = page.getByTestId("run-history").locator('[data-testid^="run-row-"]')
   await expect(filas.first()).toBeVisible()
-  expect(await filas.count()).toBeGreaterThanOrEqual(2)
+  /**
+   * **Se ESPERA a que haya dos runs, no se cuenta una vez.** Sobre una base
+   * recién creada el historial arranca vacío y este caso corre contra su propio
+   * barrido: contar en el instante siguiente al `reload()` daba 1 y el fichero
+   * entero caía en cadena (`mode: "serial"`). Sobre una base con historial
+   * previo pasaba siempre, que es la peor clase de test: el que sólo falla la
+   * primera vez.
+   */
+  await expect.poll(async () => await filas.count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(2)
 
   await filas.nth(0).locator('input[type="checkbox"]').check({ force: true })
   await filas.nth(1).locator('input[type="checkbox"]').check({ force: true })

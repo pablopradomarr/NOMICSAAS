@@ -4,7 +4,10 @@
  * Dos precisiones sin las cuales el badge mentiría:
  *
  * **1 · Por composición (O-16).** El epígrafe `B.VII.1 Tesorería` agrega TODAS
- * las 57x, **caja incluida**, y la caja no tiene extracto ni puede tenerlo.
+ * las 57x, **caja incluida**, y la caja no tiene extracto ni puede tenerlo. Y
+ * una cuenta **en divisa** con diferencia de cambio sin reconocer tampoco lo
+ * lleva (O-1 de la re-auditoría): está validada en su divisa, pero el balance
+ * enseña su contravalor en euros, y ése no lo está.
  *
  * > Una cifra lleva `✓ validado contra fuente` si y sólo si **todas** las cuentas
  * > que la componen están íntegramente conciliadas para el periodo, con I-E7-1 y
@@ -159,6 +162,24 @@ export function badgeForFigure(input: BadgeInput): BadgeResult {
     if (summary.diferencia !== 0) {
       cuentasNoValidadas.push(code)
       motivos.push(`${code} no cuadra: I-E7-1 no está en PASS`)
+      continue
+    }
+    /**
+     * **O-1 de la re-auditoría.** Una cuenta en divisa puede estar conciliada
+     * contra fuente **en su divisa** y tener a la vez su contravalor en euros
+     * sin regularizar: los 350,00 USD están validados, pero los euros con los
+     * que entran en el balance no. `✓ validado contra fuente` diría entonces más
+     * de lo comprobado, porque la cifra que el balance enseña es la de euros.
+     * Se retira el badge y se dice por qué; en cuanto existe el asiento de
+     * 768/668 (que mueve la 57x), la diferencia es 0 y el badge vuelve solo.
+     */
+    if (summary.enDivisa && summary.fxDifferenceCents !== null && summary.fxDifferenceCents !== 0) {
+      cuentasNoValidadas.push(code)
+      motivos.push(
+        `${code} está conciliada en ${summary.moneda} pero su contravalor en euros no: diferencia de cambio de ` +
+          `${(summary.fxDifferenceCents / 100).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € ` +
+          "sin reconocer en 768/668 (I-E7-12 en WARN, NRV 11ª.2.2)"
+      )
       continue
     }
     // Los pendientes que el propio cuadre declara recogidos por un grupo a

@@ -1,6 +1,28 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-07 (**E7 ronda 1 de corrección aplicada**: H-1…H-7, 3 DEBE, 3 PUEDE, BUG-E7-1 y BUG-E7-2) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-07 (**✅ E7 CERRADA** tras dos rondas de corrección · **SIGUIENTE: `/epica E9`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## ✅ E7 CERRADA (2026-09-07) — siguiente: `/epica E9`
+
+Auditoría y conciliación bancaria cerradas tras **dos rondas de corrección**:
+
+- **auditor-fiabilidad: CONFORME** (ronda 2). En la ronda 0 dio DISCREPANCIA con
+  siete hallazgos —tres ALTA: el cuadre en divisa mezclaba monedas, el `headline`
+  se firmaba en cero a 31-12 e I-E7-12 no podía medir nada—; en la ronda 1,
+  DISCREPANCIA por **N-1**, que introdujo el propio arreglo de H-3.
+- **revisor-codigo: APROBADO** (ronda 2). En la ronda 1, CAMBIOS REQUERIDOS por
+  la documentación que ADR-0015 se comprometió a escribir, «explicado» sin
+  conectar y las dos pantallas nuevas sin test de rendimiento.
+- **QA**: BUG-E7-1 (`--reset-org` no limpiaba las tablas de E7 y rompía la suite
+  e2e completa) y BUG-E7-2 (sin medición por cargador), cerrados con test propio.
+
+Tests del cierre: unit **1 552 ✓** · integración **2 042 ✓** · RLS **183 ✓** ·
+build **OK** · e2e **35 ✓** (suite completa por fichero, en orden alfabético).
+
+**Siguiente**: `/epica E9` — cierre de ejercicio, regularización de IVA y
+asientos recurrentes. Es además donde se **reconoce** la diferencia de cambio
+que E7 se limita a medir (I-E7-12, NRV 11ª.2.2), y donde se cerrarán O-1 y O-2
+si la práctica pide más de lo que la ronda 2 ya dejó hecho.
 
 ## Hecho
 | Épica | Estado | Commits |
@@ -246,7 +268,9 @@ seguimiento. Las decisiones de fondo están en `docs/adr/0014-estados-transaccio
 
 Entradas: `docs/design/E7-auditoria-informe.md` (auditor, **DISCREPANCIA**, H-1…H-7),
 `docs/design/E7-revision.md` (revisor, 3 DEBE + 3 PUEDE) y el QA de E7
-(BUG-E7-1, BUG-E7-2). **Todo cerrado en E7**; no queda deuda diferida de esta ronda.
+(BUG-E7-1, BUG-E7-2). **Todo cerrado en E7** en dos rondas; no queda deuda diferida. Lo único que E7
+deja explícitamente para otra épica es lo que su diseño ya declaraba: **E7 mide
+la diferencia de cambio, E9 la reconoce** (I-E7-12, NRV 11ª.2.2).
 
 | Hallazgo | Qué era | Cómo se ha cerrado |
 |---|---|---|
@@ -263,6 +287,24 @@ Entradas: `docs/design/E7-auditoria-informe.md` (auditor, **DISCREPANCIA**, H-1�
 | **PUEDE 4** | `authPrisma` no estaba bajo `no-restricted-imports` | Cubierto por nombre y por patrón, con lista blanca `lib/auth.ts` + `models/users.ts` |
 | **PUEDE 5** | El `CONSTRAINT TRIGGER` de I-E7-11 era `AFTER INSERT` sobre las pertenencias: un grupo vivo sin ninguna nunca se comprobaba | `bank_match_groups_not_empty`, constraint trigger **diferido** sobre el grupo |
 | **PUEDE 6** | `e4-qa-attack.test.ts` flaky por timeout de 5 s en la suite completa | Timeout del caso a 120 s con el motivo escrito. **No es de E7** (el test no toca `bigint`, ni el borde, ni la conciliación): es contención del pool, misma causa que el criterio 15 de E6. De paso, `e4-analytics #7` dejó de depender de un `findFirstOrThrow` sin `orderBy` que en la suite completa tocaba un asiento anulado |
+
+### Ronda 2 (2026-09-07) — el bloqueante N-1 y las dos observaciones menores
+
+| # | Qué era | Cómo se ha cerrado |
+|---|---|---|
+| **N-1** (ALTA) | El arreglo de H-3 **duplicaba la diferencia de cambio**: `fxDifferenceOf` restaba `recognizedDifferenceCents` sobre un `baseBalanceCents` que `readFxCloses` calcula como el saldo COMPLETO de la 57x —y el asiento que reconoce la diferencia (`5740001 (D) / 768 (H)`, NRV 11ª.2.2) **mueve la 57x**, así que ya estaba dentro—. Sobre una cuenta correctamente regularizada salía `WARN` con la diferencia cambiada de signo y una evidencia que se contradecía sola («332,50 € valorados frente a 332,50 € contabilizados … diferencia −10,50 €»); y como H-4 hizo que el motivo **sí** mueva el sello, la cuenta quedaba en `REQUIERE REVISIÓN` **para siempre por haber hecho lo correcto** | La diferencia es `saldo en divisa × tasa de cierre − contravalor contabilizado`, y punto. `recognizedDifferenceCents` se conserva como **evidencia**, no como sumando. El test unitario de la ronda 1 pasaba con un fixture que `readFxCloses` **no puede producir jamás** (saldo base sin mover y a la vez diferencia reconocida): se sustituye por uno realizable y por `tests/integration/e7-ronda2.test.ts`, que va de punta a punta —cuenta USD, tasa de cierre, asiento de 768— y comprueba **WARN antes, PASS después** |
+| **O-1** | Una cuenta en divisa lucía `✓ validado contra fuente` con I-E7-12 en WARN: está conciliada en dólares, pero el balance enseña su contravalor en euros y ése no lo estaba | El badge se retira con la diferencia sin reconocer, diciendo por qué; en cuanto existe el asiento de 768/668 vuelve solo |
+| **O-2** | `createMatchGroup` borraba el tipado de un pendiente **a caballo del corte**, que a la fecha de corte sigue siendo pendiente: se enseñaba «sin tipar» justo después de que alguien lo describiera | Conciliar **no destipa**. El tipado sólo se borra al **ignorar**, que es cuando el pendiente deja de serlo en todos los cortes. Un tipado que sobrevive a una conciliación completa es inocuo: `pendingKind` sólo se lee para lo que está pendiente en el corte evaluado |
+| **R2-1** (revisor) | El comentario de `headlineFigures` atribuía el hallazgo a H-1 en vez de a H-2 | Corregido |
+
+**Efecto lateral de N-1, resuelto de paso.** El asiento de reconocimiento mueve
+la 57x **en moneda base y no en divisa**: en la moneda de la cuenta vale 0,00.
+Aparecía como un pendiente de 0,00 USD «sin tipar» y retiraba el badge. Un apunte
+que no mueve nada en la moneda del cuadre **no es una partida en tránsito** y sale
+de la lista de pendientes (a `Ub` suma 0, así que la identidad no se toca). Es la
+regla negativa de §3.5 —*una diferencia de cambio jamás aparece en `Ue` ni en
+`Ub`*— aplicada donde de verdad muerde. En moneda base el caso no existe: el
+CHECK del diario exige que exactamente uno de debe/haber sea > 0.
 
 **Decisión de diseño registrada (H-5).** Un grupo de conciliación **sólo cancela
 en la identidad `E − B = Ue − Ub` si TODOS sus miembros caen dentro del corte**.
@@ -300,11 +342,11 @@ proceso):
   sembrado. Las suites que degradan el rol para probar el VIEWER dejaban la base
   sin ADMIN y su `finally` moría sin restaurar el rol.
 
-## e2e en un sandbox saturado — cómo leer un fallo (2026-09-06)
+## e2e en un sandbox saturado — cómo leer un fallo (2026-09-06, ampliado en E7)
 
 Los `test:e2e` corren contra `next dev`, y en esta máquina (8 GB, Postgres + dev
-server + Chromium + la sesión del agente) hay dos modos de fallo que **no son
-del producto** y conviene reconocer antes de perder una hora:
+server + Chromium + la sesión del agente) hay **tres** modos de fallo que **no
+son del producto** y conviene reconocer antes de perder una hora:
 
 1. **Compilación en frío de una ruta.** La primera visita la compila Turbopack:
    medido, 30–90 s (`/ledger/new` 32,7 s · `/settings/taxes` 72 s ·
@@ -315,10 +357,33 @@ del producto** y conviene reconocer antes de perder una hora:
 2. **El dev server crece hasta 5–6 GB** a lo largo de una sesión larga de
    compilaciones y acaba sin responder (`ERR_ABORTED`, o peticiones que nunca
    terminan). Se arregla reiniciándolo.
+3. **`.next` envenenado por un `npm run build` previo** (visto en E7, ronda 1).
+   Si se ha ejecutado `npm run build` y después se arranca `npm run dev` sobre el
+   mismo directorio, Turbopack se queda **compilando una ruta indefinidamente**
+   —medido: `/audit/bank/[id]` más de 20 minutos, con el dev server en 5,1 GB—
+   sin error y sin timeout que lo corte. No es la ruta: la misma ruta compila en
+   segundos con la caché limpia, y el `build` de producción la compila entera en
+   71 s. **Receta**: parar el dev server, `rm -rf .next`, arrancarlo de nuevo.
+   Con eso, `auditoria.spec.ts` pasó sus 7 tests en 2,6 minutos.
 
-Cómo verificar de verdad: reiniciar `npm run dev`, **calentar las rutas** con
-`curl` y volver a lanzar el fichero. Y nunca borrar `.next` —ni lanzar
-`npm run build`— con el dev server arrancado: comparten directorio.
+Cómo verificar de verdad: parar el dev server, **borrar `.next` si antes se ha
+hecho un `build`**, reiniciar `npm run dev`, **calentar las rutas** con `curl` y
+volver a lanzar el fichero. Y nunca borrar `.next` —ni lanzar `npm run build`—
+**con el dev server arrancado**: comparten directorio.
+
+Y un aviso sobre los tests mismos: **un e2e que depende de datos que dejó una
+sesión anterior sólo falla la primera vez**, que es la peor clase de fallo. En el
+cierre de E7 lo hizo `auditoria.spec.ts` §historial, que contaba los barridos del
+historial en el instante siguiente a crear el suyo: sobre una base con historial
+previo pasaba siempre; sobre una recién creada daba 1 y tumbaba el fichero entero
+por `mode: "serial"`. Corregido con `expect.poll`. Al reproducir un fallo de e2e,
+**mirar antes si la base viene de cero**.
+
+Orden recomendado para la suite completa: **un fichero por invocación, con el dev
+server reiniciado entre ficheros** (`scripts` de sesión aparte). En orden
+alfabético, que es como corre Playwright: `auditoria.spec.ts` deja conciliaciones
+y barridos en la organización de fixtures y `liquidacion.spec.ts` llama después a
+`--reset-org` — es justo el escenario de BUG-E7-1 y hay que conservarlo.
 
 Lo que **sí** era producto y se corrigió tras verlo aquí está en §«E8 — deuda y
 decisiones»: el desajuste de hidratación por `toLocaleDateString` y el `HEAD` a

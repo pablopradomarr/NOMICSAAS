@@ -942,8 +942,21 @@ export async function createMatchGroup(
     where: { id: { in: [...input.statementLineIds] } },
     data: { status: "MATCHED" },
   })
-  // H-5: lo conciliado ya no es una partida en tránsito.
-  await clearPendingKinds(tx, { statementLineIds: input.statementLineIds, journalLineIds: input.journalLineIds })
+  /**
+   * **O-2 de la re-auditoría: conciliar NO destipa.** La ronda 1 borraba aquí el
+   * tipado, y eso perdía información justo donde hace falta: un pendiente **a
+   * caballo del corte** —el cheque contabilizado el 20-12 y cargado por el banco
+   * el 15-01— sigue siendo pendiente a 31-12 aunque el grupo exista, y la
+   * pantalla lo enseñaba con `kind: null` («sin tipar») a pesar de estar tipado
+   * y explicado. El tipado sólo se borra cuando el pendiente deja de serlo **en
+   * todos los cortes**, que es lo que ocurre al ignorar una línea.
+   *
+   * Un tipado que sobrevive a una conciliación completa es inocuo: `pendingKind`
+   * sólo se lee para los elementos que ESTÁN pendientes en el corte evaluado, y
+   * un elemento conciliado dentro del corte no aparece en esa lista. Si más
+   * tarde se desconcilia el grupo, el pendiente vuelve con la descripción que
+   * una persona ya le había dado, que es lo correcto.
+   */
 
   await writeAuditLog(tx, {
     entity: "BankMatchGroup",
@@ -1144,9 +1157,10 @@ export async function typePending(
 }
 
 /**
- * **Un pendiente que deja de serlo deja de estar tipado.** Se llama al conciliar
- * y al ignorar: un tipado huérfano haría que `explainPending` explicara algo que
- * ya no existe, y el badge P6 se concedería sobre una descripción caducada.
+ * **Un pendiente que deja de serlo en TODOS los cortes deja de estar tipado.**
+ * Se llama al **ignorar**, no al conciliar (O-2): una línea ignorada no vuelve a
+ * la lista de pendientes en ninguna fecha de corte, mientras que un miembro de
+ * un grupo a caballo del corte sigue siendo pendiente antes de él.
  */
 async function clearPendingKinds(
   tx: TenantTransactionClient,
