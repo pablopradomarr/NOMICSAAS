@@ -51,6 +51,8 @@ export type AuditEntity =
   | "BankMatchGroup"
   | "InvariantRun"
   | "StoreSweep"
+  // E13 — autenticación email + contraseña (docs/design/E13-autenticacion.md §7).
+  | "User"
 
 export type AuditAction =
   | "create"
@@ -113,6 +115,10 @@ export type AuditAction =
   | "DETECTION_TEST"
   /** Propuesta de asiento desde un movimiento del extracto (T23). */
   | "PROPOSE_ENTRY_FROM_LINE"
+  // E13 — contraseñas: nunca se registra el hash ni la longitud (§7).
+  | "password_set"
+  | "password_reset_sent"
+  | "password_changed"
 
 export type AuditLogInput = {
   entity: AuditEntity
