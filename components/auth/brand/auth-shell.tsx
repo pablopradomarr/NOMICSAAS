@@ -19,18 +19,23 @@ export function AuthShell({ children, className }: { children: React.ReactNode; 
 }
 
 /**
- * Logo tipográfico del producto: "CFO" en carbón + "nomic" en negro, sin icono. Debajo, "de CFOnomic" en
- * gris (§6.2, "en las pantallas de auth el producto se llama NOMIC, de CFOnomic").
+ * Logo tipográfico de las pantallas de acceso: el producto se llama **NOMIC** (League Spartan 900,
+ * `letter-spacing: -2%`), con la línea "de CFOnomic" debajo en el tratamiento tipográfico habitual del
+ * logo de la marca — "CFO" en League Spartan Black y "nomic" en Playfair Display italic — pero **ambas en
+ * carbón**, no en lima: dentro de `(auth)` el lima nunca lleva texto encima (§6.3, contraste AA).
  */
 export function AuthWordmark() {
   return (
     <div className="flex flex-col gap-1">
-      <span className="font-[family-name:var(--font-league-spartan)] text-2xl font-black tracking-[-0.02em]">
-        <span className="text-[var(--nomic-carbon)]">CFO</span>
-        <span className="text-[var(--nomic-black)]">nomic</span>
+      <span className="font-[family-name:var(--font-league-spartan)] text-2xl font-black tracking-[-0.02em] text-[var(--nomic-black)]">
+        {BRAND.product}
       </span>
       <span className="font-[family-name:var(--font-open-sans)] text-xs text-[var(--nomic-gray)]">
-        de {BRAND.company}
+        de{" "}
+        <span className="font-[family-name:var(--font-league-spartan)] font-black text-[var(--nomic-carbon)]">
+          CFO
+        </span>
+        <span className="font-[family-name:var(--font-playfair)] italic text-[var(--nomic-carbon)]">nomic</span>
       </span>
     </div>
   )
