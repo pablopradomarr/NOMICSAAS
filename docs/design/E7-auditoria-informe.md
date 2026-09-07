@@ -422,3 +422,37 @@ fixture del test unitario por uno que salga de `readFxCloses`.
 Un solo bloqueante: **N-1**. Corregir la doble resta de
 `recognizedDifferenceCents` y su test unitario; con eso E7 queda cerrable.
 O-1 y O-2, a `ESTADO.md` con fecha.
+
+---
+
+# Verificación final (ronda 2) — diff `f227f1a…6670fd6`
+
+Base aislada nueva, sólo el escenario de **N-1**: cuenta `5740001` en USD,
+350,00 USD contabilizados a **0,92** (contravalor histórico 322,00 €), tasa de
+**cierre 0,95**, extracto N43 en divisa 840 íntegramente conciliado.
+
+| Momento | I-E7-12 | `fxDifferenceCents` | Cuadre (USD) | Badge | Sello |
+|---|---|---:|---|---|---|
+| Antes de reconocer | **WARN** «332,50 € frente a 322,00 € contabilizados: diferencia de cambio **10,50 €** … (ya reconocidos 0,00 €)» | 1 050 | `E`=`B`=35 000, `Ue`=`Ub`=0, dif **0** | `comprobado`, con motivo: «conciliada en USD pero su contravalor en euros no» | `REQUIERE REVISIÓN` (`DIFERENCIA_DE_CAMBIO_SIN_RECONOCER`) |
+| Tras `5740001 (D) 10,50 € / 768 (H) 10,50 €` | **PASS** «cuadran en su divisa y sin diferencia de cambio pendiente» | **0** | idéntico, dif **0** | **`validado`** | **`VALIDADO AUTOMÁTICAMENTE`** |
+
+- **N-1 cerrado.** La diferencia es `saldo en divisa × tasa de cierre −
+  contravalor contabilizado`; lo reconocido queda como **evidencia**, no como
+  sumando, y ya no se duplica. Reconocer lo correcto **libera** el sello.
+- **O-1 cerrado.** El badge se retira mientras hay diferencia sin reconocer, con
+  el motivo escrito, y **vuelve solo** al reconocerla.
+- **O-2 cerrado.** El cheque de 20-08 tipado `CHEQUE_EMITIDO_NO_CARGADO` y
+  conciliado contra su cargo de enero **conserva el tipo** y sigue apareciendo
+  como pendiente explicado a la fecha de corte.
+- El apunte de reconocimiento **no es pendiente**: `pendientesLibros` vacío y
+  `E`/`B`/`Ue`/`Ub` intactos — la identidad `E − B = Ue − Ub` no se toca.
+- Suite: `e7-ronda2`, `e7-ronda1`, `e7-conciliacion`, `e7-qa`, `e7-esquema` →
+  **61 tests en verde**.
+
+```
+VEREDICTO FINAL: CONFORME
+```
+
+Sin hallazgos abiertos. Los siete de la ronda 0, el nuevo N-1 de la ronda 1 y las
+dos observaciones menores están cerrados y verificados por reconstrucción
+independiente. E7 es auditable y sus cifras cuadran con tolerancia 0.
