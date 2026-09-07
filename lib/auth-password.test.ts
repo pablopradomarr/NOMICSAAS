@@ -19,9 +19,11 @@ vi.mock("@/lib/auth", () => ({
   },
 }))
 
+// E7 · T14 (ADR-0015 D5): `sessions` se borra por `authPrisma` (rol `app_auth`), no por el
+// cliente de runtime; el mock sigue al cliente que usa el fichero.
 const sessionDeleteMany = vi.fn(async (_args: unknown) => ({ count: 3 }))
-vi.mock("@/lib/db", () => ({
-  prisma: { session: { deleteMany: sessionDeleteMany } },
+vi.mock("@/lib/auth-db", () => ({
+  authPrisma: { session: { deleteMany: sessionDeleteMany } },
 }))
 
 const { hashPassword, hasPassword, revokeAllSessions, setUserPassword } = await import("./auth-password")

@@ -16,7 +16,7 @@ export function isEmailDeliveryEnabled(): boolean {
  * E13 · T4 — Correo de restablecimiento (§4.1). A diferencia de la invitación, el reset NO
  * enseña el enlace en pantalla si no hay Resend configurado (R3 del diseño: sería un bypass
  * de S1/S3). Sin `RESEND_API_KEY` el envío es INERTE: registra y no rompe, porque el preview
- * de hoy todavía no tiene Resend — ADR-0015 lo deja como requisito, no como bloqueo del deploy.
+ * de hoy todavía no tiene Resend — ADR-0017 lo deja como requisito, no como bloqueo del deploy.
  * Devuelve `false` cuando no se envía nada (para que quien lo llama pueda registrar el evento
  * igualmente en `lib/auth-log.ts`, que es donde vive `reset_requested`).
  */

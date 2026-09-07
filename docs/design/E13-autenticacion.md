@@ -1,7 +1,7 @@
 # E13 — Autenticación con email + contraseña
 
 > Diseño. Rama `feat/e13-auth`, en paralelo a E8. **Nivel 1**: no toca `lib/ledger`, `lib/analytics`, RLS,
-> migraciones de negocio ni invariantes contables. ADR informativo: `docs/adr/0015-autenticacion-email-contrasena.md`.
+> migraciones de negocio ni invariantes contables. ADR informativo: `docs/adr/0017-autenticacion-email-contrasena.md`.
 > Estado: **PROPUESTO** (pendiente de validación de Pablo en las tres dudas de §9.3).
 
 ---
@@ -349,7 +349,7 @@ justo lo que S1 impide). Por eso lo pre-tenant va al log de proceso y sólo lo o
 | **T12** | Sección "Cambiar contraseña" en el perfil + `changeMyPasswordAction` (exige la actual, revoca las demás sesiones, `AuditLog User/password_changed`) | T3 | dev-backend + dev-frontend | 1 | 1 | `app/(app)/settings/profile/actions.ts` (nuevo), `components/settings/profile-settings-form.tsx` |
 | **T13** | `scripts/create-admin.ts --email --name [--org] [--reset-password]`, contraseña por `ADMIN_PASSWORD` o prompt oculto, idempotente; runbook local y Supabase | T3 | dev-backend | 1 | 1 | `scripts/create-admin.ts`, `docs/deploy/` (runbook) |
 | **T14** | e2e: `playwright.auth.config.ts` (proyecto propio, puerto 7332, `SELF_HOSTED_MODE=false`), `tests/support/ensure-cloud-auth.ts`, `tests/e2e/auth/{login,invite,reset,roles}.spec.ts`; verificar que la suite self-hosted sigue verde | T6, T7, T9, T11, T12 | qa-tester | 1 | 1 | `playwright.auth.config.ts`, `package.json` (script), `tests/support/ensure-cloud-auth.ts`, `tests/e2e/auth/*` |
-| **T15** | Cierre: `ESTADO.md` (deuda: rate limit en memoria, sin 2FA, sin verificación de email), `ROADMAP.md` E13 → CERRADA, runbook del preview con `SELF_HOSTED_MODE=false`, ADR-0015 → APROBADO, `runs/registro.jsonl` | T14 | arquitecto | 1 | 0,5 | `docs/ESTADO.md`, `docs/ROADMAP.md`, `docs/adr/0015-*.md`, `runs/registro.jsonl` |
+| **T15** | Cierre: `ESTADO.md` (deuda: rate limit en memoria, sin 2FA, sin verificación de email), `ROADMAP.md` E13 → CERRADA, runbook del preview con `SELF_HOSTED_MODE=false`, ADR-0017 → APROBADO, `runs/registro.jsonl` | T14 | arquitecto | 1 | 0,5 | `docs/ESTADO.md`, `docs/ROADMAP.md`, `docs/adr/0017-*.md`, `runs/registro.jsonl` |
 
 Total ≈ 11,5 días-persona. Camino crítico: T1 → T2 → T3 → T8 → T9 → T14 → T15.
 

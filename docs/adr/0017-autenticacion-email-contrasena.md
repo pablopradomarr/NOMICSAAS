@@ -1,4 +1,4 @@
-# ADR-0015 — Autenticación con email + contraseña sobre better-auth
+# ADR-0017 — Autenticación con email + contraseña sobre better-auth
 
 - **Estado**: ACEPTADO (Pablo, 2026-09-07 — encargo directo de la épica E13; Nivel 1)
 - **Fecha**: 2026-09-07
@@ -7,7 +7,10 @@
   método de acceso existente.
 - **Épica**: E13 — `docs/design/E13-autenticacion.md`
 - **Relacionados**: ADR-0001 (fork de TaxHacker), ADR-0002 (multi-tenant), ADR-0008/0009 (`audit_logs`
-  append-only y RLS estricta con `FORCE`)
+  append-only y RLS estricta con `FORCE`), **ADR-0015 D5** (E7 · T14: RLS en `users` con políticas por rol
+  y el cliente `authPrisma`/`app_auth`, del que depende todo el camino de auth de esta épica)
+- **Numeración**: nació como `0015` en la rama `feat/e13-auth`; al integrarla, `0015` ya estaba ocupado por
+  el ADR de E7 y `0016` reservado a E9, así que pasa a **0017**. El contenido no cambia.
 
 ---
 

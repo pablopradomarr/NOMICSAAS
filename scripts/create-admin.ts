@@ -167,7 +167,15 @@ type MaintenanceModules = {
 
 /** Conecta como `app_maintenance` y comprueba que de verdad esquiva RLS (mismo patrón que migrate-uploads-to-org.ts). */
 async function connectAsMaintenance(): Promise<MaintenanceModules> {
-  process.env.DATABASE_URL = maintenanceDatabaseUrl()
+  const url = maintenanceDatabaseUrl()
+  process.env.DATABASE_URL = url
+  // E7 · T14 (ADR-0015 D5): `models/users.ts` y `lib/auth-password.ts` escriben por
+  // `authPrisma`, que lee `AUTH_DATABASE_URL`. Si en el entorno del operador esa variable
+  // apunta a `app_auth` (lo normal en el despliegue), este script escribiría `users` con un
+  // rol NOBYPASSRLS y `ensurePersonalOrganization` fallaría al crear la organización. Aquí se
+  // fuerza al MISMO `app_maintenance` que el resto del script, que es el rol que el propio
+  // guardia de abajo verifica que tiene BYPASSRLS.
+  process.env.AUTH_DATABASE_URL = url
 
   const db = await import("@/lib/db")
   const users = await import("@/models/users")

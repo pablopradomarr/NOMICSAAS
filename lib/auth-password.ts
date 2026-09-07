@@ -9,7 +9,11 @@
  * `lib/auth.ts`, que a su vez importa `revokeAllSessions` de este fichero para sus hooks.
  */
 
-import { prisma } from "@/lib/db"
+// E7 · T14 (ADR-0015 D5): `users` lleva RLS con políticas por rol y `app_runtime` ya no
+// escribe el camino de autenticación. `sessions`/`account` los toca este fichero SIN sesión
+// (reset y cambio de contraseña), así que va por `authPrisma` (rol `app_auth`), igual que el
+// adaptador de better-auth en `lib/auth.ts` y que `models/users.ts`.
+import { authPrisma } from "@/lib/auth-db"
 
 const CREDENTIAL_PROVIDER_ID = "credential"
 
@@ -54,10 +58,11 @@ export async function hasPassword(userId: string): Promise<boolean> {
 
 /**
  * Revoca TODAS las sesiones del usuario (S2): borra sus filas de `sessions`. `sessions` es
- * pre-tenant (sin `organization_id`), así que se usa `prisma` directo, como el resto de
- * `models/users.ts`. Devuelve el número de sesiones revocadas.
+ * pre-tenant (sin `organization_id`) y se borra sin sesión de por medio, así que va por
+ * `authPrisma` (rol `app_auth`, ADR-0015 D5), el único que tiene `DELETE` sobre esa tabla.
+ * Devuelve el número de sesiones revocadas.
  */
 export async function revokeAllSessions(userId: string): Promise<number> {
-  const result = await prisma.session.deleteMany({ where: { userId } })
+  const result = await authPrisma.session.deleteMany({ where: { userId } })
   return result.count
 }

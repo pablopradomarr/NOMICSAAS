@@ -67,7 +67,7 @@ export const auth = betterAuth({
       maxAge: 5 * 60,
     },
   },
-  // E13 · T2 — activa emailAndPassword como método único de acceso (§4.1, ADR-0015).
+  // E13 · T2 — activa emailAndPassword como método único de acceso (§4.1, ADR-0017).
   emailAndPassword: {
     enabled: true,
     disableSignUp: config.auth.disableSignup, // DISABLE_SIGNUP=true o SELF_HOSTED_MODE=true

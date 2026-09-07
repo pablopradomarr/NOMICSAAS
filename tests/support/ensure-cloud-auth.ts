@@ -65,7 +65,13 @@ export type CloudAuthSeed = {
 }
 
 async function main(): Promise<CloudAuthSeed> {
-  process.env.DATABASE_URL = maintenanceDatabaseUrl()
+  const url = maintenanceDatabaseUrl()
+  process.env.DATABASE_URL = url
+  // E7 · T14 (ADR-0015 D5): `models/users.ts` y `lib/auth-password.ts` escriben por
+  // `authPrisma` (`AUTH_DATABASE_URL`, rol `app_auth`). El arnés siembra ADEMÁS la
+  // organización y la membresía, que `app_auth` no puede tocar: se le fuerza el mismo
+  // `app_maintenance` que al resto del script, como hace `scripts/create-admin.ts`.
+  process.env.AUTH_DATABASE_URL = url
 
   const db = await import("@/lib/db")
   const users = await import("@/models/users")

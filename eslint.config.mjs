@@ -15,7 +15,7 @@ const TENANT_FREE_MESSAGE =
  * negocio. Fuera de `lib/auth.ts` y `models/users.ts` no hay razón para tocarlo.
  */
 const AUTH_DB_MESSAGE =
-  "`authPrisma` es el cliente del camino de autenticación (rol app_auth, ADR-0015 D5): sólo lib/auth.ts y models/users.ts. Para datos de negocio, tenantDb(orgId).";
+  "`authPrisma` es el cliente del camino de autenticación (rol app_auth, ADR-0015 D5): sólo lib/auth.ts, lib/auth-password.ts y models/users.ts. Para datos de negocio, tenantDb(orgId).";
 
 const TENANT_FREE_FILES = [
   "lib/db.ts",
