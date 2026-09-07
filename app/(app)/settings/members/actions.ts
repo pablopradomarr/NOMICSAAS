@@ -1,8 +1,15 @@
 "use server"
 
 import { invitationIdSchema, inviteMemberFormSchema } from "@/forms/invitations"
-import { changeMemberRoleFormSchema, removeMemberFormSchema } from "@/forms/memberships"
+import {
+  changeMemberRoleFormSchema,
+  removeMemberFormSchema,
+  sendMemberPasswordResetFormSchema,
+} from "@/forms/memberships"
 import { ActionState } from "@/lib/actions"
+import { auth } from "@/lib/auth"
+import { logAuthEvent } from "@/lib/auth-log"
+import { checkAuthAttempt } from "@/lib/auth-rate-limit"
 import { clearActiveOrg, withOrg } from "@/lib/authz"
 import config from "@/lib/config"
 import { sendOrganizationInviteEmail } from "@/lib/email"
@@ -23,8 +30,10 @@ import {
   removeMembership,
   updateMembershipRole,
 } from "@/models/memberships"
-import { getUserByEmail } from "@/models/users"
+import { getUserByEmail, getUserById } from "@/models/users"
 import { Role } from "@/prisma/client"
+import { createHash } from "node:crypto"
+import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
 
 const MEMBERS_PATH = "/settings/members"
@@ -237,6 +246,60 @@ export async function removeMemberAction(
   revalidatePath(MEMBERS_PATH)
   revalidatePath("/", "layout")
   return { success: true }
+  })()
+}
+
+/**
+ * E13 · T10 — Enlace de restablecimiento a otro miembro (§4.2, §4.3). Sólo
+ * ADMIN, sólo sobre alguien que ya es miembro de la organización activa; el
+ * ADMIN nunca ve ni fija la contraseña (matriz de roles §4.3, criterio 10):
+ * dispara el mismo flujo `sendResetPassword` de better-auth que usaría el
+ * propio usuario, y queda registrado en `AuditLog`.
+ */
+export async function sendMemberPasswordResetAction(
+  _prevState: ActionState<null> | null,
+  formData: FormData
+): Promise<ActionState<null>> {
+  return await withOrg(Role.ADMIN, async ({ org, user: actor }): Promise<ActionState<null>> => {
+    const validated = sendMemberPasswordResetFormSchema.safeParse(Object.fromEntries(formData))
+    if (!validated.success) {
+      return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
+    }
+
+    const membership = await getMembership(org.id, validated.data.userId)
+    if (!membership) {
+      return { success: false, error: "Esa persona no es miembro de la organización" }
+    }
+
+    const target = await getUserById(validated.data.userId)
+    if (!target) {
+      return { success: false, error: "Esa persona no es miembro de la organización" }
+    }
+
+    const headerList = await headers()
+    const forwarded = headerList.get("x-forwarded-for") ?? ""
+    const ip = forwarded.split(",")[0]?.trim() || headerList.get("x-real-ip") || "unknown"
+    const emailHash = createHash("sha256").update(target.email.toLowerCase()).digest("hex")
+
+    // Rate limit 3/h por email destino (§3): un ADMIN no puede inflar los
+    // correos de reset de un mismo miembro pulsando el botón sin parar.
+    const rate = checkAuthAttempt("reset", ip, emailHash, Date.now())
+    if (!rate.allowed) {
+      return { success: false, error: "Demasiados envíos a esta persona. Vuelve a probarlo en unos minutos." }
+    }
+
+    await auth.api.requestPasswordReset({ body: { email: target.email } })
+    logAuthEvent({ event: "reset_requested", emailHash, ip, userId: target.id })
+
+    await recordAuditLog(org.id, {
+      entity: "User",
+      entityId: target.id,
+      action: "password_reset_sent",
+      after: { targetUserId: target.id, email: target.email },
+      userId: actor.id,
+    })
+
+    return { success: true }
   })()
 }
 
