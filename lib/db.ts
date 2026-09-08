@@ -134,6 +134,23 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "BankMatchGroup",
   "BankReconciliation",
   "BankPendingKind",
+  // E9 — cierre, recurrentes y fiscalidad periódica
+  // (docs/design/E9-cierre-recurrentes.md §3.1 y §3.3). Las TRECE nacen con
+  // `SELECT app.enforce_tenant_rls('<tabla>')` en M2/M3/M4: o están aquí o la
+  // barrera 1 no las acota y una consulta fuera de `tenantDb` devuelve VACÍO.
+  "RecurringEntry",
+  "RecurringOccurrence",
+  "FixedAsset",
+  "AssetRevision",
+  "Accrual",
+  "DebtSchedule",
+  "DebtInstallment",
+  "VatRegimePeriod",
+  "VatSettlement",
+  "ProrrataYear",
+  "ReclassificationPair",
+  "ProfitDistribution",
+  "ClosingRun",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */

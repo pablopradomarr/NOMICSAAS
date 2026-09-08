@@ -104,6 +104,49 @@ const NO_PARALLEL_READS_MESSAGE =
   "executing a query». Encadena los `await`. Si de verdad no consulta la base (ficheros, fetch), " +
   "extráelo a un helper fuera de la página.";
 
+/**
+ * **E9 · T3.** El motor contable es PURO (CLAUDE.md): sin reloj implícito, sin
+ * IO, sin BD, sin LLM y sin azar — la fecha de referencia entra por parámetro.
+ * Hasta E9 sólo lo vigilaban el hook `.claude/hooks/guard.sh` (antes de escribir)
+ * y el job `pureza-motor` de CI (después de empujar); en medio, `npm run lint` no
+ * decía nada. Estos selectores cierran el hueco para los seis directorios puros,
+ * `lib/closing/**` y `lib/recurring/**` incluidos.
+ */
+const PURE_ENGINE_DIRS = [
+  "lib/ledger/**/*.ts",
+  "lib/analytics/**/*.ts",
+  "lib/accounts/**/*.ts",
+  "lib/taxes/**/*.ts",
+  "lib/audit/**/*.ts",
+  "lib/bank/**/*.ts",
+  // E9 (docs/design/E9-cierre-recurrentes.md §4): recurrentes y cierre.
+  "lib/closing/**/*.ts",
+  "lib/recurring/**/*.ts",
+];
+
+const PURE_ENGINE_MESSAGE =
+  "El motor contable es PURO: sin Date.now()/new Date() sin argumento, sin fetch, sin Math.random y sin BD. " +
+  "La fecha de referencia entra por parámetro (CLAUDE.md, SPEC-FIABILIDAD P1).";
+
+const NO_IMPURE_ENGINE = [
+  {
+    selector: 'NewExpression[callee.name="Date"][arguments.length=0]',
+    message: PURE_ENGINE_MESSAGE,
+  },
+  {
+    selector: 'CallExpression[callee.object.name="Date"][callee.property.name="now"]',
+    message: PURE_ENGINE_MESSAGE,
+  },
+  {
+    selector: 'CallExpression[callee.name="fetch"]',
+    message: PURE_ENGINE_MESSAGE,
+  },
+  {
+    selector: 'MemberExpression[object.name="Math"][property.name="random"]',
+    message: PURE_ENGINE_MESSAGE,
+  },
+];
+
 const eslintConfig = [
   ...nextConfig,
   {
@@ -189,6 +232,16 @@ const eslintConfig = [
     ignores: ["lib/db.ts", "lib/db.test.ts", "lib/email-sync/ingest.test.ts"],
     rules: {
       "no-restricted-syntax": ["error", NO_BARE_PRISMA_DELEGATE],
+    },
+  },
+  {
+    // E9 · T3 — pureza del motor. Va DESPUÉS del bloque anterior porque en la
+    // configuración plana el último `no-restricted-syntax` que casa sustituye a
+    // los anteriores: por eso repite `NO_BARE_PRISMA_DELEGATE`.
+    files: PURE_ENGINE_DIRS,
+    ignores: ["lib/**/*.test.ts", "lib/**/*.fixture.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", NO_BARE_PRISMA_DELEGATE, ...NO_IMPURE_ENGINE],
     },
   },
   {

@@ -92,6 +92,24 @@ model Organization {
   roiRegistered Boolean   @default(false) @map("roi_registered")
   ivaRegime     IvaRegime @default(GENERAL) @map("iva_regime")
 
+  // E9 — valoración y distribución (ADR-0016 D7 / D10)
+  /// **O-2.** Tipo de descuento **MENSUAL** en micro-puntos básicos
+  /// (1 000 000 = 1 %). Se declara mensual y no anual porque `i/12` sólo vale
+  /// para un TIN: convertir un TAE dividiendo entre doce es un error de
+  /// valoración que se arrastra a todos los aplazamientos.
+  discountRateMonthlyMicroBps Int?    @map("discount_rate_monthly_micro_bps")
+  /// **O-1.** Umbral de importancia relativa por debajo del cual NO se reconoce
+  /// el valor actual del aplazamiento (NRV 9ª.2.1 y 11ª).
+  pvMaterialityCents          BigInt  @default(0) @map("pv_materiality_cents")
+  /// **R2-2 · contingencia declarada.** El capital social se DERIVA del saldo
+  /// acreedor de la cuenta `100` a la fecha de la junta; almacenarlo diverge del
+  /// diario en la primera ampliación y sería una cifra de balance almacenada
+  /// (contra ADR-0003). Sólo para el plan sin `100` postable o el capital en
+  /// varias subcuentas no derivables: al usarlo, `DISTRIBUCION_RESULTADO` sale
+  /// **WARN** con motivo `CAPITAL_SOCIAL_DECLARADO` y la evidencia enseña las
+  /// dos cifras.
+  capitalStockOverrideCents   BigInt? @map("capital_stock_override_cents")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -149,6 +167,21 @@ model Organization {
   bankMatchGroups     BankMatchGroup[]
   bankReconciliations BankReconciliation[]
   bankPendingKinds    BankPendingKind[]
+
+  // E9 — cierre, recurrentes y fiscalidad periódica (docs/design/E9-*.md §3.2)
+  recurringEntries      RecurringEntry[]
+  recurringOccurrences  RecurringOccurrence[]
+  fixedAssets           FixedAsset[]
+  assetRevisions        AssetRevision[]
+  accruals              Accrual[]
+  debtSchedules         DebtSchedule[]
+  debtInstallments      DebtInstallment[]
+  vatRegimePeriods      VatRegimePeriod[]
+  vatSettlements        VatSettlement[]
+  prorrataYears         ProrrataYear[]
+  reclassificationPairs ReclassificationPair[]
+  profitDistributions   ProfitDistribution[]
+  closingRuns           ClosingRun[]
 
   @@map("organizations")
 }
@@ -209,7 +242,7 @@ model User {
   appData       AppData[]
   progress      Progress[]
   /// E3 (#2): asientos que este usuario ha contabilizado.
-  postedEntries JournalEntry[] @relation("EntryPostedBy")
+  postedEntries JournalEntry[]    @relation("EntryPostedBy")
   /// E7 (H-5): tipados de pendiente que ha declarado.
   pendingKinds  BankPendingKind[]
 
@@ -337,6 +370,10 @@ model Counterparty {
   surchargeRegime     Boolean           @default(false) @map("surcharge_regime")
   /// Notas de gasto (O-13): contra 465 o tesorería, nunca 400/410.
   isEmployee          Boolean           @default(false) @map("is_employee")
+  /// **E9 · ADR-0016 D8.** Régimen de IVA **de la contraparte**: un proveedor en
+  /// RECC difiere MI deducción hasta el pago (art. 163 terdecies). Es la
+  /// dirección que se olvida y la que la Inspección comprueba.
+  ivaRegime           IvaRegime         @default(GENERAL) @map("iva_regime")
 
   isActive  Boolean  @default(true) @map("is_active")
   notes     String?  @db.VarChar(512)
@@ -415,7 +452,9 @@ model Project {
   archivedAt         DateTime?     @map("archived_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
-  lines JournalLine[]
+  lines       JournalLine[]
+  fixedAssets FixedAsset[]
+  accruals    Accrual[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -525,6 +564,18 @@ model Transaction {
   voidedEntryIds               String[]  @map("voided_entry_ids") @db.Uuid
   /// O-9.iii: el split crea N Transaction, una por asiento, sobre el mismo File.
   splitParentTransactionId     String?   @map("split_parent_transaction_id") @db.Uuid
+
+  // ── E9 (ADR-0016 D4/D8) ────────────────────────────────────────────────────
+  /// **O-10.** Clave de operación del libro registro (`GENERAL`, `ISP`, `AIB`,
+  /// `EXENTA_25`, `EXPORTACION`, `NO_SUJETA`). Las exclusiones del art. 104.Tres
+  /// se **marcan en el documento**; nunca se deducen del importe. Sin ella, la
+  /// prorrata sale `INFO` y **jamás** un porcentaje.
+  vatOperationKey String? @map("vat_operation_key") @db.VarChar(16)
+  /// **O-14 / O-15.** Cobros y pagos del art. 61 *decies* / *undecies* RIVA:
+  /// `[{ date, amountCents, means }]`, uno por cobro o pago **parcial**. Sin
+  /// fechas, importes y medio empleado el libro de RECC **no cumple**. Es un
+  /// dato del documento, no una cifra calculada (P1).
+  reccPayments    Json    @default("[]") @map("recc_payments")
 
   @@unique([organizationId, id])
   @@index([organizationId, status])
@@ -705,6 +756,48 @@ enum AccountKey {
   OTROS_GASTOS_FINANCIEROS
   /// 665 — intereses por descuento de efectos y operaciones de factoring.
   INTERESES_DESCUENTO_EFECTOS
+  // ── E9 (ADR-0016): diecinueve claves nuevas. `INTERESES_DEUDAS` (662),
+  //    `DIFERENCIA_CAMBIO_*` (668/768), `PERIODIFICACION_*`,
+  //    `PROVEEDORES_INMOVILIZADO` (523), `REMANENTE` (120) y
+  //    `RESULTADOS_NEGATIVOS_ANTERIORES` (121) YA existen arriba.
+  /// 634 — ajuste negativo en la imputación definitiva de la prorrata (O-9).
+  AJUSTE_PRORRATA_NEGATIVO
+  /// 639 — ajuste positivo en la imputación definitiva de la prorrata (O-9).
+  AJUSTE_PRORRATA_POSITIVO
+  /// 4728 — IVA soportado pendiente de devengo (RECC, art. 163 terdecies).
+  /// **No es oficial**: hija de 472 por prefijo, hereda `statement`/`epigraph`.
+  IVA_SOPORTADO_PENDIENTE_RECC
+  /// 4778 — IVA repercutido pendiente de devengo (RECC). Hija de 477 (O-14).
+  IVA_REPERCUTIDO_PENDIENTE_RECC
+  /// 600/6xx del DUA: derechos arancelarios de la importación (O-16).
+  ARANCELES
+  /// 173 — deudas a largo plazo por proveedores de inmovilizado (ADR-0014 D6).
+  DEUDA_LARGO_INMOVILIZADO
+  /// 771 — beneficio procedente del inmovilizado material (O-24).
+  BENEFICIO_BAJA_INMOVILIZADO
+  /// 671 — pérdidas procedentes del inmovilizado material (O-24).
+  PERDIDA_BAJA_INMOVILIZADO
+  /// 543 — créditos a corto plazo por enajenación de inmovilizado. **No 430**.
+  CREDITO_ENAJENACION_CP
+  /// 253 — créditos a largo plazo por enajenación de inmovilizado.
+  CREDITO_ENAJENACION_LP
+  /// 762 — ingresos de créditos (O-3).
+  INGRESOS_CREDITOS
+  /// **6300**, no `630`: impuesto corriente (O-26).
+  IMPUESTO_CORRIENTE
+  /// 112 — reserva legal (art. 274 LSC).
+  RESERVA_LEGAL
+  /// 113 — reservas voluntarias.
+  RESERVAS_VOLUNTARIAS
+  /// 526 — dividendo activo a pagar.
+  DIVIDENDO_ACTIVO_A_PAGAR
+  /// 557 — dividendo activo a cuenta (deudora, minora el PN).
+  DIVIDENDO_ACTIVO_A_CUENTA
+  /// O-27: `4751` partida por modelo, o el puente I-E8-17 no puede repartir el
+  /// saldo y `RETENCIONES_LIQUIDADAS` no es verificable.
+  IRPF_A_PAGAR_111
+  IRPF_A_PAGAR_115
+  IRPF_A_PAGAR_123
 
   @@map("account_key")
 }
@@ -779,6 +872,13 @@ model LedgerAccount {
   /// los grupos 8/9. R-18′: obligatorio en toda cuenta postable salvo 57x.
   cashflowBucket CashflowBucket? @map("cashflow_bucket")
 
+  /// **E9 · O-4 (ADR-0016 D6).** NRV 11ª.2.2: sólo las partidas **monetarias**
+  /// se convierten al tipo de cierre. Sin el atributo,
+  /// `original_currency IS NOT NULL` arrastraba `407` y `438` —anticipos, que
+  /// **no** son monetarios— e inventaba resultado. Se siembra desde
+  /// `seeds/npgc.csv`, es editable por organización con `AuditLog` y **nunca**
+  /// es una lista de códigos en el motor.
+  isMonetary Boolean       @default(false) @map("is_monetary")
   /// Solo las hojas reciben líneas de asiento (I-E2-2).
   isPostable Boolean       @default(true) @map("is_postable")
   isActive   Boolean       @default(true) @map("is_active")
@@ -955,10 +1055,25 @@ model FiscalYear {
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
 
-  periodLocks    PeriodLock[]
-  entries        JournalEntry[]
+  /// **E9 · ADR-0016 D1.** Estado SOCIETARIO, distinto de `status` (contable):
+  /// separa una reapertura legítima —antes de formular, art. 253 LSC— de una
+  /// **reformulación** de cuentas aprobadas o depositadas (arts. 272 y 279
+  /// LSC), que no es una operación de usuario. G-14: reabrir exige `BORRADOR`.
+  accountsApprovalStatus AccountsApprovalStatus @default(BORRADOR) @map("accounts_approval_status")
+  formulatedAt           DateTime?              @map("formulated_at")
+  approvedAt             DateTime?              @map("approved_at")
+  depositedAt            DateTime?              @map("deposited_at")
+  /// **Q-1.2.** Si el modelo 200 ya se presentó, reabrir obliga a
+  /// autoliquidación complementaria o rectificativa (art. 122 LGT).
+  taxFilingStatus        TaxFilingStatus        @default(NO_PRESENTADO) @map("tax_filing_status")
+
+  periodLocks         PeriodLock[]
+  entries             JournalEntry[]
   /// E5 · O-E5-6: un run pertenece a UN ejercicio.
-  allocationRuns AllocationRun[]
+  allocationRuns      AllocationRun[]
+  // E9
+  closingRuns         ClosingRun[]
+  profitDistributions ProfitDistribution[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -1066,11 +1181,27 @@ model JournalEntry {
   entryHash   String @map("entry_hash") @db.VarChar(64)
   hashVersion Int    @default(2) @map("hash_version")
 
-  lines         JournalLine[]
-  postedFromTxs Transaction[] @relation("TransactionPosted")
+  /// **E9 · ADR-0016 D8.** Periodo de liquidación de IVA (`AAAA-T1`…`AAAA-T4`,
+  /// `AAAA-01`…`AAAA-12`) DERIVADO por el trigger de M3 a partir de
+  /// `app.iva_period(document_date, reception_date, period_kind)` y del
+  /// `VatRegimePeriod` vigente. Es columna y no cálculo en memoria porque B-6
+  /// (G-13) tiene que poder rechazar en la BD un asiento de un periodo ya
+  /// liquidado, y porque el libro registro se agrupa por ella con índice.
+  ivaPeriod String? @map("iva_period") @db.VarChar(8)
+
+  lines                JournalLine[]
+  postedFromTxs        Transaction[]         @relation("TransactionPosted")
+  vatSettlements       VatSettlement[]
+  profitDistributions  ProfitDistribution[]
+  recurringOccurrences RecurringOccurrence[]
 
   @@unique([organizationId, fiscalYearId, entryNumber])
+  /// E9: destino de las FK compuestas por tenant de `vat_settlements`,
+  /// `profit_distributions` y `recurring_occurrences`.
+  @@unique([organizationId, id])
   @@unique([organizationId, id, entryDate, fiscalYearId, kind], name: "journal_entries_denorm_key")
+  /// E9 · O-13: el libro registro y las casillas del 303 agrupan por periodo.
+  @@index([organizationId, ivaPeriod])
   @@index([organizationId, entryDate])
   @@index([organizationId, transactionId])
   @@index([organizationId, templateCode])
@@ -1134,6 +1265,15 @@ model JournalLine {
   exchangeRateId      String?       @map("exchange_rate_id") @db.Uuid
   exchangeRate        ExchangeRate? @relation(fields: [exchangeRateId], references: [id], onDelete: Restrict)
 
+  /// **E9 · O-19 (ADR-0016 D11).** Activo al que se atribuye la línea. `NULL`
+  /// salvo en líneas de `68x`/`28x`/`671`/`771` (CHECK G-15). `2811` es una
+  /// cuenta COMPARTIDA: sin esta columna, I-E9-5 se evalúa por agregado y deja
+  /// pasar justo lo que busca —un activo sobreamortizado compensado por otro
+  /// infraamortizado— y el drill-down «cuota → asiento» no existe. FK
+  /// compuesta por tenant.
+  fixedAssetId String?     @map("fixed_asset_id") @db.Uuid
+  fixedAsset   FixedAsset? @relation(fields: [organizationId, fixedAssetId], references: [organizationId, id], onDelete: Restrict)
+
   // Denormalizado desde el asiento (FK compuesta en §2.4).
   entryDate    DateTime  @map("entry_date") @db.Date
   fiscalYearId String    @map("fiscal_year_id") @db.Uuid
@@ -1158,6 +1298,8 @@ model JournalLine {
   @@index([organizationId, entryDate, accountCode, analyticType])
   /// E6 · T20: las cuatro fotos del balance agregan por cuenta excluyendo `kind`.
   @@index([organizationId, accountCode, entryKind, entryDate])
+  /// E9 · O-19: I-E9-5 agrega la amortización POR ACTIVO.
+  @@index([organizationId, fixedAssetId])
   @@map("journal_lines")
 }
 
@@ -1254,6 +1396,8 @@ model CostCenter {
   // inversa para no obligar a dos back-refs sobre la misma tabla).
   allocationRulesAsSource AllocationRule[] @relation("AllocationRuleSource")
   allocationLinesAsSource AllocationLine[] @relation("AllocationLineSource")
+  fixedAssets             FixedAsset[]
+  accruals                Accrual[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -1741,6 +1885,12 @@ model ExtractionRun {
   reconcile       Json?
   reconcileStatus ReconcileStatus? @map("reconcile_status")
 
+  /// **E9 · O-10 / O-14.** Lo que la extracción PROPONE para el libro registro:
+  /// clave de operación y cobros/pagos del art. 61 *decies* y *undecies* RIVA.
+  /// Propuesta, no verdad: la `Transaction` confirmada es la que manda (P1).
+  vatOperationKey String? @map("vat_operation_key") @db.VarChar(16)
+  reccPayments    Json    @default("[]") @map("recc_payments")
+
   tokensIn   Int?    @map("tokens_in")
   tokensOut  Int?    @map("tokens_out")
   costMicros BigInt? @map("cost_micros")
@@ -1959,6 +2109,8 @@ enum CheckFamily {
   DOCUMENTAL
   CONCILIACION
   INTEGRIDAD
+  /// E9 (T11): familia de los invariantes de cierre I-E9-1…26.
+  CIERRE
 
   @@map("check_family")
 }
@@ -2300,11 +2452,11 @@ model BankPendingKind {
   journalLine     JournalLine?       @relation(fields: [organizationId, journalLineId], references: [organizationId, id], onDelete: Cascade)
 
   kind PendingKind
-  note String? @db.VarChar(512)
+  note String?     @db.VarChar(512)
 
-  declaredById String?   @map("declared_by_id") @db.Uuid
-  declaredBy   User?     @relation(fields: [declaredById], references: [id], onDelete: SetNull)
-  declaredAt   DateTime  @default(now()) @map("declared_at")
+  declaredById String?  @map("declared_by_id") @db.Uuid
+  declaredBy   User?    @relation(fields: [declaredById], references: [id], onDelete: SetNull)
+  declaredAt   DateTime @default(now()) @map("declared_at")
 
   @@unique([organizationId, id])
   @@unique([organizationId, statementLineId], map: "bank_pending_kinds_one_per_statement_line")
@@ -2333,4 +2485,678 @@ enum MatchMethod {
   SUGGESTION_ACCEPTED
 
   @@map("match_method")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// E9 — Cierre, recurrentes y fiscalidad periódica
+// (docs/design/E9-cierre-recurrentes.md §3.2 · ADR-0016 D1–D12)
+//
+// Convenciones §3.1: `@@map`/`@map` snake_case en TODO lo nuevo;
+// `organizationId` en toda tabla de negocio con **FK compuesta por tenant**
+// `(organization_id, <id>)`; dinero en `BigInt` céntimos desde el día 1
+// (ADR-0015 D1); fechas de negocio `@db.Date` y `DateTime` sólo para auditoría
+// técnica; toda tabla entra a la vez en `TENANT_MODELS` (`lib/db.ts`) y en
+// `SELECT app.enforce_tenant_rls('<tabla>')`.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E9 · A — Recurrentes
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum RecurrenceFreq {
+  MENSUAL
+  TRIMESTRAL
+  SEMESTRAL
+  ANUAL
+
+  @@map("recurrence_freq")
+}
+
+enum RecurrenceAnchor {
+  PRIMER_DIA
+  ULTIMO_DIA
+  DIA_DEL_MES
+
+  @@map("recurrence_anchor")
+}
+
+enum RecurringKind {
+  AMORTIZACION
+  PERIODIFICACION
+  IMPORTE_FIJO
+
+  @@map("recurring_kind")
+}
+
+enum RecurringStatus {
+  ACTIVA
+  PAUSADA
+  FINALIZADA
+
+  @@map("recurring_status")
+}
+
+enum OccurrenceStatus {
+  GENERADA
+  OMITIDA
+  FALLIDA
+
+  @@map("occurrence_status")
+}
+
+/// Plantilla recurrente. **Ninguna cifra sale de un modelo** (P1, ADR-0005): o es
+/// un importe fijo que una persona escribió, o lo aporta un cuadro determinista.
+model RecurringEntry {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code String        @db.VarChar(32)
+  name String        @db.VarChar(160)
+  kind RecurringKind
+
+  templateCode  String @map("template_code") @db.VarChar(32)
+  /// Validado por el schema zod de su plantilla al crear la regla y **revalidado
+  /// en cada generación**: si la cuenta desapareció del plan, la ocurrencia sale
+  /// `FALLIDA` con motivo, no un asiento roto.
+  templateInput Json   @map("template_input")
+
+  /// Sólo `IMPORTE_FIJO` (CHECK G-2).
+  amountCents BigInt? @map("amount_cents")
+
+  frequency  RecurrenceFreq
+  anchor     RecurrenceAnchor @default(ULTIMO_DIA)
+  /// 1–31 y sólo con `anchor = DIA_DEL_MES` (G-3); el motor SATURA al último día.
+  dayOfMonth Int?             @map("day_of_month")
+
+  /// Vigencia en PERIODOS, no en fechas: el generador nunca compara `Date.now()`.
+  startPeriod String  @map("start_period") @db.VarChar(8)
+  endPeriod   String? @map("end_period") @db.VarChar(8)
+
+  status RecurringStatus @default(ACTIVA)
+
+  fixedAssetId String?     @map("fixed_asset_id") @db.Uuid
+  fixedAsset   FixedAsset? @relation(fields: [organizationId, fixedAssetId], references: [organizationId, id], onDelete: Restrict)
+  accrualId    String?     @map("accrual_id") @db.Uuid
+  accrual      Accrual?    @relation(fields: [organizationId, accrualId], references: [organizationId, id], onDelete: Restrict)
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String?  @map("created_by_id") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  occurrences RecurringOccurrence[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, status, frequency])
+  @@map("recurring_entries")
+}
+
+/// **APPEND-ONLY.** El `@@unique (organizationId, recurringEntryId, period)` **ES**
+/// la idempotencia: dos generaciones simultáneas no producen dos asientos porque
+/// la segunda choca contra el índice, no porque el código mire antes.
+model RecurringOccurrence {
+  id               String         @id @default(uuid()) @db.Uuid
+  organizationId   String         @map("organization_id") @db.Uuid
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recurringEntryId String         @map("recurring_entry_id") @db.Uuid
+  recurringEntry   RecurringEntry @relation(fields: [organizationId, recurringEntryId], references: [organizationId, id], onDelete: Restrict)
+
+  period      String   @db.VarChar(8)
+  postingDate DateTime @map("posting_date") @db.Date
+
+  status OccurrenceStatus
+  /// Obligatorio si `status ≠ GENERADA` (CHECK G-4). **O-22**: vocabulario
+  /// reservado `CUOTA_CERO` para la fila de importe 0 que no genera asiento.
+  reason String?          @db.VarChar(512)
+
+  entryId String?       @map("entry_id") @db.Uuid
+  entry   JournalEntry? @relation(fields: [organizationId, entryId], references: [organizationId, id], onDelete: Restrict)
+
+  /// sha256 canónico del input EFECTIVO. **I-E9-1b**: el asiento de marzo no se
+  /// explica con la regla de septiembre.
+  inputHash String @map("input_hash") @db.Char(64)
+
+  generatedAt   DateTime @default(now()) @map("generated_at")
+  generatedById String?  @map("generated_by_id") @db.Uuid
+
+  @@unique([organizationId, recurringEntryId, period])
+  @@unique([organizationId, id])
+  @@index([organizationId, period])
+  @@map("recurring_occurrences")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E9 · B — Inmovilizado
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **Sólo `LINEAL` se resuelve**; los otros tres se declaran y el motor los
+/// **RECHAZA** (D2, mismo criterio que ADR-0013 D4 con `HOURS`). La amortización
+/// del diario es la CONTABLE (NRV 2ª.2.1); la fiscal es extracontable (O-23).
+enum DepreciationMethod {
+  LINEAL
+  SUMA_DIGITOS
+  PORCENTAJE_CONSTANTE
+  UNIDADES_PRODUCCION
+
+  @@map("depreciation_method")
+}
+
+enum AssetStatus {
+  EN_USO
+  TOTALMENTE_AMORTIZADO
+  BAJA
+  VENDIDO
+
+  @@map("asset_status")
+}
+
+model FixedAsset {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code String @db.VarChar(32)
+  name String @db.VarChar(160)
+
+  /// Las tres cuentas, del plan de la organización y validadas (postables y
+  /// activas). NUNCA hardcodeadas.
+  assetAccountCode       String @map("asset_account_code") @db.VarChar(12)
+  accumulatedAccountCode String @map("accumulated_account_code") @db.VarChar(12)
+  expenseAccountCode     String @map("expense_account_code") @db.VarChar(12)
+
+  acquisitionDate DateTime @map("acquisition_date") @db.Date
+  /// **Puesta en condiciones de funcionamiento** (NRV 2ª.1 y 3ª), no la factura.
+  inServiceDate   DateTime @map("in_service_date") @db.Date
+
+  acquisitionCostCents BigInt             @map("acquisition_cost_cents")
+  residualValueCents   BigInt             @default(0) @map("residual_value_cents")
+  method               DepreciationMethod @default(LINEAL)
+  usefulLifeMonths     Int                @map("useful_life_months")
+
+  /// **O-12**: bien de inversión del art. 108 LIVA (> 3 005,06 €, vida > 1 año).
+  /// Derivado del coste al alta y **editable con motivo**: gobierna la guardia de
+  /// regularización del art. 107.
+  isCapitalGood          Boolean @default(false) @map("is_capital_good")
+  /// Prorrata definitiva del año de adquisición, sellada. Sin ella la guardia de
+  /// O-12 no puede comparar los diez puntos.
+  acquisitionProrrataBps Int?    @map("acquisition_prorrata_bps")
+
+  projectId    String?     @map("project_id") @db.Uuid
+  project      Project?    @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  costCenterId String?     @map("cost_center_id") @db.Uuid
+  costCenter   CostCenter? @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
+
+  status          AssetStatus @default(EN_USO)
+  disposalDate    DateTime?   @map("disposal_date") @db.Date
+  disposalEntryId String?     @map("disposal_entry_id") @db.Uuid
+
+  entryId       String? @map("entry_id") @db.Uuid
+  transactionId String? @map("transaction_id") @db.Uuid
+  fileId        String? @map("file_id") @db.Uuid
+
+  /// sha256 del cuadro VIGENTE. El cuadro **no se almacena** (§3.6): se deriva.
+  scheduleHash String @map("schedule_hash") @db.Char(64)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  revisions  AssetRevision[]
+  recurrings RecurringEntry[]
+  /// O-19: las líneas de `68x`/`28x`/`671`/`771` atribuidas a este activo.
+  lines      JournalLine[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, status])
+  @@map("fixed_assets")
+}
+
+/// **APPEND-ONLY.** Cambio de ESTIMACIÓN (NRV 22ª): prospectivo, no toca el
+/// pasado. **O-1**: reconocer tarde el valor actual **no** es un cambio de
+/// estimación sino la corrección de un error, y NO usa esta tabla.
+model AssetRevision {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fixedAssetId   String       @map("fixed_asset_id") @db.Uuid
+  fixedAsset     FixedAsset   @relation(fields: [organizationId, fixedAssetId], references: [organizationId, id], onDelete: Cascade)
+
+  /// Día 1 de mes (CHECK G-6).
+  effectiveFrom DateTime @map("effective_from") @db.Date
+
+  newUsefulLifeMonths   Int?    @map("new_useful_life_months")
+  newResidualValueCents BigInt? @map("new_residual_value_cents")
+  /// Mejora capitalizada (NRV 3ª.b).
+  addedCostCents        BigInt? @map("added_cost_cents")
+
+  reason      String   @db.VarChar(512)
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String?  @map("created_by_id") @db.Uuid
+
+  @@unique([organizationId, fixedAssetId, effectiveFrom])
+  @@map("asset_revisions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E9 · C — Periodificaciones y deuda con cuadro
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum AccrualKind {
+  /// 480 · contra 6xx
+  GASTO_ANTICIPADO
+  /// 485 · contra 7xx
+  INGRESO_ANTICIPADO
+  /// 567 · contra 662
+  INTERESES_PAGADOS_ANTICIPADO
+  /// 568 · contra 762
+  INTERESES_COBRADOS_ANTICIPADO
+
+  @@map("accrual_kind")
+}
+
+enum AccrualBasis {
+  DIAS
+  MESES
+  TIPO_EFECTIVO
+
+  @@map("accrual_basis")
+}
+
+enum AccrualStatus {
+  VIVA
+  AGOTADA
+  CANCELADA
+
+  @@map("accrual_status")
+}
+
+model Accrual {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code String      @db.VarChar(32)
+  name String      @db.VarChar(160)
+  kind AccrualKind
+
+  accrualAccountCode String @map("accrual_account_code") @db.VarChar(12)
+  pnlAccountCode     String @map("pnl_account_code") @db.VarChar(12)
+
+  totalCents  BigInt       @map("total_cents")
+  periodStart DateTime     @map("period_start") @db.Date
+  periodEnd   DateTime     @map("period_end") @db.Date
+  /// **O-25**: `TIPO_EFECTIVO` sólo con `debtScheduleId`; `DIAS` sobre 567/568
+  /// con horizonte > 12 meses o principal decreciente emite **WARN**.
+  basis       AccrualBasis @default(MESES)
+
+  /// **O-25 / O-6**: el devengo de intereses de un préstamo lo aporta su cuadro,
+  /// no un reparto lineal.
+  debtScheduleId String?       @map("debt_schedule_id") @db.Uuid
+  debtSchedule   DebtSchedule? @relation(fields: [organizationId, debtScheduleId], references: [organizationId, id], onDelete: Restrict)
+
+  projectId    String?     @map("project_id") @db.Uuid
+  project      Project?    @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  costCenterId String?     @map("cost_center_id") @db.Uuid
+  costCenter   CostCenter? @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
+
+  sourceEntryId String?       @map("source_entry_id") @db.Uuid
+  status        AccrualStatus @default(VIVA)
+  scheduleHash  String        @map("schedule_hash") @db.Char(64)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  recurrings RecurringEntry[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, status, periodEnd])
+  @@map("accruals")
+}
+
+/// **O-6 · la pieza que faltaba.** Cuadro de amortización de una deuda (préstamo,
+/// arrendamiento financiero, aplazamiento largo). Sin él, un préstamo entra como
+/// una línea de `170` sin `dueDate` y el balance presenta **cero** en «Deudas con
+/// entidades de crédito a corto plazo» teniendo préstamos vivos: la
+/// reclasificación que un auditor comprueba primero, y la que más veces está mal.
+model DebtSchedule {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code String @db.VarChar(32)
+  name String @db.VarChar(160)
+
+  /// Par de cuentas largo/corto de la deuda; se valida contra `ReclassificationPair`.
+  longAccountCode  String @map("long_account_code") @db.VarChar(12)
+  shortAccountCode String @map("short_account_code") @db.VarChar(12)
+
+  counterpartyId      String? @map("counterparty_id") @db.Uuid
+  principalCents      BigInt  @map("principal_cents")
+  currency            String  @default("EUR") @db.VarChar(3)
+  /// Tipo MENSUAL en punto fijo (O-2), misma convención que el descuento.
+  monthlyRateMicroBps Int?    @map("monthly_rate_micro_bps")
+
+  startDate DateTime @map("start_date") @db.Date
+  /// T-37: asiento de alta del préstamo.
+  entryId   String?  @map("entry_id") @db.Uuid
+
+  /// sha256 del cuadro sellado. El cuadro de la deuda **sí** se persiste (a
+  /// diferencia del de amortización): no es derivable de la deuda, es un dato
+  /// del contrato que el banco entrega.
+  scheduleHash String @map("schedule_hash") @db.Char(64)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  installments DebtInstallment[]
+  accruals     Accrual[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@map("debt_schedules")
+}
+
+model DebtInstallment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  debtScheduleId String       @map("debt_schedule_id") @db.Uuid
+  debtSchedule   DebtSchedule @relation(fields: [organizationId, debtScheduleId], references: [organizationId, id], onDelete: Cascade)
+
+  seq            Int
+  dueDate        DateTime @map("due_date") @db.Date
+  principalCents BigInt   @map("principal_cents")
+  interestCents  BigInt   @map("interest_cents")
+
+  @@unique([organizationId, debtScheduleId, seq])
+  @@index([organizationId, dueDate])
+  @@map("debt_installments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E9 · D — IVA: régimen fechado, liquidación y prorrata
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum VatPeriodKind {
+  MENSUAL
+  TRIMESTRAL
+
+  @@map("vat_period_kind")
+}
+
+enum VatSettlementStatus {
+  LIQUIDADA
+  REVERTIDA
+
+  @@map("vat_settlement_status")
+}
+
+/// **El régimen de IVA es un dato FECHADO, no una columna** (D8). Entrar en
+/// REDEME en 2027 con una columna habría reagrupado los periodos de 2026 **ya
+/// presentados**, y eso sólo se descubre en una inspección. Vigencias sin solape
+/// por `EXCLUDE USING gist`, como `TaxRate` en E2.
+model VatRegimePeriod {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  regime         IvaRegime
+  periodKind     VatPeriodKind @map("period_kind")
+  /// **O-16.** Diferimiento del ingreso del IVA a la importación (art. 167.Dos
+  /// LIVA, art. 74.1 RIVA): opción con vigencia anual, sólo con periodo MENSUAL
+  /// (CHECK). Con ella, el DUA **sí** devenga 477 y aparece en la casilla 77.
+  importDeferral Boolean       @default(false) @map("import_deferral")
+
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+
+  reason      String?  @db.VarChar(512)
+  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String?  @map("created_by_id") @db.Uuid
+
+  @@index([organizationId, validFrom])
+  @@map("vat_regime_periods")
+}
+
+/// El **acto** de liquidar, no sus cifras: las casillas del 303 se derivan
+/// siempre (ADR-0003, §3.6). `outputCents`, `inputCents`, `carryForwardCents` y
+/// `resultCents` son **evidencia recomputable** —patrón de
+/// `recognizedDifferenceCents` en E7 ronda 2— e **I-E9-9** los recalcula.
+model VatSettlement {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  periodKind  VatPeriodKind @map("period_kind")
+  period      String        @db.VarChar(8)
+  periodStart DateTime      @map("period_start") @db.Date
+  periodEnd   DateTime      @map("period_end") @db.Date
+
+  regime         IvaRegime
+  prorrataBps    Int?      @map("prorrata_bps")
+  /// **O-16**: sellado, porque cambia la composición de la cuota devengada.
+  importDeferral Boolean   @default(false) @map("import_deferral")
+
+  entryId String       @map("entry_id") @db.Uuid
+  entry   JournalEntry @relation(fields: [organizationId, entryId], references: [organizationId, id], onDelete: Restrict)
+
+  outputCents       BigInt @map("output_cents")
+  inputCents        BigInt @map("input_cents")
+  carryForwardCents BigInt @default(0) @map("carry_forward_cents")
+  resultCents       BigInt @map("result_cents")
+
+  ledgerHash String @map("ledger_hash") @db.Char(64)
+  bookHash   String @map("book_hash") @db.Char(64)
+  gitSha     String @map("git_sha")
+
+  status            VatSettlementStatus @default(LIQUIDADA)
+  reversedByEntryId String?             @map("reversed_by_entry_id") @db.Uuid
+  reverseReason     String?             @map("reverse_reason") @db.VarChar(512)
+
+  settledAt   DateTime @default(now()) @map("settled_at")
+  settledById String?  @map("settled_by_id") @db.Uuid
+
+  /// Una liquidación **viva** por periodo: índice único PARCIAL
+  /// `WHERE status = 'LIQUIDADA'` (G-8), creado en M3. Con `@@unique` a secas,
+  /// revertir y re-liquidar sería imposible.
+  @@unique([organizationId, id])
+  @@index([organizationId, periodKind, period])
+  @@map("vat_settlements")
+}
+
+/// Prorrata del año natural (arts. 104 y 105 LIVA). **O-9/O-10/O-11**:
+/// `prorrateableQuotaCents` es la BASE del ajuste —la cuota soportada sometida a
+/// prorrata—, no lo ya deducido; numerador y denominador se **derivan** del libro
+/// de emitidas con las exclusiones del art. 104.Tres **marcadas en el documento**.
+model ProrrataYear {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  year           Int
+  provisionalBps Int  @map("provisional_bps")
+  definitiveBps  Int? @map("definitive_bps")
+
+  numeratorCents         BigInt? @map("numerator_cents")
+  denominatorCents       BigInt? @map("denominator_cents")
+  prorrateableQuotaCents BigInt? @map("prorrateable_quota_cents")
+  /// Documentos del año sin clave de operación: con alguno, el resultado es
+  /// `INFO` y **nunca** un porcentaje (O-10).
+  unclassifiedCount      Int     @default(0) @map("unclassified_count")
+
+  adjustmentCents       BigInt? @map("adjustment_cents")
+  regularizationEntryId String? @map("regularization_entry_id") @db.Uuid
+  /// El periodo de IVA en el que se practicó (art. 105.Uno: la ÚLTIMA
+  /// declaración-liquidación del año). **I-E9-10b**.
+  regularizationPeriod  String? @map("regularization_period") @db.VarChar(8)
+
+  closedAt   DateTime? @map("closed_at")
+  closedById String?   @map("closed_by_id") @db.Uuid
+
+  @@unique([organizationId, year])
+  @@map("prorrata_years")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E9 · E — Presentación y distribución
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **O-7.** Pares largo ↔ corto, configuración versionada por organización, jamás
+/// códigos en el motor. Se siembran **veintitrés** (§4.5), sólo donde ambas
+/// cuentas existan y sean postables; en el resto, WARN de Auditoría.
+model ReclassificationPair {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  longAccountCode  String  @map("long_account_code") @db.VarChar(12)
+  shortAccountCode String  @map("short_account_code") @db.VarChar(12)
+  /// Norma 6ª de elaboración de las cuentas anuales (RD 1514/2007).
+  thresholdMonths  Int     @default(12) @map("threshold_months")
+  isActive         Boolean @default(true) @map("is_active")
+
+  @@unique([organizationId, longAccountCode, shortAccountCode])
+  @@map("reclassification_pairs")
+}
+
+/// **O-18.** La distribución del resultado, acordada por la junta (art. 164 LSC).
+/// Sin ella, `129` se arrastra indefinidamente, la reserva legal no se dota
+/// (art. 274 LSC) y el patrimonio neto es incorrecto desde el segundo ejercicio.
+model ProfitDistribution {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// El ejercicio CUYO resultado se distribuye.
+  fiscalYearId   String       @map("fiscal_year_id") @db.Uuid
+  fiscalYear     FiscalYear   @relation(fields: [organizationId, fiscalYearId], references: [organizationId, id], onDelete: Restrict)
+
+  /// Fecha de la junta general. El asiento se postea con ella, en el ejercicio
+  /// ABIERTO (art. 164 LSC: dentro de los seis meses siguientes al cierre).
+  meetingDate DateTime @map("meeting_date") @db.Date
+
+  /// Saldo de 129 regularizado.
+  resultCents           BigInt @map("result_cents")
+  /// Destinos, todos en céntimos. `legalReserveCents` lo **calcula** el motor
+  /// (art. 274 LSC) y no es editable a la baja; el resto lo acuerda la junta.
+  legalReserveCents     BigInt @default(0) @map("legal_reserve_cents")
+  voluntaryReserveCents BigInt @default(0) @map("voluntary_reserve_cents")
+  /// 120 — remanente.
+  carryForwardCents     BigInt @default(0) @map("carry_forward_cents")
+  /// 526 — dividendo activo a pagar.
+  dividendCents         BigInt @default(0) @map("dividend_cents")
+  /// Dividendo a cuenta ya satisfecho durante el ejercicio (557, deudora, minora
+  /// el PN). Se cancela contra el resultado en esta misma distribución.
+  interimDividendCents  BigInt @default(0) @map("interim_dividend_cents")
+  /// 121 — resultados negativos de ejercicios anteriores.
+  lossCarryForwardCents BigInt @default(0) @map("loss_carry_forward_cents")
+
+  /// T-35.
+  entryId String       @map("entry_id") @db.Uuid
+  entry   JournalEntry @relation(fields: [organizationId, entryId], references: [organizationId, id], onDelete: Restrict)
+
+  approvedAt   DateTime @default(now()) @map("approved_at")
+  approvedById String?  @map("approved_by_id") @db.Uuid
+
+  @@unique([organizationId, fiscalYearId])
+  @@unique([organizationId, id])
+  @@map("profit_distributions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E9 · F — El cierre como acto sellado
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum ClosingRunStatus {
+  BORRADOR
+  COMPROBADO
+  CERRADO
+  REABIERTO
+  ABORTADO
+
+  @@map("closing_run_status")
+}
+
+/// **D1.** Estado societario: separa una reapertura legítima (antes de formular,
+/// art. 253 LSC) de una **reformulación** de cuentas aprobadas o depositadas
+/// (arts. 272 y 279 LSC), que no es una operación de usuario.
+enum AccountsApprovalStatus {
+  BORRADOR
+  FORMULADAS
+  APROBADAS
+  DEPOSITADAS
+
+  @@map("accounts_approval_status")
+}
+
+/// **Q-1, precisión 2 del experto.** Si el modelo 200 ya se presentó, reabrir
+/// obliga a autoliquidación complementaria o rectificativa (art. 122 LGT). El
+/// asistente lo advierte y `AuditLog` lo recoge.
+enum TaxFilingStatus {
+  NO_PRESENTADO
+  PRESENTADO
+  RECTIFICADO
+
+  @@map("tax_filing_status")
+}
+
+/// El cierre con su checklist y su sello. **APPEND-ONLY salvo** `status`, `steps`,
+/// `seal`, `sealReasons` y las columnas de reapertura, por `GRANT UPDATE` de
+/// columna (patrón de `journal_entries.voided_*`).
+model ClosingRun {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  fiscalYearId   String       @map("fiscal_year_id") @db.Uuid
+  fiscalYear     FiscalYear   @relation(fields: [organizationId, fiscalYearId], references: [organizationId, id], onDelete: Restrict)
+
+  status  ClosingRunStatus @default(BORRADOR)
+  refDate DateTime         @map("ref_date") @db.Date
+
+  /// **O-29**: los 41 pasos en nueve bloques.
+  /// `[{ step, block, status: PASS|WARN|FAIL|NA|PENDIENTE_RECOMPUTO, blocking,
+  ///    evidencia, query?, entryId? }]`
+  steps Json
+
+  ledgerHash     String  @map("ledger_hash") @db.Char(64)
+  planHash       String  @map("plan_hash") @db.Char(64)
+  accountMapHash String  @map("account_map_hash") @db.Char(64)
+  configHash     String  @map("config_hash") @db.Char(64)
+  gitSha         String  @map("git_sha")
+  invariantRunId String? @map("invariant_run_id") @db.Uuid
+
+  /// Los doce asientos del cierre, en el orden de O-17.
+  recurringEntryIds      Json    @default("[]") @map("recurring_entry_ids")
+  reccAccrualEntryId     String? @map("recc_accrual_entry_id") @db.Uuid
+  prorrataEntryId        String? @map("prorrata_entry_id") @db.Uuid
+  vatSettlementEntryId   String? @map("vat_settlement_entry_id") @db.Uuid
+  presentValueEntryId    String? @map("present_value_entry_id") @db.Uuid
+  fxEntryId              String? @map("fx_entry_id") @db.Uuid
+  reclassEntryId         String? @map("reclass_entry_id") @db.Uuid
+  incomeTaxEntryId       String? @map("income_tax_entry_id") @db.Uuid
+  regularizacionEntryId  String? @map("regularizacion_entry_id") @db.Uuid
+  cierreEntryId          String? @map("cierre_entry_id") @db.Uuid
+  aperturaEntryId        String? @map("apertura_entry_id") @db.Uuid
+  reclassReversalEntryId String? @map("reclass_reversal_entry_id") @db.Uuid
+
+  seal        Seal
+  sealReasons Json @default("[]") @map("seal_reasons")
+
+  durationMs Int       @map("duration_ms")
+  closedAt   DateTime? @map("closed_at")
+  closedById String?   @map("closed_by_id") @db.Uuid
+
+  /// **O-21.** La reapertura revierte T-28 → T-27 → T-26 → **T-25**.
+  reopenedAt     DateTime? @map("reopened_at")
+  reopenedById   String?   @map("reopened_by_id") @db.Uuid
+  reopenReason   String?   @map("reopen_reason") @db.VarChar(512)
+  reopenEntryIds Json      @default("[]") @map("reopen_entry_ids")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Un `CERRADO` vivo por ejercicio: índice único PARCIAL en M4 (G-12).
+  @@unique([organizationId, id])
+  @@index([organizationId, fiscalYearId, createdAt(sort: Desc)])
+  @@map("closing_runs")
 }

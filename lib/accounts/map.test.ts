@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { buildPlan } from "@/lib/accounts/codes"
 import {
   ACCOUNT_KEY_DEFAULT_CODE,
+  DEFERRED_ACCOUNT_KEYS,
   defaultAccountMap,
   extraAccountsToCreate,
   OPTIONAL_ACCOUNT_KEYS,
@@ -37,13 +38,35 @@ function account(code: string, extra: Partial<PlanAccount> = {}): PlanAccount {
 // e `INTERESES_DESCUENTO_EFECTOS` (665) lo suben a 61. Las cuatro son
 // OPCIONALES —una organización cuyo plan no tenga la cuenta postable no debe
 // fallar la migración—, así que las 43 obligatorias no se mueven.
-describe("AccountKey — 61 claves, 43 obligatorias (D2-7, E-4, E8·T2, E7·ADR-0015)", () => {
-  it("43 obligatorias + 18 declaradas, sin solapes ni duplicados", () => {
+describe("AccountKey — 80 claves, 43 obligatorias (D2-7, E-4, E8·T2, E7·ADR-0015, E9·ADR-0016)", () => {
+  it("43 obligatorias + 18 declaradas + 19 diferidas a M4, sin solapes ni duplicados", () => {
     expect(REQUIRED_ACCOUNT_KEYS).toHaveLength(43)
     expect(OPTIONAL_ACCOUNT_KEYS).toHaveLength(18)
-    const todas = [...REQUIRED_ACCOUNT_KEYS, ...OPTIONAL_ACCOUNT_KEYS]
-    expect(new Set(todas).size).toBe(61)
-    expect(Object.keys(ACCOUNT_KEY_DEFAULT_CODE)).toHaveLength(61)
+    // E9 · ADR-0016: las diecinueve nuevas se declaran pero NO entran en el mapa
+    // automático (ver `DEFERRED_ACCOUNT_KEYS`): las siembra M4 donde la cuenta
+    // exista y sea postable.
+    expect(DEFERRED_ACCOUNT_KEYS).toHaveLength(19)
+    const todas = [...REQUIRED_ACCOUNT_KEYS, ...OPTIONAL_ACCOUNT_KEYS, ...DEFERRED_ACCOUNT_KEYS]
+    expect(new Set(todas).size).toBe(80)
+    // La invariante que importa: NINGUNA clave del enum se queda sin declarar.
+    expect(Object.keys(ACCOUNT_KEY_DEFAULT_CODE)).toHaveLength(80)
+    expect(new Set(todas)).toEqual(new Set(Object.keys(ACCOUNT_KEY_DEFAULT_CODE)))
+  })
+
+  it("E9 · O-14 / O-27: las claves diferidas NO las resuelve `defaultAccountMap`", () => {
+    // `4728` no es cuenta oficial: si entrara en el mapa automático,
+    // `resolvePostable` subiría al ancestro y el IVA soportado PENDIENTE de
+    // devengo del RECC caería en `472`, junto al ya deducible.
+    for (const key of DEFERRED_ACCOUNT_KEYS) {
+      expect(OPTIONAL_ACCOUNT_KEYS).not.toContain(key)
+      expect(REQUIRED_ACCOUNT_KEYS).not.toContain(key)
+    }
+    expect(ACCOUNT_KEY_DEFAULT_CODE.IVA_SOPORTADO_PENDIENTE_RECC).toBe("4728")
+    expect(ACCOUNT_KEY_DEFAULT_CODE.IVA_REPERCUTIDO_PENDIENTE_RECC).toBe("4778")
+    // O-26: el impuesto corriente es **6300**, no `630`.
+    expect(ACCOUNT_KEY_DEFAULT_CODE.IMPUESTO_CORRIENTE).toBe("6300")
+    // O-24: la contrapartida de la venta de inmovilizado es `543`, no `430`.
+    expect(ACCOUNT_KEY_DEFAULT_CODE.CREDITO_ENAJENACION_CP).toBe("543")
   })
 
   it("E7 · ADR-0015 (m1): las tres claves nuevas resuelven a 662, 669 y 665", () => {

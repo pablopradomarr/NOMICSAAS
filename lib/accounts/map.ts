@@ -97,6 +97,43 @@ export const OPTIONAL_ACCOUNT_KEYS: readonly AccountKey[] = [
   "INTERESES_DESCUENTO_EFECTOS",
 ] as const
 
+/**
+ * **E9 · ADR-0016.** Las diecinueve claves nuevas. Están DECLARADAS (tienen
+ * código por defecto y entran en `ACCOUNT_KEY_DEFAULT_CODE`) pero **no** en el
+ * mapa automático de `defaultAccountMap`: las siembra la migración M4 y sólo
+ * **donde la cuenta exista y sea postable**; en el resto, WARN de Auditoría —
+ * nunca un fallo de migración (patrón de E8 §299).
+ *
+ * Por qué no van en `OPTIONAL_ACCOUNT_KEYS`: `resolvePostable` sube al ancestro
+ * cuando el código no existe, de modo que `4728` —que **no** es una cuenta
+ * oficial (O-14)— resolvería a `472` y el IVA soportado **pendiente de devengo**
+ * del RECC acabaría en la misma cuenta que el ya deducible, que es exactamente
+ * el error que el régimen hace grave. Lo mismo con `4751x` por modelo (O-27).
+ * Colgar `4728` de `472` en la siembra general tampoco vale: dejaría `472` sin
+ * ser postable y arrastraría a todas las claves que apuntan a ella.
+ */
+export const DEFERRED_ACCOUNT_KEYS: readonly AccountKey[] = [
+  "AJUSTE_PRORRATA_NEGATIVO",
+  "AJUSTE_PRORRATA_POSITIVO",
+  "IVA_SOPORTADO_PENDIENTE_RECC",
+  "IVA_REPERCUTIDO_PENDIENTE_RECC",
+  "ARANCELES",
+  "DEUDA_LARGO_INMOVILIZADO",
+  "BENEFICIO_BAJA_INMOVILIZADO",
+  "PERDIDA_BAJA_INMOVILIZADO",
+  "CREDITO_ENAJENACION_CP",
+  "CREDITO_ENAJENACION_LP",
+  "INGRESOS_CREDITOS",
+  "IMPUESTO_CORRIENTE",
+  "RESERVA_LEGAL",
+  "RESERVAS_VOLUNTARIAS",
+  "DIVIDENDO_ACTIVO_A_PAGAR",
+  "DIVIDENDO_ACTIVO_A_CUENTA",
+  "IRPF_A_PAGAR_111",
+  "IRPF_A_PAGAR_115",
+  "IRPF_A_PAGAR_123",
+] as const
+
 /** Código PGC "de libro" de cada clave (§3.1 y §3.2 de la validación contable). */
 export const ACCOUNT_KEY_DEFAULT_CODE: Readonly<Record<AccountKey, string>> = {
   CLIENTES: "430",
@@ -168,6 +205,48 @@ export const ACCOUNT_KEY_DEFAULT_CODE: Readonly<Record<AccountKey, string>> = {
   INTERESES_DEUDAS: "662",
   OTROS_GASTOS_FINANCIEROS: "669",
   INTERESES_DESCUENTO_EFECTOS: "665",
+  // ── E9 · ADR-0016 ──────────────────────────────────────────────────────────
+  // O-9: la prorrata definitiva usa las MISMAS cuentas que el ajuste de IVA
+  // (634 / 639); son claves distintas porque el origen del ajuste —y por tanto
+  // su evidencia— es otro: art. 105.Uno LIVA, no art. 89.
+  AJUSTE_PRORRATA_NEGATIVO: "634",
+  AJUSTE_PRORRATA_POSITIVO: "639",
+  // O-14: NO son cuentas del PGC. Se crean como hijas de 472 y 477 por prefijo
+  // (`parentCode` derivado) y heredan `statement` y `epigraph` del padre, para
+  // que el balance no haya que remapear.
+  IVA_SOPORTADO_PENDIENTE_RECC: "4728",
+  IVA_REPERCUTIDO_PENDIENTE_RECC: "4778",
+  // O-16: los aranceles del DUA son MAYOR COSTE (NRV 10ª.1 y 2ª.1), no gasto
+  // financiero ni tributo deducible aparte.
+  ARANCELES: "600",
+  // ADR-0014 D6: la separación 523 → 173 se mide desde el CIERRE.
+  DEUDA_LARGO_INMOVILIZADO: "173",
+  // O-24: baja y venta de inmovilizado.
+  BENEFICIO_BAJA_INMOVILIZADO: "771",
+  PERDIDA_BAJA_INMOVILIZADO: "671",
+  // O-24: la contrapartida de la venta de inmovilizado es 543/253, **no 430**.
+  CREDITO_ENAJENACION_CP: "543",
+  CREDITO_ENAJENACION_LP: "253",
+  // O-3: el lado activo del valor actual devenga en 762, no en 769.
+  INGRESOS_CREDITOS: "762",
+  // O-26: **6300**, no `630`. `IMPUESTO_BENEFICIOS_GASTO` (630) se conserva
+  // para no romper lo ya mapeado; T-25 pasa a usar ésta.
+  IMPUESTO_CORRIENTE: "6300",
+  // O-18: distribución del resultado (arts. 164 y 274 LSC).
+  RESERVA_LEGAL: "112",
+  RESERVAS_VOLUNTARIAS: "113",
+  DIVIDENDO_ACTIVO_A_PAGAR: "526",
+  DIVIDENDO_ACTIVO_A_CUENTA: "557",
+  // O-27: `4751` partido POR MODELO. Sin las tres subcuentas, el puente
+  // I-E8-17 no puede repartir el saldo y `RETENCIONES_LIQUIDADAS` no es
+  // verificable. Se reutiliza la numeración que E2 ya siembra con
+  // `useSubaccounts` (`47510` profesionales y `47512` trabajo son AMBAS del
+  // modelo 111; `47511`, del 115) y sólo el 123 es nueva. Las tres claves de E3
+  // (`IRPF_*_A_PAGAR`) siguen apuntando a `4751` y no se tocan: el histórico se
+  // queda donde está (§3.5).
+  IRPF_A_PAGAR_111: "47510",
+  IRPF_A_PAGAR_115: "47511",
+  IRPF_A_PAGAR_123: "47513",
 }
 
 /**

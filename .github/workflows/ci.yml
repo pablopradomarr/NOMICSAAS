@@ -130,20 +130,21 @@ jobs:
       - run: npm run test:integration:rls
 
   pureza-motor:
-    name: Guard de pureza (lib/ledger, lib/analytics, lib/audit, lib/bank)
+    name: Guard de pureza (lib/ledger, lib/analytics, lib/audit, lib/bank, lib/closing, lib/recurring)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # CLAUDE.md: `lib/ledger/**`, `lib/analytics/**` y, desde E7,
-      # `lib/audit/**` y `lib/bank/**` son funciones PURAS.
+      # CLAUDE.md: `lib/ledger/**`, `lib/analytics/**`, `lib/accounts/**`,
+      # `lib/taxes/**` y, desde E7, `lib/audit/**` y `lib/bank/**` son funciones
+      # PURAS. **E9 · T3** añade `lib/closing/**` y `lib/recurring/**`.
       # Prohibido `new Date()` sin argumento, `Date.now()`, `prisma`, `fetch` y
       # cualquier LLM: la fecha de referencia entra por parámetro.
       - name: Sin reloj, IO ni LLM en el motor contable
         run: |
           set -e
-          for dir in lib/ledger lib/analytics lib/audit lib/bank; do
+          for dir in lib/ledger lib/analytics lib/accounts lib/taxes lib/audit lib/bank lib/closing lib/recurring; do
             [ -d "$dir" ] || { echo "· $dir todavía no existe (E3/E4/E7), se omite"; continue; }
             if grep -rnE "Date\.now\(\)|new Date\(\s*\)|from \"@/lib/db\"|\bprisma\b|\bfetch\(|langchain|@langchain" \
                  --include="*.ts" "$dir" | grep -v "\.test\.ts:"; then

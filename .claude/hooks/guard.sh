@@ -22,8 +22,8 @@ esac
 
 # 3) Motor contable puro: sin reloj implícito, IO, BD ni LLM (tests excluidos).
 case "$rel" in
-  lib/ledger/*.test.ts|lib/analytics/*.test.ts|lib/accounts/*.test.ts|lib/taxes/*.test.ts|lib/audit/*.test.ts|lib/bank/*.test.ts) ;;
-  lib/ledger/*|lib/analytics/*|lib/accounts/*|lib/taxes/*|lib/audit/*|lib/bank/*)
+  lib/ledger/*.test.ts|lib/analytics/*.test.ts|lib/accounts/*.test.ts|lib/taxes/*.test.ts|lib/audit/*.test.ts|lib/bank/*.test.ts|lib/closing/*.test.ts|lib/recurring/*.test.ts) ;;
+  lib/ledger/*|lib/analytics/*|lib/accounts/*|lib/taxes/*|lib/audit/*|lib/bank/*|lib/closing/*|lib/recurring/*)
     if printf '%s' "$content" | grep -nE 'Date\.now\(\)|new Date\(\)|@/lib/db|prisma\.|fetch\(|@langchain|Math\.random' >/dev/null; then
       echo "⛔ $rel debe ser puro: sin Date.now()/new Date()/prisma/fetch/LLM/Math.random. La fecha de referencia entra por parámetro." >&2; exit 2; fi ;;
 esac
