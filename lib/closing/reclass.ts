@@ -44,9 +44,10 @@
  * ## Códigos de plantilla
  *
  * Las plantillas T-29…T-37 las escribe **T10** (agente B1 de la ola B). Aquí
- * viajan como **constantes de string documentadas**, no como importaciones: este
- * módulo no depende del catálogo para calcular, y así T9 y T10 avanzan en
- * paralelo sin tocar el mismo fichero.
+ * viajan como **constantes de string documentadas** —con el mismo valor que
+ * `TemplateCode`, que es el **nombre** (`RECLASIFICACION_VENCIMIENTOS`), no el
+ * ordinal `T-32`—, no como importaciones: este módulo no depende del catálogo
+ * para calcular, y así T9 y T10 avanzan sin tocar el mismo fichero.
  */
 
 import { daysInMonth, formatLocalDate, parseLocalDate } from "@/lib/ledger/dates"
@@ -57,10 +58,10 @@ import type { ClosingStepResult } from "@/lib/closing/vat"
 // Códigos de plantilla (T10 · agente B1). Constantes documentadas, no imports.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** `RECLASIFICACION_VENCIMIENTOS`: el asiento de reclasificación del cierre. */
-export const TEMPLATE_RECLASIFICACION = "T-32"
-/** `ALTA_PRESTAMO`: alta con **una línea de `170`/`520` por vencimiento** (O-6). */
-export const TEMPLATE_ALTA_PRESTAMO = "T-37"
+/** **T-32** — el asiento de reclasificación del cierre. */
+export const TEMPLATE_RECLASIFICACION = "RECLASIFICACION_VENCIMIENTOS"
+/** **T-37** — alta con **una línea de `170`/`520` por vencimiento** (O-6). */
+export const TEMPLATE_ALTA_PRESTAMO = "ALTA_PRESTAMO"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos planos
@@ -561,7 +562,7 @@ export function reclassStep(result: ReclassResult): ClosingStepResult {
 export const RECLASS_REVERSAL_ORDER: readonly { orden: number; asiento: string; entryNumberEsperado: number | null }[] = [
   { orden: 1, asiento: "T-27 (cierre de N, con los saldos ya reclasificados)", entryNumberEsperado: null },
   { orden: 2, asiento: "T-28 (apertura de N+1, espejo exacto)", entryNumberEsperado: 1 },
-  { orden: 3, asiento: `contra-asiento de ${TEMPLATE_RECLASIFICACION}`, entryNumberEsperado: 2 },
+  { orden: 3, asiento: `contra-asiento de T-32 (${TEMPLATE_RECLASIFICACION})`, entryNumberEsperado: 2 },
 ]
 
 export type OpeningEntryRef = {
@@ -586,7 +587,7 @@ export function reclassReversalDeviations(entries: readonly OpeningEntryRef[]): 
   const reversal = entries.find((e) => e.templateCode === TEMPLATE_RECLASIFICACION && e.reversesEntryId)
   if (reversal && reversal.entryNumber <= opening.entryNumber) {
     problems.push(
-      `el contra-asiento de ${TEMPLATE_RECLASIFICACION} es el nº ${reversal.entryNumber}, anterior o igual a la apertura: ` +
+      `el contra-asiento de T-32 (${TEMPLATE_RECLASIFICACION}) es el nº ${reversal.entryNumber}, anterior o igual a la apertura: ` +
         "debe ser el nº 2 de N+1 (O-8)"
     )
   }

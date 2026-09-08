@@ -390,7 +390,7 @@ describe("I-E9-12/13/14/15 · regularización, cierre y apertura", () => {
         entries: [closing, opening],
         nextYearEntries: [
           { entryNumber: 1, kind: "OPENING" },
-          { entryNumber: 2, kind: "REVERSAL", templateCode: "T-32", reversesEntryId: "e-32" },
+          { entryNumber: 2, kind: "REVERSAL", templateCode: "RECLASIFICACION_VENCIMIENTOS", reversesEntryId: "e-32" },
         ],
       }).status
     ).toBe("PASS")
@@ -398,7 +398,7 @@ describe("I-E9-12/13/14/15 · regularización, cierre y apertura", () => {
     const r = checkIE914({
       entries: [closing, opening],
       nextYearEntries: [
-        { entryNumber: 1, kind: "REVERSAL", templateCode: "T-32", reversesEntryId: "e-32" },
+        { entryNumber: 1, kind: "REVERSAL", templateCode: "RECLASIFICACION_VENCIMIENTOS", reversesEntryId: "e-32" },
         { entryNumber: 2, kind: "OPENING" },
       ],
     })
@@ -439,9 +439,9 @@ describe("I-E9-20/21 · ClosingRun y reapertura", () => {
       pendingRecompute: ["VALOR_ACTUAL_APLAZAMIENTO", "DIFERENCIAS_DE_CAMBIO", "RECLASIFICACION_VENCIMIENTOS"],
     }
     expect(checkIE921(ok).status).toBe("PASS")
-    const sinT25 = checkIE921({ ...ok, reversedTemplates: ["T-28", "T-27", "T-26"] })
+    const sinT25 = checkIE921({ ...ok, reversedTemplates: ["APERTURA_EJERCICIO", "CIERRE_EJERCICIO", "REGULARIZACION_RESULTADO"] })
     expect(sinT25.status).toBe("FAIL")
-    expect(sinT25.evidencia).toContain("T-25")
+    expect(sinT25.evidencia).toContain("IMPUESTO_BENEFICIOS")
     expect(checkIE921({ ...ok, balance6300Cents: 500_000 }).status).toBe("FAIL")
     expect(checkIE921({ ...ok, driftedAccounts: [{ accountCode: "572", beforeCents: 1, afterCents: 2 }] }).status).toBe("FAIL")
     expect(checkIE921(null).status).toBe("INFO")

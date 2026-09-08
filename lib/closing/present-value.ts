@@ -69,10 +69,10 @@ import type { AccountKey, Cents, DraftLine, LocalDate } from "@/lib/ledger/types
 // Códigos de plantilla (T10 · agente B1). Constantes documentadas, no imports.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** `AJUSTE_VALOR_ACTUAL`: el asiento de reconocimiento del descuento. */
-export const TEMPLATE_VALOR_ACTUAL = "T-31"
-/** `AJUSTE_EJERCICIOS_ANTERIORES` (E8): el caso **B** va por aquí, contra `113`. */
-export const TEMPLATE_AJUSTE_EJERCICIOS_ANTERIORES = "T-22"
+/** **T-31** `AJUSTE_VALOR_ACTUAL`: el reconocimiento del descuento. */
+export const TEMPLATE_VALOR_ACTUAL = "AJUSTE_VALOR_ACTUAL"
+/** **T-22** `AJUSTE_EJERCICIO_CERRADO`: el caso **B** va por aquí, contra `113`. */
+export const TEMPLATE_AJUSTE_EJERCICIOS_ANTERIORES = "AJUSTE_EJERCICIO_CERRADO"
 
 /** 662 — intereses de deudas: el interés implícito del lado **pasivo**. */
 const INTERESES_DEUDAS: AccountKey = "INTERESES_DEUDAS"
@@ -492,7 +492,7 @@ export function lateRecognitionPlan(input: LateRecognitionInput): LateRecognitio
     )
     notas.push(
       kase === "B"
-        ? `Va por ${TEMPLATE_AJUSTE_EJERCICIOS_ANTERIORES} contra 113 en el ejercicio ABIERTO, se reexpresa el comparativo y se desglosa en la memoria (NRV 22ª)`
+        ? `Va por T-22 (${TEMPLATE_AJUSTE_EJERCICIOS_ANTERIORES}) contra 113 en el ejercicio ABIERTO, se reexpresa el comparativo y se desglosa en la memoria (NRV 22ª)`
         : "Origen no inmovilizado: al gasto o ingreso original si es del mismo ejercicio; a 113 si es de un ejercicio cerrado"
     )
   }

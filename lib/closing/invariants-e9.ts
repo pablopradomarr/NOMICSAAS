@@ -992,8 +992,17 @@ export function checkIE920(runs: readonly ClosingRunSnapshot[] | undefined): Che
     : failed("I-E9-20", cut(problems))
 }
 
-/** El orden inverso de la reversión (O-21): **T-28 → T-27 → T-26 → T-25**. */
-export const REOPENING_REVERSAL_TEMPLATES: readonly string[] = ["T-28", "T-27", "T-26", "T-25"]
+/**
+ * El orden inverso de la reversión (O-21): **T-28 → T-27 → T-26 → T-25**. Los
+ * valores son los `TemplateCode` del catálogo de T10, que son **nombres**, no el
+ * ordinal `T-nn` con el que el diseño los cita.
+ */
+export const REOPENING_REVERSAL_TEMPLATES: readonly string[] = [
+  "APERTURA_EJERCICIO", // T-28
+  "CIERRE_EJERCICIO", // T-27
+  "REGULARIZACION_RESULTADO", // T-26
+  "IMPUESTO_BENEFICIOS", // T-25
+]
 
 /**
  * **I-E9-21 (O-21).** Existen los **cuatro** contra-asientos, el saldo de **cada

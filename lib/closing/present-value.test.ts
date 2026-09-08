@@ -262,7 +262,7 @@ describe("criterio 22 · caso A (ejercicio en curso)", () => {
 
   it("es el caso A y va por T-31", () => {
     expect(plan.case).toBe("A")
-    expect(plan.templateCode).toBe("T-31")
+    expect(plan.templateCode).toBe("AJUSTE_VALOR_ACTUAL") // T-31 en el catálogo de T10
   })
 
   it("valor actual 8 899 964 y descuento 1 100 036, como el fixture", () => {

@@ -52,8 +52,8 @@ import type { ClosingStepResult } from "@/lib/closing/vat"
 // Códigos de plantilla (T10 · agente B1). Constantes documentadas, no imports.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** `DIFERENCIAS_CAMBIO_CIERRE`. */
-export const TEMPLATE_DIFERENCIAS_CAMBIO = "T-30"
+/** **T-30** `DIFERENCIAS_CAMBIO_CIERRE`. El valor es el `TemplateCode`, no el ordinal. */
+export const TEMPLATE_DIFERENCIAS_CAMBIO = "DIFERENCIAS_CAMBIO_CIERRE"
 
 /** Ventana por defecto para la tasa de cierre, en días naturales (O-5). */
 export const FX_RATE_WINDOW_DAYS = 7

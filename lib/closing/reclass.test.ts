@@ -20,6 +20,7 @@ import {
   reclassStep,
   reclassifyMaturities,
   TEMPLATE_ALTA_PRESTAMO,
+  TEMPLATE_RECLASIFICACION,
   type MaturityPosition,
 } from "@/lib/closing/reclass"
 
@@ -241,7 +242,7 @@ describe("criterio 25 · préstamo sin desglose", () => {
     expect(step.blocking).toBe(true)
     expect(step.sealReason).toBe("DEUDA_SIN_DESGLOSE")
     expect(step.evidencia).toContain("PR-2024/1")
-    expect(step.evidencia).toContain(TEMPLATE_ALTA_PRESTAMO)
+    expect(step.evidencia).toContain(TEMPLATE_ALTA_PRESTAMO) // "ALTA_PRESTAMO", el TemplateCode de T-37
   })
 
   it("con el cuadro declarado, el mismo préstamo pasa a PASS y se reclasifica", () => {
@@ -295,14 +296,14 @@ describe("R-RC-6 · orden y numeración en la apertura", () => {
     expect(
       reclassReversalDeviations([
         { entryNumber: 1, kind: "OPENING" },
-        { entryNumber: 2, kind: "REVERSAL", templateCode: "T-32", reversesEntryId: "e-32" },
+        { entryNumber: 2, kind: "REVERSAL", templateCode: TEMPLATE_RECLASIFICACION, reversesEntryId: "e-32" },
       ])
     ).toEqual([])
   })
 
   it("delata el contra-asiento posteado ANTES de la apertura", () => {
     const problems = reclassReversalDeviations([
-      { entryNumber: 1, kind: "REVERSAL", templateCode: "T-32", reversesEntryId: "e-32" },
+      { entryNumber: 1, kind: "REVERSAL", templateCode: TEMPLATE_RECLASIFICACION, reversesEntryId: "e-32" },
       { entryNumber: 2, kind: "OPENING" },
     ])
     expect(problems.join(" ")).toContain("nº 2")
