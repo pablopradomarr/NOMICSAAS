@@ -25,11 +25,18 @@ import type { AccrualRow } from "@/models/accruals"
 import { readAccrualBalances, readAccruals } from "@/models/accruals"
 import type { AssetWithRevisions } from "@/models/assets"
 import { assetsWithoutAttribution, readAssetsWithRevisions, readCapitalGoods, type CapitalGoodRow } from "@/models/assets"
-import type { ChecklistInput, InvariantSnapshot, ManualAnswer } from "@/lib/closing/checklist"
+import type { ChecklistInput, InvariantSnapshot, ManualAnswer, StepEvidence } from "@/lib/closing/checklist"
 import { duePeriods } from "@/lib/recurring/schedule"
+import { periodBounds, type AllocPeriod } from "@/lib/analytics/allocate"
+import { badgeForFigure } from "@/lib/audit/confidence"
+import { isCashAccount, isUnderAccount } from "@/lib/bank/types"
+import { depreciationSchedule } from "@/lib/closing/depreciation"
 import { fxClosingAdjustments, fxStep as fxStepOf, type ClosingRate, type FxPosition } from "@/lib/closing/fx"
 import { reclassStep as reclassStepOf, reclassifyMaturities } from "@/lib/closing/reclass"
-import { capitalGoodsGuard, type ClosingStepResult } from "@/lib/closing/vat"
+import { capitalGoodsGuard, withholdingAccountKey, type ClosingStepResult, type WithholdingModel } from "@/lib/closing/vat"
+import { getAccountMapByKey } from "@/models/account-map"
+import { allocationRunStaleness, listAllocationRules, listAllocationRuns } from "@/models/allocations"
+import { listBankAccounts, pendingItems } from "@/models/bank"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import type { Cents, LocalDate } from "@/lib/ledger/types"
@@ -584,6 +591,350 @@ export async function sealedClosingRun(db: AnyClient, fiscalYearId: string): Pro
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// E9 · T23 — los cuatro bloques que C1 dejó llegando VACÍOS
+//
+// Conciliación bancaria (E7), dotación pendiente por activo, retenciones por
+// modelo (D12/O-27) y liquidación de CECOs (E5). Los cuatro se leen AQUÍ, con
+// agregados en SQL y sin N+1, y viajan al checklist con **evidencia y
+// provenance**: un paso que sale PASS tiene que decir sobre cuántas cuentas,
+// cuántos activos o cuántos periodos lo dice, o es un PASS por vacuidad
+// (lección I-E9-5).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Lo que cada bloque devuelve: los pendientes, la evidencia y el origen del dato. */
+export type ChecklistBlockRead = {
+  /** Los incumplimientos, ya nombrados con su motivo. Vacío = nada pendiente. */
+  pendientes: string[]
+  /** Qué se ha mirado y qué ha quedado fuera del alcance, y por qué. */
+  evidencia: string
+  /** La consulta o la derivación de la que sale, para el drill-down. */
+  query: string
+}
+
+/**
+ * **CONCILIACION_BANCARIA (E7).** Una cuenta de tesorería está conciliada al
+ * corte si y sólo si su cifra lleva el badge **`✓ validado contra fuente`**:
+ * anclada, sin hueco de extractos (I-E7-6b), con `I-E7-1` cuadrando, sin
+ * diferencia de cambio pendiente y **sin un pendiente sin explicar** (O-8/O-17).
+ * Es la MISMA derivación que pinta el panel de E7 —`pendingItems` +
+ * `badgeForFigure`—, nunca una segunda: un paso evaluado por dos caminos puede
+ * decir dos cosas distintas.
+ *
+ * Tres precisiones que evitan un veredicto falso:
+ *
+ *  · **La caja queda fuera del alcance y se dice.** `570` no tiene extracto ni
+ *    puede tenerlo (O-16): exigirle el badge condenaría a WARN eterno a toda
+ *    organización con caja. Su comprobación es `ARQUEO_DE_CAJA`, que es un paso
+ *    DECLARADO y ya está en el catálogo.
+ *  · **Una `57x` con saldo y sin cuenta bancaria declarada es un pendiente**, no
+ *    un silencio: sin fuente no hay nada contra lo que conciliar.
+ *  · **`invariantsPass` entra en `true` a propósito.** El badge lo baja a
+ *    `calculado` cuando los invariantes no pasan, pero eso ya lo dice
+ *    `INVARIANTES_PASS` —bloqueante— en este mismo checklist, y repetirlo aquí
+ *    haría que un FAIL del diario se contara dos veces.
+ */
+export async function readBankReconciliationBlock(
+  tx: TenantTransactionClient,
+  opts: { cutoff: LocalDate; baseCurrency: string }
+): Promise<ChecklistBlockRead> {
+  const query = "models/bank.pendingItems + lib/audit/confidence.badgeForFigure (I-E7-1, I-E7-6b, O-8/O-17)"
+  const accounts = await listBankAccounts(tx, { activeOnly: true })
+  const saldos57 = await readAccountBalances(tx, { cutoff: opts.cutoff, prefixes: ["57"], sign: "DEUDOR" })
+
+  const declaradas = new Set(accounts.map((a) => a.accountCode))
+  const pendientes: string[] = []
+  const sinFuente: string[] = []
+  for (const [code, saldo] of saldos57) {
+    if (isCashAccount(code)) {
+      sinFuente.push(code)
+      continue
+    }
+    if (saldo === 0) continue
+    if (![...declaradas].some((declarada) => isUnderAccount(code, declarada) || isUnderAccount(declarada, code))) {
+      pendientes.push(`${code}: con saldo (${saldo} c) y sin cuenta bancaria declarada contra la que conciliar`)
+    }
+  }
+
+  const bancarias = accounts.filter((a) => !isCashAccount(a.accountCode))
+  if (bancarias.length === 0) {
+    return {
+      pendientes,
+      evidencia:
+        sinFuente.length > 0
+          ? `sin cuentas bancarias declaradas; ${sinFuente.length} cuenta(s) de caja (${sinFuente.join(", ")}) quedan fuera del alcance: no tienen extracto (O-16), las cubre ARQUEO_DE_CAJA`
+          : "sin cuentas bancarias declaradas ni saldo en 57x al corte",
+      query,
+    }
+  }
+
+  const summaries = await pendingItems(tx, { cutoff: opts.cutoff, baseCurrency: opts.baseCurrency })
+  let antiguos = 0
+  for (const account of bancarias) {
+    const badge = badgeForFigure({
+      accountCodes: [account.accountCode],
+      bankAccounts: accounts,
+      summaries,
+      invariantsPass: true,
+    })
+    const summary = summaries.find((s) => s.bankAccountId === account.id)
+    antiguos += summary?.pendientesAntiguos.length ?? 0
+    if (badge.badge !== "validado") {
+      pendientes.push(`${account.code} (${account.accountCode}): ${badge.motivos[0] ?? "sin cuadre calculado al corte"}`)
+    }
+  }
+
+  const partes = [`${bancarias.length} cuenta(s) bancaria(s) miradas al corte ${opts.cutoff}`]
+  if (antiguos > 0) partes.push(`${antiguos} pendiente(s) por encima del plazo declarado (O-8)`)
+  if (sinFuente.length > 0) {
+    partes.push(`caja (${sinFuente.join(", ")}) fuera del alcance: no tiene extracto (O-16), la cubre ARQUEO_DE_CAJA`)
+  }
+  return { pendientes, evidencia: partes.join("; "), query }
+}
+
+/**
+ * **AMORTIZACION_AL_DIA.** Cuotas del ejercicio **sin asiento**, activo a
+ * activo. El cuadro no se almacena (§3.6): se recalcula con el MISMO
+ * `depreciationSchedule` que compone T-31, y los periodos contabilizados salen
+ * de `journal_lines.fixed_asset_id` (O-19), que ya trae `readAssetsWithRevisions`
+ * en su agregado. **Cero consultas nuevas.**
+ *
+ * Los activos **sin ninguna línea atribuida** no entran aquí: no se puede decir
+ * que les falte una cuota cuando no se puede ver ninguna. Los nombra
+ * `assetsWithoutAttribution` y el paso sale `INFO` (I-E9-5, §3.5).
+ */
+export function pendingDepreciationOf(
+  assets: readonly AssetWithRevisions[],
+  opts: { fiscalYearStart: LocalDate; fiscalYearEnd: LocalDate; refDate: LocalDate; sinAtribucion: ReadonlySet<string> }
+): ChecklistBlockRead & { items: { code: string; periods: string[] }[] } {
+  const desde = opts.fiscalYearStart.slice(0, 7)
+  const hasta = (opts.refDate < opts.fiscalYearEnd ? opts.refDate : opts.fiscalYearEnd).slice(0, 7)
+  const items: { code: string; periods: string[] }[] = []
+  const noEvaluables: string[] = []
+  let mirados = 0
+  let cuotas = 0
+
+  for (const { asset, revisions, postedPeriods } of assets) {
+    if (opts.sinAtribucion.has(asset.id)) continue
+    // Un activo dado de baja ANTES del ejercicio no dota nada en él.
+    if (asset.disposalDate != null && asset.disposalDate < opts.fiscalYearStart) continue
+    let rows
+    try {
+      rows = depreciationSchedule(asset, revisions)
+    } catch (error) {
+      // D2.1: los métodos no resueltos LANZAN en vez de aproximar. Aquí no se
+      // traga la excepción: se nombra el activo y el paso lo enseña.
+      noEvaluables.push(`${asset.code} (${error instanceof Error ? error.message : "cuadro no calculable"})`)
+      continue
+    }
+    mirados += 1
+    const posted = new Set(postedPeriods)
+    const delEjercicio = rows.filter((r) => r.period >= desde && r.period <= hasta && r.quotaCents !== 0)
+    cuotas += delEjercicio.length
+    const periods = delEjercicio.filter((r) => !posted.has(r.period)).map((r) => r.period)
+    if (periods.length > 0) items.push({ code: asset.code, periods })
+  }
+
+  const partes = [`${mirados} activo(s) con atribución y ${cuotas} cuota(s) del ejercicio en su cuadro vigente`]
+  if (noEvaluables.length > 0) partes.push(`cuadro no calculable en ${noEvaluables.join(", ")}`)
+  return {
+    items,
+    pendientes: items.map((a) => `${a.code}: ${a.periods.join(", ")}`),
+    evidencia: partes.join("; "),
+    query: "lib/closing/depreciation.depreciationSchedule × journal_lines.fixed_asset_id (O-19)",
+  }
+}
+
+/** Fecha límite de ingreso de un trimestre de retenciones: día 20 del mes siguiente. */
+const withholdingDueDate = (quarter: string): LocalDate => {
+  const year = Number(quarter.slice(0, 4))
+  const q = Number(quarter.slice(-1))
+  const month = 3 * q + 1
+  return month > 12 ? `${year + 1}-01-20` : `${year}-${String(month).padStart(2, "0")}-20`
+}
+
+/**
+ * **RETENCIONES_LIQUIDADAS (D12 · O-27).** `4751` está partida por modelo, y por
+ * eso el saldo **sí** se puede repartir: un trimestre está liquidado cuando su
+ * subcuenta (`IRPF_A_PAGAR_111` / `_115` / `_123`, resueltas por `AccountKey`,
+ * nunca por códigos escritos) queda a cero después del asiento de ingreso.
+ *
+ * Dos cosas que un saldo a secas diría mal:
+ *
+ *  · **El trimestre en curso no está «sin liquidar»**: el modelo del 4T se
+ *    ingresa hasta el 20 de enero, así que a 31-12 su saldo es un pasivo
+ *    correcto. Lo pendiente es el saldo del modelo **menos lo devengado en los
+ *    trimestres cuyo plazo aún no ha vencido**. El ingreso se contabiliza en el
+ *    trimestre SIGUIENTE al devengo, así que un saldo por trimestre compararía
+ *    el cargo de abril contra el abono de marzo y daría un falso pendiente.
+ *  · **El histórico anterior a E9 sigue en la `4751` sin partir** (§3.5): no se
+ *    puede verificar por modelo, y se dice en la evidencia en vez de repartirlo
+ *    a ojo.
+ *
+ * `checkWithholdingByModel` **no** se usa aquí a propósito: compara lo
+ * *practicado* según el documento con lo *abonado* según el diario, y lo
+ * practicado vive en la propuesta de extracción (E8, `readAuditInput`), no en el
+ * libro mayor. Alimentarlo con el diario por los dos lados sería un PASS por
+ * construcción.
+ */
+export async function readWithholdingBlock(
+  tx: TenantTransactionClient,
+  opts: { fiscalYearStart: LocalDate; fiscalYearEnd: LocalDate; refDate: LocalDate }
+): Promise<ChecklistBlockRead> {
+  const query =
+    "journal_lines agrupadas por (cuenta 4751 del modelo, trimestre) — saldo acreedor al corte, art. 74 RIRPF (día 20)"
+  const map = await getAccountMapByKey(tx)
+  const models: WithholdingModel[] = ["111", "115", "123"]
+  const byCode = new Map<string, WithholdingModel>()
+  const sinMapear: WithholdingModel[] = []
+  for (const model of models) {
+    const code = map.get(withholdingAccountKey(model))
+    if (code) byCode.set(code, model)
+    else sinMapear.push(model)
+  }
+  const codes = [...byCode.keys()]
+  if (codes.length === 0) {
+    return {
+      pendientes: [],
+      evidencia: `ninguna subcuenta de 4751 mapeada por AccountKey (modelos ${models.join(", ")}): no es verificable por modelo (O-27)`,
+      query,
+    }
+  }
+
+  const hasta = opts.refDate < opts.fiscalYearEnd ? opts.refDate : opts.fiscalYearEnd
+  const rows = await tx.$queryRaw<{ account_code: string; quarter: string; credit_cents: bigint; debit_cents: bigint }[]>`
+    SELECT l.account_code,
+           EXTRACT(YEAR FROM l.entry_date)::int || '-Q' || EXTRACT(QUARTER FROM l.entry_date)::int AS quarter,
+           SUM(l.credit_cents)::bigint AS credit_cents,
+           SUM(l.debit_cents)::bigint  AS debit_cents
+      FROM journal_lines l
+     WHERE l.organization_id = ${tx.$organizationId}::uuid
+       AND l.entry_date BETWEEN ${toUtcDate(opts.fiscalYearStart)}::date AND ${toUtcDate(hasta)}::date
+       AND l.entry_kind <> 'CLOSING'
+       AND l.account_code = ANY(${codes}::text[])
+     GROUP BY 1, 2
+     ORDER BY 1, 2`
+
+  const pendientes: string[] = []
+  const noVencidos: string[] = []
+  const porModelo = new Map<WithholdingModel, { code: string; saldo: Cents; noVencido: Cents; ultimoVencido: string | null }>()
+  for (const row of rows) {
+    const model = byCode.get(row.account_code)
+    if (!model) continue
+    const abonado = centsFromDb(row.credit_cents, `retención devengada en ${row.account_code}`)
+    const cargado = centsFromDb(row.debit_cents, `retención ingresada desde ${row.account_code}`)
+    const acc = porModelo.get(model) ?? { code: row.account_code, saldo: 0, noVencido: 0, ultimoVencido: null }
+    acc.saldo += abonado - cargado
+    if (withholdingDueDate(row.quarter) > opts.refDate) {
+      acc.noVencido += abonado
+      if (abonado !== 0 && !noVencidos.includes(row.quarter)) noVencidos.push(row.quarter)
+    } else if (abonado !== 0) {
+      acc.ultimoVencido = row.quarter
+    }
+    porModelo.set(model, acc)
+  }
+  for (const [model, acc] of porModelo) {
+    const pendiente = acc.saldo - acc.noVencido
+    if (pendiente <= 0) continue
+    pendientes.push(
+      `${model}: ${pendiente} c abonados en ${acc.code} sin ingresar` +
+        (acc.ultimoVencido ? ` (último trimestre vencido: ${acc.ultimoVencido})` : "")
+    )
+  }
+
+  // El saldo que sigue en la 4751 madre: histórico anterior a E9 (§3.5).
+  const madre = await readAccountBalances(tx, { cutoff: hasta, prefixes: ["4751"] })
+  const sinPartir = [...madre.entries()].filter(([code, saldo]) => !byCode.has(code) && saldo !== 0)
+
+  const partes = [`${codes.length} subcuenta(s) de 4751 miradas trimestre a trimestre hasta ${hasta}`]
+  if (noVencidos.length > 0) {
+    partes.push(`${noVencidos.join(", ")} con plazo aún no vencido al corte (día 20 del mes siguiente, art. 74 RIRPF)`)
+  }
+  if (sinMapear.length > 0) partes.push(`modelos sin subcuenta mapeada: ${sinMapear.join(", ")}`)
+  if (sinPartir.length > 0) {
+    partes.push(
+      `${sinPartir.map(([code, saldo]) => `${code} ${saldo} c`).join(", ")} sigue(n) sin partir por modelo (histórico anterior a E9, O-27): no verificable por modelo`
+    )
+  }
+  return { pendientes, evidencia: partes.join("; "), query }
+}
+
+/** Los periodos completos de tipo `kind` contenidos en `[from, to]`. */
+function periodLabelsBetween(kind: AllocPeriod, from: LocalDate, to: LocalDate): string[] {
+  const labels: string[] = []
+  for (let year = Number(from.slice(0, 4)); year <= Number(to.slice(0, 4)); year++) {
+    const candidatos =
+      kind === "YEAR"
+        ? [String(year)]
+        : kind === "QUARTER"
+          ? [1, 2, 3, 4].map((q) => `${year}-Q${q}`)
+          : Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`)
+    for (const label of candidatos) {
+      const bounds = periodBounds(label)
+      if (bounds.from >= from && bounds.to <= to) labels.push(label)
+    }
+  }
+  return labels
+}
+
+/**
+ * **LIQUIDACION_CECOS (E5, ADR-0013).** Un centro de coste está liquidado cuando
+ * **cada periodo cerrado** de cada regla vigente tiene su `AllocationRun`
+ * **SELLADO** y ese run **no está caducado**.
+ *
+ * Las dos mitades son necesarias:
+ *
+ *  · **Regla vigente sin run** — el saldo del CECO sigue donde estaba y la
+ *    matriz analítica no lo reparte. Sólo se exigen los periodos **completos**
+ *    (`periodEnd ≤ corte`): a un reparto anual no se le reclama en junio.
+ *  · **Run SELLADO pero `STALE`** — se liquidó con un diario, unas dimensiones o
+ *    unas reglas que ya no son los de hoy (O-E5-6). El sello no se guarda: se
+ *    DERIVA, y `allocationRunStaleness` memoiza el contexto del ejercicio por
+ *    transacción, de modo que doce runs mensuales no son doce lecturas del
+ *    ejercicio (es el mismo camino que la pantalla de runs de E5).
+ *
+ * I5 (`Σ imputado = saldo del CECO`) no se recalcula aquí: lo trae el invariante
+ * y lo enseña `I4_I5_PASS`, su propio paso.
+ */
+export async function readCostCenterSettlementBlock(
+  tx: TenantTransactionClient,
+  opts: { fiscalYearId: string; fiscalYearStart: LocalDate; fiscalYearEnd: LocalDate; refDate: LocalDate }
+): Promise<ChecklistBlockRead> {
+  const query = "allocation_rules vigentes × allocation_runs SELLADOS del ejercicio + staleness derivada (O-E5-6)"
+  const hasta = opts.refDate < opts.fiscalYearEnd ? opts.refDate : opts.fiscalYearEnd
+  const rules = await listAllocationRules(tx, {})
+  const runs = (await listAllocationRuns(tx, { fiscalYearId: opts.fiscalYearId })).filter(
+    (r) => r.status === "SEALED" && r.reversedAt === null && r.supersededById === null
+  )
+  const sellados = new Set(runs.map((r) => `${r.periodKind}|${r.periodStart}|${r.periodEnd}`))
+
+  const pendientes: string[] = []
+  let exigidos = 0
+  for (const rule of rules) {
+    const desde = rule.validFrom > opts.fiscalYearStart ? rule.validFrom : opts.fiscalYearStart
+    const fin = rule.validTo !== null && rule.validTo < hasta ? rule.validTo : hasta
+    if (desde > fin) continue
+    for (const label of periodLabelsBetween(rule.period, desde, fin)) {
+      const bounds = periodBounds(label)
+      exigidos += 1
+      if (!sellados.has(`${rule.period}|${bounds.from}|${bounds.to}`)) {
+        pendientes.push(`regla ${rule.code} (CECO ${rule.sourceCostCenterCode}): sin run sellado en ${label}`)
+      }
+    }
+  }
+
+  for (const run of runs) {
+    const { isStale, reasons } = await allocationRunStaleness(tx, run)
+    if (isStale) pendientes.push(`run ${run.periodStart}…${run.periodEnd}: STALE — ${reasons.join(", ")}`)
+  }
+
+  return {
+    pendientes,
+    evidencia: `${rules.length} regla(s) vigente(s), ${exigidos} periodo(s) exigido(s) hasta ${hasta} y ${runs.length} run(s) sellado(s) del ejercicio`,
+    query,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // E9 · T13 — `ChecklistInput`: lo que los pasos del cierre necesitan
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -791,6 +1142,35 @@ export async function readChecklistInput(
     assets: capitalGoodRefs,
   })
 
+  // ── T23 · los cuatro bloques que exigen leer otros módulos ──────────────
+  // En SERIE, como el resto (§9): dentro de la transacción todas comparten
+  // conexión. Ninguno recalcula un veredicto: devuelven los pendientes ya
+  // nombrados, la evidencia de lo mirado y el origen del dato.
+  const bank = await readBankReconciliationBlock(tx, { cutoff: opts.refDate, baseCurrency: opts.baseCurrency })
+  const depreciation = pendingDepreciationOf(closing.assets, {
+    fiscalYearStart: start,
+    fiscalYearEnd: end,
+    refDate: opts.refDate,
+    sinAtribucion: new Set(closing.assetsWithoutAttribution.map((a) => a.id)),
+  })
+  const withholding = await readWithholdingBlock(tx, {
+    fiscalYearStart: start,
+    fiscalYearEnd: end,
+    refDate: opts.refDate,
+  })
+  const cecos = await readCostCenterSettlementBlock(tx, {
+    fiscalYearId: opts.fiscalYearId,
+    fiscalYearStart: start,
+    fiscalYearEnd: end,
+    refDate: opts.refDate,
+  })
+  const stepEvidence: Record<string, StepEvidence> = {
+    CONCILIACION_BANCARIA: { evidencia: bank.evidencia, query: bank.query },
+    AMORTIZACION_AL_DIA: { evidencia: depreciation.evidencia, query: depreciation.query },
+    RETENCIONES_LIQUIDADAS: { evidencia: withholding.evidencia, query: withholding.query },
+    LIQUIDACION_CECOS: { evidencia: cecos.evidencia, query: cecos.query },
+  }
+
   const closingRun = await latestClosingRun(tx, opts.fiscalYearId)
   const answers: Record<string, ManualAnswer> = {}
   for (const step of closingRun?.steps ?? []) {
@@ -815,14 +1195,12 @@ export async function readChecklistInput(
     bridgeBalances,
     againstNature,
 
-    // La conciliación bancaria vive en E7 y se cablea desde la acción: aquí, sin
-    // dato, el paso sale INFO diciendo que falta, no PASS.
-    unreconciledBankAccounts: [],
+    unreconciledBankAccounts: bank.pendientes,
 
     pendingRecurring: closing.recurring.flatMap((r) =>
       duePeriods(r, r.generatedPeriods, opts.refDate).map((p) => ({ code: r.code, period: p.key }))
     ),
-    assetsPendingDepreciation: [],
+    assetsPendingDepreciation: depreciation.items,
     assetsWithoutAttribution: closing.assetsWithoutAttribution.map((a) => ({ code: a.code })),
     accrualsNotExhausted: closing.accruals
       .filter((a) => a.periodEnd <= opts.refDate && a.status === "VIVA")
@@ -841,7 +1219,7 @@ export async function readChecklistInput(
     prorrataStep,
     capitalGoodsStep,
     reccPendingCents: null,
-    withholdingPendingModels: [],
+    withholdingPendingModels: withholding.pendientes,
     balance473Cents,
 
     incomeTaxEntryId: byTemplate("IMPUESTO_BENEFICIOS"),
@@ -853,9 +1231,10 @@ export async function readChecklistInput(
     distributionEntryId: distribution?.entryId ?? null,
     previousResultPendingCents,
 
-    cecosPendientes: [],
+    cecosPendientes: cecos.pendientes,
     i4i5: invariants.filter((c) => c.id === "I4" || c.id === "I5"),
     answers,
+    stepEvidence,
   }
 }
 

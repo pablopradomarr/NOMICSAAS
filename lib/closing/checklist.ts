@@ -31,6 +31,13 @@
  * prescindible —los quince que el experto echó en falta están todos ahí—. Los
  * **nueve bloqueantes** sí coinciden exactamente con el diseño. Queda anotado
  * para que T26 lo cierre con el experto-contable.
+ *
+ * ---
+ * **T23.** Los cuatro bloques que nacieron llegando vacíos —conciliación
+ * bancaria, dotación pendiente por activo, retenciones por modelo y liquidación
+ * de CECOs— los alimenta ya `models/closing.ts`, que además aporta por paso su
+ * `stepEvidence`: qué se ha mirado y de dónde sale. La evidencia se **añade** a
+ * la del motor; el veredicto lo sigue decidiendo sólo `evaluate`.
  */
 
 import type { CheckStatus } from "@/lib/ledger/invariants-types"
@@ -304,6 +311,24 @@ export type ChecklistInput = {
   answers?: Readonly<Partial<Record<string, ManualAnswer>>>
   /** Pasos que la reapertura dejó `PENDIENTE_RECOMPUTO` (O-21). */
   pendingRecompute?: readonly string[]
+  /**
+   * **T23.** Lo que el LECTOR sabe del paso y el motor no puede saber: cuántas
+   * cuentas ha mirado, qué quedó fuera del alcance y **de dónde sale el dato**.
+   *
+   * No cambia el veredicto —lo decide `evaluate`, y sólo él—: se **añade** a la
+   * evidencia y rellena `query`, que es el camino del drill-down de la pantalla.
+   * Sin esto, un `PASS` de conciliación bancaria dice «todas conciliadas» sin
+   * decir **cuántas** ni **contra qué**, que es evidencia de adorno.
+   */
+  stepEvidence?: Readonly<Partial<Record<string, StepEvidence>>>
+}
+
+/** Evidencia y provenance que aporta quien LEE el dato (`models/closing.ts`). */
+export type StepEvidence = {
+  /** Se concatena a la evidencia del motor; nunca la sustituye. */
+  evidencia?: string
+  /** De dónde sale el dato: la consulta o la derivación, para el drill-down. */
+  query?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -466,7 +491,7 @@ function evaluate(def: ClosingStepDef, input: ChecklistInput, refDate: LocalDate
     case "RETENCIONES_LIQUIDADAS":
       return input.withholdingPendingModels.length === 0
         ? pass("Retenciones liquidadas por modelo (111, 115, 123)")
-        : warn(`Modelos con retención pendiente: ${input.withholdingPendingModels.join(", ")}`)
+        : warn(`Modelos con retención pendiente: ${list([...input.withholdingPendingModels])}`)
     case "PRORRATA_DEFINITIVA":
       return fromMotor(input.prorrataStep, "la organización no tiene prorrata declarada o falta el libro del año")
     case "BIENES_DE_INVERSION":
@@ -540,14 +565,16 @@ function evaluate(def: ClosingStepDef, input: ChecklistInput, refDate: LocalDate
 export function closingChecklist(input: ChecklistInput, refDate: LocalDate): ClosingStepResult[] {
   const results = CLOSING_STEPS.map((def) => {
     const out = evaluate(def, input, refDate)
+    const extra = input.stepEvidence?.[def.step]
     const result: ClosingStepResult = {
       step: def.step,
       block: def.block,
       status: out.status,
       blocking: def.blocking,
-      evidencia: out.evidencia,
+      evidencia: extra?.evidencia ? `${out.evidencia} · ${extra.evidencia}` : out.evidencia,
     }
-    if (out.query) result.query = out.query
+    const query = out.query ?? extra?.query
+    if (query) result.query = query
     if (def.sealReason && out.status !== "PASS" && out.status !== "NA") result.sealReason = def.sealReason
     return result
   })
