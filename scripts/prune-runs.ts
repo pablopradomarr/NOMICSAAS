@@ -35,15 +35,38 @@
  *   la que cualquier otra sesión podría cruzar organizaciones. Se deja como está
  *   y el test de «ninguna tabla en NO FORCE» sigue siendo la red.
  *
- * La AUTOMATIZACIÓN —cron y archivado en frío— es **E9**, fechada en `ESTADO.md`.
- * Aquí sólo está la herramienta del operador.
+ * ## E9 · T21 — el archivado en frío y el `cron` (ADR-0015 D3, R12 de E7)
+ *
+ * Lo que E7 dejó fechado se cierra aquí, y se cierra en este orden:
+ * **archivar primero, borrar después**. `--archive <dir>` escribe **un JSON por
+ * run** —con su `checksHash` / `paramsHash` intactos— **antes** de que la
+ * transacción de borrado empiece; si el archivado falla, no se borra nada. Al
+ * revés, un fallo de escritura dejaría evidencia destruida y sin copia, que es
+ * exactamente lo que la política de retención existe para impedir.
+ *
+ * El fichero en frío es **recomputable, no una foto nueva**: lleva las mismas
+ * cifras selladas que la fila, de modo que I-E7-7 (`checksHash`) puede
+ * verificarlo fuera de la base. Un archivo que no se puede verificar no es
+ * evidencia, es un `.json`.
+ *
+ * **Política escrita** (la que el `cron` ejecuta cada noche):
+ *
+ * | Cuándo | Qué | Dónde |
+ * |---|---|---|
+ * | Diario, 03:15 | `--all --archive /var/lib/erp/archive --apply` | `etc/crontab` |
+ * | Retención | 24 meses (`ReportRun`, `InvariantRun`) · 12 (`StoreSweep`) | `RETENTION_MONTHS` |
+ * | Nunca se purga | `AuditLog`, `ExtractionRun`, `AllocationRun`, extractos y sus `File` | `NUNCA_SE_PURGAN` |
+ * | Archivo en frío | `<dir>/<organizationId>/<tabla>/<id>.json`, 0600 | `--archive` |
+ * | Rol | `app_maintenance` (BYPASSRLS), nunca la aplicación | `docker-cron-entrypoint.sh` |
  *
  * Uso:
  *   DATABASE_URL_MAINTENANCE=… npx tsx scripts/prune-runs.ts --all
  *   DATABASE_URL_MAINTENANCE=… npx tsx scripts/prune-runs.ts --org <uuid> --apply
  *   DATABASE_URL_MAINTENANCE=… npx tsx scripts/prune-runs.ts --all --apply --ref-date 2027-01-01
+ *   DATABASE_URL_MAINTENANCE=… npx tsx scripts/prune-runs.ts --all --archive /var/lib/erp/archive --apply
  */
 
+import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import type { Client } from "pg"
@@ -74,6 +97,10 @@ export type PruneReport = {
   storeSweeps: number
   /** Ficheros de extracto protegidos (siempre > 0 si hay extractos importados). */
   ficherosDeExtractoProtegidos: number
+  /** **T21**: runs escritos en frío ANTES de borrarlos. 0 sin `--archive`. */
+  archivados: number
+  /** Directorio del archivo en frío, o `null` si no se pidió. */
+  archiveDir: string | null
 }
 
 export type PruneOptions = {
@@ -82,6 +109,13 @@ export type PruneOptions = {
   apply?: boolean
   /** «Hoy» para el cálculo de la ventana. Por parámetro: no se lee el reloj. */
   refDate?: string
+  /**
+   * **T21 · archivado en frío.** Directorio donde se escribe un JSON por run
+   * **antes** de borrarlo. Sin él, `--apply` borra sin copia — que sigue siendo
+   * la política de E7 y sigue siendo válida para un entorno de desarrollo, pero
+   * no para producción, donde el `cron` siempre lo pasa.
+   */
+  archive?: string | null
 }
 
 function parseArgs(argv: readonly string[]): PruneOptions {
@@ -91,6 +125,7 @@ function parseArgs(argv: readonly string[]): PruneOptions {
     all: argv.includes("--all"),
     apply: argv.includes("--apply"),
     refDate: at("--ref-date"),
+    archive: at("--archive") ?? null,
   }
 }
 
@@ -196,6 +231,44 @@ async function idsABorrar(client: Client, sql: string, organizationId: string, r
 }
 
 /**
+ * **T21 · archivado en frío.** Escribe un JSON por run en
+ * `<dir>/<organizationId>/<tabla>/<id>.json`, con la fila **completa** tal cual
+ * está en la base —incluidos `checksHash` / `paramsHash`—, para que la evidencia
+ * siga siendo **verificable fuera** de PostgreSQL (I-E7-7 recomputa el hash
+ * sobre `checks`, y eso funciona igual sobre el fichero).
+ *
+ * Se hace **antes** del `DELETE` y **fuera** de su transacción: si escribir
+ * falla, la excepción sube y no se borra nada. El orden inverso —borrar y luego
+ * archivar— destruiría evidencia ante el primer disco lleno.
+ *
+ * Los ficheros se escriben con modo `0600`: un run lleva importes, cuentas y
+ * nombres de contrapartes, y el directorio de archivo es del operador.
+ */
+export async function archivarRuns(
+  client: Client,
+  opts: { dir: string; organizationId: string; table: string; ids: readonly string[] }
+): Promise<number> {
+  if (opts.ids.length === 0) return 0
+  const destino = path.join(opts.dir, opts.organizationId, opts.table)
+  await mkdir(destino, { recursive: true, mode: 0o700 })
+
+  // `row_to_json` deja que sea PostgreSQL quien serialice: los `bigint` salen
+  // como número JSON y los `jsonb` sin doble codificar, que es justo lo que un
+  // `JSON.stringify` del lado de node haría mal con `BigInt` (lanza TypeError).
+  const { rows } = await client.query<{ id: string; fila: unknown }>(
+    `SELECT id, row_to_json(t) AS fila FROM ${opts.table} t WHERE id = ANY($1::uuid[]) ORDER BY id`,
+    [[...opts.ids]]
+  )
+  for (const row of rows) {
+    await writeFile(path.join(destino, `${row.id}.json`), `${JSON.stringify(row.fila, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    })
+  }
+  return rows.length
+}
+
+/**
  * Purga según la política. `refDate` entra por parámetro —nunca se lee el
  * reloj— para que dos ejecuciones sobre el mismo estado den el mismo resultado.
  */
@@ -209,6 +282,8 @@ export async function pruneRuns(opts: PruneOptions): Promise<PruneReport> {
     invariantRuns: 0,
     storeSweeps: 0,
     ficherosDeExtractoProtegidos: 0,
+    archivados: 0,
+    archiveDir: opts.archive ?? null,
   }
 
   await withMaintenanceClient(async (client) => {
@@ -237,6 +312,29 @@ export async function pruneRuns(opts: PruneOptions): Promise<PruneReport> {
       report.storeSweeps += sweepIds.length
 
       if (!opts.apply) continue
+
+      // **T21 · archivar ANTES de borrar, y fuera de la transacción.** Si esto
+      // lanza, no se abre el `BEGIN` y no se pierde una sola fila.
+      if (opts.archive) {
+        report.archivados += await archivarRuns(client, {
+          dir: opts.archive,
+          organizationId,
+          table: "invariant_runs",
+          ids: invariantIds,
+        })
+        report.archivados += await archivarRuns(client, {
+          dir: opts.archive,
+          organizationId,
+          table: "report_runs",
+          ids: reportIds,
+        })
+        report.archivados += await archivarRuns(client, {
+          dir: opts.archive,
+          organizationId,
+          table: "store_sweeps",
+          ids: sweepIds,
+        })
+      }
 
       // Las tres son APPEND-ONLY para la aplicación (`RESTRICTIVE … USING(false)`
       // + `REVOKE`), pero `app_maintenance` tiene `BYPASSRLS` y sí conserva el
@@ -284,7 +382,12 @@ export async function pruneRuns(opts: PruneOptions): Promise<PruneReport> {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (!args.org && !args.all) {
-    console.error("Uso: prune-runs.ts (--all | --org <uuid>) [--apply] [--ref-date AAAA-MM-DD]")
+    console.error("Uso: prune-runs.ts (--all | --org <uuid>) [--apply] [--ref-date AAAA-MM-DD] [--archive <dir>]")
+    process.exitCode = 1
+    return
+  }
+  if (args.archive !== null && args.archive !== undefined && !path.isAbsolute(args.archive)) {
+    console.error(`--archive exige una ruta ABSOLUTA (recibido: ${args.archive}); el cron corre con otro cwd`)
     process.exitCode = 1
     return
   }
@@ -300,7 +403,10 @@ async function main() {
       `  ReportRun    a purgar: ${report.reportRuns}   (se conservan 24 meses + 1 por tipo y mes + todo ejercicio CLOSED)\n` +
       `  InvariantRun a purgar: ${report.invariantRuns}   (+ el último de cada alcance y el último REQUIERE REVISIÓN)\n` +
       `  StoreSweep   a purgar: ${report.storeSweeps}   (12 meses + el último DONE)\n` +
-      `  Ficheros de extracto PROTEGIDOS: ${report.ficherosDeExtractoProtegidos} (art. 30 CCom; nunca se borran)`
+      `  Ficheros de extracto PROTEGIDOS: ${report.ficherosDeExtractoProtegidos} (art. 30 CCom; nunca se borran)\n` +
+      (report.archiveDir
+        ? `  Archivo en frío: ${report.archivados} run(s) escritos en ${report.archiveDir} ANTES de borrar (T21)`
+        : "  Archivo en frío: NO solicitado (--archive <dir>); en producción el cron siempre lo pasa")
   )
   for (const [tabla, motivo] of Object.entries(NUNCA_SE_PURGAN)) {
     console.log(`  · ${tabla}: no se purga — ${motivo}`)

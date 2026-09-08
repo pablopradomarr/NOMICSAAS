@@ -1206,6 +1206,20 @@ type FxRow = {
  *  · `recognizedDifferenceCents`: lo ya reconocido en **768/668** por asientos
  *    que tocan ESA 57x. Es la única atribución posible desde el diario: una
  *    diferencia de cambio de una cuenta bancaria se contabiliza contra ella.
+ *
+ * ## E9 · qué se generaliza y qué se queda (§4.10, O-4)
+ *
+ * Esta función **sigue aquí y sigue igual**: mide la diferencia de cambio de una
+ * **cuenta bancaria** y es lo que alimenta I-E7-12. Lo que E9 necesitaba era el
+ * universo completo de partidas monetarias —`400`, `430`, `17x`, `52x`…— para el
+ * asiento T-30, y eso es **`readFxPositions` en `models/closing.ts`**, acotado
+ * por **`accounts.is_monetary`** (I-E9-24).
+ *
+ * No se fusionan a propósito: aquí el eje es la cuenta bancaria (una fila por
+ * `BankAccount`, con su `code_pattern`), allí es `(cuenta, contraparte, divisa)`
+ * y el filtro lo pone el **plan**, no una lista. Fundirlas obligaría a que I-E7-12
+ * dependiera de `is_monetary`, y una 57x en divisa es monetaria por definición:
+ * el invariante dejaría de medir si alguien desmarcara la cuenta.
  */
 async function readFxCloses(
   tx: TenantTransactionClient,

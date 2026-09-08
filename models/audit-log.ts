@@ -53,6 +53,22 @@ export type AuditEntity =
   | "StoreSweep"
   // E13 — autenticación email + contraseña (docs/design/E13-autenticacion.md §7).
   | "User"
+  // E9 · T12/T14 — cierre, recurrentes y fiscalidad periódica (§8: «AuditLog
+  // en: alta/edición/pausa de regla, generación de lote, alta / revisión / baja
+  // y venta de activo, alta de deuda, liquidación y reversión de IVA, cierre de
+  // prorrata, barrido RECC, cada paso posteado, cierre, reapertura con motivo,
+  // cambio de estado societario y fiscal, distribución del resultado»).
+  | "RecurringEntry"
+  | "RecurringOccurrence"
+  | "FixedAsset"
+  | "AssetRevision"
+  | "Accrual"
+  | "DebtSchedule"
+  | "VatRegimePeriod"
+  | "VatSettlement"
+  | "ProrrataYear"
+  | "ClosingRun"
+  | "ProfitDistribution"
 
 export type AuditAction =
   | "create"
@@ -119,6 +135,33 @@ export type AuditAction =
   | "password_set"
   | "password_reset_sent"
   | "password_changed"
+  // E9 · T12/T14 — actos del ciclo del ejercicio (§8). Cada uno con `before` y
+  // `after` en la MISMA transacción que el hecho que registra.
+  /** Pausar / reactivar / finalizar una regla recurrente. */
+  | "SET_STATUS"
+  /** Generación de un lote de ocurrencias, con su periodo tope. */
+  | "GENERATE_OCCURRENCES"
+  /** Revertir una ocurrencia: contra-asiento + motivo; la fila NO se borra. */
+  | "REVERT_OCCURRENCE"
+  /** Revisión prospectiva de un activo (NRV 22ª), siempre con motivo. */
+  | "REVISE_ASSET"
+  /** Baja (T-33) y venta (T-34) de un activo. */
+  | "DISPOSE_ASSET"
+  /** Liquidación de IVA (T-23) y su reversión. */
+  | "SETTLE_VAT"
+  | "REVERSE_VAT_SETTLEMENT"
+  /** Cierre de la prorrata del año con su regularización (art. 105 LIVA). */
+  | "CLOSE_PRORRATA"
+  /** Barrido RECC del 31/12 (art. 163 terdecies, T-36). */
+  | "RECC_YEAR_END"
+  /** Un paso del checklist posteado, el cierre y la reapertura con motivo. */
+  | "POST_CLOSING_STEP"
+  | "REOPEN"
+  /** Estado societario (FORMULADAS/APROBADAS/DEPOSITADAS) y estado fiscal. */
+  | "SET_APPROVAL_STATUS"
+  | "SET_TAX_FILING_STATUS"
+  /** Distribución del resultado acordada por la junta (T-35, O-18). */
+  | "DISTRIBUTE_PROFIT"
 
 export type AuditLogInput = {
   entity: AuditEntity

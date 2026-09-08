@@ -3,5 +3,13 @@
 # Email sync heartbeat — every 5 min; runEmailSync honors each mailbox's UI sync frequency.
 */5 * * * * set -a; . /etc/cron.env; cd /app && npm run email:sync >> /var/log/cron.log 2>&1
 
+# E9 · T21 — retención de runs (ADR-0015 D3): ARCHIVA en frío y luego purga.
+# Conecta como `app_maintenance` (BYPASSRLS): recorre todas las organizaciones y
+# con `app_runtime` vería 0 filas en silencio. Sin DATABASE_URL_MAINTENANCE el
+# script aborta con mensaje explícito y el cron no borra nada.
+# Se archiva ANTES de borrar y fuera de la transacción: si el disco falla, no se
+# pierde una sola fila. Los `File` de extracto no se purgan nunca (art. 30 CCom).
+15 3 * * * set -a; . /etc/cron.env; cd /app && npx tsx scripts/prune-runs.ts --all --archive "${RUN_ARCHIVE_DIR:-/var/lib/erp/archive}" --apply >> /var/log/cron.log 2>&1
+
 # Rotate log when it grows past 10 MB.
 0 0 * * * find /var/log -name "cron.log*" -size +10M -delete
