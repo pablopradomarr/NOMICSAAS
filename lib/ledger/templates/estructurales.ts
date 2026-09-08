@@ -382,14 +382,30 @@ export function buildRegularizacionIva(input: RegularizacionIvaInput, ctx: Ledge
 // T-25 · IMPUESTO_BENEFICIOS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * **E9 · O-26 (T-25 modificada).** Dos correcciones que un auditor mira:
+ *
+ * 1. La cuenta es **`6300` Impuesto corriente**, no el padre `630`
+ *    (`IMPUESTO_CORRIENTE`; `IMPUESTO_BENEFICIOS_GASTO` sigue como respaldo para
+ *    el plan que no tenga la subcuenta, y no se rompe nada de lo ya mapeado).
+ * 2. La cancelación de **`473`** es **obligatoria**, no condicional: retenciones
+ *    soportadas y pagos fraccionados son un activo que la liquidación consume.
+ *    Sin ella —el defecto que O-26 destapa— el activo (`473`) y el pasivo
+ *    (`4752`) quedan **simultáneamente sobrevalorados por el mismo importe**,
+ *    con compensación aparente en el resultado.
+ *
+ * *(ejemplo del experto: base 2 000 000 al 25 %, retenciones 120 000 y pagos
+ * fraccionados 180 000 ⇒ `6300 (D) 500 000 / 473 (H) 300 000 / 4752 (H) 200 000`.)*
+ */
 export function buildImpuestoBeneficios(input: ImpuestoBeneficiosInput, ctx: LedgerContext): Result<EntryDraft> {
   const errors: LedgerError[] = []
-  const expenseCode = mapped(ctx, "IMPUESTO_BENEFICIOS_GASTO", errors)
-  // Base negativa: no hay cuota (la BIN se compensa en ejercicios futuros, E9).
+  const expenseCode = ctx.map("IMPUESTO_CORRIENTE") ?? mapped(ctx, "IMPUESTO_BENEFICIOS_GASTO", errors)
+  // Base negativa: no hay cuota (la BIN se compensa en ejercicios futuros, E10).
   const cuotaCents = input.taxableBaseCents > 0 ? applyBps(input.taxableBaseCents, input.rateBps) : 0
   const prepayments = input.prepaymentsCents ?? 0
   const netCents = cuotaCents - prepayments
   const payableCode = netCents >= 0 ? mapped(ctx, "HP_ACREEDORA_IS", errors) : mapped(ctx, "HP_DEUDORA_IS", errors)
+  const prepaymentsCode = prepayments > 0 ? mapped(ctx, "IRPF_RETENIDO_CLIENTES", errors) : null
   if (cuotaCents === 0) {
     errors.push(
       err("TEMPLATE_INPUT", "taxableBaseCents", "Sin base imponible positiva no hay cuota que contabilizar en T-25")
@@ -399,13 +415,19 @@ export function buildImpuestoBeneficios(input: ImpuestoBeneficiosInput, ctx: Led
 
   const lines: DraftLine[] = [
     debit(cuotaCents, { accountCode: expenseCode!, analyticType: "NO_ANALITICO" }),
+    // O-26: los pagos a cuenta se cancelan SIEMPRE, tanto si la cuota
+    // diferencial sale a pagar como a devolver.
+    ...(prepaymentsCode
+      ? [
+          credit(prepayments, {
+            accountCode: prepaymentsCode,
+            description: "Cancelación de retenciones soportadas y pagos fraccionados",
+          }),
+        ]
+      : []),
     ...(netCents >= 0
       ? [credit(netCents, { accountCode: payableCode! })]
       : [debit(-netCents, { accountCode: payableCode! })]),
-    // Los pagos fraccionados previos (473/4709) se cancelan contra la cuota.
-    ...(prepayments > 0 && netCents >= 0
-      ? [credit(prepayments, { accountCode: ctx.map("IRPF_RETENIDO_CLIENTES") ?? "473" })]
-      : []),
   ]
 
   return buildEntry(

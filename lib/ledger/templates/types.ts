@@ -1,11 +1,17 @@
 /**
- * E3 · T5 — Contrato de las 28 plantillas de asiento
+ * E3 · T5 — Contrato de las plantillas de asiento
  * (`docs/design/E3-asientos-tipo.md` §0 y §1). Módulo PURO.
  *
  * Una plantilla es una función pura `build(input, ctx) → Result<EntryDraft>`.
  * No lee la BD, no hace IO y **no conoce ningún código de cuenta**: pide una
  * `AccountKey` y `ctx.map` resuelve. Las cuentas que decide el usuario o el
  * documento (621, 628, 681, 216…) llegan como `accountCode` en el input.
+ *
+ * **E9 · T10 (ADR-0016).** El catálogo pasa de 28 a **37**: T-29…T-37 cubren el
+ * DUA de importación, los cuatro ajustes de cierre de valoración y
+ * presentación, la baja y la venta de inmovilizado, la distribución del
+ * resultado, el barrido del RECC y el alta de préstamo con su cuadro de
+ * vencimientos. **I-E3-5 exige 37/37.**
  */
 
 import type { z } from "zod"
@@ -44,17 +50,42 @@ export const TEMPLATE_CODES = [
   "REGULARIZACION_RESULTADO",
   "CIERRE_EJERCICIO",
   "APERTURA_EJERCICIO",
+  // Bloque E9 — cierre, recurrentes y fiscalidad periódica (T-29…T-37)
+  "DUA_IMPORTACION",
+  "DIFERENCIAS_CAMBIO_CIERRE",
+  "AJUSTE_VALOR_ACTUAL",
+  "RECLASIFICACION_VENCIMIENTOS",
+  "BAJA_INMOVILIZADO",
+  "VENTA_INMOVILIZADO",
+  "DISTRIBUCION_RESULTADO",
+  "DEVENGO_RECC",
+  "ALTA_PRESTAMO",
 ] as const
 
 export type TemplateCode = (typeof TEMPLATE_CODES)[number]
 
-/** Las 24 de operativa corriente son las que E3 expone al usuario (§1). */
+/**
+ * Plantillas **sin formulario de usuario**: las construye el motor a partir de
+ * saldos, cuadros o del libro registro (E3 §1 y E9 §4.10). Que no tengan
+ * formulario no significa que no tengan acción: el asistente de cierre, el
+ * barrido del art. 163 *terdecies* y la distribución del resultado las
+ * disparan con un input **calculado**, nunca tecleado.
+ */
+export const SYSTEM_ONLY_TEMPLATE_CODES: readonly TemplateCode[] = [
+  "IMPUESTO_BENEFICIOS",
+  "REGULARIZACION_RESULTADO",
+  "CIERRE_EJERCICIO",
+  "APERTURA_EJERCICIO",
+  "DIFERENCIAS_CAMBIO_CIERRE",
+  "AJUSTE_VALOR_ACTUAL",
+  "RECLASIFICACION_VENCIMIENTOS",
+  "DISTRIBUCION_RESULTADO",
+  "DEVENGO_RECC",
+] as const
+
+/** Las de operativa corriente son las que el producto expone al usuario (§1). */
 export const OPERATIONAL_TEMPLATE_CODES: readonly TemplateCode[] = TEMPLATE_CODES.filter(
-  (c) =>
-    c !== "IMPUESTO_BENEFICIOS" &&
-    c !== "REGULARIZACION_RESULTADO" &&
-    c !== "CIERRE_EJERCICIO" &&
-    c !== "APERTURA_EJERCICIO"
+  (c) => !SYSTEM_ONLY_TEMPLATE_CODES.includes(c)
 )
 
 export type TemplateBlock = "A" | "B" | "C"

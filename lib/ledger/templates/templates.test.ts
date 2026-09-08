@@ -1,15 +1,23 @@
 /**
- * E3 · T5a/T5b/T5c — las 28 plantillas contra las tablas del experto contable
+ * E3 · T5a/T5b/T5c — las plantillas contra las tablas del experto contable
  * (`docs/design/E3-asientos-tipo.md` §1). Los importes son los de sus ejemplos.
  *
  * Cada plantilla se comprueba con un fixture pequeño: qué cuentas, en qué
  * columna y por qué importe. La reproducción de los 84 asientos del fixture
- * completo (I-E3-5 con cobertura 28/28) es de la suite de integración.
+ * completo (I-E3-5 con cobertura 37/37) es de la suite de integración. Las nueve
+ * plantillas de E9 (T-29…T-37) tienen su propio fichero, `cierre-e9.test.ts`.
  */
 
 import { describe, expect, it } from "vitest"
 
-import { ALL_TEMPLATES, buildFromTemplate, OPERATIONAL_TEMPLATE_CODES, TEMPLATE_CODES, TEMPLATES } from "@/lib/ledger/templates"
+import {
+  ALL_TEMPLATES,
+  buildFromTemplate,
+  OPERATIONAL_TEMPLATE_CODES,
+  SYSTEM_ONLY_TEMPLATE_CODES,
+  TEMPLATE_CODES,
+  TEMPLATES,
+} from "@/lib/ledger/templates"
 import type { EntryDraft, Result } from "@/lib/ledger/types"
 import { codeFor, FY_2026, testContext } from "@/tests/support/ledger-context"
 
@@ -70,24 +78,27 @@ const ctx = testContext()
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("registro de plantillas", () => {
-  it("son 28, con código único y coherente con su clave", () => {
-    expect(TEMPLATE_CODES).toHaveLength(28)
-    expect(new Set(TEMPLATE_CODES).size).toBe(28)
+  // E9 · T10: el catálogo pasa de 28 a 37 (T-29…T-37) e I-E3-5 exige 37/37.
+  it("son 37, con código único y coherente con su clave", () => {
+    expect(TEMPLATE_CODES).toHaveLength(37)
+    expect(new Set(TEMPLATE_CODES).size).toBe(37)
     for (const code of TEMPLATE_CODES) expect(TEMPLATES[code].code).toBe(code)
-    expect(ALL_TEMPLATES).toHaveLength(28)
+    expect(ALL_TEMPLATES).toHaveLength(37)
   })
 
-  it("24 son de operativa corriente; las 4 de cierre no tienen acción hasta E9", () => {
-    expect(OPERATIONAL_TEMPLATE_CODES).toHaveLength(24)
+  it("28 son de operativa corriente; las 9 de sistema no tienen formulario", () => {
+    expect(OPERATIONAL_TEMPLATE_CODES).toHaveLength(28)
     const systemOnly = ALL_TEMPLATES.filter((t) => t.systemOnly).map((t) => t.code)
-    expect(systemOnly.sort()).toEqual(
-      ["APERTURA_EJERCICIO", "CIERRE_EJERCICIO", "IMPUESTO_BENEFICIOS", "REGULARIZACION_RESULTADO"].sort()
-    )
+    expect(systemOnly.sort()).toEqual([...SYSTEM_ONLY_TEMPLATE_CODES].sort())
+    // La lista de `types.ts` y el registro no pueden divergir: quien añada una
+    // plantilla de sistema y olvide una de las dos rompe este test.
+    expect(systemOnly).toHaveLength(9)
+    for (const code of SYSTEM_ONLY_TEMPLATE_CODES) expect(OPERATIONAL_TEMPLATE_CODES).not.toContain(code)
   })
 
-  it("los tres bloques reparten las 28 (7 + 11 + 10)", () => {
+  it("los tres bloques reparten las 37 (9 + 13 + 15)", () => {
     const count = (block: string) => ALL_TEMPLATES.filter((t) => t.block === block).length
-    expect([count("A"), count("B"), count("C")]).toEqual([7, 11, 10])
+    expect([count("A"), count("B"), count("C")]).toEqual([9, 13, 15])
   })
 
   it("una plantilla desconocida devuelve TEMPLATE_INPUT, no lanza", () => {

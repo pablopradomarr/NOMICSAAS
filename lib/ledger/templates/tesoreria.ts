@@ -11,6 +11,7 @@
 
 import { ajusteRedondeo } from "@/lib/ledger/tax"
 import { buildEntry } from "@/lib/ledger/post"
+import { reccAccrualOnCollection } from "@/lib/closing/vat"
 import {
   AccountKey,
   AnalyticType,
@@ -31,6 +32,7 @@ import type {
   PagoDeudaInput,
   PagoProveedorInput,
   PeriodificacionInput,
+  ReccBlockInput,
 } from "@/lib/ledger/templates/schemas"
 
 import { templateDestination } from "@/lib/ledger/templates/dimensions"
@@ -86,6 +88,73 @@ function financialLines(
   return lines
 }
 
+/**
+ * **E9 · R-IVA-19 (O-14/O-15) — bloque RECC de T-08 y T-09.**
+ *
+ * Bajo el criterio de caja el repercutido se devenga **al cobro** (`4778 → 477`)
+ * y el soportado se deduce **al pago** (`472 → 4728`), con el límite del 31 de
+ * diciembre del año inmediato posterior que barre T-36. Con cobro o pago
+ * parcial, la cuota es proporcional y el **residuo va al último** (`isFinal`).
+ *
+ * *(ejemplo del experto: base 1 000 000, IVA 210 000, cobro 500 000 ⇒
+ * `4778 (D) 86 776 / 477 (H) 86 776`.)*
+ *
+ * Sin bloque `recc`, T-08 y T-09 emiten exactamente las líneas de E3.
+ */
+function reccLines(
+  recc: ReccBlockInput | undefined,
+  settledCents: Cents,
+  side: "COBRO" | "PAGO",
+  errors: LedgerError[]
+): DraftLine[] {
+  if (!recc) return []
+  const collected = recc.collectedCents ?? settledCents
+  if (recc.alreadyAccruedCents > recc.totalQuotaCents) {
+    errors.push(
+      err(
+        "TEMPLATE_INPUT",
+        "recc.alreadyAccruedCents",
+        `Lo ya devengado (${recc.alreadyAccruedCents}) supera la cuota total del documento (${recc.totalQuotaCents})`
+      )
+    )
+    return []
+  }
+  if (collected > recc.totalInvoiceCents) {
+    errors.push(
+      err(
+        "TEMPLATE_INPUT",
+        "recc.collectedCents",
+        `El importe imputado a ${recc.documentNumber} (${collected}) supera el total de la factura ` +
+          `(${recc.totalInvoiceCents})`
+      )
+    )
+    return []
+  }
+  const quota = reccAccrualOnCollection({
+    collectedCents: collected,
+    totalInvoiceCents: recc.totalInvoiceCents,
+    totalQuotaCents: recc.totalQuotaCents,
+    alreadyAccruedCents: recc.alreadyAccruedCents,
+    isFinal: recc.isFinal,
+  })
+  if (quota <= 0) return []
+
+  const descripcion =
+    side === "COBRO"
+      ? `Devengo RECC al cobro · ${recc.documentNumber} (art. 163 terdecies LIVA)`
+      : `Deducción RECC al pago · ${recc.documentNumber} (art. 163 terdecies LIVA)`
+
+  return side === "COBRO"
+    ? [
+        debit(quota, { accountKey: "IVA_REPERCUTIDO_PENDIENTE_RECC", description: descripcion }),
+        credit(quota, { accountKey: "IVA_REPERCUTIDO", description: descripcion }),
+      ]
+    : [
+        debit(quota, { accountKey: "IVA_SOPORTADO", description: descripcion }),
+        credit(quota, { accountKey: "IVA_SOPORTADO_PENDIENTE_RECC", description: descripcion }),
+      ]
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // T-08 · COBRO_CLIENTE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,6 +171,10 @@ export function buildCobroCliente(input: CobroClienteInput, ctx: LedgerContext):
     const code = mapped(ctx, s.receivableKey, errors)
     return credit(s.amountCents, { accountCode: code ?? "", counterpartyId: s.counterpartyId ?? null })
   })
+
+  // E9 · O-15: el devengo del repercutido al cobro, proporcional a lo cobrado.
+  const settledCents = sumCents(input.settlements.map((s) => s.amountCents))
+  const recc = reccLines(input.recc, settledCents, "COBRO", errors)
 
   if (errors.length > 0) return fail<EntryDraft>(...errors)
 
@@ -121,6 +194,7 @@ export function buildCobroCliente(input: CobroClienteInput, ctx: LedgerContext):
       : []),
     ...financial,
     ...settlementLines,
+    ...recc,
   ]
 
   return buildEntry(
@@ -155,6 +229,12 @@ export function buildPagoProveedor(input: PagoProveedorInput, ctx: LedgerContext
     return debit(s.amountCents, { accountCode: code ?? "", counterpartyId: s.counterpartyId ?? null })
   })
 
+  // E9 · O-15: la deducción del soportado al pago, proporcional a lo pagado. La
+  // dirección que se olvida —y la que la Inspección comprueba— es ésta: el
+  // destinatario en régimen general de un proveedor en RECC también difiere.
+  const settledCents = sumCents(input.settlements.map((s) => s.amountCents))
+  const recc = reccLines(input.recc, settledCents, "PAGO", errors)
+
   if (errors.length > 0) return fail<EntryDraft>(...errors)
 
   const lines: DraftLine[] = [
@@ -172,6 +252,7 @@ export function buildPagoProveedor(input: PagoProveedorInput, ctx: LedgerContext
       : []),
     ...financial,
     credit(input.amountPaidCents, { accountCode: bankCode! }),
+    ...recc,
   ]
 
   return buildEntry(

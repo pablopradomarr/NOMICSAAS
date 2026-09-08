@@ -1,10 +1,10 @@
 /**
- * E3 · T5 — Registro de las 28 plantillas y `buildFromTemplate`.
+ * E3 · T5 · E9 · T10 — Registro de las **37** plantillas y `buildFromTemplate`.
  *
  * `TEMPLATES` es la fuente única del catálogo: la UI construye sus formularios
  * a partir de `schema`, las server actions su unión discriminada a partir de
  * `OPERATIONAL_TEMPLATE_CODES` y el invariante I-E3-5 recorre `TEMPLATES` para
- * comprobar que el fixture las cubre 28/28.
+ * comprobar que el fixture las cubre **37/37** (E9 · ADR-0016).
  */
 
 import { z } from "zod"
@@ -42,6 +42,17 @@ import {
   buildTraspasoTesoreria,
   ContraAsientoBuildInput,
 } from "@/lib/ledger/templates/estructurales"
+import {
+  buildAjusteValorActual,
+  buildAltaPrestamo,
+  buildBajaInmovilizado,
+  buildDevengoRecc,
+  buildDiferenciasCambio,
+  buildDistribucionResultado,
+  buildDuaImportacion,
+  buildReclasificacionVencimientos,
+  buildVentaInmovilizado,
+} from "@/lib/ledger/templates/cierre-e9"
 import * as S from "@/lib/ledger/templates/schemas"
 import { TEMPLATE_CODES, TemplateCode, TemplateDefinition } from "@/lib/ledger/templates/types"
 
@@ -347,9 +358,101 @@ export const TEMPLATES: Readonly<Record<TemplateCode, AnyTemplate>> = {
     schema: S.aperturaEjercicioSchema,
     build: buildAperturaEjercicio,
   }),
+
+  // ── Bloque E9 (ADR-0016): T-29 … T-37 ──
+  DUA_IMPORTACION: define({
+    code: "DUA_IMPORTACION",
+    label: "DUA de importación (con y sin diferimiento)",
+    block: "A",
+    kind: "NORMAL",
+    sourceType: "DOCUMENT",
+    systemOnly: false,
+    schema: S.duaImportacionSchema,
+    build: buildDuaImportacion,
+  }),
+  DIFERENCIAS_CAMBIO_CIERRE: define({
+    code: "DIFERENCIAS_CAMBIO_CIERRE",
+    label: "Diferencias de cambio al cierre (NRV 11ª.2.2)",
+    block: "C",
+    kind: "NORMAL",
+    sourceType: "SYSTEM",
+    systemOnly: true,
+    schema: S.diferenciasCambioSchema,
+    build: buildDiferenciasCambio,
+  }),
+  AJUSTE_VALOR_ACTUAL: define({
+    code: "AJUSTE_VALOR_ACTUAL",
+    label: "Ajuste al valor actual del aplazamiento",
+    block: "C",
+    kind: "NORMAL",
+    sourceType: "SYSTEM",
+    systemOnly: true,
+    schema: S.ajusteValorActualSchema,
+    build: buildAjusteValorActual,
+  }),
+  RECLASIFICACION_VENCIMIENTOS: define({
+    code: "RECLASIFICACION_VENCIMIENTOS",
+    label: "Reclasificación corriente / no corriente",
+    block: "C",
+    kind: "NORMAL",
+    sourceType: "SYSTEM",
+    systemOnly: true,
+    schema: S.reclasificacionVencimientosSchema,
+    build: buildReclasificacionVencimientos,
+  }),
+  BAJA_INMOVILIZADO: define({
+    code: "BAJA_INMOVILIZADO",
+    label: "Baja de inmovilizado sin contraprestación",
+    block: "B",
+    kind: "NORMAL",
+    sourceType: "SYSTEM",
+    systemOnly: false,
+    schema: S.bajaInmovilizadoSchema,
+    build: buildBajaInmovilizado,
+  }),
+  VENTA_INMOVILIZADO: define({
+    code: "VENTA_INMOVILIZADO",
+    label: "Venta de inmovilizado (543 / 253, nunca 430)",
+    block: "A",
+    kind: "NORMAL",
+    sourceType: "DOCUMENT",
+    systemOnly: false,
+    schema: S.ventaInmovilizadoSchema,
+    build: buildVentaInmovilizado,
+  }),
+  DISTRIBUCION_RESULTADO: define({
+    code: "DISTRIBUCION_RESULTADO",
+    label: "Distribución del resultado (arts. 164 y 274 LSC)",
+    block: "C",
+    kind: "NORMAL",
+    sourceType: "SYSTEM",
+    systemOnly: true,
+    schema: S.distribucionResultadoSchema,
+    build: buildDistribucionResultado,
+  }),
+  DEVENGO_RECC: define({
+    code: "DEVENGO_RECC",
+    label: "Devengo del RECC pendiente al 31/12 (art. 163 terdecies)",
+    block: "C",
+    kind: "NORMAL",
+    sourceType: "SYSTEM",
+    systemOnly: true,
+    schema: S.devengoReccSchema,
+    build: buildDevengoRecc,
+  }),
+  ALTA_PRESTAMO: define({
+    code: "ALTA_PRESTAMO",
+    label: "Alta de préstamo con cuadro de vencimientos",
+    block: "B",
+    kind: "NORMAL",
+    sourceType: "MANUAL",
+    systemOnly: false,
+    schema: S.altaPrestamoSchema,
+    build: buildAltaPrestamo,
+  }),
 }
 
-/** Todas las plantillas del catálogo, en el orden T-01…T-28. */
+/** Todas las plantillas del catálogo, en el orden T-01…T-37. */
 export const ALL_TEMPLATES: readonly AnyTemplate[] = TEMPLATE_CODES.map((c) => TEMPLATES[c])
 
 export const isTemplateCode = (v: string): v is TemplateCode => v in TEMPLATES

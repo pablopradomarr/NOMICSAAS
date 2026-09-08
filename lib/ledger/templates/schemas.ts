@@ -240,6 +240,32 @@ export type AnticipoInput = z.infer<typeof anticipoSchema>
 // Bloque B — tesorería, personal y periodificación (T-08…T-18)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * **E9 · R-IVA-19 (O-14/O-15) — bloque RECC de T-08 y T-09.**
+ *
+ * Bajo el régimen especial del criterio de caja el IVA se devenga **al cobro** y
+ * se deduce **al pago** (art. 163 *terdecies* LIVA), y el destinatario en
+ * régimen general de un proveedor acogido **también difiere** su deducción. Con
+ * cobro o pago parcial, `cuotaDevengada = trunc(cobro × cuotaTotal / total)` con
+ * el **residuo al último**, que es lo que aporta `isFinal`.
+ *
+ * Ausente el bloque, T-08 y T-09 son EXACTAMENTE los de E3: ni una línea más.
+ */
+export const reccBlockSchema = z.object({
+  documentNumber: z.string().min(1).max(64),
+  /** Total de la factura (base + cuota): denominador del prorrateo. */
+  totalInvoiceCents: centsSchema.min(1),
+  /** Cuota total repercutida (T-08) o soportada (T-09) del documento. */
+  totalQuotaCents: centsSchema,
+  /** Ya devengada (o deducida) por cobros o pagos anteriores. */
+  alreadyAccruedCents: centsSchema.default(0),
+  /** Importe imputado a esta factura; por defecto, el cobrado o pagado. */
+  collectedCents: centsSchema.optional(),
+  /** Último cobro o pago: arrastra el residuo y salda la cuota (I-E9-26). */
+  isFinal: z.boolean().default(false),
+})
+export type ReccBlockInput = z.infer<typeof reccBlockSchema>
+
 export const cobroClienteSchema = z.object({
   bankKey: bankKeySchema.default("BANCO_DEFAULT"),
   bankAccountCode: accountCodeSchema.optional(),
@@ -266,6 +292,8 @@ export const cobroClienteSchema = z.object({
   roundingCents: signedCentsSchema.optional(),
   /** E4 · T6: destino de `668`/`768` y `669`/`769`. Default: CECO `FINANCIERO`. */
   financialCostCenterId: uuidSchema.optional(),
+  /** E9 · O-15: devengo del repercutido al cobro (`4778 → 477`). */
+  recc: reccBlockSchema.optional(),
   description: z.string().max(512).optional(),
 })
 export type CobroClienteInput = z.infer<typeof cobroClienteSchema>
@@ -295,6 +323,8 @@ export const pagoProveedorSchema = z.object({
   roundingCents: signedCentsSchema.optional(),
   /** E4 · T6: destino de `668`/`768` y `669`/`769`. Default: CECO `FINANCIERO`. */
   financialCostCenterId: uuidSchema.optional(),
+  /** E9 · O-15: deducción del soportado al pago (`472 → 4728`). */
+  recc: reccBlockSchema.optional(),
   description: z.string().max(512).optional(),
 })
 export type PagoProveedorInput = z.infer<typeof pagoProveedorSchema>
@@ -511,3 +541,267 @@ export const aperturaEjercicioSchema = balanceDrivenSchema.extend({
   fiscalYearId: uuidSchema.optional(),
 })
 export type AperturaEjercicioInput = z.infer<typeof aperturaEjercicioSchema>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bloque E9 — T-29 … T-37 (ADR-0016)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * **T-29 · R-IVA-18 (O-16).** La base es la del **DUA** —valor en aduana +
+ * aranceles + gravámenes y gastos hasta el primer lugar de destino (art. 83.Uno
+ * LIVA)—, **no** la de la factura del proveedor, que ya se contabilizó sin IVA.
+ * Los aranceles son **mayor coste** (NRV 10ª.1 y 2ª.1), nunca gasto financiero.
+ */
+export const duaImportacionSchema = z.object({
+  ...baseDocumentDates,
+  documentNumber: z.string().min(1).max(64),
+  counterpartyId: uuidSchema.optional(),
+  /** Valor en aduana declarado en el DUA. Sólo informa la casilla: no se asienta. */
+  customsValueCents: centsSchema,
+  /** Derechos arancelarios: mayor coste de la mercancía o del inmovilizado. */
+  dutiesCents: centsSchema.default(0),
+  /** Cuenta del mayor coste (600, 2xx…). Sin ella, la clave `ARANCELES`. */
+  dutiesAccountCode: accountCodeSchema.optional(),
+  vatQuotaCents: centsSchema,
+  /** Art. 167.Dos LIVA y 74.1 RIVA: exige periodo MENSUAL. */
+  importDeferral: z.boolean().default(false),
+  periodKind: z.enum(["MENSUAL", "TRIMESTRAL"]).default("TRIMESTRAL"),
+  /** Bien de inversión: cambia las casillas 32-33 por 34-35, no el asiento. */
+  investmentGood: z.boolean().default(false),
+  /** Contrapartida del importe a pagar a la Aduana o al transitario. */
+  payableKey: z.enum(["ACREEDORES", "PROVEEDORES", "BANCO_DEFAULT", "CAJA"]).default("ACREEDORES"),
+  payableAccountCode: accountCodeSchema.optional(),
+  dueDate: localDateSchema.optional(),
+  description: z.string().max(512).optional(),
+  ...analyticFields,
+})
+export type DuaImportacionInput = z.infer<typeof duaImportacionSchema>
+
+/**
+ * **T-30 · R-FX-1…6 (O-4/O-5).** Una posición **monetaria** por fila, con su
+ * `Δ = convertWithRateMicro(D, r) − S` ya calculado por `lib/closing/fx.ts`: la
+ * plantilla **no convierte**, sella. `exchangeRateId` es obligatorio con divisa
+ * (CHECK de `journal_lines`) y es la tasa efectiva del cierre (R-FX-5).
+ */
+export const diferenciasCambioSchema = z.object({
+  /** Fecha de corte; es también la del asiento salvo `entryDate` explícito. */
+  cutoff: localDateSchema,
+  entryDate: localDateSchema.optional(),
+  adjustments: z
+    .array(
+      z.object({
+        accountCode: accountCodeSchema,
+        counterpartyId: uuidSchema.optional(),
+        currency: z.string().length(3),
+        /** `Δ` con signo: `> 0` beneficio (768), `< 0` pérdida (668). */
+        deltaCents: signedCentsSchema,
+        exchangeRateId: uuidSchema,
+        /** Tasa efectiva usada: la de mayor `rateDate ≤ cutoff` (R-FX-5). */
+        rateDate: localDateSchema,
+      })
+    )
+    .min(1),
+  /** E4 · T6: 668/768 son FINANCIERO, nivel BAI, CECO `CC-FIN` por defecto. */
+  financialCostCenterId: uuidSchema.optional(),
+  description: z.string().max(512).optional(),
+})
+export type DiferenciasCambioInput = z.infer<typeof diferenciasCambioSchema>
+
+/**
+ * **T-31 · R-VA-1 (O-1).** El valor actual es **valoración inicial**, no ajuste
+ * de cierre: esta plantilla es el **plan de corrección** de lo que no se hizo en
+ * el alta. El caso **B** (alta de un ejercicio ya cerrado) **no entra aquí**: es
+ * un error de ejercicios anteriores y se corrige con **T-22** contra `113`.
+ */
+export const AJUSTE_VALOR_ACTUAL_CASES = ["A_EJERCICIO_CORRIENTE", "C_NO_INMOVILIZADO"] as const
+
+export const ajusteValorActualSchema = z.object({
+  documentDate: localDateSchema.optional(),
+  entryDate: localDateSchema,
+  case: z.enum(AJUSTE_VALOR_ACTUAL_CASES),
+  /** `PASIVO`: débito aplazado (523/173). `ACTIVO`: crédito aplazado (253/543). */
+  side: z.enum(["PASIVO", "ACTIVO"]).default("PASIVO"),
+  /** Cuenta de la deuda o del crédito aplazado. */
+  positionAccountCode: accountCodeSchema.optional(),
+  positionKey: z
+    .enum(["PROVEEDORES_INMOVILIZADO", "DEUDA_LARGO_INMOVILIZADO", "CREDITO_ENAJENACION_CP", "CREDITO_ENAJENACION_LP"])
+    .optional(),
+  counterpartyId: uuidSchema.optional(),
+  /** `nominal − valor actual`, siempre positivo. */
+  discountCents: centsSchema.min(1),
+  /** Caso A: cuenta del inmovilizado cuyo coste se reduce (2131, 216…). */
+  assetAccountCode: accountCodeSchema.optional(),
+  /** Caso C: cuenta de gasto o de ingreso original del mismo ejercicio. */
+  originAccountCode: accountCodeSchema.optional(),
+  /** Caso A: amortización dotada en exceso sobre el coste bruto, a revertir. */
+  excessDepreciationCents: centsSchema.default(0),
+  accumulatedAccountCode: accountCodeSchema.optional(),
+  depreciationExpenseAccountCode: accountCodeSchema.optional(),
+  fixedAssetId: uuidSchema.optional(),
+  /** Interés implícito devengado hasta el corte: `662` (pasivo) o `762` (activo). */
+  implicitInterestCents: centsSchema.default(0),
+  description: z.string().max(512).optional(),
+  ...analyticFields,
+})
+export type AjusteValorActualInput = z.infer<typeof ajusteValorActualSchema>
+
+/**
+ * **T-32 · R-RC-1…7 (O-7/O-8).** Un movimiento por par y contraparte, con suma
+ * cero por par (I-E9-16). `side` decide la columna: una **deuda** se reclasifica
+ * cargando la cuenta de origen y abonando la de destino; un **crédito**, al
+ * revés. Los importes los fija `lib/closing/reclass.ts`; aquí no se decide nada.
+ */
+export const reclasificacionVencimientosSchema = z.object({
+  cutoff: localDateSchema,
+  entryDate: localDateSchema.optional(),
+  moves: z
+    .array(
+      z.object({
+        fromAccountCode: accountCodeSchema,
+        toAccountCode: accountCodeSchema,
+        amountCents: centsSchema.min(1),
+        side: z.enum(["PASIVO", "ACTIVO"]),
+        counterpartyId: uuidSchema.optional(),
+        currency: z.string().length(3).optional(),
+        dueDate: localDateSchema.optional(),
+      })
+    )
+    .min(1),
+  description: z.string().max(512).optional(),
+})
+export type ReclasificacionVencimientosInput = z.infer<typeof reclasificacionVencimientosSchema>
+
+/** Campos comunes de la baja (T-33) y la venta (T-34) de inmovilizado. */
+const disposalBase = {
+  documentDate: localDateSchema,
+  entryDate: localDateSchema.optional(),
+  fixedAssetId: uuidSchema.optional(),
+  /** Código del activo, para el concepto de las líneas. */
+  assetCode: z.string().min(1).max(64),
+  assetAccountCode: accountCodeSchema,
+  accumulatedAccountCode: accountCodeSchema,
+  /** Coste íntegro y amortización acumulada **hasta el mes de baja inclusive**. */
+  acquisitionCostCents: centsSchema.min(1),
+  accumulatedCents: centsSchema.default(0),
+  /** Deterioro acumulado (29x), si lo hay: minora el VNC y se cancela. */
+  impairmentCents: centsSchema.default(0),
+  impairmentAccountCode: accountCodeSchema.optional(),
+  description: z.string().max(512).optional(),
+  ...analyticFields,
+}
+
+/**
+ * **T-33 · R-AM-6 (O-24).** Baja sin contraprestación: `28x (D)` · `671 (D)` por
+ * el VNC · `2xx (H)` por el coste íntegro. La dotación del mes de baja se postea
+ * **antes** (T-14), no aquí.
+ */
+export const bajaInmovilizadoSchema = z.object({ ...disposalBase })
+export type BajaInmovilizadoInput = z.infer<typeof bajaInmovilizadoSchema>
+
+/**
+ * **T-34 · R-AM-7 (O-24).** Venta: la contrapartida es `543` —o `253` si el
+ * aplazamiento supera el año—, **nunca `430`**. El resultado va a `771`/`671` y
+ * la cuota a `477`.
+ */
+export const ventaInmovilizadoSchema = z.object({
+  ...disposalBase,
+  counterpartyId: uuidSchema.optional(),
+  priceCents: centsSchema,
+  vatQuotaCents: centsSchema.default(0),
+  taxRateCode: taxRateCodeSchema.optional(),
+  /** `CREDITO_ENAJENACION_CP` (543) o `CREDITO_ENAJENACION_LP` (253). */
+  receivableKey: z.enum(["CREDITO_ENAJENACION_CP", "CREDITO_ENAJENACION_LP"]).default("CREDITO_ENAJENACION_CP"),
+  receivableAccountCode: accountCodeSchema.optional(),
+  dueDate: localDateSchema.optional(),
+})
+export type VentaInmovilizadoInput = z.infer<typeof ventaInmovilizadoSchema>
+
+/**
+ * **T-35 · §4.9 (O-18).** Distribución del resultado acordada por la junta
+ * (art. 164 LSC). La **reserva legal** la calcula `lib/closing/distribution.ts`
+ * (art. 274 LSC) y no es editable a la baja; aquí llega ya calculada y la
+ * plantilla comprueba que el reparto suma **exactamente** el resultado.
+ */
+export const distribucionResultadoSchema = z.object({
+  /** Fecha de la junta (art. 164 LSC); el asiento va al ejercicio ABIERTO. */
+  entryDate: localDateSchema,
+  documentDate: localDateSchema.optional(),
+  /** Beneficio a distribuir (saldo acreedor de `129`). Excluyente con `lossCents`. */
+  profitCents: centsSchema.default(0),
+  /** Pérdida del ejercicio (saldo deudor de `129`): `121 (D) / 129 (H)`. */
+  lossCents: centsSchema.default(0),
+  legalReserveCents: centsSchema.default(0),
+  voluntaryReserveCents: centsSchema.default(0),
+  remainderCents: centsSchema.default(0),
+  /** Dividendo **total** acordado, incluido el ya satisfecho a cuenta. */
+  dividendCents: centsSchema.default(0),
+  /** Dividendo a cuenta ya satisfecho (`557`, deudora): se cancela aquí. */
+  interimDividendPaidCents: centsSchema.default(0),
+  /** Compensación de pérdidas de ejercicios anteriores (`121`). */
+  priorLossesOffsetCents: centsSchema.default(0),
+  description: z.string().max(512).optional(),
+})
+export type DistribucionResultadoInput = z.infer<typeof distribucionResultadoSchema>
+
+/**
+ * **T-36 · R-IVA-19 (O-14/O-15).** Barrido del 31 de diciembre del art. 163
+ * *terdecies* LIVA: `4778 → 477` y `4728 → 472` de toda factura del año anterior
+ * con cuota pendiente. Es una regla determinista, no un aviso.
+ */
+export const devengoReccSchema = z.object({
+  cutoff: localDateSchema,
+  entryDate: localDateSchema.optional(),
+  pending: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        side: z.enum(["EMITIDA", "RECIBIDA"]),
+        documentNumber: z.string().min(1).max(64),
+        operationDate: localDateSchema,
+        totalQuotaCents: centsSchema,
+        accruedCents: centsSchema.default(0),
+      })
+    )
+    .min(1),
+  description: z.string().max(512).optional(),
+})
+export type DevengoReccInput = z.infer<typeof devengoReccSchema>
+
+/**
+ * **T-37 · R-RC-4 (O-6).** Alta de un préstamo **con su cuadro**: una línea de
+ * `170`/`520` **por vencimiento de principal**, con su `dueDate`. Sin desglose,
+ * el balance presenta cero en «Deudas a corto plazo» teniendo préstamos vivos y
+ * `RECLASIFICACION_VENCIMIENTOS` queda en FAIL bloqueante (I-E9-25).
+ */
+export const altaPrestamoSchema = z.object({
+  documentDate: localDateSchema,
+  entryDate: localDateSchema.optional(),
+  /** Código del cuadro (`DebtSchedule.code`), para el concepto y el `sourceId`. */
+  scheduleCode: z.string().min(1).max(32),
+  counterpartyId: uuidSchema.optional(),
+  /** Par largo/corto validado contra `ReclassificationPair` (170↔520, 171↔521…). */
+  longAccountCode: accountCodeSchema,
+  shortAccountCode: accountCodeSchema,
+  principalCents: centsSchema.min(1),
+  bankKey: bankKeySchema.default("BANCO_DEFAULT"),
+  bankAccountCode: accountCodeSchema.optional(),
+  /** Comisión de apertura: línea propia, minora el efectivo recibido. */
+  arrangementFeeCents: centsSchema.default(0),
+  arrangementFeeAccountCode: accountCodeSchema.optional(),
+  arrangementFeeCostCenterId: uuidSchema.optional(),
+  /** Frontera corto/largo desde la fecha del alta (norma 6ª de elaboración). */
+  currentThresholdMonths: z.number().int().min(1).max(120).default(12),
+  installments: z
+    .array(
+      z.object({
+        seq: z.number().int().min(1),
+        dueDate: localDateSchema,
+        /** Principal del vencimiento. El interés **no** se registra en el alta. */
+        principalCents: centsSchema.min(1),
+      })
+    )
+    .min(1),
+  currency: z.string().length(3).optional(),
+  description: z.string().max(512).optional(),
+})
+export type AltaPrestamoInput = z.infer<typeof altaPrestamoSchema>
