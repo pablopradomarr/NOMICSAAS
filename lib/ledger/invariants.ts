@@ -16,6 +16,12 @@ import {
 } from "@/lib/analytics/invariants"
 import { type ReportsInvariantInput, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
 import { runDocumentInvariants, type DocumentsInvariantInput } from "@/lib/ledger/invariants-e8"
+import {
+  E9_SEAL_REASON_TEXT,
+  runClosingInvariants,
+  type ClosingInvariantInput,
+  type E9SealReason,
+} from "@/lib/closing/invariants-e9"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HASH_VERSION, HashableLine, isHashVersion } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
@@ -80,6 +86,15 @@ export type InvariantInput = {
    * sobre un conjunto vacío no diría nada.
    */
   documents?: DocumentsInvariantInput
+  /**
+   * E9: bloque de **cierre y recurrentes** (I-E9-1…26, con 1a/1b, 8a′ y 10b).
+   * Opcional por el mismo motivo que los anteriores: una organización que
+   * todavía no amortiza, ni liquida IVA, ni cierra el ejercicio no tiene por qué
+   * ver un FAIL por no hacerlo, y un PASS sobre un conjunto vacío no diría nada.
+   * Lo que sí ocurre siempre que el bloque llega es que **salen los veintisiete
+   * resultados**: lo no evaluable, en `INFO` diciendo qué falta.
+   */
+  closing?: ClosingInvariantInput
   /** Moneda base, que I-E8-19 necesita para saber qué es «divisa». */
   baseCurrency?: string
 }
@@ -517,6 +532,8 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
       ...(input.reports ? runReportInvariants(input.reports) : []),
       // E8: I-E8-1…20, los tres puentes al 303 y el puente al 111/115.
       ...(input.documents ? runDocumentInvariants(input.documents, input.entries, input.baseCurrency ?? "EUR") : []),
+      // E9: I-E9-1…26 (familia `CIERRE`), sólo si el llamante aporta el bloque.
+      ...(input.closing ? runClosingInvariants(input.closing) : []),
     ],
   }
 }
@@ -527,7 +544,21 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
  * una carencia de entorno: es un cambio que un humano debería mirar. Meterlo en
  * `AVISO` lo habría enterrado entre los WARN de calidad de datos.
  */
-export type SealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION" | "VARIACION" | "DOCUMENTO"
+/**
+ * E9 (§6.3): se añade **`CIERRE`**. Los diez motivos del checklist de cierre son
+ * de la misma naturaleza que los seis documentales de E8 —un dato de auditoría
+ * con código cerrado— pero no hablan de un documento, sino del **acto de
+ * cerrar**: mezclarlos con `DOCUMENTO` habría hecho imposible contar cuántos
+ * cierres se firman con la conciliación abierta.
+ */
+export type SealReasonKind =
+  | "ENTORNO"
+  | "INVARIANTE"
+  | "AVISO"
+  | "CONFIGURACION"
+  | "VARIACION"
+  | "DOCUMENTO"
+  | "CIERRE"
 
 /**
  * E8 · ADR-0014 D7 — los **seis motivos de sello** que aporta el camino
@@ -596,6 +627,18 @@ export type SealOptions = {
    * quería evitar. El texto de cada código lo pone el llamante.
    */
   auditReasons?: readonly SealReason[]
+  /**
+   * E9 (§4.8 y §6.3): los **diez motivos** que aporta el checklist de cierre
+   * —`IVA_NO_LIQUIDADO`, `RECURRENTES_PENDIENTES`, `PERIODIFICACION_SIN_AGOTAR`,
+   * `VENCIMIENTOS_SIN_FECHA`, `CIERRE_REABIERTO`,
+   * `REGULARIZACION_BIENES_INVERSION_PENDIENTE`,
+   * `IMPUESTO_DIFERIDO_NO_RECONOCIDO`, `DEUDA_SIN_DESGLOSE`,
+   * `RESULTADO_SIN_DISTRIBUIR` y `MODELO_200_PRESENTADO`—. Los compone
+   * `closingSealReasons()` **a partir de los pasos**, y se agregan aquí:
+   * lección **H-4** de E7, el sello se calcula **después** de los motivos y
+   * `seal` y `sealReasons` dicen lo mismo.
+   */
+  closingReasons?: readonly E9SealReason[]
 }
 
 /**
@@ -646,6 +689,9 @@ export function seal(validacion: Validacion, opts: SealOptions): Seal {
   }
   for (const reason of opts.auditReasons ?? []) {
     razones.push(reason)
+  }
+  for (const code of [...new Set(opts.closingReasons ?? [])].sort()) {
+    razones.push({ kind: "CIERRE", code, message: `${code} · ${E9_SEAL_REASON_TEXT[code]}` })
   }
 
   const motivos = razones.map((r) => r.message)
@@ -752,6 +798,17 @@ export type {
   VatBookRow,
   WithholdingRow,
 } from "@/lib/ledger/invariants-e8"
+
+/** E9 — invariantes del cierre y los recurrentes, desde el mismo módulo. */
+export {
+  closingSealReasons,
+  isE9SealReason,
+  runClosingInvariants,
+  E9_INVARIANT_IDS,
+  E9_SEAL_REASONS,
+  E9_SEAL_REASON_TEXT,
+} from "@/lib/closing/invariants-e9"
+export type { ClosingInvariantInput, E9SealReason } from "@/lib/closing/invariants-e9"
 
 /** E6 — invariantes de los estados financieros, desde el mismo módulo. */
 export { checkI2, checkI3, checkIE613, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"

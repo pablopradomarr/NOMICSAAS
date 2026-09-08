@@ -135,6 +135,7 @@ export const FAMILY_HELP: Readonly<Record<CheckFamily, string>> = {
   LIQUIDACION: "Reparto de centros de coste y su sello de líneas.",
   DOCUMENTAL: "Cada asiento se sostiene en un documento y en sus bytes.",
   CONCILIACION: "El extracto del banco contra el diario, cuenta a cuenta.",
+  CIERRE: "Recurrentes, amortización, IVA, valoración al cierre y el propio acto de cerrar.",
   INTEGRIDAD: "Trazabilidad, aislamiento entre organizaciones y reproducibilidad.",
 }
 

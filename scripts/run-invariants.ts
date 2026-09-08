@@ -3,9 +3,11 @@
  *
  * Dos mitades, cada una con el rol que le corresponde (revisión ronda 1, #5):
  *
- *  - **I1, I7–I9, I-E3-1…7, I4/I-E4-*, I5/I-E5-*, I2/I3/I6/I-E6-* y —desde E8—
- *    I-E8-1…20** con los tres puentes al 303 (15a/b/c), el puente al 111/115
- *    (I-E8-17) y la métrica de calidad I-E8-7b:
+ *  - **I1, I7–I9, I-E3-1…7, I4/I-E4-*, I5/I-E5-*, I2/I3/I6/I-E6-*, I-E8-1…20**
+ *    con los tres puentes al 303 (15a/b/c, reformulados a **15a′/15c′** por E9
+ *    cuando hay RECC), el puente al 111/115 (I-E8-17), la métrica de calidad
+ *    I-E8-7b y —desde E9— los **I-E9-1…26** de cierre y recurrentes (familia
+ *    `CIERRE`, con 1a/1b, 8a′ y 10b):
  *    `models/ledger.runLedgerInvariants(--org)`, que corre acotado al tenant
  *    (`app_runtime` vía `DATABASE_URL`) y usa el motor puro de
  *    `lib/ledger/invariants.ts`. Ya no hay «PENDING»: si un invariante no se
@@ -42,7 +44,17 @@
  * El `sello` lleva desde E8 los **seis motivos documentales** de ADR-0014 D7
  * (`PROPUESTA_NO_RECONCILIADA`, `DOCUMENTO_ALTERADO`, `TASA_FORZADA`,
  * `RETENCION_NO_PRACTICADA`, `IVA_PERIODO_DESPLAZADO`, `REGIMEN_NO_SOPORTADO`)
- * junto a los de entorno, invariante, aviso, configuración y variación.
+ * junto a los de entorno, invariante, aviso, configuración y variación; y desde
+ * E9 los **diez del cierre** (`IVA_NO_LIQUIDADO`, `RECURRENTES_PENDIENTES`,
+ * `PERIODIFICACION_SIN_AGOTAR`, `VENCIMIENTOS_SIN_FECHA`, `CIERRE_REABIERTO`,
+ * `REGULARIZACION_BIENES_INVERSION_PENDIENTE`, `IMPUESTO_DIFERIDO_NO_RECONOCIDO`,
+ * `DEUDA_SIN_DESGLOSE`, `RESULTADO_SIN_DISTRIBUIR` y `MODELO_200_PRESENTADO`),
+ * que llegan de los pasos del checklist por `closingSealReasons()`.
+ *
+ * La salida agrupa cada check por su **familia** (`lib/audit/families.ts`), de
+ * modo que los I-E9-* se leen juntos bajo `CIERRE` en vez de mezclados con el
+ * resto: un cierre con un invariante en FAIL no puede pasar desapercibido entre
+ * cuarenta líneas.
  */
 import { withMaintenanceClient } from "@/lib/db-maintenance"
 import { randomUUID } from "node:crypto"
@@ -248,8 +260,16 @@ async function main() {
 
   await writeFile(out, JSON.stringify(validacion, null, 2) + "\n", "utf8")
 
-  for (const check of checks) {
-    console.log(`${check.status.padEnd(7)} ${check.id.padEnd(8)} ${check.evidencia}`)
+  // Agrupado por familia (E7 · §3.1, ampliada por E9 con `CIERRE`): el orden de
+  // lectura es el de la pestaña Auditoría, no el de ejecución.
+  const { CHECK_FAMILIES, FAMILY_LABEL, familyOf } = await import("@/lib/audit/families")
+  for (const family of CHECK_FAMILIES) {
+    const ofFamily = checks.filter((check) => familyOf(check.id) === family)
+    if (ofFamily.length === 0) continue
+    console.log(`\n── ${FAMILY_LABEL[family]}`)
+    for (const check of ofFamily) {
+      console.log(`${check.status.padEnd(7)} ${check.id.padEnd(10)} ${check.evidencia}`)
+    }
   }
   if (sello) console.log(`\n· ${sello.sello}${sello.motivos.length ? ` — ${sello.motivos.join("; ")}` : ""}`)
   if (persistedRunId) console.log(`· InvariantRun ${persistedRunId} (trigger ${trigger})`)

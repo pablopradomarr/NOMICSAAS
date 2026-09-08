@@ -20,7 +20,7 @@
 
 import type { AuditCounts, CheckFamily, CheckResult, FamilyStatus, FamilySummary } from "@/lib/audit/types"
 
-/** Orden de presentación de las siete tarjetas (§6). */
+/** Orden de presentación de las tarjetas (§6). E9 añade `CIERRE` (§6.3). */
 export const CHECK_FAMILIES: readonly CheckFamily[] = [
   "PARTIDA_DOBLE",
   "ESTADOS",
@@ -28,6 +28,7 @@ export const CHECK_FAMILIES: readonly CheckFamily[] = [
   "LIQUIDACION",
   "DOCUMENTAL",
   "CONCILIACION",
+  "CIERRE",
   "INTEGRIDAD",
 ]
 
@@ -38,6 +39,7 @@ export const FAMILY_LABEL: Readonly<Record<CheckFamily, string>> = {
   LIQUIDACION: "Liquidación de CECOs",
   DOCUMENTAL: "Camino documental",
   CONCILIACION: "Conciliación bancaria",
+  CIERRE: "Cierre y recurrentes",
   INTEGRIDAD: "Integridad y trazabilidad",
 }
 
@@ -84,6 +86,8 @@ const PREFIX: readonly [string, CheckFamily][] = [
   ["I-E5-", "LIQUIDACION"],
   ["I-E6-", "ESTADOS"],
   ["I-E8-", "DOCUMENTAL"],
+  // E9 · §6.3: los I-E9-* (incluidos 1a/1b, 8a′ y 10b) van a la familia CIERRE.
+  ["I-E9-", "CIERRE"],
 ]
 
 /**
@@ -129,7 +133,7 @@ export function familyStatus(checks: readonly CheckResult[]): FamilyStatus {
 }
 
 /**
- * Las siete familias SIEMPRE, en orden fijo y aunque estén vacías: una familia
+ * Las familias SIEMPRE, en orden fijo y aunque estén vacías: una familia
  * que desaparece de la pantalla porque nadie la evaluó es exactamente el
  * silencio que R3 describe.
  */
@@ -148,7 +152,7 @@ export function groupByFamily(checks: readonly CheckResult[]): FamilySummary[] {
   })
 }
 
-/** Semáforo global: el peor de los siete, con la misma composición. */
+/** Semáforo global: el peor de todas, con la misma composición. */
 export function globalStatus(checks: readonly CheckResult[]): FamilyStatus {
   return familyStatus(checks)
 }

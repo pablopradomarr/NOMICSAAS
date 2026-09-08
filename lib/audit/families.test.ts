@@ -45,9 +45,15 @@ describe("familyOf", () => {
   })
 
   it("un check nuevo sin clasificar cae en INTEGRIDAD **y se declara**", () => {
-    expect(familyOf("I-E9-1")).toBe("INTEGRIDAD")
-    expect(isKnownCheckId("I-E9-1")).toBe(false)
-    expect(unknownCheckIds([check("I-E9-1", "PASS"), check("I1", "PASS")])).toEqual(["I-E9-1"])
+    // El ejemplo era `I-E9-1`; desde E9 esa familia existe (`CIERRE`), así que
+    // el «check nuevo» pasa a ser el de la épica siguiente. Lo que se comprueba
+    // —que un id sin tabla no desaparece del semáforo— no cambia.
+    expect(familyOf("I-E10-1")).toBe("INTEGRIDAD")
+    expect(isKnownCheckId("I-E10-1")).toBe(false)
+    expect(unknownCheckIds([check("I-E10-1", "PASS"), check("I1", "PASS")])).toEqual(["I-E10-1"])
+    // Y los I-E9-* ya tienen la suya.
+    expect(familyOf("I-E9-1a")).toBe("CIERRE")
+    expect(isKnownCheckId("I-E9-16")).toBe(true)
   })
 })
 
@@ -74,10 +80,12 @@ describe("familyStatus · la composición del semáforo, escrita una vez", () =>
 })
 
 describe("groupByFamily", () => {
-  it("devuelve SIEMPRE las siete familias en orden fijo", () => {
+  it("devuelve SIEMPRE todas las familias en orden fijo", () => {
     const summaries = groupByFamily([check("I1", "PASS")])
     expect(summaries.map((s) => s.family)).toEqual(CHECK_FAMILIES)
-    expect(summaries).toHaveLength(7)
+    // Siete en E7; ocho desde E9, que añade `CIERRE` (§6.3).
+    expect(summaries).toHaveLength(CHECK_FAMILIES.length)
+    expect(CHECK_FAMILIES).toContain("CIERRE")
   })
 
   it("las familias sin checks salen SIN_EVALUAR y no desaparecen", () => {

@@ -14,7 +14,12 @@ import type { Cents, LocalDate } from "@/lib/ledger/types"
 
 export type { CheckResult, CheckStatus, Cents, LocalDate, Provenance }
 
-/** Las siete familias (§3.1). Enum, no texto libre (O-21). */
+/**
+ * Las familias del semáforo (§3.1). Enum, no texto libre (O-21). Eran siete en
+ * E7; **E9 añade `CIERRE`** (§6.3 de `docs/design/E9-cierre-recurrentes.md`):
+ * los I-E9-* no son ni conciliación ni camino documental, y enterrarlos en
+ * `INTEGRIDAD` habría dejado el cierre sin tarjeta propia en `/audit`.
+ */
 export type CheckFamily =
   | "PARTIDA_DOBLE"
   | "ESTADOS"
@@ -22,6 +27,7 @@ export type CheckFamily =
   | "LIQUIDACION"
   | "DOCUMENTAL"
   | "CONCILIACION"
+  | "CIERRE"
   | "INTEGRIDAD"
 
 /**

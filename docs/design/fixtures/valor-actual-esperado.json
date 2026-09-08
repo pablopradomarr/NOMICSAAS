@@ -1,0 +1,1029 @@
+{
+  "fixture": "valor-actual-esperado",
+  "epica": "E9",
+  "tarea": "T9",
+  "reglas": "R-VA-1..R-VA-6 (docs/design/E9-cierre-recurrentes.md §4.7, ADR-0016 D7)",
+  "escala": 10000000000,
+  "cases": [
+    {
+      "id": "V1",
+      "titulo": "Caso A del experto: 10.000.000 a 24 meses al 6 % EFECTIVO anual (tipo mensual)",
+      "input": {
+        "nominalCents": 10000000,
+        "monthlyRateMicroBps": 48675506,
+        "months": 24,
+        "firstPeriod": "2026-03",
+        "side": "PASIVO",
+        "materialityCents": 100000
+      },
+      "presentValueCents": 8899964,
+      "discountCents": 1100036,
+      "annualEquivalentMicroBps": 599999999,
+      "requiresPresentValue": true,
+      "interestAccount": "662",
+      "rows": [
+        {
+          "period": "2026-03",
+          "interestCents": 43321,
+          "carryingCents": 8943285
+        },
+        {
+          "period": "2026-04",
+          "interestCents": 43531,
+          "carryingCents": 8986816
+        },
+        {
+          "period": "2026-05",
+          "interestCents": 43743,
+          "carryingCents": 9030559
+        },
+        {
+          "period": "2026-06",
+          "interestCents": 43956,
+          "carryingCents": 9074515
+        },
+        {
+          "period": "2026-07",
+          "interestCents": 44170,
+          "carryingCents": 9118685
+        },
+        {
+          "period": "2026-08",
+          "interestCents": 44385,
+          "carryingCents": 9163070
+        },
+        {
+          "period": "2026-09",
+          "interestCents": 44601,
+          "carryingCents": 9207671
+        },
+        {
+          "period": "2026-10",
+          "interestCents": 44818,
+          "carryingCents": 9252489
+        },
+        {
+          "period": "2026-11",
+          "interestCents": 45036,
+          "carryingCents": 9297525
+        },
+        {
+          "period": "2026-12",
+          "interestCents": 45256,
+          "carryingCents": 9342781
+        },
+        {
+          "period": "2027-01",
+          "interestCents": 45476,
+          "carryingCents": 9388257
+        },
+        {
+          "period": "2027-02",
+          "interestCents": 45697,
+          "carryingCents": 9433954
+        },
+        {
+          "period": "2027-03",
+          "interestCents": 45920,
+          "carryingCents": 9479874
+        },
+        {
+          "period": "2027-04",
+          "interestCents": 46143,
+          "carryingCents": 9526017
+        },
+        {
+          "period": "2027-05",
+          "interestCents": 46368,
+          "carryingCents": 9572385
+        },
+        {
+          "period": "2027-06",
+          "interestCents": 46594,
+          "carryingCents": 9618979
+        },
+        {
+          "period": "2027-07",
+          "interestCents": 46820,
+          "carryingCents": 9665799
+        },
+        {
+          "period": "2027-08",
+          "interestCents": 47048,
+          "carryingCents": 9712847
+        },
+        {
+          "period": "2027-09",
+          "interestCents": 47277,
+          "carryingCents": 9760124
+        },
+        {
+          "period": "2027-10",
+          "interestCents": 47507,
+          "carryingCents": 9807631
+        },
+        {
+          "period": "2027-11",
+          "interestCents": 47739,
+          "carryingCents": 9855370
+        },
+        {
+          "period": "2027-12",
+          "interestCents": 47971,
+          "carryingCents": 9903341
+        },
+        {
+          "period": "2028-01",
+          "interestCents": 48205,
+          "carryingCents": 9951546
+        },
+        {
+          "period": "2028-02",
+          "interestCents": 48454,
+          "carryingCents": 10000000
+        }
+      ],
+      "totals": {
+        "rowCount": 24,
+        "interestCents": 1100036,
+        "finalCarryingCents": 10000000
+      }
+    },
+    {
+      "id": "V2",
+      "titulo": "El mismo nominal con i_m = 6 %/12 = 0,5 % (TIN): O-2, no da lo mismo",
+      "input": {
+        "nominalCents": 10000000,
+        "monthlyRateMicroBps": 50000000,
+        "months": 24,
+        "firstPeriod": "2026-03",
+        "side": "PASIVO",
+        "materialityCents": 100000
+      },
+      "presentValueCents": 8871856,
+      "discountCents": 1128144,
+      "annualEquivalentMicroBps": 616778114,
+      "requiresPresentValue": true,
+      "interestAccount": "662",
+      "rows": [
+        {
+          "period": "2026-03",
+          "interestCents": 44359,
+          "carryingCents": 8916215
+        },
+        {
+          "period": "2026-04",
+          "interestCents": 44581,
+          "carryingCents": 8960796
+        },
+        {
+          "period": "2026-05",
+          "interestCents": 44803,
+          "carryingCents": 9005599
+        },
+        {
+          "period": "2026-06",
+          "interestCents": 45027,
+          "carryingCents": 9050626
+        },
+        {
+          "period": "2026-07",
+          "interestCents": 45253,
+          "carryingCents": 9095879
+        },
+        {
+          "period": "2026-08",
+          "interestCents": 45479,
+          "carryingCents": 9141358
+        },
+        {
+          "period": "2026-09",
+          "interestCents": 45706,
+          "carryingCents": 9187064
+        },
+        {
+          "period": "2026-10",
+          "interestCents": 45935,
+          "carryingCents": 9232999
+        },
+        {
+          "period": "2026-11",
+          "interestCents": 46164,
+          "carryingCents": 9279163
+        },
+        {
+          "period": "2026-12",
+          "interestCents": 46395,
+          "carryingCents": 9325558
+        },
+        {
+          "period": "2027-01",
+          "interestCents": 46627,
+          "carryingCents": 9372185
+        },
+        {
+          "period": "2027-02",
+          "interestCents": 46860,
+          "carryingCents": 9419045
+        },
+        {
+          "period": "2027-03",
+          "interestCents": 47095,
+          "carryingCents": 9466140
+        },
+        {
+          "period": "2027-04",
+          "interestCents": 47330,
+          "carryingCents": 9513470
+        },
+        {
+          "period": "2027-05",
+          "interestCents": 47567,
+          "carryingCents": 9561037
+        },
+        {
+          "period": "2027-06",
+          "interestCents": 47805,
+          "carryingCents": 9608842
+        },
+        {
+          "period": "2027-07",
+          "interestCents": 48044,
+          "carryingCents": 9656886
+        },
+        {
+          "period": "2027-08",
+          "interestCents": 48284,
+          "carryingCents": 9705170
+        },
+        {
+          "period": "2027-09",
+          "interestCents": 48525,
+          "carryingCents": 9753695
+        },
+        {
+          "period": "2027-10",
+          "interestCents": 48768,
+          "carryingCents": 9802463
+        },
+        {
+          "period": "2027-11",
+          "interestCents": 49012,
+          "carryingCents": 9851475
+        },
+        {
+          "period": "2027-12",
+          "interestCents": 49257,
+          "carryingCents": 9900732
+        },
+        {
+          "period": "2028-01",
+          "interestCents": 49503,
+          "carryingCents": 9950235
+        },
+        {
+          "period": "2028-02",
+          "interestCents": 49765,
+          "carryingCents": 10000000
+        }
+      ],
+      "totals": {
+        "rowCount": 24,
+        "interestCents": 1128144,
+        "finalCarryingCents": 10000000
+      }
+    },
+    {
+      "id": "V3",
+      "titulo": "Lado ACTIVO: credito 253 por enajenacion a 18 meses; el interes es INGRESO en 762 (O-3)",
+      "input": {
+        "nominalCents": 4500000,
+        "monthlyRateMicroBps": 48675506,
+        "months": 18,
+        "firstPeriod": "2026-07",
+        "side": "ACTIVO",
+        "materialityCents": 100000
+      },
+      "presentValueCents": 4123383,
+      "discountCents": 376617,
+      "annualEquivalentMicroBps": 599999999,
+      "requiresPresentValue": true,
+      "interestAccount": "762",
+      "rows": [
+        {
+          "period": "2026-07",
+          "interestCents": 20070,
+          "carryingCents": 4143453
+        },
+        {
+          "period": "2026-08",
+          "interestCents": 20168,
+          "carryingCents": 4163621
+        },
+        {
+          "period": "2026-09",
+          "interestCents": 20266,
+          "carryingCents": 4183887
+        },
+        {
+          "period": "2026-10",
+          "interestCents": 20365,
+          "carryingCents": 4204252
+        },
+        {
+          "period": "2026-11",
+          "interestCents": 20464,
+          "carryingCents": 4224716
+        },
+        {
+          "period": "2026-12",
+          "interestCents": 20564,
+          "carryingCents": 4245280
+        },
+        {
+          "period": "2027-01",
+          "interestCents": 20664,
+          "carryingCents": 4265944
+        },
+        {
+          "period": "2027-02",
+          "interestCents": 20764,
+          "carryingCents": 4286708
+        },
+        {
+          "period": "2027-03",
+          "interestCents": 20865,
+          "carryingCents": 4307573
+        },
+        {
+          "period": "2027-04",
+          "interestCents": 20967,
+          "carryingCents": 4328540
+        },
+        {
+          "period": "2027-05",
+          "interestCents": 21069,
+          "carryingCents": 4349609
+        },
+        {
+          "period": "2027-06",
+          "interestCents": 21171,
+          "carryingCents": 4370780
+        },
+        {
+          "period": "2027-07",
+          "interestCents": 21274,
+          "carryingCents": 4392054
+        },
+        {
+          "period": "2027-08",
+          "interestCents": 21378,
+          "carryingCents": 4413432
+        },
+        {
+          "period": "2027-09",
+          "interestCents": 21482,
+          "carryingCents": 4434914
+        },
+        {
+          "period": "2027-10",
+          "interestCents": 21587,
+          "carryingCents": 4456501
+        },
+        {
+          "period": "2027-11",
+          "interestCents": 21692,
+          "carryingCents": 4478193
+        },
+        {
+          "period": "2027-12",
+          "interestCents": 21807,
+          "carryingCents": 4500000
+        }
+      ],
+      "totals": {
+        "rowCount": 18,
+        "interestCents": 376617,
+        "finalCarryingCents": 4500000
+      }
+    },
+    {
+      "id": "V4",
+      "titulo": "Aplazamiento de 12 meses: NO se descuenta (la frontera es > 12, R-VA-2)",
+      "input": {
+        "nominalCents": 3000000,
+        "monthlyRateMicroBps": 48675506,
+        "months": 12,
+        "firstPeriod": "2026-01",
+        "side": "PASIVO",
+        "materialityCents": 1000
+      },
+      "presentValueCents": 2830188,
+      "discountCents": 169812,
+      "annualEquivalentMicroBps": 599999999,
+      "requiresPresentValue": false,
+      "interestAccount": "662",
+      "rows": [
+        {
+          "period": "2026-01",
+          "interestCents": 13776,
+          "carryingCents": 2843964
+        },
+        {
+          "period": "2026-02",
+          "interestCents": 13843,
+          "carryingCents": 2857807
+        },
+        {
+          "period": "2026-03",
+          "interestCents": 13910,
+          "carryingCents": 2871717
+        },
+        {
+          "period": "2026-04",
+          "interestCents": 13978,
+          "carryingCents": 2885695
+        },
+        {
+          "period": "2026-05",
+          "interestCents": 14046,
+          "carryingCents": 2899741
+        },
+        {
+          "period": "2026-06",
+          "interestCents": 14114,
+          "carryingCents": 2913855
+        },
+        {
+          "period": "2026-07",
+          "interestCents": 14183,
+          "carryingCents": 2928038
+        },
+        {
+          "period": "2026-08",
+          "interestCents": 14252,
+          "carryingCents": 2942290
+        },
+        {
+          "period": "2026-09",
+          "interestCents": 14321,
+          "carryingCents": 2956611
+        },
+        {
+          "period": "2026-10",
+          "interestCents": 14391,
+          "carryingCents": 2971002
+        },
+        {
+          "period": "2026-11",
+          "interestCents": 14461,
+          "carryingCents": 2985463
+        },
+        {
+          "period": "2026-12",
+          "interestCents": 14537,
+          "carryingCents": 3000000
+        }
+      ],
+      "totals": {
+        "rowCount": 12,
+        "interestCents": 169812,
+        "finalCarryingCents": 3000000
+      }
+    },
+    {
+      "id": "V5",
+      "titulo": "Descuento por debajo del umbral de materialidad: no se descuenta",
+      "input": {
+        "nominalCents": 50000,
+        "monthlyRateMicroBps": 48675506,
+        "months": 24,
+        "firstPeriod": "2026-01",
+        "side": "PASIVO",
+        "materialityCents": 100000
+      },
+      "presentValueCents": 44499,
+      "discountCents": 5501,
+      "annualEquivalentMicroBps": 599999999,
+      "requiresPresentValue": false,
+      "interestAccount": "662",
+      "rows": [
+        {
+          "period": "2026-01",
+          "interestCents": 216,
+          "carryingCents": 44715
+        },
+        {
+          "period": "2026-02",
+          "interestCents": 217,
+          "carryingCents": 44932
+        },
+        {
+          "period": "2026-03",
+          "interestCents": 218,
+          "carryingCents": 45150
+        },
+        {
+          "period": "2026-04",
+          "interestCents": 219,
+          "carryingCents": 45369
+        },
+        {
+          "period": "2026-05",
+          "interestCents": 220,
+          "carryingCents": 45589
+        },
+        {
+          "period": "2026-06",
+          "interestCents": 221,
+          "carryingCents": 45810
+        },
+        {
+          "period": "2026-07",
+          "interestCents": 222,
+          "carryingCents": 46032
+        },
+        {
+          "period": "2026-08",
+          "interestCents": 224,
+          "carryingCents": 46256
+        },
+        {
+          "period": "2026-09",
+          "interestCents": 225,
+          "carryingCents": 46481
+        },
+        {
+          "period": "2026-10",
+          "interestCents": 226,
+          "carryingCents": 46707
+        },
+        {
+          "period": "2026-11",
+          "interestCents": 227,
+          "carryingCents": 46934
+        },
+        {
+          "period": "2026-12",
+          "interestCents": 228,
+          "carryingCents": 47162
+        },
+        {
+          "period": "2027-01",
+          "interestCents": 229,
+          "carryingCents": 47391
+        },
+        {
+          "period": "2027-02",
+          "interestCents": 230,
+          "carryingCents": 47621
+        },
+        {
+          "period": "2027-03",
+          "interestCents": 231,
+          "carryingCents": 47852
+        },
+        {
+          "period": "2027-04",
+          "interestCents": 232,
+          "carryingCents": 48084
+        },
+        {
+          "period": "2027-05",
+          "interestCents": 234,
+          "carryingCents": 48318
+        },
+        {
+          "period": "2027-06",
+          "interestCents": 235,
+          "carryingCents": 48553
+        },
+        {
+          "period": "2027-07",
+          "interestCents": 236,
+          "carryingCents": 48789
+        },
+        {
+          "period": "2027-08",
+          "interestCents": 237,
+          "carryingCents": 49026
+        },
+        {
+          "period": "2027-09",
+          "interestCents": 238,
+          "carryingCents": 49264
+        },
+        {
+          "period": "2027-10",
+          "interestCents": 239,
+          "carryingCents": 49503
+        },
+        {
+          "period": "2027-11",
+          "interestCents": 240,
+          "carryingCents": 49743
+        },
+        {
+          "period": "2027-12",
+          "interestCents": 257,
+          "carryingCents": 50000
+        }
+      ],
+      "totals": {
+        "rowCount": 24,
+        "interestCents": 5501,
+        "finalCarryingCents": 50000
+      }
+    },
+    {
+      "id": "V6",
+      "titulo": "Tipo mensual 0: el valor actual es el nominal y el cuadro es todo ceros",
+      "input": {
+        "nominalCents": 1000000,
+        "monthlyRateMicroBps": 0,
+        "months": 24,
+        "firstPeriod": "2026-01",
+        "side": "PASIVO",
+        "materialityCents": 1
+      },
+      "presentValueCents": 1000000,
+      "discountCents": 0,
+      "annualEquivalentMicroBps": 0,
+      "requiresPresentValue": false,
+      "interestAccount": "662",
+      "rows": [
+        {
+          "period": "2026-01",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-02",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-03",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-04",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-05",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-06",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-07",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-08",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-09",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-10",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-11",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2026-12",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-01",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-02",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-03",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-04",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-05",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-06",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-07",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-08",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-09",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-10",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-11",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        },
+        {
+          "period": "2027-12",
+          "interestCents": 0,
+          "carryingCents": 1000000
+        }
+      ],
+      "totals": {
+        "rowCount": 24,
+        "interestCents": 0,
+        "finalCarryingCents": 1000000
+      }
+    },
+    {
+      "id": "V7",
+      "titulo": "Un mes de mas para ver el cuadre de la ULTIMA cuota (I-E9-19)",
+      "input": {
+        "nominalCents": 7777777,
+        "monthlyRateMicroBps": 48675506,
+        "months": 25,
+        "firstPeriod": "2026-12",
+        "side": "PASIVO",
+        "materialityCents": 1000
+      },
+      "presentValueCents": 6888662,
+      "discountCents": 889115,
+      "annualEquivalentMicroBps": 599999999,
+      "requiresPresentValue": true,
+      "interestAccount": "662",
+      "rows": [
+        {
+          "period": "2026-12",
+          "interestCents": 33530,
+          "carryingCents": 6922192
+        },
+        {
+          "period": "2027-01",
+          "interestCents": 33694,
+          "carryingCents": 6955886
+        },
+        {
+          "period": "2027-02",
+          "interestCents": 33858,
+          "carryingCents": 6989744
+        },
+        {
+          "period": "2027-03",
+          "interestCents": 34022,
+          "carryingCents": 7023766
+        },
+        {
+          "period": "2027-04",
+          "interestCents": 34188,
+          "carryingCents": 7057954
+        },
+        {
+          "period": "2027-05",
+          "interestCents": 34354,
+          "carryingCents": 7092308
+        },
+        {
+          "period": "2027-06",
+          "interestCents": 34522,
+          "carryingCents": 7126830
+        },
+        {
+          "period": "2027-07",
+          "interestCents": 34690,
+          "carryingCents": 7161520
+        },
+        {
+          "period": "2027-08",
+          "interestCents": 34859,
+          "carryingCents": 7196379
+        },
+        {
+          "period": "2027-09",
+          "interestCents": 35028,
+          "carryingCents": 7231407
+        },
+        {
+          "period": "2027-10",
+          "interestCents": 35199,
+          "carryingCents": 7266606
+        },
+        {
+          "period": "2027-11",
+          "interestCents": 35370,
+          "carryingCents": 7301976
+        },
+        {
+          "period": "2027-12",
+          "interestCents": 35542,
+          "carryingCents": 7337518
+        },
+        {
+          "period": "2028-01",
+          "interestCents": 35715,
+          "carryingCents": 7373233
+        },
+        {
+          "period": "2028-02",
+          "interestCents": 35889,
+          "carryingCents": 7409122
+        },
+        {
+          "period": "2028-03",
+          "interestCents": 36064,
+          "carryingCents": 7445186
+        },
+        {
+          "period": "2028-04",
+          "interestCents": 36239,
+          "carryingCents": 7481425
+        },
+        {
+          "period": "2028-05",
+          "interestCents": 36416,
+          "carryingCents": 7517841
+        },
+        {
+          "period": "2028-06",
+          "interestCents": 36593,
+          "carryingCents": 7554434
+        },
+        {
+          "period": "2028-07",
+          "interestCents": 36771,
+          "carryingCents": 7591205
+        },
+        {
+          "period": "2028-08",
+          "interestCents": 36950,
+          "carryingCents": 7628155
+        },
+        {
+          "period": "2028-09",
+          "interestCents": 37130,
+          "carryingCents": 7665285
+        },
+        {
+          "period": "2028-10",
+          "interestCents": 37311,
+          "carryingCents": 7702596
+        },
+        {
+          "period": "2028-11",
+          "interestCents": 37492,
+          "carryingCents": 7740088
+        },
+        {
+          "period": "2028-12",
+          "interestCents": 37689,
+          "carryingCents": 7777777
+        }
+      ],
+      "totals": {
+        "rowCount": 25,
+        "interestCents": 889115,
+        "finalCarryingCents": 7777777
+      }
+    }
+  ],
+  "casoA": {
+    "id": "A1",
+    "titulo": "Caso A: correccion dentro del ejercicio, con recalculo del cuadro y reversion del exceso",
+    "assetCostCents": 10000000,
+    "usefulLifeMonths": 60,
+    "postedMonths": 10,
+    "discountCents": 1100036,
+    "correctedCostCents": 8899964,
+    "grossAccumulatedCents": 1666660,
+    "correctedAccumulatedCents": 1483320,
+    "excessDepreciationCents": 183340,
+    "accruedInterestCents": 442817,
+    "nota": "No se crea AssetRevision: una revision es un cambio de estimacion (prospectivo) y esto es la correccion de un error (retroactiva), D7.2 de ADR-0016"
+  },
+  "checks": [
+    {
+      "id": "I-E9-19",
+      "descripcion": "Sigma intereses = descuento inicial, y a vencimiento el pasivo vale su nominal",
+      "expected": [
+        1100036,
+        1128144,
+        376617,
+        169812,
+        5501,
+        0,
+        889115
+      ],
+      "actual": [
+        1100036,
+        1128144,
+        376617,
+        169812,
+        5501,
+        0,
+        889115
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "NOMINAL_A_VENCIMIENTO",
+      "descripcion": "El valor contable final es exactamente el nominal",
+      "expected": [
+        10000000,
+        10000000,
+        4500000,
+        3000000,
+        50000,
+        1000000,
+        7777777
+      ],
+      "actual": [
+        10000000,
+        10000000,
+        4500000,
+        3000000,
+        50000,
+        1000000,
+        7777777
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "CRITERIO-22",
+      "descripcion": "Caso A del experto: valor actual 8.899.964, descuento 1.100.036, exceso 183.340",
+      "expected": [
+        8899964,
+        1100036,
+        183340
+      ],
+      "actual": [
+        8899964,
+        1100036,
+        183340
+      ],
+      "status": "PASS"
+    },
+    {
+      "id": "O-2",
+      "descripcion": "Efectivo y nominal NO dan el mismo valor actual: el tipo se declara mensual",
+      "expected": true,
+      "actual": true,
+      "status": "PASS"
+    },
+    {
+      "id": "R-VA-2",
+      "descripcion": "12 meses justos y descuento inmaterial no se descuentan",
+      "expected": [
+        false,
+        false
+      ],
+      "actual": [
+        false,
+        false
+      ],
+      "status": "PASS"
+    }
+  ]
+}

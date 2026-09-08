@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from "vitest"
 
+import { CHECK_FAMILIES } from "@/lib/audit/families"
+
 import {
   buildInvariantRun,
   canonicalChecksForm,
@@ -102,11 +104,12 @@ describe("configHashOf (O-20)", () => {
 })
 
 describe("buildInvariantRun", () => {
-  it("compone la foto con los cinco hashes, las cuatro cifras y las siete familias", () => {
+  it("compone la foto con los cinco hashes, las cuatro cifras y todas las familias", () => {
     const draft = buildInvariantRun(INPUT)
     expect(draft.checksHash).toBe(checksHashOf(INPUT.checks))
     expect(draft.configHash).toBe(configHashOf(CONFIG))
-    expect(draft.counts.byFamily).toHaveLength(7)
+    // Ocho desde E9: `CIERRE` se suma a las siete de E7 (§6.3).
+    expect(draft.counts.byFamily).toHaveLength(CHECK_FAMILIES.length)
     expect(draft.counts.global).toEqual({ PASS: 2, FAIL: 0, WARN: 0, INFO: 0, total: 2 })
     expect(Object.keys(draft.headline).sort()).toEqual(["ACTIVO", "PN_MAS_PASIVO", "RESULTADO", "TESORERIA"])
     expect(draft.scopeKind).toBe("FISCAL_YEAR")
