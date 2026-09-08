@@ -27,6 +27,9 @@ import type { AssetWithRevisions } from "@/models/assets"
 import { assetsWithoutAttribution, readAssetsWithRevisions, readCapitalGoods, type CapitalGoodRow } from "@/models/assets"
 import type { ChecklistInput, InvariantSnapshot, ManualAnswer } from "@/lib/closing/checklist"
 import { duePeriods } from "@/lib/recurring/schedule"
+import { fxClosingAdjustments, fxStep as fxStepOf, type ClosingRate, type FxPosition } from "@/lib/closing/fx"
+import { reclassStep as reclassStepOf, reclassifyMaturities } from "@/lib/closing/reclass"
+import { capitalGoodsGuard, type ClosingStepResult } from "@/lib/closing/vat"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import type { Cents, LocalDate } from "@/lib/ledger/types"
@@ -711,6 +714,83 @@ export async function readChecklistInput(
     }
   }
 
+  // ── Los cuatro pasos que resuelven los MOTORES puros ────────────────────
+  // El checklist no recalcula nada: los pasos de valoración y presentación los
+  // devuelven `fxStep` y `reclassStep`, que son la misma función que postea el
+  // asiento. Un paso evaluado por dos caminos distintos es un paso que puede
+  // decir dos cosas distintas.
+  const fxPositionsPuras: FxPosition[] = closing.fxPositions.map((p) => ({
+    accountCode: p.accountCode,
+    counterpartyId: p.counterpartyId,
+    currency: p.currency,
+    baseBalanceCents: p.baseBalanceCents,
+    currencyBalanceCents: p.originalBalanceCents,
+    // `readFxPositions` YA acota el universo por `accounts.is_monetary` (O-4):
+    // lo que llega aquí es monetario por definición del PLAN.
+    isMonetary: true,
+  }))
+  const rates: ClosingRate[] = closing.fxPositions
+    .filter((p): p is typeof p & { rateMicro: bigint; rateDate: LocalDate } => p.rateMicro !== null && p.rateDate !== null)
+    .map((p) => ({ currency: p.currency, rateMicro: p.rateMicro, rateDate: p.rateDate }))
+  const fxStep = fxStepOf(fxClosingAdjustments(fxPositionsPuras, rates, opts.refDate), opts.refDate)
+
+  // El eje ya viene agregado por `(cuenta, contraparte, divisa, vencimiento)`,
+  // así que el desempate por `entryNumber` del FIFO no tiene nada que desempatar.
+  const reclass = reclassStepOf(
+    reclassifyMaturities(
+      closing.maturityPositions.map((p) => ({
+        accountCode: p.accountCode,
+        counterpartyId: p.counterpartyId,
+        currency: p.currency ?? opts.baseCurrency,
+        dueDate: p.dueDate,
+        openCents: p.balanceCents,
+        entryNumber: 0,
+      })),
+      closing.reclassificationPairs.map((p) => ({ longCode: p.longAccountCode, shortCode: p.shortAccountCode })),
+      opts.refDate
+    )
+  )
+
+  const prorrataYear = await tx.prorrataYear.findFirst({ where: { year: Number(opts.refDate.slice(0, 4)) } })
+  const prorrataStep: ClosingStepResult =
+    prorrataYear === null
+      ? {
+          step: "PRORRATA_DEFINITIVA",
+          block: "Fiscal",
+          status: "PASS",
+          blocking: true,
+          evidencia: "La organización no tiene prorrata declarada en el año: no hay regularización del art. 105 que practicar",
+        }
+      : prorrataYear.closedAt !== null
+        ? {
+            step: "PRORRATA_DEFINITIVA",
+            block: "Fiscal",
+            status: "PASS",
+            blocking: true,
+            evidencia:
+              `Prorrata definitiva ${prorrataYear.definitiveBps ?? 0} bps cerrada el ` +
+              `${prorrataYear.closedAt.toISOString().slice(0, 10)} y regularizada en ${prorrataYear.regularizationPeriod ?? "—"}`,
+          }
+        : {
+            step: "PRORRATA_DEFINITIVA",
+            block: "Fiscal",
+            status: "FAIL",
+            blocking: true,
+            evidencia: `La prorrata de ${prorrataYear.year} sigue abierta (provisional ${prorrataYear.provisionalBps} bps): ciérrela antes de liquidar el último periodo (O-11)`,
+          }
+
+  const year = Number(opts.refDate.slice(0, 4))
+  const capitalGoodRefs = await readCapitalGoodRefs(tx, { from: `${year - 9}-01-01`, to: opts.refDate })
+  const prorrataYears = await tx.prorrataYear.findMany({
+    where: { year: { gte: year - 9, lte: year } },
+    select: { year: true, definitiveBps: true, provisionalBps: true },
+  })
+  const capitalGoodsStep = capitalGoodsGuard({
+    year,
+    prorrataByYear: prorrataYears.map((p) => ({ year: p.year, bps: p.definitiveBps ?? p.provisionalBps })),
+    assets: capitalGoodRefs,
+  })
+
   const closingRun = await latestClosingRun(tx, opts.fiscalYearId)
   const answers: Record<string, ManualAnswer> = {}
   for (const step of closingRun?.steps ?? []) {
@@ -748,9 +828,9 @@ export async function readChecklistInput(
       .filter((a) => a.periodEnd <= opts.refDate && a.status === "VIVA")
       .map((a) => ({ code: a.code, pendingCents: a.totalCents })),
 
-    fxStep: null,
+    fxStep,
     presentValuePending: [],
-    reclassStep: null,
+    reclassStep: reclass,
     positionsWithoutDueDate: closing.maturityPositions.filter((p) => p.dueDate === null).length,
     debtWithoutSchedule: closing.positionsWithoutSchedule.map((p) => ({
       accountCode: p.accountCode,
@@ -758,8 +838,8 @@ export async function readChecklistInput(
     })),
 
     unsettledVatPeriods,
-    prorrataStep: null,
-    capitalGoodsStep: null,
+    prorrataStep,
+    capitalGoodsStep,
     reccPendingCents: null,
     withholdingPendingModels: [],
     balance473Cents,

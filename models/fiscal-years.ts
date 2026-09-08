@@ -27,7 +27,7 @@ import { resolveReversalDate } from "@/lib/ledger/dates"
 import { buildReversal } from "@/lib/ledger/void"
 import {
   createClosingRunTx,
-  latestClosingRun,
+  sealedClosingRun,
   readChecklistInput,
   updateClosingRunTx,
   type ClosingRunRow,
@@ -658,7 +658,11 @@ export async function reopenFiscalYear(
         data: { status: "OPEN", closedAt: null, closedById: null },
       })
 
-      const run = await latestClosingRun(tx, input.fiscalYearId)
+      // Sólo un cierre **sellado** se reabre: un `ClosingRun` en BORRADOR es un
+      // checklist, no un cierre, y marcarlo `REABIERTO` rompería
+      // `closing_runs_closed_coherent` —que exige `closed_at` en CERRADO y
+      // REABIERTO— además de mentir sobre lo que pasó.
+      const run = await sealedClosingRun(tx, input.fiscalYearId)
       if (run) {
         const steps = run.steps.map((s) =>
           PENDING_RECOMPUTE_STEP_CODES.includes(s.step)
