@@ -25,6 +25,8 @@ import type { AccrualRow } from "@/models/accruals"
 import { readAccrualBalances, readAccruals } from "@/models/accruals"
 import type { AssetWithRevisions } from "@/models/assets"
 import { assetsWithoutAttribution, readAssetsWithRevisions, readCapitalGoods, type CapitalGoodRow } from "@/models/assets"
+import type { ChecklistInput, InvariantSnapshot, ManualAnswer } from "@/lib/closing/checklist"
+import { duePeriods } from "@/lib/recurring/schedule"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import type { Cents, LocalDate } from "@/lib/ledger/types"
@@ -349,6 +351,8 @@ export type ClosingStepRecord = {
   query?: string
   entryId?: string | null
   sealReason?: string
+  /** Respuesta humana a un paso declarado (arqueo, existencias, diferido…). */
+  answer?: ManualAnswer
 }
 
 export type ClosingRunRow = {
@@ -574,4 +578,248 @@ export async function sealedClosingRun(db: AnyClient, fiscalYearId: string): Pro
     orderBy: { createdAt: "desc" },
   })
   return row ? toRunRow(row) : null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E9 · T13 — `ChecklistInput`: lo que los pasos del cierre necesitan
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Compone el `ChecklistInput` **plano** que `lib/closing/checklist.ts` consume.
+ *
+ * La frontera es la de siempre: aquí se LEE (agregados en SQL, en serie, una
+ * transacción) y allí se DECIDE. Ninguna de estas consultas calcula un veredicto
+ * contable; devuelven la evidencia con la que el motor puro lo compone.
+ *
+ * Lo que no se puede leer viaja como `null` o lista vacía y el paso sale `INFO`
+ * **diciendo qué falta** —jamás PASS por vacuidad—, que es la lección de I-E9-5.
+ */
+export async function readChecklistInput(
+  tx: TenantTransactionClient,
+  opts: { fiscalYearId: string; refDate: LocalDate; baseCurrency: string; closing?: ClosingInput }
+): Promise<ChecklistInput> {
+  const fy = await tx.fiscalYear.findFirst({ where: { id: opts.fiscalYearId } })
+  if (!fy) e9Abort("FISCAL_YEAR_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización")
+  const start = fromUtcDate(fy.startDate)
+  const end = fromUtcDate(fy.endDate)
+
+  const closing = opts.closing ?? (await readClosingInput(tx, { ...opts }))
+
+  // ── Integridad del diario ───────────────────────────────────────────────
+  const lastRun = await tx.invariantRun.findFirst({
+    where: { fiscalYearId: opts.fiscalYearId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, checks: true },
+  })
+  const checks = Array.isArray(lastRun?.checks) ? (lastRun.checks as { id: string; status: string }[]) : []
+  const invariants = checks.map((c) => ({ id: c.id, status: c.status as InvariantSnapshot["status"] }))
+
+  const failedRuns = await tx.invariantRun.findMany({
+    where: { fiscalYearId: opts.fiscalYearId, seal: "REQUIERE_REVISION" as Seal },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: { id: true, checks: true },
+  })
+  const failedRunIds = failedRuns
+    .filter((r) => (Array.isArray(r.checks) ? (r.checks as { status: string }[]) : []).some((c) => c.status === "FAIL"))
+    .map((r) => r.id)
+
+  const proposedDocuments = await tx.transaction.count({
+    where: { status: "PROPOSED", issuedAt: { gte: toUtcDate(start), lte: toUtcDate(end) } },
+  })
+  const unsortedFiles = await tx.file.count({ where: { isReviewed: false } })
+
+  // Meses con movimiento y descuadres mensuales, en UNA consulta (I-E7-17).
+  const meses = await tx.$queryRaw<{ mes: number; debit: bigint; credit: bigint }[]>`
+    SELECT EXTRACT(MONTH FROM l.entry_date)::int AS mes,
+           SUM(l.debit_cents)::bigint  AS debit,
+           SUM(l.credit_cents)::bigint AS credit
+      FROM journal_lines l
+     WHERE l.organization_id = ${tx.$organizationId}::uuid
+       AND l.entry_date BETWEEN ${toUtcDate(start)}::date AND ${toUtcDate(end)}::date
+     GROUP BY 1
+     ORDER BY 1`
+  const monthsWithEntries = meses.map((m) => m.mes)
+  const monthlyImbalances = meses
+    .map((m) => ({ month: m.mes, deltaCents: centsFromDb(m.debit - m.credit, `descuadre del mes ${m.mes}`) }))
+    .filter((m) => m.deltaCents !== 0)
+
+  const bridge = await readAccountBalances(tx, { cutoff: opts.refDate, prefixes: ["555", "551", "4749"], sign: "DEUDOR" })
+  const bridgeBalances = [...bridge.entries()].map(([accountCode, balanceCents]) => ({ accountCode, balanceCents }))
+
+  // Saldo contrario a la naturaleza de la cuenta (I-E7-15): el signo lo dice el
+  // grupo, y el plan dice qué cuentas son postables.
+  const contraNatura = await tx.$queryRaw<{ account_code: string; balance_cents: bigint }[]>`
+    SELECT l.account_code, SUM(l.debit_cents - l.credit_cents)::bigint AS balance_cents
+      FROM journal_lines l
+     WHERE l.organization_id = ${tx.$organizationId}::uuid
+       AND l.entry_date <= ${toUtcDate(opts.refDate)}::date
+       AND l.entry_kind <> 'CLOSING'
+     GROUP BY l.account_code
+    HAVING (left(l.account_code, 1) IN ('2','3','6') AND SUM(l.debit_cents - l.credit_cents) < 0)
+        OR (left(l.account_code, 1) IN ('1','4','7') AND SUM(l.debit_cents - l.credit_cents) > 0
+            AND left(l.account_code, 2) NOT IN ('43','44','47','46'))
+     ORDER BY l.account_code`
+  const againstNature = contraNatura.map((r) => ({
+    accountCode: r.account_code,
+    balanceCents: centsFromDb(r.balance_cents, `saldo de ${r.account_code}`),
+  }))
+
+  // ── Fiscal: periodos de IVA del ejercicio sin liquidación viva ──────────
+  const ivaPeriodos = await tx.$queryRaw<{ iva_period: string }[]>`
+    SELECT DISTINCT e.iva_period
+      FROM journal_entries e
+     WHERE e.organization_id = ${tx.$organizationId}::uuid
+       AND e.iva_period IS NOT NULL
+       AND e.entry_date BETWEEN ${toUtcDate(start)}::date AND ${toUtcDate(end)}::date
+     ORDER BY 1`
+  const liquidados = await tx.vatSettlement.findMany({
+    where: { status: "LIQUIDADA" },
+    select: { period: true },
+  })
+  const liquidadosSet = new Set(liquidados.map((s) => s.period))
+  const unsettledVatPeriods = ivaPeriodos.map((r) => r.iva_period).filter((p) => !liquidadosSet.has(p))
+
+  const balances473 = await readAccountBalances(tx, { cutoff: opts.refDate, prefixes: ["473"], sign: "DEUDOR" })
+  const balance473Cents = [...balances473.values()].reduce((a, b) => a + b, 0)
+  const balances6300 = await readAccountBalances(tx, { cutoff: opts.refDate, prefixes: ["6300"], sign: "DEUDOR" })
+  const balance6300Cents = [...balances6300.values()].reduce((a, b) => a + b, 0)
+
+  // ── Los tres asientos del cierre y el del impuesto, si ya están ────────
+  const sistema = await tx.journalEntry.findMany({
+    where: { fiscalYearId: opts.fiscalYearId, voidedAt: null, templateCode: { in: [...CLOSING_SYSTEM_TEMPLATES] } },
+    select: { id: true, templateCode: true },
+  })
+  const byTemplate = (code: string) => sistema.find((e) => e.templateCode === code)?.id ?? null
+
+  // ── Societario y analítica ─────────────────────────────────────────────
+  const distribution = await tx.profitDistribution.findFirst({
+    where: { fiscalYearId: opts.fiscalYearId },
+    select: { entryId: true },
+  })
+  const previo = await tx.fiscalYear.findFirst({
+    where: { endDate: { lt: fy.startDate }, accountsApprovalStatus: { in: ["APROBADAS", "DEPOSITADAS"] } },
+    orderBy: { endDate: "desc" },
+    select: { id: true },
+  })
+  let previousResultPendingCents = 0
+  if (previo) {
+    const distPrevio = await tx.profitDistribution.findFirst({ where: { fiscalYearId: previo.id }, select: { id: true } })
+    if (!distPrevio) {
+      const saldo129 = await readAccountBalances(tx, { cutoff: opts.refDate, prefixes: ["129"] })
+      previousResultPendingCents = [...saldo129.values()].reduce((a, b) => a + b, 0)
+    }
+  }
+
+  const closingRun = await latestClosingRun(tx, opts.fiscalYearId)
+  const answers: Record<string, ManualAnswer> = {}
+  for (const step of closingRun?.steps ?? []) {
+    if (step.answer) answers[step.step] = step.answer
+  }
+
+  return {
+    fiscalYearCode: fy.code,
+    fiscalYearStart: start,
+    fiscalYearEnd: end,
+    fiscalYearStatus: fy.status === "CLOSED" ? "CLOSED" : "OPEN",
+    accountsApprovalStatus: fy.accountsApprovalStatus,
+    taxFilingStatus: fy.taxFilingStatus,
+    reopened: closingRun?.status === "REABIERTO",
+
+    invariants,
+    failedRunIds,
+    proposedDocuments,
+    unsortedFiles,
+    monthsWithEntries,
+    monthlyImbalances,
+    bridgeBalances,
+    againstNature,
+
+    // La conciliación bancaria vive en E7 y se cablea desde la acción: aquí, sin
+    // dato, el paso sale INFO diciendo que falta, no PASS.
+    unreconciledBankAccounts: [],
+
+    pendingRecurring: closing.recurring.flatMap((r) =>
+      duePeriods(r, r.generatedPeriods, opts.refDate).map((p) => ({ code: r.code, period: p.key }))
+    ),
+    assetsPendingDepreciation: [],
+    assetsWithoutAttribution: closing.assetsWithoutAttribution.map((a) => ({ code: a.code })),
+    accrualsNotExhausted: closing.accruals
+      .filter((a) => a.periodEnd <= opts.refDate && a.status === "VIVA")
+      .map((a) => ({ code: a.code, pendingCents: a.totalCents })),
+
+    fxStep: null,
+    presentValuePending: [],
+    reclassStep: null,
+    positionsWithoutDueDate: closing.maturityPositions.filter((p) => p.dueDate === null).length,
+    debtWithoutSchedule: closing.positionsWithoutSchedule.map((p) => ({
+      accountCode: p.accountCode,
+      balanceCents: p.balanceCents,
+    })),
+
+    unsettledVatPeriods,
+    prorrataStep: null,
+    capitalGoodsStep: null,
+    reccPendingCents: null,
+    withholdingPendingModels: [],
+    balance473Cents,
+
+    incomeTaxEntryId: byTemplate("IMPUESTO_BENEFICIOS"),
+    balance6300Cents,
+    regularizacionEntryId: byTemplate("REGULARIZACION_RESULTADO"),
+    cierreEntryId: byTemplate("CIERRE_EJERCICIO"),
+    aperturaEntryId: null,
+
+    distributionEntryId: distribution?.entryId ?? null,
+    previousResultPendingCents,
+
+    cecosPendientes: [],
+    i4i5: invariants.filter((c) => c.id === "I4" || c.id === "I5"),
+    answers,
+  }
+}
+
+/** Las plantillas de los asientos de sistema que el checklist busca en el diario. */
+const CLOSING_SYSTEM_TEMPLATES = [
+  "IMPUESTO_BENEFICIOS",
+  "REGULARIZACION_RESULTADO",
+  "CIERRE_EJERCICIO",
+  "APERTURA_EJERCICIO",
+] as const
+
+/**
+ * **O-12.** Los bienes de inversión con la **cuenta** y el **año de alta** que
+ * `capitalGoodsGuard` necesita para nombrarlos en la evidencia.
+ *
+ * Existe aquí y no en `models/assets.ts` porque `CapitalGoodRow` no expone
+ * `asset_account_code` —lo consume para derivar `isBuilding`— y la guardia lo
+ * enseña literalmente: «AC-0007 (2131, alta 2024, coste …)». Un bien nombrado
+ * sin su cuenta obliga a buscarlo a mano, que es justo lo que la guardia evita.
+ */
+export async function readCapitalGoodRefs(
+  tx: TenantTransactionClient,
+  opts: { from: LocalDate; to: LocalDate }
+): Promise<{ id: string; code: string; accountCode: string; acquisitionYear: number; costCents: Cents; realEstate: boolean }[]> {
+  const rows = await tx.$queryRaw<
+    { id: string; code: string; asset_account_code: string; year: number; cost_cents: bigint }[]
+  >`
+    SELECT a.id, a.code, a.asset_account_code,
+           EXTRACT(YEAR FROM a.in_service_date)::int AS year,
+           a.acquisition_cost_cents AS cost_cents
+      FROM fixed_assets a
+     WHERE a.organization_id = ${tx.$organizationId}::uuid
+       AND a.is_capital_good = TRUE
+       AND left(a.asset_account_code, 1) = '2'
+       AND a.in_service_date BETWEEN ${toUtcDate(opts.from)}::date AND ${toUtcDate(opts.to)}::date
+     ORDER BY a.in_service_date, a.code`
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    accountCode: r.asset_account_code,
+    acquisitionYear: r.year,
+    costCents: centsFromDb(r.cost_cents, "coste del bien de inversión"),
+    // Art. 107.Tres: terrenos (`210`) y construcciones (`211`) regularizan nueve
+    // años, no cuatro.
+    realEstate: r.asset_account_code.startsWith("210") || r.asset_account_code.startsWith("211"),
+  }))
 }

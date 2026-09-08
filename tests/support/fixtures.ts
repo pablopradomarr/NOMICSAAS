@@ -104,7 +104,15 @@ export type FixtureFile = {
   }
 }
 
-export type FixtureName = "ejercicio-minimo" | "ejercicio-completo"
+/**
+ * **E9 · T15.** `ejercicio-completo-v2` (schemaVersion 2.0) es el fixture
+ * ampliado de T20: dos ejercicios encadenados, 300 activos, 60 reglas
+ * recurrentes, cuatro préstamos con cuadro, posiciones en divisa monetarias y no
+ * monetarias, una organización en RECC —de ahí las cuentas `4728`/`4778` de
+ * `accountsExtra`— y otra con prorrata. Los fixtures v1 **no se tocan**: su
+ * `ledgerHash` es el mismo de E3.
+ */
+export type FixtureName = "ejercicio-minimo" | "ejercicio-completo" | "ejercicio-completo-v2"
 
 const FIXTURE_DIR = path.join(process.cwd(), "tests", "fixtures")
 
