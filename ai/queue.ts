@@ -10,6 +10,15 @@
  *     dos pestañas abiertas ya no duplican el ritmo contra el proveedor.
  *  3. **Rate limit por organización** con `lib/rate-limit.ts`. Es de proceso y
  *     así está declarado: frena la ráfaga, no sustituye a una cuota.
+ *  5. **E9 · T22 — el techo es por organización, por minuto y por PLAN** (§5.4,
+ *     deuda de E8). Hasta aquí el techo era una constante única para todas las
+ *     organizaciones: la cola sólo acotaba la **concurrencia** por proveedor y un
+ *     lote de 100 documentos consumía saldo tan rápido como el proveedor lo
+ *     sirviera. Ahora `EXTRACTION_RATE_LIMIT_BY_PLAN` fija cuántas extracciones
+ *     por minuto admite cada plan y el rechazo viaja con el límite y el plan
+ *     dentro de `ExtractionRateLimitedError`, para que la bandeja pueda decir
+ *     **qué** techo se ha tocado y **cuándo** se libera, en vez de un «inténtelo
+ *     más tarde» que el usuario no puede accionar.
  *  4. **El saldo se decrementa POR RUN CREADO** (G-12), y sólo después de que
  *     el `INSERT` haya tenido éxito. El código anterior descontaba «si
  *     `tokensUsed > 0`», de modo que un proveedor que no reportaba tokens
@@ -36,13 +45,48 @@ import { getOrCreateProgress, incrementProgress, updateProgress } from "@/models
 import { getAnalyzeConcurrency, getSettings } from "@/models/settings"
 import type { ExtractionRun, Organization } from "@/prisma/client"
 
+/**
+ * **E9 · T22.** Techo de extracciones **por organización y por minuto**, según
+ * el plan de la organización (`Organization.membershipPlan`). No sustituye a la
+ * cuota —el saldo se descuenta por run creado (G-12)—: acota la **ráfaga**, que
+ * es lo que hoy podía vaciar el saldo de un mes en un minuto.
+ *
+ * Un plan desconocido cae al techo por defecto: el límite nunca desaparece por
+ * no reconocer una cadena.
+ */
+export const EXTRACTION_RATE_LIMIT_BY_PLAN: Readonly<Record<string, number>> = {
+  free: 10,
+  starter: 30,
+  pro: 60,
+  business: 120,
+  enterprise: 300,
+}
+
+/** Techo aplicable a una organización, en peticiones por ventana. */
+export function extractionRateLimitFor(organization: Pick<Organization, "membershipPlan">): number {
+  const plan = organization.membershipPlan?.trim().toLowerCase()
+  if (!plan) return EXTRACTION_RATE_LIMIT
+  return EXTRACTION_RATE_LIMIT_BY_PLAN[plan] ?? EXTRACTION_RATE_LIMIT
+}
+
 export class ExtractionRateLimitedError extends Error {
   readonly resetAt: number
+  /** Techo que se ha tocado, para que la bandeja lo diga con una cifra. */
+  readonly limit: number
+  readonly windowMs: number
+  readonly plan: string | null
 
-  constructor(resetAt: number) {
-    super("Demasiadas extracciones seguidas en esta organización. Inténtelo de nuevo en unos segundos.")
+  constructor(resetAt: number, limit: number = EXTRACTION_RATE_LIMIT, plan: string | null = null) {
+    super(
+      `Demasiadas extracciones seguidas en esta organización: el máximo es de ${limit} por minuto` +
+        (plan ? ` en el plan ${plan}` : "") +
+        ". Inténtelo de nuevo en unos segundos."
+    )
     this.name = "ExtractionRateLimitedError"
     this.resetAt = resetAt
+    this.limit = limit
+    this.windowMs = EXTRACTION_RATE_WINDOW_MS
+    this.plan = plan
   }
 }
 
@@ -81,13 +125,11 @@ export async function enqueueExtraction(
   options: EnqueueOptions = {}
 ): Promise<ExtractionRun> {
   const now = options.now ?? Date.now()
-  const limit = consumeRateLimit(
-    extractionRateLimitKey(organization.id),
-    EXTRACTION_RATE_LIMIT,
-    EXTRACTION_RATE_WINDOW_MS,
-    now
-  )
-  if (!limit.allowed) throw new ExtractionRateLimitedError(limit.resetAt)
+  const perMinute = extractionRateLimitFor(organization)
+  const limit = consumeRateLimit(extractionRateLimitKey(organization.id), perMinute, EXTRACTION_RATE_WINDOW_MS, now)
+  if (!limit.allowed) {
+    throw new ExtractionRateLimitedError(limit.resetAt, perMinute, organization.membershipPlan ?? null)
+  }
 
   if (isAiBalanceExhausted(organization)) throw new AiBalanceExhaustedError()
   if (isSubscriptionExpired(organization)) throw new SubscriptionExpiredError()

@@ -284,6 +284,16 @@ export type ReconcileResult = {
 
 const sum = (values: readonly number[]): number => values.reduce((a, b) => a + b, 0)
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * **E9 · T22** (auditor H-9 de E8). ¿Es un uuid canónico? Los identificadores de
+ * asiento del diario son `uuid` en la base: cualquier otra cosa no identifica a
+ * nada y no se manda a Postgres. Se comprueba en el borde puro —aquí— y en el
+ * borde de lectura (`models/reconcile-context.ts`).
+ */
+export const isUuid = (value: unknown): value is string => typeof value === "string" && UUID_RE.test(value)
+
 /** `round_half_up(numerator / denominator)` exacto y entero (RC-17). */
 export function halfUpDiv(numerator: number, denominator: number): number {
   if (denominator <= 0) throw new RangeError("denominador positivo")
@@ -1638,6 +1648,22 @@ function checkRectification(
         "no es construible",
       evidence: { rectifies: r ?? null },
       fields: ["rectifies"],
+      delta: null,
+    }
+  }
+  // E9 · T22 (auditor H-9 de E8): `rectifies.entryId` es un uuid o no es nada.
+  // Hoy es inalcanzable —`ai/schema.ts` no expone el campo al modelo y
+  // `forms/extraction.ts` lo valida como uuid—, pero el borde que consulta la
+  // base no puede depender de que los dos de arriba sigan ahí mañana: un valor
+  // que no es uuid llegaría a Postgres como una comparación con `uuid` y
+  // reventaría con un error de driver en vez de con un veredicto explicable.
+  if (r.entryId !== undefined && r.entryId !== null && !isUuid(r.entryId)) {
+    return {
+      status: "FAIL",
+      blocksBatch: true,
+      message: `el identificador del asiento rectificado «${r.entryId}» no es un uuid: no se resuelve ningún documento con él`,
+      evidence: { documentNumber: r.documentNumber, entryId: r.entryId, mode: r.mode },
+      fields: ["rectifies.entryId"],
       delta: null,
     }
   }

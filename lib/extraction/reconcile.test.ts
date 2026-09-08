@@ -36,6 +36,7 @@ import {
 import {
   convertWithRate,
   euVatNumberLooksValid,
+  isUuid,
   fullYearsBetween,
   halfUpDiv,
   quarterOf,
@@ -512,6 +513,28 @@ describe("aritmética y ramas", () => {
     const rc05 = r.checks.find((k) => k.id === "RC-05")
     expect(rc05?.status).toBe("WARN")
     expect(r.fiscalYearClosed).toBe(true)
+  })
+
+
+  it("E9 · T22 — `rectifies.entryId` que no es uuid: RC-21 lo rechaza con veredicto (auditor H-9)", () => {
+    expect(isUuid("3f2504e0-4f89-41d3-9a0c-0305e82c3301")).toBe(true)
+    expect(isUuid("ENTRY-C01")).toBe(false)
+    expect(isUuid("")).toBe(false)
+    expect(isUuid(null)).toBe(false)
+
+    const c = caseById("C07")
+    const p = toProposal(c.propuesta)
+    const r = reconcile(
+      { ...p, rectifies: { ...p.rectifies!, entryId: "'; DROP TABLE journal_entries; --" } },
+      reconcileContextFor(c)
+    )
+    const rc21 = r.checks.find((k) => k.id === "RC-21")
+    expect(rc21?.status).toBe("FAIL")
+    expect(rc21?.blocksBatch).toBe(true)
+    expect(rc21?.message).toContain("no es un uuid")
+    // Con el uuid del fixture, el mismo caso sigue en PASS: la barrera no
+    // estorba al camino bueno.
+    expect(reconcile(p, reconcileContextFor(c)).checks.find((k) => k.id === "RC-21")?.status).toBe("PASS")
   })
 
   it("el catálogo de cuentas del fixture no trae ninguna del subgrupo 64 (O-13)", () => {

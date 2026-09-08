@@ -12,11 +12,12 @@
  */
 
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
-import type {
-  CounterpartyRef,
-  ExtractionKind,
-  ReconcileContext,
-  TaxRateRef,
+import {
+  isUuid,
+  type CounterpartyRef,
+  type ExtractionKind,
+  type ReconcileContext,
+  type TaxRateRef,
 } from "@/lib/extraction/reconcile"
 import type { ExtractionProposal } from "@/lib/extraction/types"
 import { getOrFetchRate, newRateMemo, type RateMemo } from "@/lib/fx/rates"
@@ -244,7 +245,11 @@ async function resolveRectifiedEntry(
   taxRates: readonly { id: string; code: string }[]
 ): Promise<ReconcileContext["rectifiedEntry"] | null> {
   const entryId = proposal.rectifies?.entryId
-  if (!entryId) return null
+  // E9 · T22 (auditor H-9): sin uuid no se consulta. `journal_entries.id` es
+  // `uuid`, así que una cadena cualquiera no devolvería «no encontrado»: haría
+  // saltar al driver con un error que la pantalla no sabe explicar. RC-21 ya lo
+  // rechaza con veredicto; esta es la segunda barrera, la del borde de lectura.
+  if (!entryId || !isUuid(entryId)) return null
   const entry = await db.journalEntry.findFirst({
     where: { id: entryId },
     select: { id: true, lines: { select: { taxRateId: true, taxBaseCents: true, debitCents: true, creditCents: true } } },
@@ -275,7 +280,9 @@ async function resolveAdvanceEntry(
   outputVatAccount: string
 ): Promise<{ id: string; taxCents: number } | null> {
   const entryId = proposal.advanceEntryId
-  if (!entryId) return null
+  // Misma barrera que en `resolveRectifiedEntry` (T22): el identificador del
+  // anticipo entra por el mismo camino y va al mismo `uuid` de la base.
+  if (!entryId || !isUuid(entryId)) return null
   const entry = await db.journalEntry.findFirst({
     where: { id: entryId },
     select: { id: true, lines: { select: { accountCode: true, debitCents: true, creditCents: true } } },
