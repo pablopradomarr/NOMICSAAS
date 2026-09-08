@@ -1,0 +1,1842 @@
+{
+  "fixture": "cuadros-esperados",
+  "epica": "E9",
+  "tarea": "T6",
+  "reglas": "R-AM-1..R-AM-10 (docs/design/E9-cierre-recurrentes.md §4.2, ADR-0016 D2)",
+  "cases": [
+    {
+      "id": "C1",
+      "titulo": "Base indivisible sin residual: 1.000.000 / 7 meses, residuo de 1 a la última cuota (R-AM-2)",
+      "asset": {
+        "id": "fa-am-c1",
+        "code": "AM-C1",
+        "name": "AM-C1",
+        "method": "LINEAL",
+        "inServiceDate": "2026-01-10",
+        "acquisitionCostCents": 1000000,
+        "residualValueCents": 0,
+        "usefulLifeMonths": 7,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "EN_USO",
+        "disposalDate": null,
+        "isCapitalGood": false,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [],
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "quotaCents": 142857,
+          "accumulatedCents": 142857,
+          "netBookValueCents": 857143
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "quotaCents": 142857,
+          "accumulatedCents": 285714,
+          "netBookValueCents": 714286
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 142857,
+          "accumulatedCents": 428571,
+          "netBookValueCents": 571429
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 142857,
+          "accumulatedCents": 571428,
+          "netBookValueCents": 428572
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 142857,
+          "accumulatedCents": 714285,
+          "netBookValueCents": 285715
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 142857,
+          "accumulatedCents": 857142,
+          "netBookValueCents": 142858
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 142858,
+          "accumulatedCents": 1000000,
+          "netBookValueCents": 0
+        }
+      ],
+      "totals": {
+        "quotaCents": 1000000,
+        "rowCount": 7,
+        "zeroQuotaRows": 0,
+        "lastQuotaCents": 142858,
+        "amortizableBaseCents": 1000000
+      },
+      "scheduleHash": "6f0ca7c71d34f510043a56402c463a63300eca5c8cdceb59a775b7e9148cf1f3",
+      "disposal": null,
+      "disposalLines": [],
+      "disposalWarnings": []
+    },
+    {
+      "id": "C2",
+      "titulo": "Valor residual > 0: base 900.000 / 7 meses; última cuota 128.574 (criterio 5 de §12)",
+      "asset": {
+        "id": "fa-am-c2",
+        "code": "AM-C2",
+        "name": "AM-C2",
+        "method": "LINEAL",
+        "inServiceDate": "2026-03-01",
+        "acquisitionCostCents": 1000000,
+        "residualValueCents": 100000,
+        "usefulLifeMonths": 7,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "EN_USO",
+        "disposalDate": null,
+        "isCapitalGood": false,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [],
+      "rows": [
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 128571,
+          "accumulatedCents": 128571,
+          "netBookValueCents": 871429
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 128571,
+          "accumulatedCents": 257142,
+          "netBookValueCents": 742858
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 128571,
+          "accumulatedCents": 385713,
+          "netBookValueCents": 614287
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 128571,
+          "accumulatedCents": 514284,
+          "netBookValueCents": 485716
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 128571,
+          "accumulatedCents": 642855,
+          "netBookValueCents": 357145
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "quotaCents": 128571,
+          "accumulatedCents": 771426,
+          "netBookValueCents": 228574
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "quotaCents": 128574,
+          "accumulatedCents": 900000,
+          "netBookValueCents": 100000
+        }
+      ],
+      "totals": {
+        "quotaCents": 900000,
+        "rowCount": 7,
+        "zeroQuotaRows": 0,
+        "lastQuotaCents": 128574,
+        "amortizableBaseCents": 900000
+      },
+      "scheduleHash": "d9bc5f7b8b3067690ddf99cc348ca362687faf5eb95e2af38e0313d8e437fd30",
+      "disposal": null,
+      "disposalLines": [],
+      "disposalWarnings": []
+    },
+    {
+      "id": "C3",
+      "titulo": "Alta a mitad de mes: mes entero desde la puesta en servicio, no prorrateo (R-AM-3, O-30)",
+      "asset": {
+        "id": "fa-am-c3",
+        "code": "AM-C3",
+        "name": "AM-C3",
+        "method": "LINEAL",
+        "inServiceDate": "2026-03-17",
+        "acquisitionCostCents": 600000,
+        "residualValueCents": 0,
+        "usefulLifeMonths": 12,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "EN_USO",
+        "disposalDate": null,
+        "isCapitalGood": false,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [],
+      "rows": [
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 50000,
+          "netBookValueCents": 550000
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 50000,
+          "accumulatedCents": 100000,
+          "netBookValueCents": 500000
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 150000,
+          "netBookValueCents": 450000
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 50000,
+          "accumulatedCents": 200000,
+          "netBookValueCents": 400000
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 250000,
+          "netBookValueCents": 350000
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 300000,
+          "netBookValueCents": 300000
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "quotaCents": 50000,
+          "accumulatedCents": 350000,
+          "netBookValueCents": 250000
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 400000,
+          "netBookValueCents": 200000
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "quotaCents": 50000,
+          "accumulatedCents": 450000,
+          "netBookValueCents": 150000
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 500000,
+          "netBookValueCents": 100000
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 550000,
+          "netBookValueCents": 50000
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "quotaCents": 50000,
+          "accumulatedCents": 600000,
+          "netBookValueCents": 0
+        }
+      ],
+      "totals": {
+        "quotaCents": 600000,
+        "rowCount": 12,
+        "zeroQuotaRows": 0,
+        "lastQuotaCents": 50000,
+        "amortizableBaseCents": 600000
+      },
+      "scheduleHash": "209f7e7257c10043d8571a3bcc606615ff4293ecf041948221a28ca587137bb4",
+      "disposal": null,
+      "disposalLines": [],
+      "disposalWarnings": []
+    },
+    {
+      "id": "C4",
+      "titulo": "Revisión prospectiva de vida útil en el mes 20: 36 → 48 meses, el pasado no se toca (R-AM-5)",
+      "asset": {
+        "id": "fa-am-c4",
+        "code": "AM-C4",
+        "name": "AM-C4",
+        "method": "LINEAL",
+        "inServiceDate": "2026-01-01",
+        "acquisitionCostCents": 3600000,
+        "residualValueCents": 0,
+        "usefulLifeMonths": 36,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "EN_USO",
+        "disposalDate": null,
+        "isCapitalGood": false,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [
+        {
+          "effectiveFrom": "2027-08-01",
+          "newUsefulLifeMonths": 48,
+          "newResidualValueCents": null,
+          "addedCostCents": null,
+          "reason": "Ampliación de la vida útil estimada tras la revisión técnica"
+        }
+      ],
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 100000,
+          "netBookValueCents": 3500000
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "quotaCents": 100000,
+          "accumulatedCents": 200000,
+          "netBookValueCents": 3400000
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 300000,
+          "netBookValueCents": 3300000
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 100000,
+          "accumulatedCents": 400000,
+          "netBookValueCents": 3200000
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 500000,
+          "netBookValueCents": 3100000
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 100000,
+          "accumulatedCents": 600000,
+          "netBookValueCents": 3000000
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 700000,
+          "netBookValueCents": 2900000
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 800000,
+          "netBookValueCents": 2800000
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "quotaCents": 100000,
+          "accumulatedCents": 900000,
+          "netBookValueCents": 2700000
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 1000000,
+          "netBookValueCents": 2600000
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "quotaCents": 100000,
+          "accumulatedCents": 1100000,
+          "netBookValueCents": 2500000
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 1200000,
+          "netBookValueCents": 2400000
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 1300000,
+          "netBookValueCents": 2300000
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "quotaCents": 100000,
+          "accumulatedCents": 1400000,
+          "netBookValueCents": 2200000
+        },
+        {
+          "period": "2027-03",
+          "from": "2027-03-01",
+          "to": "2027-03-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 1500000,
+          "netBookValueCents": 2100000
+        },
+        {
+          "period": "2027-04",
+          "from": "2027-04-01",
+          "to": "2027-04-30",
+          "quotaCents": 100000,
+          "accumulatedCents": 1600000,
+          "netBookValueCents": 2000000
+        },
+        {
+          "period": "2027-05",
+          "from": "2027-05-01",
+          "to": "2027-05-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 1700000,
+          "netBookValueCents": 1900000
+        },
+        {
+          "period": "2027-06",
+          "from": "2027-06-01",
+          "to": "2027-06-30",
+          "quotaCents": 100000,
+          "accumulatedCents": 1800000,
+          "netBookValueCents": 1800000
+        },
+        {
+          "period": "2027-07",
+          "from": "2027-07-01",
+          "to": "2027-07-31",
+          "quotaCents": 100000,
+          "accumulatedCents": 1900000,
+          "netBookValueCents": 1700000
+        },
+        {
+          "period": "2027-08",
+          "from": "2027-08-01",
+          "to": "2027-08-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 1958620,
+          "netBookValueCents": 1641380
+        },
+        {
+          "period": "2027-09",
+          "from": "2027-09-01",
+          "to": "2027-09-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 2017240,
+          "netBookValueCents": 1582760
+        },
+        {
+          "period": "2027-10",
+          "from": "2027-10-01",
+          "to": "2027-10-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2075860,
+          "netBookValueCents": 1524140
+        },
+        {
+          "period": "2027-11",
+          "from": "2027-11-01",
+          "to": "2027-11-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 2134480,
+          "netBookValueCents": 1465520
+        },
+        {
+          "period": "2027-12",
+          "from": "2027-12-01",
+          "to": "2027-12-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2193100,
+          "netBookValueCents": 1406900
+        },
+        {
+          "period": "2028-01",
+          "from": "2028-01-01",
+          "to": "2028-01-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2251720,
+          "netBookValueCents": 1348280
+        },
+        {
+          "period": "2028-02",
+          "from": "2028-02-01",
+          "to": "2028-02-29",
+          "quotaCents": 58620,
+          "accumulatedCents": 2310340,
+          "netBookValueCents": 1289660
+        },
+        {
+          "period": "2028-03",
+          "from": "2028-03-01",
+          "to": "2028-03-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2368960,
+          "netBookValueCents": 1231040
+        },
+        {
+          "period": "2028-04",
+          "from": "2028-04-01",
+          "to": "2028-04-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 2427580,
+          "netBookValueCents": 1172420
+        },
+        {
+          "period": "2028-05",
+          "from": "2028-05-01",
+          "to": "2028-05-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2486200,
+          "netBookValueCents": 1113800
+        },
+        {
+          "period": "2028-06",
+          "from": "2028-06-01",
+          "to": "2028-06-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 2544820,
+          "netBookValueCents": 1055180
+        },
+        {
+          "period": "2028-07",
+          "from": "2028-07-01",
+          "to": "2028-07-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2603440,
+          "netBookValueCents": 996560
+        },
+        {
+          "period": "2028-08",
+          "from": "2028-08-01",
+          "to": "2028-08-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2662060,
+          "netBookValueCents": 937940
+        },
+        {
+          "period": "2028-09",
+          "from": "2028-09-01",
+          "to": "2028-09-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 2720680,
+          "netBookValueCents": 879320
+        },
+        {
+          "period": "2028-10",
+          "from": "2028-10-01",
+          "to": "2028-10-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2779300,
+          "netBookValueCents": 820700
+        },
+        {
+          "period": "2028-11",
+          "from": "2028-11-01",
+          "to": "2028-11-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 2837920,
+          "netBookValueCents": 762080
+        },
+        {
+          "period": "2028-12",
+          "from": "2028-12-01",
+          "to": "2028-12-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2896540,
+          "netBookValueCents": 703460
+        },
+        {
+          "period": "2029-01",
+          "from": "2029-01-01",
+          "to": "2029-01-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 2955160,
+          "netBookValueCents": 644840
+        },
+        {
+          "period": "2029-02",
+          "from": "2029-02-01",
+          "to": "2029-02-28",
+          "quotaCents": 58620,
+          "accumulatedCents": 3013780,
+          "netBookValueCents": 586220
+        },
+        {
+          "period": "2029-03",
+          "from": "2029-03-01",
+          "to": "2029-03-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 3072400,
+          "netBookValueCents": 527600
+        },
+        {
+          "period": "2029-04",
+          "from": "2029-04-01",
+          "to": "2029-04-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 3131020,
+          "netBookValueCents": 468980
+        },
+        {
+          "period": "2029-05",
+          "from": "2029-05-01",
+          "to": "2029-05-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 3189640,
+          "netBookValueCents": 410360
+        },
+        {
+          "period": "2029-06",
+          "from": "2029-06-01",
+          "to": "2029-06-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 3248260,
+          "netBookValueCents": 351740
+        },
+        {
+          "period": "2029-07",
+          "from": "2029-07-01",
+          "to": "2029-07-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 3306880,
+          "netBookValueCents": 293120
+        },
+        {
+          "period": "2029-08",
+          "from": "2029-08-01",
+          "to": "2029-08-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 3365500,
+          "netBookValueCents": 234500
+        },
+        {
+          "period": "2029-09",
+          "from": "2029-09-01",
+          "to": "2029-09-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 3424120,
+          "netBookValueCents": 175880
+        },
+        {
+          "period": "2029-10",
+          "from": "2029-10-01",
+          "to": "2029-10-31",
+          "quotaCents": 58620,
+          "accumulatedCents": 3482740,
+          "netBookValueCents": 117260
+        },
+        {
+          "period": "2029-11",
+          "from": "2029-11-01",
+          "to": "2029-11-30",
+          "quotaCents": 58620,
+          "accumulatedCents": 3541360,
+          "netBookValueCents": 58640
+        },
+        {
+          "period": "2029-12",
+          "from": "2029-12-01",
+          "to": "2029-12-31",
+          "quotaCents": 58640,
+          "accumulatedCents": 3600000,
+          "netBookValueCents": 0
+        }
+      ],
+      "totals": {
+        "quotaCents": 3600000,
+        "rowCount": 48,
+        "zeroQuotaRows": 0,
+        "lastQuotaCents": 58640,
+        "amortizableBaseCents": 3600000
+      },
+      "scheduleHash": "3f9c4c475e561c58e99f343c7ab06ed879b7311fc20521742fe51824bb3beaa1",
+      "disposal": null,
+      "disposalLines": [],
+      "disposalWarnings": []
+    },
+    {
+      "id": "C5",
+      "titulo": "Mejora capitalizada de 300.000 en el mes 7: base = coste + mejoras − residual (R-AM-1, O-28)",
+      "asset": {
+        "id": "fa-am-c5",
+        "code": "AM-C5",
+        "name": "AM-C5",
+        "method": "LINEAL",
+        "inServiceDate": "2026-01-01",
+        "acquisitionCostCents": 1200000,
+        "residualValueCents": 0,
+        "usefulLifeMonths": 24,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "EN_USO",
+        "disposalDate": null,
+        "isCapitalGood": false,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [
+        {
+          "effectiveFrom": "2026-07-01",
+          "newUsefulLifeMonths": null,
+          "newResidualValueCents": null,
+          "addedCostCents": 300000,
+          "reason": "Mejora capitalizada que amplía la capacidad del elemento"
+        }
+      ],
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 50000,
+          "netBookValueCents": 1150000
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "quotaCents": 50000,
+          "accumulatedCents": 100000,
+          "netBookValueCents": 1100000
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 150000,
+          "netBookValueCents": 1050000
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 50000,
+          "accumulatedCents": 200000,
+          "netBookValueCents": 1000000
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 50000,
+          "accumulatedCents": 250000,
+          "netBookValueCents": 950000
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 50000,
+          "accumulatedCents": 300000,
+          "netBookValueCents": 900000
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 366666,
+          "netBookValueCents": 1133334
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 433332,
+          "netBookValueCents": 1066668
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "quotaCents": 66666,
+          "accumulatedCents": 499998,
+          "netBookValueCents": 1000002
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 566664,
+          "netBookValueCents": 933336
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "quotaCents": 66666,
+          "accumulatedCents": 633330,
+          "netBookValueCents": 866670
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 699996,
+          "netBookValueCents": 800004
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 766662,
+          "netBookValueCents": 733338
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "quotaCents": 66666,
+          "accumulatedCents": 833328,
+          "netBookValueCents": 666672
+        },
+        {
+          "period": "2027-03",
+          "from": "2027-03-01",
+          "to": "2027-03-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 899994,
+          "netBookValueCents": 600006
+        },
+        {
+          "period": "2027-04",
+          "from": "2027-04-01",
+          "to": "2027-04-30",
+          "quotaCents": 66666,
+          "accumulatedCents": 966660,
+          "netBookValueCents": 533340
+        },
+        {
+          "period": "2027-05",
+          "from": "2027-05-01",
+          "to": "2027-05-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 1033326,
+          "netBookValueCents": 466674
+        },
+        {
+          "period": "2027-06",
+          "from": "2027-06-01",
+          "to": "2027-06-30",
+          "quotaCents": 66666,
+          "accumulatedCents": 1099992,
+          "netBookValueCents": 400008
+        },
+        {
+          "period": "2027-07",
+          "from": "2027-07-01",
+          "to": "2027-07-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 1166658,
+          "netBookValueCents": 333342
+        },
+        {
+          "period": "2027-08",
+          "from": "2027-08-01",
+          "to": "2027-08-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 1233324,
+          "netBookValueCents": 266676
+        },
+        {
+          "period": "2027-09",
+          "from": "2027-09-01",
+          "to": "2027-09-30",
+          "quotaCents": 66666,
+          "accumulatedCents": 1299990,
+          "netBookValueCents": 200010
+        },
+        {
+          "period": "2027-10",
+          "from": "2027-10-01",
+          "to": "2027-10-31",
+          "quotaCents": 66666,
+          "accumulatedCents": 1366656,
+          "netBookValueCents": 133344
+        },
+        {
+          "period": "2027-11",
+          "from": "2027-11-01",
+          "to": "2027-11-30",
+          "quotaCents": 66666,
+          "accumulatedCents": 1433322,
+          "netBookValueCents": 66678
+        },
+        {
+          "period": "2027-12",
+          "from": "2027-12-01",
+          "to": "2027-12-31",
+          "quotaCents": 66678,
+          "accumulatedCents": 1500000,
+          "netBookValueCents": 0
+        }
+      ],
+      "totals": {
+        "quotaCents": 1500000,
+        "rowCount": 24,
+        "zeroQuotaRows": 0,
+        "lastQuotaCents": 66678,
+        "amortizableBaseCents": 1500000
+      },
+      "scheduleHash": "8cc765d8bc80c849b0bcf4d2f07579bab49d47fd3b41d0f66e02f5c4dc01a957",
+      "disposal": null,
+      "disposalLines": [],
+      "disposalWarnings": []
+    },
+    {
+      "id": "C6",
+      "titulo": "Baja en el mes 14: se dota hasta el mes de la baja inclusive y el VNC va a 671 (R-AM-6)",
+      "asset": {
+        "id": "fa-am-c6",
+        "code": "AM-C6",
+        "name": "AM-C6",
+        "method": "LINEAL",
+        "inServiceDate": "2026-01-01",
+        "acquisitionCostCents": 1000000,
+        "residualValueCents": 0,
+        "usefulLifeMonths": 60,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "BAJA",
+        "disposalDate": "2027-02-10",
+        "isCapitalGood": false,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [],
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 16666,
+          "netBookValueCents": 983334
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "quotaCents": 16666,
+          "accumulatedCents": 33332,
+          "netBookValueCents": 966668
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 49998,
+          "netBookValueCents": 950002
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 16666,
+          "accumulatedCents": 66664,
+          "netBookValueCents": 933336
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 83330,
+          "netBookValueCents": 916670
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 16666,
+          "accumulatedCents": 99996,
+          "netBookValueCents": 900004
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 116662,
+          "netBookValueCents": 883338
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 133328,
+          "netBookValueCents": 866672
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "quotaCents": 16666,
+          "accumulatedCents": 149994,
+          "netBookValueCents": 850006
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 166660,
+          "netBookValueCents": 833340
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "quotaCents": 16666,
+          "accumulatedCents": 183326,
+          "netBookValueCents": 816674
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 199992,
+          "netBookValueCents": 800008
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "quotaCents": 16666,
+          "accumulatedCents": 216658,
+          "netBookValueCents": 783342
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "quotaCents": 16666,
+          "accumulatedCents": 233324,
+          "netBookValueCents": 766676
+        }
+      ],
+      "totals": {
+        "quotaCents": 233324,
+        "rowCount": 14,
+        "zeroQuotaRows": 0,
+        "lastQuotaCents": 16666,
+        "amortizableBaseCents": 1000000
+      },
+      "scheduleHash": "0ab2c53165cffea335a23d543ad6f93465a704758a890d23cda8668743814c2b",
+      "disposal": {
+        "kind": "BAJA",
+        "date": "2027-02-10",
+        "lossAccountCode": "671"
+      },
+      "disposalLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "2811",
+          "debitCents": 233324,
+          "creditCents": 0,
+          "description": "Cancelación amortización acumulada AM-C6",
+          "fixedAssetId": "fa-am-c6"
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "671",
+          "debitCents": 766676,
+          "creditCents": 0,
+          "description": "Pérdida por baja de AM-C6",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 3,
+          "accountCode": "2131",
+          "debitCents": 0,
+          "creditCents": 1000000,
+          "description": "Baja del inmovilizado AM-C6",
+          "fixedAssetId": "fa-am-c6"
+        }
+      ],
+      "disposalWarnings": []
+    },
+    {
+      "id": "C7",
+      "titulo": "Venta con 543 e IVA: acumulada 640.000, beneficio 140.000 en 771 (criterio 7 de §12, R-AM-7)",
+      "asset": {
+        "id": "fa-am-c7",
+        "code": "AM-C7",
+        "name": "AM-C7",
+        "method": "LINEAL",
+        "inServiceDate": "2026-01-01",
+        "acquisitionCostCents": 1000000,
+        "residualValueCents": 0,
+        "usefulLifeMonths": 25,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "VENDIDO",
+        "disposalDate": "2027-04-20",
+        "isCapitalGood": true,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [],
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 40000,
+          "netBookValueCents": 960000
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "quotaCents": 40000,
+          "accumulatedCents": 80000,
+          "netBookValueCents": 920000
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 120000,
+          "netBookValueCents": 880000
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 40000,
+          "accumulatedCents": 160000,
+          "netBookValueCents": 840000
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 200000,
+          "netBookValueCents": 800000
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 40000,
+          "accumulatedCents": 240000,
+          "netBookValueCents": 760000
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 280000,
+          "netBookValueCents": 720000
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 320000,
+          "netBookValueCents": 680000
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "quotaCents": 40000,
+          "accumulatedCents": 360000,
+          "netBookValueCents": 640000
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 400000,
+          "netBookValueCents": 600000
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "quotaCents": 40000,
+          "accumulatedCents": 440000,
+          "netBookValueCents": 560000
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 480000,
+          "netBookValueCents": 520000
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 520000,
+          "netBookValueCents": 480000
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "quotaCents": 40000,
+          "accumulatedCents": 560000,
+          "netBookValueCents": 440000
+        },
+        {
+          "period": "2027-03",
+          "from": "2027-03-01",
+          "to": "2027-03-31",
+          "quotaCents": 40000,
+          "accumulatedCents": 600000,
+          "netBookValueCents": 400000
+        },
+        {
+          "period": "2027-04",
+          "from": "2027-04-01",
+          "to": "2027-04-30",
+          "quotaCents": 40000,
+          "accumulatedCents": 640000,
+          "netBookValueCents": 360000
+        }
+      ],
+      "totals": {
+        "quotaCents": 640000,
+        "rowCount": 16,
+        "zeroQuotaRows": 0,
+        "lastQuotaCents": 40000,
+        "amortizableBaseCents": 1000000
+      },
+      "scheduleHash": "86883a9eca8462f71361d9988b3a54ebd99ba43cd35d946b446634f617a6f4ad",
+      "disposal": {
+        "kind": "VENTA",
+        "date": "2027-04-20",
+        "priceCents": 500000,
+        "vatCents": 105000,
+        "receivableAccountCode": "543",
+        "vatAccountCode": "477",
+        "gainAccountCode": "771",
+        "lossAccountCode": "671",
+        "counterpartyId": null,
+        "dueDate": "2027-05-20"
+      },
+      "disposalLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "543",
+          "debitCents": 605000,
+          "creditCents": 0,
+          "description": "Enajenación AM-C7",
+          "counterpartyId": null,
+          "dueDate": "2027-05-20"
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "2811",
+          "debitCents": 640000,
+          "creditCents": 0,
+          "description": "Cancelación amortización acumulada AM-C7",
+          "fixedAssetId": "fa-am-c7"
+        },
+        {
+          "lineNo": 3,
+          "accountCode": "2131",
+          "debitCents": 0,
+          "creditCents": 1000000,
+          "description": "Baja del inmovilizado AM-C7",
+          "fixedAssetId": "fa-am-c7"
+        },
+        {
+          "lineNo": 4,
+          "accountCode": "477",
+          "debitCents": 0,
+          "creditCents": 105000,
+          "description": "IVA repercutido en la enajenación de AM-C7"
+        },
+        {
+          "lineNo": 5,
+          "accountCode": "771",
+          "debitCents": 0,
+          "creditCents": 140000,
+          "description": "Beneficio en la enajenación de AM-C7",
+          "projectId": null,
+          "costCenterId": null
+        }
+      ],
+      "disposalWarnings": [
+        {
+          "code": "ART_110_LIVA_BIEN_INVERSION",
+          "message": "AM-C7 es bien de inversión (art. 108 LIVA) y se vende dentro del periodo de regularización (5 años desde 2026-01-01): procede la regularización ÚNICA del art. 110 LIVA. El producto no la calcula: consulte con su asesor."
+        }
+      ]
+    },
+    {
+      "id": "C8",
+      "titulo": "base < n (O-22): 20 céntimos y 36 meses; 35 cuotas de 0 y la última de 20 (R-REC-8)",
+      "asset": {
+        "id": "fa-am-c8",
+        "code": "AM-C8",
+        "name": "AM-C8",
+        "method": "LINEAL",
+        "inServiceDate": "2026-01-01",
+        "acquisitionCostCents": 20,
+        "residualValueCents": 0,
+        "usefulLifeMonths": 36,
+        "assetAccountCode": "2131",
+        "accumulatedAccountCode": "2811",
+        "expenseAccountCode": "6813",
+        "status": "EN_USO",
+        "disposalDate": null,
+        "isCapitalGood": false,
+        "isBuilding": false,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "revisions": [],
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-03",
+          "from": "2027-03-01",
+          "to": "2027-03-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-04",
+          "from": "2027-04-01",
+          "to": "2027-04-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-05",
+          "from": "2027-05-01",
+          "to": "2027-05-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-06",
+          "from": "2027-06-01",
+          "to": "2027-06-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-07",
+          "from": "2027-07-01",
+          "to": "2027-07-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-08",
+          "from": "2027-08-01",
+          "to": "2027-08-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-09",
+          "from": "2027-09-01",
+          "to": "2027-09-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-10",
+          "from": "2027-10-01",
+          "to": "2027-10-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-11",
+          "from": "2027-11-01",
+          "to": "2027-11-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2027-12",
+          "from": "2027-12-01",
+          "to": "2027-12-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-01",
+          "from": "2028-01-01",
+          "to": "2028-01-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-02",
+          "from": "2028-02-01",
+          "to": "2028-02-29",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-03",
+          "from": "2028-03-01",
+          "to": "2028-03-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-04",
+          "from": "2028-04-01",
+          "to": "2028-04-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-05",
+          "from": "2028-05-01",
+          "to": "2028-05-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-06",
+          "from": "2028-06-01",
+          "to": "2028-06-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-07",
+          "from": "2028-07-01",
+          "to": "2028-07-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-08",
+          "from": "2028-08-01",
+          "to": "2028-08-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-09",
+          "from": "2028-09-01",
+          "to": "2028-09-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-10",
+          "from": "2028-10-01",
+          "to": "2028-10-31",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-11",
+          "from": "2028-11-01",
+          "to": "2028-11-30",
+          "quotaCents": 0,
+          "accumulatedCents": 0,
+          "netBookValueCents": 20
+        },
+        {
+          "period": "2028-12",
+          "from": "2028-12-01",
+          "to": "2028-12-31",
+          "quotaCents": 20,
+          "accumulatedCents": 20,
+          "netBookValueCents": 0
+        }
+      ],
+      "totals": {
+        "quotaCents": 20,
+        "rowCount": 36,
+        "zeroQuotaRows": 35,
+        "lastQuotaCents": 20,
+        "amortizableBaseCents": 20
+      },
+      "scheduleHash": "95853d69487435e05019b3632bedb6f3f0010376c58d71f325f57c011bb94e46",
+      "disposal": null,
+      "disposalLines": [],
+      "disposalWarnings": []
+    }
+  ],
+  "checks": [
+    {
+      "id": "I-E9-4/C1",
+      "expected": 1000000,
+      "actual": 1000000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C1",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "I-E9-4/C2",
+      "expected": 900000,
+      "actual": 900000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C2",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "I-E9-4/C3",
+      "expected": 600000,
+      "actual": 600000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C3",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "I-E9-4/C4",
+      "expected": 3600000,
+      "actual": 3600000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C4",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "I-E9-4/C5",
+      "expected": 1500000,
+      "actual": 1500000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C5",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C6",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "I1/C6",
+      "expected": 1000000,
+      "actual": 1000000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C7",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "I1/C7",
+      "expected": 1245000,
+      "actual": 1245000,
+      "status": "PASS"
+    },
+    {
+      "id": "I-E9-4/C8",
+      "expected": 20,
+      "actual": 20,
+      "status": "PASS"
+    },
+    {
+      "id": "R-AM-4/C8",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Q-2/ultima-cuota-128574",
+      "expected": 128574,
+      "actual": 128574,
+      "status": "PASS"
+    },
+    {
+      "id": "criterio-7/acumulada-640000",
+      "expected": 640000,
+      "actual": 640000,
+      "status": "PASS"
+    },
+    {
+      "id": "criterio-7/beneficio-140000",
+      "expected": 140000,
+      "actual": 140000,
+      "status": "PASS"
+    },
+    {
+      "id": "O-22/cuota-cero",
+      "expected": 35,
+      "actual": 35,
+      "status": "PASS"
+    }
+  ]
+}

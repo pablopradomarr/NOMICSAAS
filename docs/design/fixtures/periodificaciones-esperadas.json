@@ -1,0 +1,1381 @@
+{
+  "fixture": "periodificaciones-esperadas",
+  "epica": "E9",
+  "tarea": "T7",
+  "reglas": "R-PE-1..R-PE-6 (docs/design/E9-cierre-recurrentes.md §4.3, ADR-0016 D3)",
+  "cases": [
+    {
+      "id": "P1",
+      "titulo": "Prima 100.000 del 15-11-2026 al 14-11-2027, ACT/ACT anual: 12.876 / 87.124 (criterio 9)",
+      "freq": "ANUAL",
+      "accrual": {
+        "id": "ac-pe-p1",
+        "code": "PE-P1",
+        "name": "PE-P1",
+        "kind": "GASTO_ANTICIPADO",
+        "accrualAccountCode": "480",
+        "pnlAccountCode": "625",
+        "totalCents": 100000,
+        "periodStart": "2026-11-15",
+        "periodEnd": "2027-11-14",
+        "basis": "DIAS",
+        "debtInstallments": null,
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026",
+          "from": "2026-11-15",
+          "to": "2026-12-31",
+          "days": 47,
+          "quotaCents": 12876,
+          "pendingCents": 87124
+        },
+        {
+          "period": "2027",
+          "from": "2027-01-01",
+          "to": "2027-11-14",
+          "days": 318,
+          "quotaCents": 87124,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [],
+      "totals": {
+        "quotaCents": 100000,
+        "rowCount": 2,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 365
+      },
+      "scheduleHash": "339740081e4d27eb75afbc82654315aeeb26114175941e9bfdc1b60fad553b3a",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "625",
+          "debitCents": 12876,
+          "creditCents": 0,
+          "description": "PE-P1 · devengo 2026",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "480",
+          "debitCents": 0,
+          "creditCents": 12876,
+          "description": "PE-P1 · devengo 2026"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "titulo": "La misma prima repartida por meses: el saldo de 480 queda en CERO exacto (R-PE-2)",
+      "freq": "MENSUAL",
+      "accrual": {
+        "id": "ac-pe-p2",
+        "code": "PE-P2",
+        "name": "PE-P2",
+        "kind": "GASTO_ANTICIPADO",
+        "accrualAccountCode": "480",
+        "pnlAccountCode": "625",
+        "totalCents": 100000,
+        "periodStart": "2026-11-15",
+        "periodEnd": "2027-11-14",
+        "basis": "DIAS",
+        "debtInstallments": null,
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026-11",
+          "from": "2026-11-15",
+          "to": "2026-11-30",
+          "days": 16,
+          "quotaCents": 4383,
+          "pendingCents": 95617
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "days": 31,
+          "quotaCents": 8493,
+          "pendingCents": 87124
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "days": 31,
+          "quotaCents": 8493,
+          "pendingCents": 78631
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "days": 28,
+          "quotaCents": 7671,
+          "pendingCents": 70960
+        },
+        {
+          "period": "2027-03",
+          "from": "2027-03-01",
+          "to": "2027-03-31",
+          "days": 31,
+          "quotaCents": 8493,
+          "pendingCents": 62467
+        },
+        {
+          "period": "2027-04",
+          "from": "2027-04-01",
+          "to": "2027-04-30",
+          "days": 30,
+          "quotaCents": 8219,
+          "pendingCents": 54248
+        },
+        {
+          "period": "2027-05",
+          "from": "2027-05-01",
+          "to": "2027-05-31",
+          "days": 31,
+          "quotaCents": 8493,
+          "pendingCents": 45755
+        },
+        {
+          "period": "2027-06",
+          "from": "2027-06-01",
+          "to": "2027-06-30",
+          "days": 30,
+          "quotaCents": 8219,
+          "pendingCents": 37536
+        },
+        {
+          "period": "2027-07",
+          "from": "2027-07-01",
+          "to": "2027-07-31",
+          "days": 31,
+          "quotaCents": 8493,
+          "pendingCents": 29043
+        },
+        {
+          "period": "2027-08",
+          "from": "2027-08-01",
+          "to": "2027-08-31",
+          "days": 31,
+          "quotaCents": 8493,
+          "pendingCents": 20550
+        },
+        {
+          "period": "2027-09",
+          "from": "2027-09-01",
+          "to": "2027-09-30",
+          "days": 30,
+          "quotaCents": 8219,
+          "pendingCents": 12331
+        },
+        {
+          "period": "2027-10",
+          "from": "2027-10-01",
+          "to": "2027-10-31",
+          "days": 31,
+          "quotaCents": 8493,
+          "pendingCents": 3838
+        },
+        {
+          "period": "2027-11",
+          "from": "2027-11-01",
+          "to": "2027-11-14",
+          "days": 14,
+          "quotaCents": 3838,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [],
+      "totals": {
+        "quotaCents": 100000,
+        "rowCount": 13,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 365
+      },
+      "scheduleHash": "89ecf6957586215f4ca29bab62bc843c4671d80a8449f9b5e0bd50592b11b41e",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "625",
+          "debitCents": 4383,
+          "creditCents": 0,
+          "description": "PE-P2 · devengo 2026-11",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "480",
+          "debitCents": 0,
+          "creditCents": 4383,
+          "description": "PE-P2 · devengo 2026-11"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "titulo": "MESES con pesos iguales: 100.000 / 12 y residuo de 4 a la última fila (R-PE-2)",
+      "freq": "MENSUAL",
+      "accrual": {
+        "id": "ac-pe-p3",
+        "code": "PE-P3",
+        "name": "PE-P3",
+        "kind": "GASTO_ANTICIPADO",
+        "accrualAccountCode": "480",
+        "pnlAccountCode": "625",
+        "totalCents": 100000,
+        "periodStart": "2026-01-01",
+        "periodEnd": "2026-12-31",
+        "basis": "MESES",
+        "debtInstallments": null,
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "days": 31,
+          "quotaCents": 8333,
+          "pendingCents": 91667
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "days": 28,
+          "quotaCents": 8333,
+          "pendingCents": 83334
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "days": 31,
+          "quotaCents": 8333,
+          "pendingCents": 75001
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "days": 30,
+          "quotaCents": 8333,
+          "pendingCents": 66668
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "days": 31,
+          "quotaCents": 8333,
+          "pendingCents": 58335
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "days": 30,
+          "quotaCents": 8333,
+          "pendingCents": 50002
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "days": 31,
+          "quotaCents": 8333,
+          "pendingCents": 41669
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "days": 31,
+          "quotaCents": 8333,
+          "pendingCents": 33336
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "days": 30,
+          "quotaCents": 8333,
+          "pendingCents": 25003
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "days": 31,
+          "quotaCents": 8333,
+          "pendingCents": 16670
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "days": 30,
+          "quotaCents": 8333,
+          "pendingCents": 8337
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "days": 31,
+          "quotaCents": 8337,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [],
+      "totals": {
+        "quotaCents": 100000,
+        "rowCount": 12,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 365
+      },
+      "scheduleHash": "1ad6b6657374e1297f793e46c595b0fa7aab5254b7ff9a5a8f5e0d292cc74d23",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "625",
+          "debitCents": 8333,
+          "creditCents": 0,
+          "description": "PE-P3 · devengo 2026-01",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "480",
+          "debitCents": 0,
+          "creditCents": 8333,
+          "description": "PE-P3 · devengo 2026-01"
+        }
+      ]
+    },
+    {
+      "id": "P4",
+      "titulo": "Ingreso anticipado 485 contra 705 por trimestres (R-PE-5)",
+      "freq": "TRIMESTRAL",
+      "accrual": {
+        "id": "ac-pe-p4",
+        "code": "PE-P4",
+        "name": "PE-P4",
+        "kind": "INGRESO_ANTICIPADO",
+        "accrualAccountCode": "485",
+        "pnlAccountCode": "705",
+        "totalCents": 1000000,
+        "periodStart": "2026-01-01",
+        "periodEnd": "2026-12-31",
+        "basis": "MESES",
+        "debtInstallments": null,
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026-Q1",
+          "from": "2026-01-01",
+          "to": "2026-03-31",
+          "days": 90,
+          "quotaCents": 250000,
+          "pendingCents": 750000
+        },
+        {
+          "period": "2026-Q2",
+          "from": "2026-04-01",
+          "to": "2026-06-30",
+          "days": 91,
+          "quotaCents": 250000,
+          "pendingCents": 500000
+        },
+        {
+          "period": "2026-Q3",
+          "from": "2026-07-01",
+          "to": "2026-09-30",
+          "days": 92,
+          "quotaCents": 250000,
+          "pendingCents": 250000
+        },
+        {
+          "period": "2026-Q4",
+          "from": "2026-10-01",
+          "to": "2026-12-31",
+          "days": 92,
+          "quotaCents": 250000,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [],
+      "totals": {
+        "quotaCents": 1000000,
+        "rowCount": 4,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 365
+      },
+      "scheduleHash": "de6bf42ca39aebdc1292e8155d7c3e92ae315f04c7f41f6e37b1c1a87dc82e8b",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "485",
+          "debitCents": 250000,
+          "creditCents": 0,
+          "description": "PE-P4 · devengo 2026-Q1"
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "705",
+          "debitCents": 0,
+          "creditCents": 250000,
+          "description": "PE-P4 · devengo 2026-Q1",
+          "projectId": null,
+          "costCenterId": null
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "titulo": "567 por DIAS con principal decreciente: WARN con la desviación estimada (R-PE-6, O-25)",
+      "freq": "TRIMESTRAL",
+      "accrual": {
+        "id": "ac-pe-p5",
+        "code": "PE-P5",
+        "name": "PE-P5",
+        "kind": "INTERESES_PAGADOS_ANTICIPADO",
+        "accrualAccountCode": "567",
+        "pnlAccountCode": "662",
+        "totalCents": 250000,
+        "periodStart": "2026-01-01",
+        "periodEnd": "2026-12-31",
+        "basis": "DIAS",
+        "debtInstallments": [
+          {
+            "seq": 1,
+            "dueDate": "2026-03-31",
+            "principalCents": 2500000,
+            "interestCents": 100000
+          },
+          {
+            "seq": 2,
+            "dueDate": "2026-06-30",
+            "principalCents": 2500000,
+            "interestCents": 75000
+          },
+          {
+            "seq": 3,
+            "dueDate": "2026-09-30",
+            "principalCents": 2500000,
+            "interestCents": 50000
+          },
+          {
+            "seq": 4,
+            "dueDate": "2026-12-31",
+            "principalCents": 2500000,
+            "interestCents": 25000
+          }
+        ],
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026-Q1",
+          "from": "2026-01-01",
+          "to": "2026-03-31",
+          "days": 90,
+          "quotaCents": 61643,
+          "pendingCents": 188357
+        },
+        {
+          "period": "2026-Q2",
+          "from": "2026-04-01",
+          "to": "2026-06-30",
+          "days": 91,
+          "quotaCents": 62328,
+          "pendingCents": 126029
+        },
+        {
+          "period": "2026-Q3",
+          "from": "2026-07-01",
+          "to": "2026-09-30",
+          "days": 92,
+          "quotaCents": 63013,
+          "pendingCents": 63016
+        },
+        {
+          "period": "2026-Q4",
+          "from": "2026-10-01",
+          "to": "2026-12-31",
+          "days": 92,
+          "quotaCents": 63016,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [
+        {
+          "code": "DIAS_SOBRE_INTERESES",
+          "severity": "WARN",
+          "message": "PE-P5 devenga intereses (INTERESES_PAGADOS_ANTICIPADO) por reparto lineal de días sobre un horizonte de 365 días y principal decreciente. Los intereses se devengan por tipo de interés efectivo sobre el coste amortizado (NRV 9ª.2.2 y 9ª.3.1): use basis = TIPO_EFECTIVO con el cuadro del préstamo.",
+          "deviationCents": 51029
+        }
+      ],
+      "totals": {
+        "quotaCents": 250000,
+        "rowCount": 4,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 365
+      },
+      "scheduleHash": "090e955fac4a1ccf4ecec3c5431b816135fabe2750a8395737ed3370734207a4",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "662",
+          "debitCents": 61643,
+          "creditCents": 0,
+          "description": "PE-P5 · devengo 2026-Q1",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "567",
+          "debitCents": 0,
+          "creditCents": 61643,
+          "description": "PE-P5 · devengo 2026-Q1"
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "titulo": "El mismo préstamo con basis = TIPO_EFECTIVO: el devengo lo aporta el cuadro (R-PE-6)",
+      "freq": "TRIMESTRAL",
+      "accrual": {
+        "id": "ac-pe-p6",
+        "code": "PE-P6",
+        "name": "PE-P6",
+        "kind": "INTERESES_PAGADOS_ANTICIPADO",
+        "accrualAccountCode": "567",
+        "pnlAccountCode": "662",
+        "totalCents": 250000,
+        "periodStart": "2026-01-01",
+        "periodEnd": "2026-12-31",
+        "basis": "TIPO_EFECTIVO",
+        "debtInstallments": [
+          {
+            "seq": 1,
+            "dueDate": "2026-03-31",
+            "principalCents": 2500000,
+            "interestCents": 100000
+          },
+          {
+            "seq": 2,
+            "dueDate": "2026-06-30",
+            "principalCents": 2500000,
+            "interestCents": 75000
+          },
+          {
+            "seq": 3,
+            "dueDate": "2026-09-30",
+            "principalCents": 2500000,
+            "interestCents": 50000
+          },
+          {
+            "seq": 4,
+            "dueDate": "2026-12-31",
+            "principalCents": 2500000,
+            "interestCents": 25000
+          }
+        ],
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026-Q1",
+          "from": "2026-01-01",
+          "to": "2026-03-31",
+          "days": 90,
+          "quotaCents": 100000,
+          "pendingCents": 150000
+        },
+        {
+          "period": "2026-Q2",
+          "from": "2026-04-01",
+          "to": "2026-06-30",
+          "days": 91,
+          "quotaCents": 75000,
+          "pendingCents": 75000
+        },
+        {
+          "period": "2026-Q3",
+          "from": "2026-07-01",
+          "to": "2026-09-30",
+          "days": 92,
+          "quotaCents": 50000,
+          "pendingCents": 25000
+        },
+        {
+          "period": "2026-Q4",
+          "from": "2026-10-01",
+          "to": "2026-12-31",
+          "days": 92,
+          "quotaCents": 25000,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [],
+      "totals": {
+        "quotaCents": 250000,
+        "rowCount": 4,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 365
+      },
+      "scheduleHash": "4a3ae00570ea9039f3f2baa9bb49a9878686b5ebae5f0e3848a7713a512e495e",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "662",
+          "debitCents": 100000,
+          "creditCents": 0,
+          "description": "PE-P6 · devengo 2026-Q1",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "567",
+          "debitCents": 0,
+          "creditCents": 100000,
+          "description": "PE-P6 · devengo 2026-Q1"
+        }
+      ]
+    },
+    {
+      "id": "P7",
+      "titulo": "base < n (O-22): 20 céntimos en 36 meses; 35 cuotas de 0 y la última de 20 (R-REC-8)",
+      "freq": "MENSUAL",
+      "accrual": {
+        "id": "ac-pe-p7",
+        "code": "PE-P7",
+        "name": "PE-P7",
+        "kind": "GASTO_ANTICIPADO",
+        "accrualAccountCode": "480",
+        "pnlAccountCode": "625",
+        "totalCents": 20,
+        "periodStart": "2026-01-01",
+        "periodEnd": "2028-12-31",
+        "basis": "MESES",
+        "debtInstallments": null,
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "days": 28,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-06",
+          "from": "2026-06-01",
+          "to": "2026-06-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-07",
+          "from": "2026-07-01",
+          "to": "2026-07-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-08",
+          "from": "2026-08-01",
+          "to": "2026-08-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-09",
+          "from": "2026-09-01",
+          "to": "2026-09-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-10",
+          "from": "2026-10-01",
+          "to": "2026-10-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-11",
+          "from": "2026-11-01",
+          "to": "2026-11-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2026-12",
+          "from": "2026-12-01",
+          "to": "2026-12-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-01",
+          "from": "2027-01-01",
+          "to": "2027-01-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-02",
+          "from": "2027-02-01",
+          "to": "2027-02-28",
+          "days": 28,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-03",
+          "from": "2027-03-01",
+          "to": "2027-03-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-04",
+          "from": "2027-04-01",
+          "to": "2027-04-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-05",
+          "from": "2027-05-01",
+          "to": "2027-05-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-06",
+          "from": "2027-06-01",
+          "to": "2027-06-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-07",
+          "from": "2027-07-01",
+          "to": "2027-07-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-08",
+          "from": "2027-08-01",
+          "to": "2027-08-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-09",
+          "from": "2027-09-01",
+          "to": "2027-09-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-10",
+          "from": "2027-10-01",
+          "to": "2027-10-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-11",
+          "from": "2027-11-01",
+          "to": "2027-11-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2027-12",
+          "from": "2027-12-01",
+          "to": "2027-12-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-01",
+          "from": "2028-01-01",
+          "to": "2028-01-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-02",
+          "from": "2028-02-01",
+          "to": "2028-02-29",
+          "days": 29,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-03",
+          "from": "2028-03-01",
+          "to": "2028-03-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-04",
+          "from": "2028-04-01",
+          "to": "2028-04-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-05",
+          "from": "2028-05-01",
+          "to": "2028-05-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-06",
+          "from": "2028-06-01",
+          "to": "2028-06-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-07",
+          "from": "2028-07-01",
+          "to": "2028-07-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-08",
+          "from": "2028-08-01",
+          "to": "2028-08-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-09",
+          "from": "2028-09-01",
+          "to": "2028-09-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-10",
+          "from": "2028-10-01",
+          "to": "2028-10-31",
+          "days": 31,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-11",
+          "from": "2028-11-01",
+          "to": "2028-11-30",
+          "days": 30,
+          "quotaCents": 0,
+          "pendingCents": 20
+        },
+        {
+          "period": "2028-12",
+          "from": "2028-12-01",
+          "to": "2028-12-31",
+          "days": 31,
+          "quotaCents": 20,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [
+        {
+          "code": "CUOTA_CERO",
+          "severity": "WARN",
+          "message": "PE-P7 tiene 35 periodo(s) con cuota 0: no generan asiento (R-REC-8/O-22) y la ocurrencia queda OMITIDA con motivo CUOTA_CERO."
+        }
+      ],
+      "totals": {
+        "quotaCents": 20,
+        "rowCount": 36,
+        "zeroQuotaRows": 35,
+        "lastPendingCents": 0,
+        "totalDays": 1096
+      },
+      "scheduleHash": "737b5dfab23922ee7ce080fb93e384b85e7fde9c8e9709990c640cb3b92574e6",
+      "firstEntryLines": []
+    },
+    {
+      "id": "P8",
+      "titulo": "Cancelación anticipada en 2026-05: el pendiente se devenga en ese periodo (R-PE-4)",
+      "freq": "MENSUAL",
+      "accrual": {
+        "id": "ac-pe-p8",
+        "code": "PE-P8",
+        "name": "PE-P8",
+        "kind": "GASTO_ANTICIPADO",
+        "accrualAccountCode": "480",
+        "pnlAccountCode": "625",
+        "totalCents": 120000,
+        "periodStart": "2026-01-01",
+        "periodEnd": "2026-12-31",
+        "basis": "MESES",
+        "debtInstallments": null,
+        "cancelledAtPeriod": "2026-05",
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2026-01",
+          "from": "2026-01-01",
+          "to": "2026-01-31",
+          "days": 31,
+          "quotaCents": 10000,
+          "pendingCents": 110000
+        },
+        {
+          "period": "2026-02",
+          "from": "2026-02-01",
+          "to": "2026-02-28",
+          "days": 28,
+          "quotaCents": 10000,
+          "pendingCents": 100000
+        },
+        {
+          "period": "2026-03",
+          "from": "2026-03-01",
+          "to": "2026-03-31",
+          "days": 31,
+          "quotaCents": 10000,
+          "pendingCents": 90000
+        },
+        {
+          "period": "2026-04",
+          "from": "2026-04-01",
+          "to": "2026-04-30",
+          "days": 30,
+          "quotaCents": 10000,
+          "pendingCents": 80000
+        },
+        {
+          "period": "2026-05",
+          "from": "2026-05-01",
+          "to": "2026-05-31",
+          "days": 31,
+          "quotaCents": 80000,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [
+        {
+          "code": "CANCELACION_ANTICIPADA",
+          "severity": "WARN",
+          "message": "PE-P8 se cancela en 2026-05: se devengan 70000 céntimos pendientes en ese periodo (R-PE-4).",
+          "deviationCents": 70000
+        }
+      ],
+      "totals": {
+        "quotaCents": 120000,
+        "rowCount": 5,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 365
+      },
+      "scheduleHash": "7938254562101e1b8e30efd5cf554233b186735c451fa3878607ef7e8361842d",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "625",
+          "debitCents": 10000,
+          "creditCents": 0,
+          "description": "PE-P8 · devengo 2026-01",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "480",
+          "debitCents": 0,
+          "creditCents": 10000,
+          "description": "PE-P8 · devengo 2026-01"
+        }
+      ]
+    },
+    {
+      "id": "P9",
+      "titulo": "Año bisiesto: 366 días con el 29-feb dentro, ACT/ACT mensual (caso límite)",
+      "freq": "MENSUAL",
+      "accrual": {
+        "id": "ac-pe-p9",
+        "code": "PE-P9",
+        "name": "PE-P9",
+        "kind": "GASTO_ANTICIPADO",
+        "accrualAccountCode": "480",
+        "pnlAccountCode": "625",
+        "totalCents": 366000,
+        "periodStart": "2028-01-01",
+        "periodEnd": "2028-12-31",
+        "basis": "DIAS",
+        "debtInstallments": null,
+        "cancelledAtPeriod": null,
+        "projectId": null,
+        "costCenterId": null
+      },
+      "rows": [
+        {
+          "period": "2028-01",
+          "from": "2028-01-01",
+          "to": "2028-01-31",
+          "days": 31,
+          "quotaCents": 31000,
+          "pendingCents": 335000
+        },
+        {
+          "period": "2028-02",
+          "from": "2028-02-01",
+          "to": "2028-02-29",
+          "days": 29,
+          "quotaCents": 29000,
+          "pendingCents": 306000
+        },
+        {
+          "period": "2028-03",
+          "from": "2028-03-01",
+          "to": "2028-03-31",
+          "days": 31,
+          "quotaCents": 31000,
+          "pendingCents": 275000
+        },
+        {
+          "period": "2028-04",
+          "from": "2028-04-01",
+          "to": "2028-04-30",
+          "days": 30,
+          "quotaCents": 30000,
+          "pendingCents": 245000
+        },
+        {
+          "period": "2028-05",
+          "from": "2028-05-01",
+          "to": "2028-05-31",
+          "days": 31,
+          "quotaCents": 31000,
+          "pendingCents": 214000
+        },
+        {
+          "period": "2028-06",
+          "from": "2028-06-01",
+          "to": "2028-06-30",
+          "days": 30,
+          "quotaCents": 30000,
+          "pendingCents": 184000
+        },
+        {
+          "period": "2028-07",
+          "from": "2028-07-01",
+          "to": "2028-07-31",
+          "days": 31,
+          "quotaCents": 31000,
+          "pendingCents": 153000
+        },
+        {
+          "period": "2028-08",
+          "from": "2028-08-01",
+          "to": "2028-08-31",
+          "days": 31,
+          "quotaCents": 31000,
+          "pendingCents": 122000
+        },
+        {
+          "period": "2028-09",
+          "from": "2028-09-01",
+          "to": "2028-09-30",
+          "days": 30,
+          "quotaCents": 30000,
+          "pendingCents": 92000
+        },
+        {
+          "period": "2028-10",
+          "from": "2028-10-01",
+          "to": "2028-10-31",
+          "days": 31,
+          "quotaCents": 31000,
+          "pendingCents": 61000
+        },
+        {
+          "period": "2028-11",
+          "from": "2028-11-01",
+          "to": "2028-11-30",
+          "days": 30,
+          "quotaCents": 30000,
+          "pendingCents": 31000
+        },
+        {
+          "period": "2028-12",
+          "from": "2028-12-01",
+          "to": "2028-12-31",
+          "days": 31,
+          "quotaCents": 31000,
+          "pendingCents": 0
+        }
+      ],
+      "warnings": [],
+      "totals": {
+        "quotaCents": 366000,
+        "rowCount": 12,
+        "zeroQuotaRows": 0,
+        "lastPendingCents": 0,
+        "totalDays": 366
+      },
+      "scheduleHash": "0dff35a2f1047d27a20f3a2f4b222c5956b79f1503ac980e79b4176b578c875e",
+      "firstEntryLines": [
+        {
+          "lineNo": 1,
+          "accountCode": "625",
+          "debitCents": 31000,
+          "creditCents": 0,
+          "description": "PE-P9 · devengo 2028-01",
+          "projectId": null,
+          "costCenterId": null
+        },
+        {
+          "lineNo": 2,
+          "accountCode": "480",
+          "debitCents": 0,
+          "creditCents": 31000,
+          "description": "PE-P9 · devengo 2028-01"
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "R-PE-2/P1",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P1",
+      "expected": 100000,
+      "actual": 100000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-PE-2/P2",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P2",
+      "expected": 100000,
+      "actual": 100000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-PE-2/P3",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P3",
+      "expected": 100000,
+      "actual": 100000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-PE-2/P4",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P4",
+      "expected": 1000000,
+      "actual": 1000000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-PE-2/P5",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P5",
+      "expected": 250000,
+      "actual": 250000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-PE-2/P7",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P7",
+      "expected": 20,
+      "actual": 20,
+      "status": "PASS"
+    },
+    {
+      "id": "R-PE-2/P8",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P8",
+      "expected": 120000,
+      "actual": 120000,
+      "status": "PASS"
+    },
+    {
+      "id": "R-PE-2/P9",
+      "expected": 0,
+      "actual": 0,
+      "status": "PASS"
+    },
+    {
+      "id": "Sigma/P9",
+      "expected": 366000,
+      "actual": 366000,
+      "status": "PASS"
+    },
+    {
+      "id": "criterio-9/2026",
+      "expected": 12876,
+      "actual": 12876,
+      "status": "PASS"
+    },
+    {
+      "id": "criterio-9/2027",
+      "expected": 87124,
+      "actual": 87124,
+      "status": "PASS"
+    },
+    {
+      "id": "Q-6/365-dias",
+      "expected": 365,
+      "actual": 365,
+      "status": "PASS"
+    },
+    {
+      "id": "O-25/warn-dias-sobre-intereses",
+      "expected": 1,
+      "actual": 1,
+      "status": "PASS"
+    },
+    {
+      "id": "O-22/cuota-cero",
+      "expected": 35,
+      "actual": 35,
+      "status": "PASS"
+    },
+    {
+      "id": "bisiesto/29-feb",
+      "expected": 29,
+      "actual": 29,
+      "status": "PASS"
+    }
+  ]
+}
