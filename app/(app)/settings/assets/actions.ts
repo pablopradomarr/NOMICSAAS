@@ -26,6 +26,7 @@ import {
 import { ActionState } from "@/lib/actions"
 import { withOrg } from "@/lib/authz"
 import { tenantTransaction } from "@/lib/db"
+import { assertAssetDimension } from "@/models/assets"
 import {
   accumulatedThrough,
   depreciationSchedule,
@@ -128,15 +129,28 @@ export const previewDepreciationAction = withOrg(
 // Alta y revisión (EDITOR)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * **E10 · T14 — deuda §0-bis #7, la mitad de servidor.** El alta lleva **destino
+ * analítico** (proyecto **xor** CECO) desde E9, pero el aviso de
+ * `analyticsRequired` se quedaba dentro del modelo y la pantalla no lo veía: un
+ * activo sin destino amortiza en `NO_ANALITICO` y el margen del proyecto que lo
+ * usa queda incompleto **en silencio**. Ahora el aviso viaja con el resultado y
+ * la pantalla lo pinta junto al activo recién dado de alta. No bloquea: la
+ * decisión es del usuario, pero informada.
+ */
 export const createAssetAction = withOrg(
   Role.EDITOR,
-  async (ctx, input: unknown): Promise<ActionState<{ id: string; code: string; scheduleHash: string }>> => {
+  async (ctx, input: unknown): Promise<ActionState<{ id: string; code: string; scheduleHash: string; analyticsWarning: string | null }>> => {
     const parsed = createAssetSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
     const v = parsed.data
     const result = await runLedgerTransaction(ctx.org.id, ctx.user.id, async (tx) => {
+      const dimension = await assertAssetDimension(tx, {
+        projectId: v.projectId ?? null,
+        costCenterId: v.costCenterId ?? null,
+      })
       const row = await createAssetTx(tx, { ...v, isCapitalGood: v.isCapitalGood ?? undefined }, { userId: ctx.user.id })
-      return { id: row.id, code: row.code, scheduleHash: row.scheduleHash }
+      return { id: row.id, code: row.code, scheduleHash: row.scheduleHash, analyticsWarning: dimension.warning }
     })
     if (result.ok) revalidatePath(ASSETS_PATH)
     return toActionState(result)

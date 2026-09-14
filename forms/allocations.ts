@@ -26,8 +26,22 @@ export const allocPeriodSchema = z.enum(["MONTH", "QUARTER", "YEAR"])
 export const targetKindSchema = z.enum(["PROJECTS", "BUSINESS_LINES", "COST_CENTERS"])
 export const zeroBaseFallbackSchema = z.enum(["SKIP_WARN", "EQUAL", "YTD", "PRIOR_PERIOD"])
 
-/** Los cinco drivers VIVOS. `HOURS` y `HEADCOUNT` llegan en E10 (ADR-0013). */
-export const driverSchema = z.enum(["FIXED_PERCENT", "REVENUE_SHARE", "DIRECT_COST_SHARE", "EQUAL", "MANUAL"])
+/**
+ * Los **siete** drivers vivos. `HOURS` y `HEADCOUNT` se encienden en E10 · T14
+ * (ADR-0018 D1): el `CHECK allocation_rules_driver_available` desapareció en la
+ * migración `20260924120000_e10_drivers_horas` y la garantía de «ninguna regla
+ * inerte» (ADR-0013 D4) se traslada a la validación al guardar, al sellar y al
+ * avisar con base parcial (§3.6).
+ */
+export const driverSchema = z.enum([
+  "FIXED_PERCENT",
+  "REVENUE_SHARE",
+  "DIRECT_COST_SHARE",
+  "HOURS",
+  "HEADCOUNT",
+  "EQUAL",
+  "MANUAL",
+])
 
 /** Cualquier valor del enum de BD, para poder DAR UN MENSAJE en vez de «no válido». */
 export const anyDriverSchema = z.enum([
@@ -111,14 +125,35 @@ const withRuleInvariants = <T extends z.ZodTypeAny>(schema: T): T =>
   schema.superRefine((value: Record<string, unknown>, ctx: z.RefinementCtx) => {
     const driver = value.driver as string | undefined
     const targets = (value.targets ?? []) as { percentBps?: number | null; amountCents?: number | null }[]
-    if (driver === "HOURS" || driver === "HEADCOUNT") {
+    const targetKindOf = value.targetKind as string | undefined
+    // **E10 · D1** — `PLANTILLA` sólo reparte a centros de coste: con proyectos
+    // no hay plantilla declarada y derivarla de las horas sería `HORAS` con otro
+    // nombre. Lo dicen también el motor y el CHECK; aquí el usuario lo lee
+    // ANTES de guardar.
+    if (driver === "HEADCOUNT" && targetKindOf !== "COST_CENTERS") {
       ctx.addIssue({
         code: "custom",
         path: ["driver"],
         message:
-          driver === "HOURS"
-            ? "El driver HORAS necesita partes de horas, que llegan en E10. Elige otro driver o deja el centro de coste sin liquidar"
-            : "El driver PLANTILLA necesita las asignaciones de personal, que llegan en E10. Elige otro driver o deja el centro de coste sin liquidar",
+          "El driver PLANTILLA sólo reparte a centros de coste, que son los únicos con plantilla declarada: " +
+          "para repartir a proyectos usa HORAS",
+      })
+    }
+    // `HORAS` y `PLANTILLA` sobre CECOs o líneas de negocio exigen destinos
+    // DECLARADOS: un receptor que no es proyecto no se descubre del diario. El
+    // `percentBps` de esos destinos es un valor formal —la BD exige uno— y el
+    // driver lo ignora: los pesos salen de los minutos o de los FTE·mes.
+    if (
+      (driver === "HOURS" || driver === "HEADCOUNT") &&
+      (targetKindOf === "COST_CENTERS" || targetKindOf === "BUSINESS_LINES") &&
+      targets.length === 0
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["targets"],
+        message:
+          "Con HORAS o PLANTILLA hacia centros de coste o líneas de negocio hay que declarar los destinos: " +
+          "no repartiría un céntimo",
       })
     }
     if (driver === "FIXED_PERCENT") {
@@ -134,7 +169,13 @@ const withRuleInvariants = <T extends z.ZodTypeAny>(schema: T): T =>
     if (driver === "MANUAL" && targets.length === 0) {
       ctx.addIssue({ code: "custom", path: ["targets"], message: "Una regla manual necesita al menos un importe declarado" })
     }
-    if (driver !== "FIXED_PERCENT" && driver !== "MANUAL" && targets.length > 0) {
+    const declaresTargets =
+      driver === "FIXED_PERCENT" ||
+      driver === "MANUAL" ||
+      // E10: los dos drivers de actividad SÍ declaran receptores cuando no son
+      // proyectos (§3.6), y el peso lo pone el driver.
+      ((driver === "HOURS" || driver === "HEADCOUNT") && targetKindOf !== "PROJECTS")
+    if (!declaresTargets && targets.length > 0) {
       ctx.addIssue({
         code: "custom",
         path: ["targets"],
@@ -149,7 +190,11 @@ const withRuleInvariants = <T extends z.ZodTypeAny>(schema: T): T =>
     if (
       (targetKind === "COST_CENTERS" || targetKind === "BUSINESS_LINES") &&
       driver !== "FIXED_PERCENT" &&
-      driver !== "MANUAL"
+      driver !== "MANUAL" &&
+      // E10 · D1: `HORAS` y `PLANTILLA` sí saben ponderar un CECO o una línea de
+      // negocio —el parte lleva su receptor y su LN, y el snapshot su centro—.
+      driver !== "HOURS" &&
+      driver !== "HEADCOUNT"
     ) {
       ctx.addIssue({
         code: "custom",
@@ -160,7 +205,7 @@ const withRuleInvariants = <T extends z.ZodTypeAny>(schema: T): T =>
             : "Repartir a líneas de negocio exige destinos explícitos: elige porcentaje fijo o importes manuales",
       })
     }
-    if ((driver === "FIXED_PERCENT" || driver === "MANUAL") && targets.length === 0) {
+    if (declaresTargets && targets.length === 0) {
       ctx.addIssue({
         code: "custom",
         path: ["targets"],

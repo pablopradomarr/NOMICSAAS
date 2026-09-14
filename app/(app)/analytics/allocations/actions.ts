@@ -43,8 +43,10 @@ import { ActionState } from "@/lib/actions"
 import { withOrg } from "@/lib/authz"
 import { tenantDb, tenantTransaction } from "@/lib/db"
 import type { AllocationResult } from "@/lib/analytics/allocate"
+import { listHeadcount } from "@/models/employees"
+import { listTimeEntries } from "@/models/time"
+import type { TenantTransactionClient } from "@/lib/db"
 import {
-  allocationRunStaleness,
   closeAllocationRuleTx,
   createAllocationRuleTx,
   createAllocationRulesTx,
@@ -90,6 +92,71 @@ function toActionState<T>(result: LedgerResult<T>): ActionState<T> {
 function revalidateAnalytics(): void {
   revalidatePath(ALLOCATIONS_PATH)
   revalidatePath(PYG_PATH)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E10 · T14 — ADR-0013 D4, punto 1: ninguna regla de actividad INERTE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Con `HORAS` o `PLANTILLA`, la organización tiene que tener el módulo de horas
+ * encendido **y** al menos un dato de la clase que el driver consume —un parte
+ * **aprobado**, o un snapshot de plantilla— en el ejercicio de `validFrom`.
+ *
+ * El `CHECK allocation_rules_driver_available` desapareció con E10 (los drivers
+ * ya existen), así que la garantía de que **una regla no nace muerta** vive aquí,
+ * en el sellado del run y en el aviso de base parcial (§3.6). El mensaje dice
+ * **qué falta y dónde darlo de alta**: un «driver no disponible» mudo obliga al
+ * usuario a adivinar.
+ */
+async function assertActivityDriverAvailable(
+  tx: TenantTransactionClient,
+  rules: readonly { code: string; driver: string; validFrom: string }[]
+): Promise<string | null> {
+  const activity = rules.filter((r) => r.driver === "HOURS" || r.driver === "HEADCOUNT")
+  if (activity.length === 0) return null
+
+  const organization = await tx.organization.findUniqueOrThrow({
+    where: { id: tx.$organizationId },
+    select: { timeTrackingEnabled: true },
+  })
+
+  for (const rule of activity) {
+    const fiscalYear = await tx.fiscalYear.findFirst({
+      where: { startDate: { lte: new Date(`${rule.validFrom}T00:00:00.000Z`) }, endDate: { gte: new Date(`${rule.validFrom}T00:00:00.000Z`) } },
+      select: { code: true, startDate: true, endDate: true },
+    })
+    if (!fiscalYear) {
+      return `la regla ${rule.code} empieza el ${rule.validFrom}, que no cae en ningún ejercicio de la organización`
+    }
+    const from = fiscalYear.startDate.toISOString().slice(0, 10)
+    const to = fiscalYear.endDate.toISOString().slice(0, 10)
+
+    if (rule.driver === "HOURS") {
+      if (!organization.timeTrackingEnabled) {
+        return (
+          `el driver HORAS necesita el módulo de partes de horas, y esta organización lo tiene apagado. ` +
+          `Actívalo en Configuración → Horas`
+        )
+      }
+      const approved = await listTimeEntries(tx, { from, to, status: "APROBADO" }, { take: 1 })
+      if (approved.total === 0) {
+        return (
+          `el driver HORAS necesita partes de horas aprobados: la organización no tiene ninguno en ${fiscalYear.code}. ` +
+          `Actívalos en Configuración → Horas y aprueba al menos un parte`
+        )
+      }
+    } else {
+      const snapshots = await listHeadcount(tx, { from, to })
+      if (snapshots.length === 0) {
+        return (
+          `el driver PLANTILLA necesita snapshots de plantilla: la organización no tiene ninguno en ${fiscalYear.code}. ` +
+          `Regístralos en Configuración → Plantilla, o derívalos de los empleados`
+        )
+      }
+    }
+  }
+  return null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,22 +211,18 @@ export const listAllocationRunsAction = withOrg(
   async ({ org }, input: unknown = {}): Promise<ActionState<AllocationRunListItem[]>> => {
     const parsed = allocationRunListSchema.safeParse(input ?? {})
     if (!parsed.success) return invalid(parsed.error)
-    // `STALE` es DERIVADO (§3.5): se calcula aquí comparando los tres sellos del
-    // run con los del periodo hoy. Nunca se almacena, así que nunca se queda
-    // obsoleto ni exige un cron que lo mantenga.
-    const runs = await tenantTransaction(org.id, async (tx) => {
-      const rows = await listAllocationRuns(tx, parsed.data)
-      const out: AllocationRunListItem[] = []
-      for (const run of rows) {
-        if (run.status !== "SEALED") {
-          out.push(run)
-          continue
-        }
-        const stale = await allocationRunStaleness(tx, run)
-        out.push({ ...run, isStale: stale.isStale, staleReasons: stale.reasons })
-      }
-      return out
-    })
+    // `STALE` es DERIVADO (§3.5): se calcula comparando los sellos del run con
+    // los del periodo hoy. Nunca se almacena, así que nunca se queda obsoleto ni
+    // exige un cron que lo mantenga.
+    //
+    // **E10 · deuda §0-bis #6** — la derivación va por LOTE
+    // (`allocationRunStalenessBatch`, dentro de `listAllocationRuns`): tres
+    // consultas sea cual sea el número de runs, frente a las ~17 del bucle de
+    // E5. Y con E10 hay una CUARTA causa de `STALE`: el `timeHash` de la ventana
+    // del run, que cambia en cuanto se aprueba un parte tardío.
+    const runs = await tenantTransaction(org.id, async (tx) =>
+      listAllocationRuns(tx, { ...parsed.data, deriveStaleness: true })
+    )
     return { success: true, data: runs }
   }
 )
@@ -196,8 +259,12 @@ export const createAllocationRuleAction = withOrg(
     const parsed = allocationRuleCreateSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
     const data = parsed.data
-    const result = await runLedgerTransaction(org.id, user.id, async (tx) =>
-      createAllocationRuleTx(
+    const result = await runLedgerTransaction(org.id, user.id, async (tx) => {
+      const unavailable = await assertActivityDriverAvailable(tx, [
+        { code: data.code, driver: data.driver, validFrom: data.validFrom },
+      ])
+      if (unavailable) throw new Error(unavailable)
+      return createAllocationRuleTx(
         tx,
         {
           code: data.code,
@@ -222,7 +289,7 @@ export const createAllocationRuleAction = withOrg(
         },
         { userId: user.id }
       )
-    )
+    })
     if (result.ok) revalidateAnalytics()
     return toActionState(result)
   }
@@ -240,8 +307,13 @@ export const createAllocationRuleSetAction = withOrg(
   async ({ org, user }, input: unknown): Promise<ActionState<AllocationRuleListItem[]>> => {
     const parsed = allocationRuleSetCreateSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
-    const result = await runLedgerTransaction(org.id, user.id, async (tx) =>
-      createAllocationRulesTx(
+    const result = await runLedgerTransaction(org.id, user.id, async (tx) => {
+      const unavailable = await assertActivityDriverAvailable(
+        tx,
+        parsed.data.map((d) => ({ code: d.code, driver: d.driver, validFrom: d.validFrom }))
+      )
+      if (unavailable) throw new Error(unavailable)
+      return createAllocationRulesTx(
         tx,
         parsed.data.map((data) => ({
           code: data.code,
@@ -266,7 +338,7 @@ export const createAllocationRuleSetAction = withOrg(
         })),
         { userId: user.id }
       )
-    )
+    })
     if (result.ok) revalidateAnalytics()
     return toActionState(result)
   }
@@ -283,8 +355,14 @@ export const supersedeAllocationRuleAction = withOrg(
     const parsed = allocationRuleSupersedeSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
     const data = parsed.data
-    const result = await runLedgerTransaction(org.id, user.id, async (tx) =>
-      supersedeAllocationRuleTx(
+    const result = await runLedgerTransaction(org.id, user.id, async (tx) => {
+      if (data.changes.driver) {
+        const unavailable = await assertActivityDriverAvailable(tx, [
+          { code: data.ruleId, driver: data.changes.driver, validFrom: data.validFrom },
+        ])
+        if (unavailable) throw new Error(unavailable)
+      }
+      return supersedeAllocationRuleTx(
         tx,
         {
           ruleId: data.ruleId,
@@ -298,7 +376,7 @@ export const supersedeAllocationRuleAction = withOrg(
         },
         { userId: user.id }
       )
-    )
+    })
     if (result.ok) revalidateAnalytics()
     return toActionState(result)
   }
