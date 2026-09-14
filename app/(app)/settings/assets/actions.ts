@@ -149,7 +149,9 @@ export const reviseAssetAction = withOrg(
     const parsed = reviseAssetSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
     const result = await runLedgerTransaction(ctx.org.id, ctx.user.id, async (tx) =>
-      reviseAssetTx(tx, parsed.data, { userId: ctx.user.id })
+      // `refDate` entra por parámetro: la prospectividad de la NRV 22ª se juzga
+      // contra el mes en curso, y el reloj no vive dentro del modelo.
+      reviseAssetTx(tx, { ...parsed.data, refDate: today() }, { userId: ctx.user.id })
     )
     if (result.ok) revalidatePath(ASSETS_PATH)
     return toActionState(result)

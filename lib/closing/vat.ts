@@ -168,6 +168,16 @@ export type ClosingStepResult = {
   step: string
   block: string
   status: CheckStatus | "NA" | "PENDIENTE_RECOMPUTO"
+  /**
+   * **Informativo. La única fuente es el catálogo** (`CLOSING_STEPS` de
+   * `lib/closing/checklist.ts`, los nueve bloqueantes de §4.8).
+   *
+   * `closingChecklist` no lo lee del motor: `fromMotor` copia `status`,
+   * `evidencia` y `query`, y pone el `blocking` del catálogo. Un motor que
+   * devuelva aquí `false` para un paso bloqueante —`capitalGoodsGuard` en su
+   * rama WARN lo hace— **no cambia nada**; queda escrito para que quien lea el
+   * motor no concluya lo contrario (PUEDE 10 de la revisión de E9).
+   */
   blocking: boolean
   evidencia: string
   /** Motivo de sello que el paso aporta cuando no está en PASS. */
@@ -890,6 +900,14 @@ export function capitalGoodsGuard(input: CapitalGoodsInput): ClosingStepResult {
       step,
       block,
       status: "WARN",
+      // **PUEDE 10 del revisor, resuelto en el TIPO y no aquí.** Este `false`
+      // contradice el catálogo —`BIENES_DE_INVERSION` es uno de los nueve
+      // bloqueantes—, pero el campo es **inerte**: `fromMotor` copia sólo
+      // `status`, `evidencia` y `query`, y el `blocking` real lo pone
+      // `CLOSING_STEPS`. Cambiarlo a `true` obligaría a reversionar el fixture
+      // sellado `liquidacion-iva-esperada.json`, que lo recoge tal cual, por un
+      // campo que nadie lee. Se deja como está y se declara en
+      // `ClosingStepResult.blocking` que la única fuente es el catálogo.
       blocking: false,
       evidencia:
         current === null

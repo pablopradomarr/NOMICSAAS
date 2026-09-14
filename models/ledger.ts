@@ -2165,6 +2165,29 @@ export async function runLedgerInvariants(
         allocationRunSetHash: applied.runIds.length === 0 ? null : allocationRunSetHash(applied.runIds),
       })
 
+      // ── E9 · H-2 · el bloque `closing`, que nadie rellenaba ──────────────
+      //
+      // §6.3 dice que los veintisiete `I-E9-*` entran aquí, en el `InvariantRun`
+      // y en `/audit` bajo la familia `CIERRE`. `runInvariantsPure` los ejecuta
+      // `if (input.closing)` y **este montaje nunca lo rellenaba**: eran código
+      // muerto en producción (0 de 215 checks con un id `I-E9-*` sobre un
+      // ejercicio realmente cerrado), incluida I-E9-16, la que debía cazar la
+      // reclasificación con el signo invertido.
+      //
+      // Se lee **sólo en el barrido de auditoría y con un ejercicio en el
+      // alcance**: los invariantes del cierre son de un ejercicio concreto y su
+      // bloque cuesta las mismas lecturas que el checklist (§9). Una cabecera de
+      // informe no paga por lo que no usa, igual que con el bloque de E7.
+      let closingBlock: Awaited<ReturnType<typeof import("@/models/closing").readClosingInvariantInput>> | null = null
+      if (withAudit && opts.fiscalYearId) {
+        const { readClosingInvariantInput } = await import("@/models/closing")
+        closingBlock = await readClosingInvariantInput(tx, {
+          fiscalYearId: opts.fiscalYearId,
+          refDate: opts.refDate,
+          baseCurrency,
+        })
+      }
+
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),
         gitSha,
@@ -2194,6 +2217,9 @@ export async function runLedgerInvariants(
         // organización no ha liquidado nada: no tener imputaciones no es un
         // descuadre, y devolver FAIL por ello sería ruido permanente.
         ...(allocationContext ? { allocations: allocationContext } : {}),
+        // E9 · §6.3: la familia `CIERRE`. Los bloques que no se pueden componer
+        // salen `INFO` diciendo qué falta, nunca PASS por vacuidad.
+        ...(closingBlock ? { closing: { ...closingBlock, closing: { ...closingBlock.closing, entries } } } : {}),
       }
       validacion = runInvariantsPure(input, opts.refDate)
 

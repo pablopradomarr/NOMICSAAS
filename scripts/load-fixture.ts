@@ -41,7 +41,7 @@ import {
   runLedgerInvariants,
   type LedgerModelError,
 } from "@/models/ledger"
-import { fixtureRefDate, loadFixture, readFixture, type FixtureName } from "@/tests/support/fixtures"
+import { fixtureAccountMap, fixtureRefDate, loadFixture, readFixture, type FixtureName } from "@/tests/support/fixtures"
 import { existsSync, statSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -83,8 +83,10 @@ export type LoadFixtureReport = {
 /** `tests/fixtures/ejercicio-completo.json` → `ejercicio-completo`. */
 export function fixtureNameOf(fixturePath: string): FixtureName {
   const base = path.basename(fixturePath).replace(/\.json$/, "")
-  if (base !== "ejercicio-minimo" && base !== "ejercicio-completo") {
-    throw new Error(`Fixture desconocido: ${fixturePath} (sólo ejercicio-minimo y ejercicio-completo)`)
+  if (base !== "ejercicio-minimo" && base !== "ejercicio-completo" && base !== "ejercicio-completo-v2") {
+    throw new Error(
+      `Fixture desconocido: ${fixturePath} (sólo ejercicio-minimo, ejercicio-completo y ejercicio-completo-v2)`
+    )
   }
   return base
 }
@@ -126,6 +128,55 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
       useSubaccounts: file.organization.useSubaccounts,
     })
     say(`· plan ${file.organization.pgcVariant}: ${seeded.created} cuentas`)
+  }
+
+  // ── 1a-bis. Las cuentas que el fixture añade al plan ──────────────────────
+  //
+  // `accountsExtra`: las `4728`/`4778` del RECC, que **no son del PGC** y que la
+  // siembra de M4 deja fuera a propósito (colgar `4728` de `472` dejaría `472`
+  // sin ser postable). `planWithExtras` las resuelve en el motor puro; aquí se
+  // crean en la base y se mapean, que es lo que hace el producto cuando la
+  // organización activa el RECC (ADR-0016, siembra 3 de M4).
+  const extras = [...loaded.plan.byCode.values()].filter((a) => a.origin === "MANUAL")
+  if (extras.length > 0) {
+    await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
+      for (const a of extras) {
+        await tx.ledgerAccount.upsert({
+          where: { organizationId_code: { organizationId, code: a.code } },
+          update: {},
+          create: {
+            organizationId,
+            code: a.code,
+            name: a.name,
+            level: a.level,
+            parentCode: a.parentCode,
+            nature: a.nature,
+            statement: a.statement,
+            epigraph: a.epigraph,
+            epigraphPymes: a.epigraphPymes,
+            analyticType: a.analyticType,
+            cashflowBucket: a.cashflowBucket,
+            isPostable: true,
+            isActive: true,
+            isSystem: false,
+            origin: "MANUAL",
+          },
+        })
+      }
+      // El padre NO se vuelve no postable: el fixture usa `4751` directamente en
+      // sus nóminas y `47513` sólo para el modelo 123. Convivir es correcto —el
+      // saldo por modelo es el de las hijas y el resto queda en la madre, que es
+      // exactamente el histórico que O-27 describe como «no verificable por
+      // modelo»— y forzar lo contrario rompería asientos válidos.
+      for (const [key, accountCode] of fixtureAccountMap(file, loaded.plan)) {
+        await tx.organizationAccountMap.upsert({
+          where: { organizationId_key: { organizationId, key: key as never } },
+          update: { accountCode },
+          create: { organizationId, key: key as never, accountCode },
+        })
+      }
+    })
+    say(`· plan: ${extras.length} cuenta(s) fuera del PGC creadas y mapeadas (RECC / modelo 123)`)
   }
 
   // ── 1b. E4 · T9: dimensiones analíticas del fichero ───────────────────────

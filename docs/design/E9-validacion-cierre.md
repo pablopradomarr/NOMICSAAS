@@ -253,8 +253,8 @@ En los tres casos, el **interés implícito** devengado desde el reconocimiento 
 | `2131` Maquinaria | | 1 100 036 |
 | `2813` Amortización acumulada | 183 340 | |
 | `6813` Amortización del inmovilizado material | | 183 340 |
-| `662` Intereses de deudas *(10 meses de interés implícito)* | 454 133 | |
-| `173` | | 454 133 |
+| `662` Intereses de deudas *(10 meses de interés implícito)* | 442 817 | |
+| `173` | | 442 817 |
 
 **I-E9-19** debe reformularse: `descuento inicial = Σ intereses implícitos de toda la vida del pasivo`, y a vencimiento el pasivo vale su nominal.
 

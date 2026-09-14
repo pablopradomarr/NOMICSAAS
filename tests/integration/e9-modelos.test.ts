@@ -521,15 +521,44 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T12 — diferencias de cambio: el uni
     ])
   })
 
-  it("**criterio 20 · I-E9-24** · `400` entra y el anticipo de `407` NO", async () => {
+  it("**criterio 20 · I-E9-24** · `400` se ajusta y el anticipo de `407` viaja EXCLUIDO con su marca", async () => {
     const { readFxPositions } = await import("@/models/closing")
+    const { fxClosingAdjustments, fxStep } = await import("@/lib/closing/fx")
     const rows = await withOrg(
       async (tx) => await readFxPositions(tx as never, { cutoff: CUTOFF, baseCurrency: "EUR" })
     )
-    expect(rows.map((r) => r.accountCode)).toEqual(["400"])
-    expect(rows[0].baseBalanceCents).toBe(-460000)
-    expect(rows[0].originalBalanceCents).toBe(-500000)
-    expect(rows[0].recognizedDifferenceCents).toBe(0)
+    const monetaria = rows.find((r) => r.accountCode === "400")!
+    expect(monetaria.isMonetary).toBe(true)
+    expect(monetaria.baseBalanceCents).toBe(-460000)
+    expect(monetaria.originalBalanceCents).toBe(-500000)
+    expect(monetaria.recognizedDifferenceCents).toBe(0)
+
+    // **H-5.** El anticipo NO monetario llega con su marca en `false`: se sigue
+    // excluyendo del barrido (lo decide `accounts.is_monetary`, no el motor),
+    // pero ahora la exclusión se puede EXPLICAR. Antes la consulta lo filtraba
+    // en SQL y `excludedNonMonetary` estaba siempre vacío.
+    const anticipo = rows.find((r) => r.accountCode === "407")
+    expect(anticipo, "el anticipo de 407 en USD tiene que llegar, marcado como no monetario").toBeTruthy()
+    expect(anticipo!.isMonetary).toBe(false)
+
+    const resultado = fxClosingAdjustments(
+      rows.map((r) => ({
+        accountCode: r.accountCode,
+        counterpartyId: r.counterpartyId,
+        currency: r.currency,
+        baseBalanceCents: r.baseBalanceCents,
+        currencyBalanceCents: r.originalBalanceCents,
+        isMonetary: r.isMonetary,
+      })),
+      rows
+        .filter((r): r is typeof r & { rateMicro: bigint; rateDate: string } => r.rateMicro !== null && r.rateDate !== null)
+        .map((r) => ({ currency: r.currency, rateMicro: r.rateMicro, rateDate: r.rateDate })),
+      CUTOFF
+    )
+    // El ajuste sigue siendo sólo el de `400`: la exclusión no cambia una cifra.
+    expect(resultado.byPosition.map((a) => a.accountCode)).toEqual(["400"])
+    expect(resultado.excludedNonMonetary.map((p) => p.accountCode)).toEqual(["407"])
+    expect(fxStep(resultado, CUTOFF).evidencia).toContain("no monetaria")
   })
 
   it("**criterio 21 · O-5** · la tasa efectiva es la del 29-12 y viaja con su fecha", async () => {
@@ -567,7 +596,10 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T12 — `readClosingInput`: todo en U
     expect(input.assets.length).toBeGreaterThan(0)
     expect(input.maturities).toHaveLength(1)
     expect(input.positionsWithoutSchedule.map((p) => p.accountCode)).toEqual(["173"])
-    expect(input.fxPositions.map((p) => p.accountCode)).toEqual(["400"])
+    // H-5: las dos posiciones en divisa llegan; la no monetaria, marcada, para
+    // que el motor la excluya y lo explique.
+    expect(input.fxPositions.map((p) => p.accountCode)).toEqual(["400", "407"])
+    expect(input.fxPositions.filter((p) => p.isMonetary).map((p) => p.accountCode)).toEqual(["400"])
     expect(input.assetsWithoutAttribution.map((a) => a.code)).toEqual(["ACT-SIN"])
     expect(input.balances.size).toBeGreaterThan(0)
   })

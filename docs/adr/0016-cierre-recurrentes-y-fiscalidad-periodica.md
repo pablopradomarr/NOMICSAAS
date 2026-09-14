@@ -10,7 +10,7 @@
 > producían **un balance mal clasificado, una PyG con el resultado en el ejercicio
 > equivocado o una autoliquidación incorrecta** — no imprecisa: incorrecta.
 >
-> **Re-validación (R2), incorporada:** **R2-1** — 23 pares de reclasificación
+> **Re-validación (R2), incorporada:** **R2-1** — **22** pares de reclasificación
 > (176↔**5595**, 177↔**500**, partes vinculadas en cuatro pares **sin 514**, y
 > `527`/`528` fuera); **R2-2** — el **capital social se deriva del saldo de `100`**,
 > no se teclea, y el campo queda sólo como contingencia con WARN; **R2-3** — el
@@ -18,6 +18,23 @@
 >
 > **APROBADO el 2026-09-07.** Las tareas de Nivel 2 quedan desbloqueadas y la
 > épica puede pasar a `/sprint E9`.
+
+> **Nota de la ronda 1 de corrección de E9 (2026-09-14) — cardinales y una cifra.**
+> Tres correcciones **de redacción**; ninguna decisión cambia.
+> · **22 pares** de reclasificación, no 23: la propia enumeración de D5/R2-1
+>   contiene 22, y son los 22 que se siembran y se implementan.
+> · **43 pasos** de checklist, no 41: la tabla que los enumera en §4.8 del diseño
+>   contiene 43 (8·3·7·5·3·7·2·6·2) y son los 43 implementados. Los **nueve
+>   bloqueantes** no cambian.
+> · **Interés implícito del caso A de D7: 442 817 c**, no 454 133. Recomputado a
+>   mano con la convención que la propia **D7.3** fija —un ÚNICO tipo **mensual**
+>   declarado, el mismo para descontar y para devengar—: el tipo que produce el
+>   valor actual 8 899 964 desde 10 000 000 a 24 meses es `1,06^(1/12) − 1`, y
+>   devengarlo diez meses con truncamiento mensual da 442 817 exacto. Los 454 133
+>   salían de mezclar dos tipos (descontar al efectivo y devengar al nominal
+>   6 %/12), que es justo la ambigüedad que D7.3 existe para eliminar. El fixture
+>   sellado `valor-actual-esperado.json` y el motor ya decían 442 817: se corrige
+>   el texto, no el fixture.
 
 ---
 
@@ -61,7 +78,7 @@ relaja en ningún caso.
 **Decisión.**
 
 1. El cierre es un **acto sellado**: `ClosingRun` con una lista de comprobación
-   de **41 pasos en nueve bloques** (D9), **nueve de ellos bloqueantes**,
+   de **43 pasos en nueve bloques** (D9), **nueve de ellos bloqueantes**,
    evaluados también **en servidor** al cerrar y no sólo al pintar el botón.
 2. **La reapertura existe** y es **anulación por contra-asiento** (T-21), con
    motivo ≥ 30 caracteres, rol **ADMIN**, confirmación escribiendo el código del
@@ -482,7 +499,7 @@ de la base amortizable y **I-E9-5 en FAIL**.
    `IMPUESTO_DIFERIDO_NO_RECONOCIDO` si la respuesta es afirmativa: la NRV 13ª
    obliga a reconocer `4740`/`4745`/`479` contra `6301`, y no reconocerlos es una
    **omisión**, no un aplazamiento.
-3. **(O-29) El checklist pasa de 16 a 41 pasos** en nueve bloques, con **nueve
+3. **(O-29) El checklist pasa de 16 a 43 pasos** en nueve bloques, con **nueve
    bloqueantes** (§4.8 del diseño). Se añaden, entre otros: sumas y saldos mes a
    mes, cuentas puente a cero, saldos contrarios a su naturaleza, arqueo de caja,
    confirmaciones bancarias, facturas pendientes de recibir, ingresos devengados

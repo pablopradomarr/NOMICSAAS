@@ -42,6 +42,13 @@ export const CAPITAL_GOOD_THRESHOLD_CENTS = 300_506
 export const isCapitalGoodByRule = (costCents: number, usefulLifeMonths: number): boolean =>
   costCents > CAPITAL_GOOD_THRESHOLD_CENTS && usefulLifeMonths > 12
 
+/** `2026-09` → `2026-10`. Sin `Date`: aritmética entera sobre la clave. */
+const nextMonthPeriod = (period: string): string => {
+  const year = Number(period.slice(0, 4))
+  const month = Number(period.slice(5, 7))
+  return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, "0")}`
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lectura
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,11 +339,49 @@ export async function reviseAssetTx(
     newResidualValueCents?: number | null
     addedCostCents?: number | null
     reason: string
+    /** «Hoy» al juzgar la prospectividad (NRV 22ª). Entra por parámetro. */
+    refDate?: LocalDate
   },
   actor: Actor
 ): Promise<{ scheduleHash: string }> {
   const [current] = await readAssetsWithRevisions(tx, { assetId: input.fixedAssetId })
   if (!current) e9Abort("ASSET_NOT_FOUND", "fixedAssetId", "El activo no existe en esta organización")
+
+  /**
+   * **R-AM-5 · NRV 22ª · BUG-E9-1 de QA.** Una revisión de la vida útil o del
+   * valor residual es un **cambio de estimación**, y un cambio de estimación es
+   * **PROSPECTIVO**: no toca el pasado. El motor la aceptaba con cualquier
+   * `effectiveFrom` —incluido enero de un ejercicio con siete meses ya
+   * devengados—, y el cuadro se recalculaba **hacia atrás**: las cuotas ya
+   * contabilizadas dejaban de explicarse con el cuadro sellado (I-E9-3 e
+   * I-E9-5 pasan a FAIL) y el ajuste se colaba sin contra-asiento.
+   *
+   * El suelo es **el mes siguiente al último con dotación contabilizada** —lo
+   * que el diario dice, no una fecha declarada—; sin ninguna dotación, el mes
+   * de puesta en condiciones de funcionamiento. Reconocer una corrección del
+   * pasado tiene su camino y es otro: T-22 contra reservas (criterio 22, caso B).
+   */
+  const ultimoPeriodoDotado = [...current.postedPeriods].sort().at(-1) ?? null
+  const sueloDotacion = ultimoPeriodoDotado
+    ? nextMonthPeriod(ultimoPeriodoDotado)
+    : current.asset.inServiceDate.slice(0, 7)
+  const mesEnCurso = input.refDate ? input.refDate.slice(0, 7) : sueloDotacion
+  const sueloPeriodo = sueloDotacion > mesEnCurso ? sueloDotacion : mesEnCurso
+  const periodoRevision = input.effectiveFrom.slice(0, 7)
+  if (periodoRevision < sueloPeriodo) {
+    e9Abort(
+      "ASSET_REVISION_RETROACTIVE",
+      "effectiveFrom",
+      `La revisión de ${current.asset.code} es PROSPECTIVA (NRV 22ª): ${input.effectiveFrom} cae en ${periodoRevision}, ` +
+        `anterior a ${sueloPeriodo}` +
+        (sueloPeriodo === mesEnCurso && mesEnCurso >= sueloDotacion
+          ? ", que es el mes en curso"
+          : ultimoPeriodoDotado
+            ? `, que es el mes siguiente al último con dotación contabilizada (${ultimoPeriodoDotado})`
+            : ", que es el mes de puesta en condiciones de funcionamiento") +
+        ". Un cambio de estimación no reescribe el pasado: si hay que corregirlo, va por T-22 contra reservas"
+    )
+  }
 
   await tx.assetRevision.create({
     data: {

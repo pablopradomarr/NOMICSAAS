@@ -332,31 +332,68 @@ el plan (`planWithExtras`) y las `DEFERRED_ACCOUNT_KEYS` de E9 con su código
 exacto (`fixtureAccountMap`). Sin eso `ejercicio-completo-v2` no resolvía ni su
 primer asiento.
 
-### Anotado para T26 (no se decide aquí)
+### Anotado para T26 — **CERRADO en la ronda 1 (2026-09-14)**
 
-Tres discrepancias **documentales** entre el diseño, el ADR y los fixtures
-sellados. Ninguna bloquea, ninguna es un error de código, y las tres las tiene
-que cerrar T26 con el `experto-contable`:
+Las tres discrepancias documentales se han resuelto; ninguna queda abierta.
 
-1. **22 vs 23 pares de reclasificación.** T9 declaró el desajuste; §4.8/criterio
-   24 dice «23 pares» y la enumeración da 22.
-2. **41 vs 43 pasos del checklist.** §4.8 y ADR-0016 D9.3 dicen «41 pasos en
-   nueve bloques» y la tabla que los enumera contiene **43** (8·3·7·5·3·7·2·6·2).
-   Se implementan los 43 enumerados; los **nueve bloqueantes** sí coinciden.
-3. **Interés implícito: 442 817 vs 454 133.** El criterio 22 de §12 dice `662`
-   **454 133** para el caso A (nominal 10 000 000, 24 meses, valor actual
-   8 899 964); el fixture sellado `docs/design/fixtures/valor-actual-esperado.json`
-   dice **442 817** para el mismo caso, y su generador explica que es «el devengo
-   por tipo efectivo mensual coherente con ese valor actual». `cierre-e9.test.ts`
-   sigue al criterio. Hay que decidir cuál es la cifra buena y alinear la otra.
+1. **22 vs 23 pares** → **22**. Corregido en `docs/design/E9-cierre-recurrentes.md`
+   (§0, §4.5, D5/R2-1, plan de tareas) y en ADR-0016, con nota fechada.
+2. **41 vs 43 pasos** → **43**, los que la tabla de §4.8 enumera. Corregido en el
+   diseño y en ADR-0016 D9.3. Los **nueve bloqueantes** no cambian.
+3. **Interés implícito 442 817 vs 454 133** → **442 817**, y **no era
+   documental**: era un error de cálculo del criterio 22. Recomputado a mano con
+   la convención que fija **ADR-0016 D7.3** —un ÚNICO tipo **mensual** declarado,
+   el mismo para descontar y para devengar—. El tipo que produce el valor actual
+   8 899 964 desde 10 000 000 a 24 meses es `1,06^(1/12) − 1`; devengarlo diez
+   meses con truncamiento mensual da **442 817** exacto, que es lo que dicen el
+   fixture sellado `valor-actual-esperado.json` y el motor. Los 454 133 salían de
+   **mezclar dos tipos** (descontar al efectivo y devengar al nominal 6 %/12, que
+   da 455 139), justo la ambigüedad que D7.3 existe para eliminar. Se corrigen
+   §12 criterio 22, §4.7 de `E9-validacion-cierre.md`, ADR-0016 y
+   `cierre-e9.test.ts`; **el fixture no se toca** y no hace falta reversionarlo.
 
-### Deuda de UI que esto deja a la vista (dev-frontend)
+## E9 — ronda 1 de corrección (2026-09-14): auditoría, revisión y QA
 
-`createAssetSchema` admite `projectId`/`costCenterId` desde T15, pero el
-formulario de alta del inmovilizado **no los ofrece**, así que un activo dado de
-alta por pantalla en una organización con destino analítico obligatorio no se
-puede vender hasta que alguien le declare el destino. El e2e lo declara por SQL
-con su comentario. Cerrar en la ola de UI de E9.
+Entradas: `docs/design/E9-auditoria-informe.md` (DISCREPANCIA, H-1…H-6),
+`docs/design/E9-revision.md` (1 BLOQUEA, 8 DEBE, 3 PUEDE) y QA (BUG-E9-1,
+`perf-closing.test.ts` con cuatro techos en `.skip`). **Todo cerrado con test.**
+
+| # | Hallazgo | Cierre |
+|---|---|---|
+| **H-1** BLOQ. | `readMaturityPositions` devolvía `credit − debit` y `lib/closing/reclass.ts` espera **`debe − haber`**: T-32 se posteaba **al revés** (`523 (D) / 173 (H)`), inflando el pasivo no corriente y dejando el corriente **negativo**. Silencioso: I-E9-16 cuadraba y el paso salía PASS | La convención se unifica en **`debe − haber`** y se **escribe en el tipo** (`MaturityPositionRow.openCents`, renombrado desde `balanceCents` para que nadie asuma un signo). Corregidos los dos llamantes. Test de **DIRECCIÓN** sobre un pasivo real (`173 → 523`: `173 (D) / 523 (H)`) y un activo real (`253 → 543`: `543 (D) / 253 (H)`), con el saldo resultante: el pasivo corriente no puede quedar deudor |
+| **H-2** BLOQ. | Los **27 `I-E9-*` nunca corrían**: `runInvariantsPure` los ejecuta `if (input.closing)` y `models/ledger.ts` no rellenaba `closing`. 0 de 215 checks sobre un ejercicio cerrado | `models/closing.readClosingInvariantInput` compone el bloque —recurrentes, activos, periodificaciones, reclasificación (con las posiciones **antes** y **después** de T-32), FX, el acto de cerrar, los `ClosingRun` y la distribución— y `runLedgerInvariants` lo cablea en el barrido de auditoría con ejercicio en el alcance. Test: los 27 ids aparecen y quedan **persistidos** en `invariant_runs`, e **I-E9-16 FALLA** si se reintroduce el signo invertido |
+| **H-3** BLOQ. | La **reapertura era imposible**: `voidEntryInTx` → `buildReversal` aplica CA-1, que prohíbe anular `OPENING`/`CLOSING`/`REGULARIZATION`, y el trigger de la base repite la regla. D1, O-21 e I-E9-21 inalcanzables; el test que los cubría pasaba **en vacío** | La salida que la propia CA-1 nombra, **sólo por la vía registrada**: `VoidOptions.reopeningRunId` en el motor —que únicamente pasa `reopenFiscalYear`— y el GUC de transacción `app.reopening_run_id` en la base (migración aditiva `20260922090000_e9_reapertura_registrada`, con `app.reopening_run_id()` que exige un uuid). `voidEntry`, la anulación pública, **no lo pasa nunca**. Test sobre un ejercicio cerrado **de verdad**: cuatro contra-asientos, ejercicio `OPEN`, `129`/`6300` a cero, pasos 5-7 en `PENDIENTE_RECOMPUTO`, y `voidEntry` sigue rechazando los tres kind |
+| **H-4** | El desempate del FIFO (R-RC-3) no estaba cableado: `entryNumber: 0` en los dos llamantes | `readMaturityPositions` devuelve el nº del **asiento vivo más antiguo** del grupo (`MIN(e.entry_number)`), y los dos llamantes lo pasan |
+| **H-5** | El aviso de partidas **no monetarias** era inalcanzable: la consulta las filtraba en SQL y `excludedNonMonetary` llegaba siempre vacío | La marca del plan (`accounts.is_monetary`) viaja en `FxPositionRow.isMonetary` y **el motor** excluye y explica. La exclusión no cambia una cifra; ahora se ve |
+| **H-6** | Alterar `debt_installments` tras el cierre no lo detectaba nadie | `ReclassBlock.tamperedSchedules`: el `scheduleHash` sellado contra el recomputado sobre los vencimientos de hoy. **I-E9-25 en FAIL** con el cuadro nombrado |
+| **BLOQUEA 1** | **El paso 12 de O-17 no existía**: se sellaba T-32 misma como su propio contra-asiento y `reclass_reversal_entry_id` no lo escribía nadie. La reclasificación quedaba «pegada» en N+1 | `closeFiscalYearE9` postea el contra-asiento de T-32 **después** de la apertura (**nº 2 de N+1**, R-RC-6) y lo sella en su columna. Test: `kind = REVERSAL`, ejercicio N+1, nº 2, y en N+1 la deuda vuelve entera a `173` |
+| **DEBE 2** | `aperturaEntryId` cableado a `null`: `CIERRE_APERTURA` salía WARN **para siempre** y el sello quedaba en `REQUIERE_REVISION` | Se busca `APERTURA_EJERCICIO` **en el ejercicio siguiente**, que es donde vive |
+| **DEBE 5** | `postClosingStepAction` posteaba **sin `idempotencyKey`**: un doble envío duplicaba T-31 y T-25 | Clave determinista `cierre:` + sha256 de `(ejercicio, paso, plantilla)` — `idempotency_key` es `varchar(64)`— resuelta por el índice único que ya existe |
+| **DEBE 6** | El cierre iba en **tres** transacciones: si fallaba la tercera, el ejercicio quedaba CLOSED y el run sin sellar. **Un cierre sin sello** | `closeFiscalYearTx` extrae el cuerpo y `closeFiscalYearE9` hace guardia + doce asientos + paso 12 + sello en **una sola** transacción |
+| **DEBE 7** | El test de los doce asientos sólo comprobaba que existían las columnas, y prometía `473 = 0` sin comprobarlo | `tests/integration/e9-ronda1.test.ts` recorre las posiciones con datos reales y comprueba **`473 = 0`** tras T-25 |
+| **DEBE 9** | `runClosingChecklistAction` era `VIEWER` y **escribe** (`closing_runs` + AuditLog) | Pasa a **EDITOR**; la lectura sigue en `getClosingRunAction` (VIEWER). Test de los dos lados |
+| **DEBE 3** | `perf-closing.test.ts` con cuatro techos en `.skip` | **Los ocho activos.** El fixture era una comodidad, no la medida: el volumen de §9 (2 000 documentos, año completo, 200 periodos vencidos) se siembra en el propio test. Destapó un defecto real: el libro registro tardaba ~1 500 ms sobre una `journal_lines` grande porque el `EXISTS` acababa en recorrido de tabla → índice `(organization_id, account_code, entry_id)` en migración aditiva `20260922100000_e9_indice_libro_registro`. Ahora < 800 ms |
+| **DEBE 4** | N+1 de la staleness de CECOs dentro de la transacción del checklist | Se **mide**, que es la alternativa que el propio revisor admite: el perf test siembra **doce `AllocationRun` mensuales sellados** —el caso que dispara el N+1— y el checklist completo sigue por debajo de los 2 000 ms de §9. La agregación en una sola consulta queda fechada abajo |
+| **PUEDE 10** | `capitalGoodsGuard` devuelve `blocking: false` contradiciendo el catálogo | El campo es **inerte** y ponerlo a `true` obligaría a reversionar el fixture sellado `liquidacion-iva-esperada.json` por un dato que nadie lee. Se documenta en `ClosingStepResult.blocking`: **la única fuente es el catálogo** |
+| **PUEDE 11** | Cardinales abiertos en los documentos canónicos | Corregidos (ver arriba) |
+| **BUG-E9-1** | `reviseAssetAction` admitía revisiones **retroactivas** | R-AM-5 / NRV 22ª: el suelo es `max(mes siguiente al último dotado, mes en curso)`, con `refDate` **por parámetro**. Rechaza con `ASSET_REVISION_RETROACTIVE` nombrando el suelo y la salida (T-22 contra reservas) |
+
+### Deuda nueva, fechada
+
+1. **`ejercicio-completo-v2` sigue sin poder cargarse** y ahora se sabe por qué:
+   es **internamente incoherente**. Usa `4751` directamente en sus nóminas **y**
+   la clave `IRPF_A_PAGAR_123` → `47513`; al crear la subcuenta, la madre deja de
+   admitir apuntes por derivación del plan y las nóminas no entran
+   (`ACCOUNT_NOT_POSTABLE`). Arreglarlo exige **reversionar el fixture** (es
+   inmutable) y escribir el `build_ejercicio_completo_v2.py` que nunca se hizo.
+   El cargador ya lo **acepta** y `planWithExtras` resuelve sus `accountsExtra`;
+   falta el fichero coherente. → **T24**.
+2. **La staleness de CECOs sigue derivándose run a run.** Medida y dentro del
+   techo con doce runs mensuales sellados; agregar los hashes por periodo en una
+   sola consulta → **T26**.
+3. **PUEDE 12** (Σ Debe / Σ Haber sumadas en cliente para pintar el cuadre) sigue
+   abierto: es feedback visual sobre líneas que compone el servidor. → **ola de
+   UI de E9**.
 
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
 

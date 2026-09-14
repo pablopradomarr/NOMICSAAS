@@ -24,6 +24,7 @@ import {
 } from "@/lib/closing/checklist"
 import { tenantTransaction, type TenantTransactionClient } from "@/lib/db"
 import { resolveReversalDate } from "@/lib/ledger/dates"
+import { TEMPLATE_RECLASIFICACION } from "@/lib/closing/reclass"
 import { buildReversal } from "@/lib/ledger/void"
 import {
   createClosingRunTx,
@@ -52,7 +53,6 @@ import {
   listPeriodLockRefs,
   modelErr,
   modelFail,
-  modelOk,
   postEntryTx,
   runLedgerTransaction,
 } from "@/models/ledger"
@@ -141,6 +141,8 @@ export type CloseFiscalYearResult = {
   regularizacion: PostedEntry | null
   cierre: PostedEntry | null
   apertura: PostedEntry | null
+  /** N+1, donde viven la apertura y el contra-asiento de la reclasificación. */
+  nextFiscalYearId?: string | null
   lockedMonths: number[]
   ledgerHash: string
 }
@@ -177,7 +179,29 @@ export async function closeFiscalYear(
   return await runLedgerTransaction(
     organizationId,
     actor.userId,
-    async (tx) => {
+    async (tx) => await closeFiscalYearTx(tx, { organizationId, fiscalYearId, reason, ...opts }, actor),
+    { timeout: 120_000, maxWait: 15_000 }
+  )
+}
+
+/**
+ * **El cierre, DENTRO de una transacción ya abierta (DEBE 6 del revisor).**
+ *
+ * `closeFiscalYearE9` usaba **tres** transacciones —guardia, cierre y sellado
+ * del `ClosingRun`—: si la tercera fallaba, el ejercicio quedaba `CLOSED` con
+ * los doce meses bloqueados y el run en `COMPROBADO`, sin `closedAt` ni ids
+ * sellados. **Un cierre sin sello.** Extraer el cuerpo aquí permite que el
+ * cierre, el paso 12 de O-17 y el sello entren en **una sola** transacción: o
+ * todo, o nada.
+ */
+async function closeFiscalYearTx(
+  tx: TenantTransactionClient,
+  args: { organizationId: string; fiscalYearId: string; reason: string; skipInvariants?: boolean; refDate?: LocalDate },
+  actor: Actor
+): Promise<CloseFiscalYearResult> {
+  const { organizationId, fiscalYearId, reason } = args
+  const opts = args
+  {
       const fy = await tx.fiscalYear.findFirst({ where: { id: fiscalYearId } })
       if (!fy) abort(modelErr("FY_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización"))
       if (fy.status === "CLOSED") {
@@ -325,12 +349,11 @@ export async function closeFiscalYear(
         regularizacion,
         cierre,
         apertura,
+        nextFiscalYearId: next?.id ?? null,
         lockedMonths: finalLocks,
         ledgerHash: ledgerHashValue,
       }
-    },
-    { timeout: 120_000, maxWait: 15_000 }
-  )
+  }
 }
 
 /**
@@ -448,74 +471,118 @@ export async function closeFiscalYearE9(
   input: { fiscalYearId: string; closingRunId: string; reason: string; refDate?: LocalDate },
   actor: Actor
 ): Promise<LedgerResult<CloseFiscalYearE9Result>> {
-  const guard = await tenantTransaction(organizationId, actor.userId ?? undefined, async (tx) => {
-    const run = await tx.closingRun.findFirst({ where: { id: input.closingRunId } })
-    if (!run) return "El cierre comprobado no existe en esta organización: lance el checklist antes de cerrar"
-    if (run.fiscalYearId !== input.fiscalYearId) return "El cierre comprobado es de otro ejercicio"
-    if (run.status !== "COMPROBADO") {
-      return `El cierre está en estado ${run.status}: sólo se cierra desde un checklist COMPROBADO (D1.1)`
-    }
-    const current = await computeLedgerHash(tx, { fiscalYearId: input.fiscalYearId })
-    if (current !== run.ledgerHash) {
-      return (
-        "El diario ha cambiado desde que se comprobó el cierre: vuelva a lanzar el checklist y revise los pasos " +
-        "(el ejercicio NO se ha cerrado)"
+  return await runLedgerTransaction(
+    organizationId,
+    actor.userId,
+    async (tx) => {
+      // ── Las tres barreras, DENTRO de la transacción que cierra ────────────
+      //
+      // **DEBE 6.** Antes eran tres transacciones (guardia → cierre → sellado):
+      // si la tercera fallaba, el ejercicio quedaba CLOSED con los doce meses
+      // bloqueados y el run en COMPROBADO, sin `closedAt` ni ids sellados — un
+      // cierre sin sello. Ahora es **una**: o los doce asientos, el estado y el
+      // sello, o nada.
+      const run = await tx.closingRun.findFirst({ where: { id: input.closingRunId } })
+      if (!run) abort(modelErr("INVARIANTS_FAILED", "closingRunId", "El cierre comprobado no existe en esta organización: lance el checklist antes de cerrar"))
+      if (run.fiscalYearId !== input.fiscalYearId) {
+        abort(modelErr("INVARIANTS_FAILED", "closingRunId", "El cierre comprobado es de otro ejercicio"))
+      }
+      if (run.status !== "COMPROBADO") {
+        abort(modelErr("INVARIANTS_FAILED", "closingRunId", `El cierre está en estado ${run.status}: sólo se cierra desde un checklist COMPROBADO (D1.1)`))
+      }
+      const current = await computeLedgerHash(tx, { fiscalYearId: input.fiscalYearId })
+      if (current !== run.ledgerHash) {
+        abort(
+          modelErr(
+            "INVARIANTS_FAILED",
+            "fiscalYearId",
+            "El diario ha cambiado desde que se comprobó el cierre: vuelva a lanzar el checklist y revise los pasos " +
+              "(el ejercicio NO se ha cerrado)"
+          )
+        )
+      }
+      const steps = (Array.isArray(run.steps) ? (run.steps as ClosingStepRecord[]) : []) as ClosingStepResult[]
+      const blockers = canCloseFiscalYear(steps)
+      if (!blockers.ok) {
+        abort(
+          modelErr(
+            "INVARIANTS_FAILED",
+            "fiscalYearId",
+            `No se cierra el ejercicio: ${blockers.blockers.map((b) => `${b.step} (${b.evidencia})`).join(" · ")}`
+          )
+        )
+      }
+
+      // ── Pasos 9, 10 y 11 de O-17: T-26, T-27 y T-28 ──────────────────────
+      const closed = await closeFiscalYearTx(
+        tx,
+        { organizationId, fiscalYearId: input.fiscalYearId, reason: input.reason, ...(input.refDate ? { refDate: input.refDate } : {}) },
+        actor
       )
-    }
-    const steps = (Array.isArray(run.steps) ? (run.steps as ClosingStepRecord[]) : []) as ClosingStepResult[]
-    const blockers = canCloseFiscalYear(steps)
-    if (!blockers.ok) {
-      return `No se cierra el ejercicio: ${blockers.blockers.map((b) => `${b.step} (${b.evidencia})`).join(" · ")}`
-    }
-    return null
-  })
-  if (typeof guard === "string") {
-    return modelFail(modelErr("INVARIANTS_FAILED", "fiscalYearId", guard))
-  }
 
-  const closed = await closeFiscalYear(organizationId, input.fiscalYearId, actor, input.reason, {
-    refDate: input.refDate,
-  })
-  if (!closed.ok) return closed
+      // ── Paso 12 de O-17: el CONTRA-ASIENTO de la reclasificación ─────────
+      //
+      // **BLOQUEA 1 del revisor.** Este paso no existía: `closeFiscalYearE9`
+      // buscaba `RECLASIFICACION_VENCIMIENTOS` en el ejercicio N —que es **T-32
+      // misma**, no su contra-asiento—, la sellaba como `reclassEntryId` y la
+      // devolvía además como `reclassReversalEntryId`. La columna
+      // `closing_runs.reclass_reversal_entry_id` existía y no la escribía nadie.
+      //
+      // La consecuencia es contable y de D5.6/O-8: la reclasificación es un
+      // ajuste de **presentación**, no un hecho económico. Si se deja pegada en
+      // N+1, los pagos del año siguiente cancelan `173` en vez de `523` y la
+      // base del FIFO queda contaminada. Va **después** de la apertura —nº 2 de
+      // N+1— porque si fuera antes, el `OPENING` dejaría de ser el nº 1 y
+      // I-E9-14 saldría FAIL (R-RC-6).
+      const reclass = await tx.journalEntry.findFirst({
+        where: { templateCode: TEMPLATE_RECLASIFICACION, voidedAt: null, fiscalYearId: input.fiscalYearId },
+        orderBy: { entryNumber: "desc" },
+        select: { id: true },
+      })
+      let reclassReversalEntryId: string | null = null
+      if (reclass && closed.nextFiscalYearId) {
+        reclassReversalEntryId = await voidEntryInTx(
+          tx,
+          reclass.id,
+          `Cierre de ${closed.fiscalYear.code}: la reclasificación por vencimiento es un ajuste de presentación y se ` +
+            "revierte en la apertura del ejercicio siguiente (O-8, R-RC-6)",
+          actor
+        )
+      }
 
-  // El sello del `ClosingRun` se cierra DESPUÉS de que el ejercicio esté
-  // cerrado: un run `CERRADO` con el ejercicio abierto sería un sello que no
-  // sella nada.
-  const sealed = await runLedgerTransaction(organizationId, actor.userId, async (tx) => {
-    const reversal = await tx.journalEntry.findFirst({
-      where: { templateCode: "RECLASIFICACION_VENCIMIENTOS", voidedAt: null, fiscalYearId: input.fiscalYearId },
-      select: { id: true },
-    })
-    const run = await updateClosingRunTx(
-      tx,
-      {
-        id: input.closingRunId,
-        status: "CERRADO",
-        entryIds: {
-          ...(closed.value.regularizacion ? { regularizacionEntryId: closed.value.regularizacion.id } : {}),
-          ...(closed.value.cierre ? { cierreEntryId: closed.value.cierre.id } : {}),
-          ...(closed.value.apertura ? { aperturaEntryId: closed.value.apertura.id } : {}),
-          ...(reversal ? { reclassEntryId: reversal.id } : {}),
+      // ── El sello del `ClosingRun`, en la MISMA transacción ───────────────
+      const sealedRun = await updateClosingRunTx(
+        tx,
+        {
+          id: input.closingRunId,
+          status: "CERRADO",
+          entryIds: {
+            ...(closed.regularizacion ? { regularizacionEntryId: closed.regularizacion.id } : {}),
+            ...(closed.cierre ? { cierreEntryId: closed.cierre.id } : {}),
+            ...(closed.apertura ? { aperturaEntryId: closed.apertura.id } : {}),
+            ...(reclass ? { reclassEntryId: reclass.id } : {}),
+            ...(reclassReversalEntryId ? { reclassReversalEntryId } : {}),
+          },
+          closedAt: new Date(),
+          closedById: actor.userId ?? null,
         },
-        closedAt: new Date(),
-        closedById: actor.userId ?? null,
-      },
-      actor
-    )
-    return { run, reclassEntryId: reversal?.id ?? null }
-  })
-  if (!sealed.ok) return modelFail(...sealed.errors)
+        actor
+      )
 
-  return modelOk({
-    ...closed.value,
-    closingRunId: input.closingRunId,
-    entryIds: {
-      regularizacion: closed.value.regularizacion?.id ?? null,
-      cierre: closed.value.cierre?.id ?? null,
-      apertura: closed.value.apertura?.id ?? null,
+      return {
+        ...closed,
+        closingRunId: sealedRun.id,
+        entryIds: {
+          regularizacion: closed.regularizacion?.id ?? null,
+          cierre: closed.cierre?.id ?? null,
+          apertura: closed.apertura?.id ?? null,
+          reclassReversal: reclassReversalEntryId,
+        },
+        reclassReversalEntryId,
+      }
     },
-    reclassReversalEntryId: sealed.value.reclassEntryId,
-  })
+    { timeout: 180_000, maxWait: 15_000 }
+  )
 }
 
 export type ReopenFiscalYearResult = {
@@ -637,6 +704,19 @@ export async function reopenFiscalYear(
       }
 
       // (4) O-21 · los CUATRO contra-asientos, en orden inverso.
+      //
+      // **H-3.** Tres de los cuatro son `OPENING`, `CLOSING` y `REGULARIZATION`,
+      // y CA-1 los bloquea… salvo por la vía que la propia CA-1 nombra: la
+      // REAPERTURA. Se abre aquí, identificada por el `ClosingRun` sellado que
+      // se está reabriendo, y en los DOS sitios que la imponen:
+      //  · la base, con `SET LOCAL app.reopening_run_id`, que vive y muere con
+      //    esta transacción (migración `20260922090000_e9_reapertura_registrada`);
+      //  · el motor, con `VoidOptions.reopeningRunId`, que sólo pasa esta función.
+      // `voidEntry` —la anulación pública— no toca ninguno de los dos, así que
+      // desde fuera CA-1 sigue siendo absoluto.
+      const sealedRun = await sealedClosingRun(tx, input.fiscalYearId)
+      const reopeningRunId = sealedRun?.id ?? input.fiscalYearId
+      await tx.$executeRaw`SELECT set_config('app.reopening_run_id', ${reopeningRunId}, true)`
       const reversalEntryIds: string[] = []
       for (const templateCode of REOPENING_REVERSAL_ORDER) {
         const target = await tx.journalEntry.findFirst({
@@ -649,7 +729,9 @@ export async function reopenFiscalYear(
           select: { id: true },
         })
         if (!target) continue
-        const reversalId = await voidEntryInTx(tx, target.id, `Reapertura de ${fy.code}: ${input.reason}`, actor)
+        const reversalId = await voidEntryInTx(tx, target.id, `Reapertura de ${fy.code}: ${input.reason}`, actor, {
+          reopeningRunId,
+        })
         reversalEntryIds.push(reversalId)
       }
 
@@ -662,7 +744,7 @@ export async function reopenFiscalYear(
       // checklist, no un cierre, y marcarlo `REABIERTO` rompería
       // `closing_runs_closed_coherent` —que exige `closed_at` en CERRADO y
       // REABIERTO— además de mentir sobre lo que pasó.
-      const run = await sealedClosingRun(tx, input.fiscalYearId)
+      const run = sealedRun
       if (run) {
         const steps = run.steps.map((s) =>
           PENDING_RECOMPUTE_STEP_CODES.includes(s.step)
@@ -726,7 +808,8 @@ async function voidEntryInTx(
   tx: TenantTransactionClient,
   entryId: string,
   reason: string,
-  actor: Actor
+  actor: Actor,
+  opts: { reopeningRunId?: string } = {}
 ): Promise<string> {
   const original = await getEntry(tx, entryId)
   if (!original) abort(modelErr("ENTRY_NOT_FOUND", "entryId", "El asiento a anular no existe en esta organización"))
@@ -736,7 +819,11 @@ async function voidEntryInTx(
   const resolved = resolveReversalDate(original.entryDate, probe, null)
   if (!resolved.ok) abortWith(resolved.errors)
   const ctx = await getLedgerContext(tx, resolved.value.entryDate)
-  const built = buildReversal(original, { reason, requestedDate: null, existingReversals }, ctx)
+  const built = buildReversal(
+    original,
+    { reason, requestedDate: null, existingReversals, ...(opts.reopeningRunId ? { reopeningRunId: opts.reopeningRunId } : {}) },
+    ctx
+  )
   if (!built.ok) abortWith(built.errors)
 
   const reversal = await postEntryTx(tx, built.value, actor)

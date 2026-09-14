@@ -27,6 +27,25 @@ export type VoidOptions = {
   requestedDate?: LocalDate | null
   /** Contra-asientos que ya existen sobre este asiento (CA-3). */
   existingReversals?: readonly { id: string }[]
+  /**
+   * **La ÚNICA excepción a CA-1 (H-3 de la auditoría de E9, ADR-0016 D1).**
+   *
+   * CA-1 dice que apertura, cierre y regularización «no se anulan: se deshacen
+   * **reabriendo el ejercicio**». La reapertura de D1/O-21 es exactamente eso
+   * —cuatro contra-asientos en orden inverso T-28 → T-27 → T-26 → T-25— y CA-1
+   * la bloqueaba: `reopenFiscalYearAction` moría con «Los asientos de tipo
+   * OPENING no se anulan con contra-asiento» y D1, O-21 e I-E9-21 eran
+   * **inalcanzables**.
+   *
+   * Se abre el paso **sólo por la vía registrada**: el id del `ClosingRun` que
+   * se está reabriendo. `voidEntry` —la anulación pública, la del botón de la
+   * pantalla del diario— **nunca** lo pasa, así que desde fuera CA-1 sigue
+   * siendo absoluto; y la base repite la misma regla con el mismo dato
+   * (`SET LOCAL app.reopening_run_id`, migración
+   * `20260922090000_e9_reapertura_registrada`), de modo que ni un `INSERT` por
+   * SQL puede saltársela sin dejar constancia de qué reapertura lo amparaba.
+   */
+  reopeningRunId?: string | null
 }
 
 const MIN_REASON = 10
@@ -68,12 +87,19 @@ export function buildReversal(entry: PostedEntry, opts: VoidOptions, ctx: Ledger
     )
   }
 
-  // CA-1: apertura, cierre y regularización no se anulan.
-  if (NON_REVERSIBLE_KINDS.has(entry.kind)) {
+  // CA-1: apertura, cierre y regularización no se anulan **fuera de una
+  // reapertura registrada**. Con `reopeningRunId` el paso se abre para las tres
+  // —es el mecanismo que la propia CA-1 nombra como salida— y sólo ahí: el
+  // camino público (`voidEntry`) no lo pasa nunca. Ver el docblock de la opción.
+  if (NON_REVERSIBLE_KINDS.has(entry.kind) && !opts.reopeningRunId) {
     errors.push(
-      err("REVERSAL_TARGET_KIND", "entryId", `Los asientos de tipo ${entry.kind} no se anulan con contra-asiento`, {
-        check: "CA-1",
-      })
+      err(
+        "REVERSAL_TARGET_KIND",
+        "entryId",
+        `Los asientos de tipo ${entry.kind} no se anulan con contra-asiento: se deshacen reabriendo el ejercicio ` +
+          "(CA-1, ADR-0016 D1)",
+        { check: "CA-1" }
+      )
     )
   }
 

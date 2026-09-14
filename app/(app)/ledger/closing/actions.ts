@@ -70,6 +70,7 @@ import {
 } from "@/models/fiscal-years"
 import { formatLedgerErrors, getLedgerContext, postEntryTx, runLedgerTransaction, todayLocalDate, type LedgerResult } from "@/models/ledger"
 import { Role } from "@/prisma/client"
+import { createHash } from "node:crypto"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
@@ -224,9 +225,18 @@ export const getClosingRunAction = withOrg(
   }
 )
 
-/** Ejecuta los pasos y sella un `ClosingRun`. **No postea nada** (§5.2). */
+/**
+ * Ejecuta los pasos y **sella un `ClosingRun`**. No postea ningún asiento
+ * (§5.2), pero **sí escribe**: inserta una fila en `closing_runs` —append-only—
+ * y su `AuditLog`.
+ *
+ * **DEBE 9 del revisor.** Por eso es `EDITOR` y no `VIEWER`: §10 concede al
+ * VIEWER *ver* el checklist, no crearlo, y con `VIEWER` cualquiera podía generar
+ * runs indefinidamente y ensuciar la traza del cierre. La lectura sigue abierta
+ * a todo el mundo en `getClosingRunAction`, que devuelve el ÚLTIMO run sellado.
+ */
 export const runClosingChecklistAction = withOrg(
-  Role.VIEWER,
+  Role.EDITOR,
   async (ctx, input: unknown): Promise<ActionState<ClosingRunView>> => {
     const parsed = runClosingChecklistSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
@@ -337,7 +347,20 @@ export const postClosingStepAction = withOrg(
         }
       }
 
-      const posted = await postEntryTx(tx, built.value, { userId: ctx.user.id })
+      // **DEBE 5 del revisor.** Sin clave de idempotencia, un doble envío
+      // duplicaba T-31 (valor actual) y T-25 (impuesto): T-30 y T-32 se
+      // autoprotegen recalculando Δ = 0, los otros dos no, y con T-25 duplicado
+      // `6300` queda al doble y `473` sobrecancelada — justo lo que O-26 y la
+      // reversión de O-21 existen para evitar. La clave es determinista y la
+      // resuelve `postEntryTx` contra el índice único de `idempotency_key`.
+      // `idempotency_key` es `varchar(64)`: el uuid del ejercicio más el paso se
+      // pasan, así que la clave es `cierre:` + sha256 de la terna. Determinista
+      // y del mismo largo siempre.
+      const idempotencyKey = `cierre:${createHash("sha256")
+        .update(`${v.fiscalYearId}|${v.step}|${orden.templateCode}`)
+        .digest("hex")
+        .slice(0, 56)}`
+      const posted = await postEntryTx(tx, built.value, { userId: ctx.user.id }, { idempotencyKey })
       const run = await latestClosingRun(tx, v.fiscalYearId)
       if (run) {
         const steps: ClosingStepRecord[] = run.steps.map((s) =>
@@ -404,7 +427,8 @@ async function deriveStepTemplateInput(
       currency: p.currency,
       baseBalanceCents: p.baseBalanceCents,
       currencyBalanceCents: p.originalBalanceCents,
-      isMonetary: true,
+      // **O-4 / H-5**: lo dice el plan y el motor lo explica al excluirlo.
+      isMonetary: p.isMonetary,
     }))
     const rates: ClosingRate[] = positions
       .filter((p): p is typeof p & { rateMicro: bigint; rateDate: LocalDate } => p.rateMicro !== null && p.rateDate !== null)
@@ -470,8 +494,11 @@ async function deriveStepTemplateInput(
         counterpartyId: p.counterpartyId,
         currency: p.currency ?? baseCurrency,
         dueDate: p.dueDate,
-        openCents: p.balanceCents,
-        entryNumber: 0,
+        // `debe − haber` (H-1): `readMaturityPositions` devuelve ya la
+        // convención del motor y `entryNumber` es el asiento vivo más antiguo
+        // del grupo (H-4, R-RC-3). Invertir el signo aquí posteaba T-32 al revés.
+        openCents: p.openCents,
+        entryNumber: p.entryNumber,
       })),
       pairRefs,
       cutoff,

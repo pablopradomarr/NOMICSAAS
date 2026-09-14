@@ -6,7 +6,7 @@
 > **ocho no bloqueantes** (O-23…O-30), respuestas a Q-1…Q-14, cinco invariantes
 > nuevos (**I-E9-10b**, **I-E9-23…26**) y el checklist de cierre completo de un
 > CFO. **Las treinta están incorporadas**, más los tres retoques de la
-> re-validación —**R2-1** (23 pares de reclasificación), **R2-2** (el capital
+> re-validación —**R2-1** (22 pares de reclasificación; la ronda 0 decía 23), **R2-2** (el capital
 > social se deriva del saldo de `100`) y **R2-3** (`LedgerAccount.isMonetary`)—,
 > con lo que la validación queda en **CONFORME CON OBSERVACIONES**.
 > `docs/adr/0016-cierre-recurrentes-y-fiscalidad-periodica.md` (D1–D12) está
@@ -35,7 +35,7 @@
 | **O-4** | El barrido de diferencias de cambio se acota a **partidas monetarias**: `LedgerAccount.isMonetary`, sembrado desde `seeds/npgc.csv`. Fuera `407`, `438`, `480`/`485`, 2xx, 3xx | §3.2, §4.6, **D6**, **I-E9-24** |
 | **O-5** | **Tasa de cierre = la de mayor `rateDate ≤ corte`** dentro de una ventana declarada, sellada y visible. Con el 31-12 en sábado no había tasa y el cierre no avanzaba | §4.6, **D6**, I-E9-17 |
 | **O-6** | **Préstamos con desglose de vencimientos obligatorio**: alta por **T-37** con una línea de `170`/`520` por vencimiento de principal; una posición de `17x`/`52x` sin desglose deja `RECLASIFICACION_VENCIMIENTOS` en **FAIL bloqueante**, no en una lista informativa | §3.2, §4.5, **D5**, **I-E9-25** |
-| **O-7** *(+ R2-1)* | `ReclassificationPair` pasa de 6 a **23 pares** sembrados: los seis del PGC, **cuatro** de partes vinculadas (160↔510, 161↔511, 162↔512, 163↔513, **sin 514**), 172↔522, 175↔525, **176↔5595**, **177↔500**, 180↔560, 185↔561, 250↔540, 251↔541, 254↔544, 258↔548, 260↔565 y 265↔566. **`527`/`528` no se reclasifican**: son intereses a corto de deudas ya reclasificadas | §3.2, §4.5, **D5** |
+| **O-7** *(+ R2-1)* | `ReclassificationPair` pasa de 6 a **22 pares** sembrados *(la ronda 0 decía 23; los enumerados aquí son 22)*: los seis del PGC, **cuatro** de partes vinculadas (160↔510, 161↔511, 162↔512, 163↔513, **sin 514**), 172↔522, 175↔525, **176↔5595**, **177↔500**, 180↔560, 185↔561, 250↔540, 251↔541, 254↔544, 258↔548, 260↔565 y 265↔566. **`527`/`528` no se reclasifican**: son intereses a corto de deudas ya reclasificadas | §3.2, §4.5, **D5** |
 | **O-8** | El contra-asiento de la reclasificación es el asiento **nº 2 de N+1**, después de T-28: T-27 y T-28 llevan los saldos **ya reclasificados** | §4.5, §4.10, **D5**, I-E9-14 |
 | **O-9** | **Base del ajuste de prorrata corregida**: `trunc(cuotaProrrateable × definitiva) − trunc(cuotaProrrateable × provisional)`, sobre la **cuota sometida a prorrata**, no sobre lo ya deducido | §4.4, **D4**, I-E9-10 |
 | **O-10** | **Regla de derivación del numerador y el denominador** (art. 104.Dos.1ª y Tres LIVA), con exclusiones **marcadas en el documento**, nunca deducidas. Sin marcar ⇒ `INFO`, jamás un porcentaje | §4.4, **D4** |
@@ -62,14 +62,14 @@
 | **O-26** | **T-25**: cuenta `6300` (no `630`), cancelación obligatoria de `473`, y pregunta explícita por diferencias temporarias, BIN y deducciones | §4.8, **D9** |
 | **O-27** | **Subcuentas de `4751` por modelo** (111 / 115 / 123), mapeadas por `AccountKey` | §3.2, §4.4, **D12** |
 | **O-28** | **I-E9-4** reformulado: `Σ cuotas = coste + Σ mejoras − residual vigente` | §6.1 |
-| **O-29** | **Checklist de cierre completo**: de 16 a **41 pasos en nueve bloques** | §4.8, §7 |
+| **O-29** | **Checklist de cierre completo**: de 16 a **43 pasos en nueve bloques** *(la ronda 0 decía 41; los enumerados son 43, ver la nota de §4.8)* | §4.8, §7 |
 | **O-30** | **Mes entero**: alta y baja el mismo mes cuentan dos meses; criterio uniforme y escrito en la memoria | §4.2, **D2** |
 
 ### Re-validación (R2) — los tres retoques de cierre
 
 | # | Qué cambia | Sección |
 |---|---|---|
-| **R2-1** | `ReclassificationPair` pasa de 18 a **23 pares**: **176↔5595** (no `526`, que es dividendo activo a pagar), **177↔500** (faltaba), y partes vinculadas en **cuatro** pares (160↔510, 161↔511, 162↔512, 163↔513) **sin `514`**, que no tiene largo plazo simétrico. **`527` y `528` no se reclasifican**: son intereses a corto de deudas ya reclasificadas y moverlos duplicaría el pasivo corriente | §3.2, §4.5, **D5** |
+| **R2-1** | `ReclassificationPair` pasa de 18 a **22 pares** *(la ronda 0 decía 23; los enumerados son 22)*: **176↔5595** (no `526`, que es dividendo activo a pagar), **177↔500** (faltaba), y partes vinculadas en **cuatro** pares (160↔510, 161↔511, 162↔512, 163↔513) **sin `514`**, que no tiene largo plazo simétrico. **`527` y `528` no se reclasifican**: son intereses a corto de deudas ya reclasificadas y moverlos duplicaría el pasivo corriente | §3.2, §4.5, **D5** |
 | **R2-2** | El **capital social se deriva del saldo acreedor de `100`** a la fecha de la junta, no se teclea: un capital almacenado diverge del diario en la primera ampliación y sería una **cifra de balance almacenada** (ADR-0003). `capitalStockOverrideCents` queda **sólo como contingencia** (plan sin `100` postable, capital en subcuentas no derivables) y su uso deja `DISTRIBUCION_RESULTADO` en **WARN** con motivo `CAPITAL_SOCIAL_DECLARADO` | §3.2, §4.9, **D10** |
 | **R2-3** | El atributo es **`LedgerAccount.isMonetary`** (modelo Prisma; columna física `accounts.is_monetary`) en todo el texto: `Account` es el modelo de better-auth y nombrarlo así inducía al error | §0, §3.2, §3.5, §4.6, §5.1, §8, §10, **D6** |
 
@@ -136,7 +136,7 @@ Nueve entregas:
 7. **Distribución del resultado** (O-18) como paso del ejercicio siguiente, tras
    la aprobación de la junta.
 8. **Bloqueo de periodos completo**: B-6 (periodo de IVA liquidado), B-7, B-8.
-9. **`ClosingRun` sellado** con los **41 pasos** del checklist de un CFO, y los
+9. **`ClosingRun` sellado** con los **43 pasos** del checklist de un CFO, y los
    motores puros **`lib/closing/`** y **`lib/recurring/`**.
 
 ### Qué NO incluye
@@ -688,7 +688,7 @@ model ClosingRun {
   status  ClosingRunStatus @default(BORRADOR)
   refDate DateTime         @map("ref_date") @db.Date
 
-  /// **O-29**: los 41 pasos en nueve bloques.
+  /// **O-29**: los 43 pasos en nueve bloques.
   /// [{ step, block, status: PASS|WARN|FAIL|NA|PENDIENTE_RECOMPUTO, blocking,
   ///    evidencia, query?, entryId? }]
   steps Json
@@ -1296,7 +1296,7 @@ export function lateRecognitionPlan(input: LateRecognitionInput): LateRecognitio
 
   *(Ejemplo del experto, caso A: nominal 10 000 000 a 24 meses al 6 % efectivo ⇒
   valor actual 8 899 964, descuento 1 100 036; con 10 meses amortizados sobre el
-  bruto y vida 60, exceso 183 340; e interés implícito de 10 meses 454 133 a
+  bruto y vida 60, exceso 183 340; e interés implícito de 10 meses 442 817 *(corregido en la ronda 1 de E9: el 454 133 de la ronda 0 mezclaba dos tipos —descontar al efectivo mensual y devengar al nominal 6 %/12—, contra ADR-0016 D7.3, que declara UN solo tipo mensual; el fixture sellado `valor-actual-esperado.json` y el motor dicen 442 817 y se ha recomputado a mano)* a
   `662`.)*
 - **R-VA-2** **Sólo** para aplazamientos **> 12 meses** y con
   `|nominal − valor actual| ≥ pvMaterialityCents`. **(O-1)** El umbral **no es un
@@ -1325,7 +1325,14 @@ export function lateRecognitionPlan(input: LateRecognitionInput): LateRecognitio
 - **R-VA-6** **I-E9-19 reformulado**: `descuento inicial = Σ intereses implícitos
   de toda la vida del pasivo`, y a vencimiento el pasivo vale su **nominal**.
 
-### 4.8 `lib/closing/checklist.ts` — los 41 pasos, el orden y la reapertura
+### 4.8 `lib/closing/checklist.ts` — los 43 pasos, el orden y la reapertura
+
+> **Nota de la ronda 1 de corrección (2026-09-14).** Esta sección decía «41
+> pasos» y la tabla que los enumera contiene **43** (8 · 3 · 7 · 5 · 3 · 7 · 2 ·
+> 6 · 2). Se implementan **los 43 enumerados** —quitar dos al azar sería inventar
+> la omisión— y el cardinal queda corregido aquí y en ADR-0016 D9.3. Los **nueve
+> bloqueantes** sí coincidían y no cambian. Misma corrección para los **22 pares**
+> de reclasificación de §4.5, que la ronda 0 llamaba 23.
 
 **El orden de los asientos (O-17).** El orden de la ronda 0 reclasificaba
 **antes** de reconocer el valor actual y las diferencias de cambio: `Σ largo +
@@ -1348,8 +1355,8 @@ justamente lo que la reclasificación existe para evitar. Orden correcto:
 | 11 | Apertura | **T-28** (nº 1 de N+1) | Espejo exacto (I-E9-14) |
 | 12 | Contra-asiento de la reclasificación | T-21 de T-32 (nº 2 de N+1) | O-8 |
 
-**El checklist (O-29): 41 pasos en nueve bloques.** `ClosingStep` pasa de
-dieciséis a cuarenta y uno; **(✓)** ya estaba, **(+)** lo añade la ronda 1.
+**El checklist (O-29): 43 pasos en nueve bloques.** `ClosingStep` pasa de
+dieciséis a cuarenta y tres; **(✓)** ya estaba, **(+)** lo añade la ronda 1.
 
 | Bloque | Pasos |
 |---|---|
@@ -1483,7 +1490,7 @@ la petición (regla de E6-perf), agregados en SQL y sin N+1.
 | `readCapitalGoods(tx, { window })` | Altas de grupo 2 con `isCapitalGood` y su prorrata de adquisición, para la guardia de O-12 |
 | `readFxPositions(tx, { cutoff, baseCurrency })` | Posiciones por `(cuenta, contraparte, divisa)` **filtradas por `LedgerAccount.isMonetary`** (O-4) |
 | `readMaturityPositions(tx, { cutoff, pairs })` | Saldo vivo por `(cuenta, contraparte, divisa)` y sus `dueDate`, más las **posiciones de `17x`/`52x` sin desglose** (O-6) |
-| `readClosingInput(tx, { fiscalYearId, refDate })` | **Todo** lo que los 41 pasos necesitan, en una sola transacción |
+| `readClosingInput(tx, { fiscalYearId, refDate })` | **Todo** lo que los 43 pasos necesitan, en una sola transacción |
 
 ### 5.2 Server actions
 
@@ -1613,7 +1620,7 @@ Los I-E9-* entran en `runLedgerInvariants` y por tanto en `InvariantRun`, en
 
 | Ruta | Contenido | VIEWER |
 |---|---|---|
-| **`/ledger/closing`** | **Asistente paso a paso.** Cabecera con ejercicio, `refDate`, los cuatro sellos y el estado del `ClosingRun`. Los **41 pasos agrupados en nueve bloques** con semáforo, evidencia y **drill-down ≤ 3 clics**; los nueve bloqueantes marcados. Cada paso con asiento ofrece **vista previa** antes de postear, en el orden de O-17. Al cerrar, resumen de los doce asientos y sello. **«Reabrir»** aparte, en rojo, con motivo, confirmación escribiendo el código, aviso del modelo 200 si procede y, con las cuentas formuladas, el mensaje que **ofrece salida** («requiere acuerdo de reformulación…») en vez de decir «imposible» | Todo, sin botones |
+| **`/ledger/closing`** | **Asistente paso a paso.** Cabecera con ejercicio, `refDate`, los cuatro sellos y el estado del `ClosingRun`. Los **43 pasos agrupados en nueve bloques** con semáforo, evidencia y **drill-down ≤ 3 clics**; los nueve bloqueantes marcados. Cada paso con asiento ofrece **vista previa** antes de postear, en el orden de O-17. Al cerrar, resumen de los doce asientos y sello. **«Reabrir»** aparte, en rojo, con motivo, confirmación escribiendo el código, aviso del modelo 200 si procede y, con las cuentas formuladas, el mensaje que **ofrece salida** («requiere acuerdo de reformulación…») en vez de decir «imposible» | Todo, sin botones |
 | **`/ledger/recurring`** | Reglas y **calendario** de 12 columnas × N reglas, con el estado por celda (generada · pendiente · **omitida con motivo, `CUOTA_CERO` incluido** · fallida). «Generar pendientes hasta [periodo]» con vista previa del lote y progreso. Pestaña **Periodificaciones** con los `Accrual` vivos, su cuadro, su pendiente y el **WARN de 567/568** con principal decreciente (O-25) | Sin botones |
 | **`/settings/assets`** | Activos con coste, acumulada, VNC y estado. Ficha: cuadro mes a mes **con enlace al asiento de cada periodo** (posible gracias a `fixed_asset_id`, O-19), revisiones con motivo, alta desde un documento de E8, **baja y venta** con su vista previa y el **aviso del art. 110 LIVA**. Al dar de alta, **sugerencia** de coeficiente del art. 12.1 LIS con la nota de que la amortización fiscal **no se contabiliza** (O-23). Aviso si el cuadro sellado no explica los asientos (I-E9-3 FAIL) | Sin botones |
 | **`/settings/debt`** | **(O-6)** Préstamos y aplazamientos con su cuadro de vencimientos; alta por T-37; lista de deudas **sin desglose** que están bloqueando el cierre | Sin botones |
@@ -1673,7 +1680,7 @@ E6-perf: **ms** y **conexiones simultáneas por petición**.
 | `/settings/assets` con el cuadro y sus asientos (300 activos) | **< 700 ms** — **exige** el índice `(organization_id, fixed_asset_id)` |
 | `/reports/vat` de un trimestre con 2 000 documentos | **< 800 ms** — **exige** `journal_entries.iva_period` indexada; sin ella el puente agrupa en memoria, O(n) sobre el ejercicio |
 | `prorrataTerms` sobre el año completo | **< 500 ms**, agregado SQL por clave de operación |
-| `runClosingChecklistAction` (los 41 pasos) | **< 2 000 ms** · **una** transacción (`readClosingInput`) |
+| `runClosingChecklistAction` (los 43 pasos) | **< 2 000 ms** · **una** transacción (`readClosingInput`) |
 | `closeFiscalYearAction` completo (doce asientos) | **< 45 s** (el `timeout: 120_000` actual se conserva) |
 
 Agregados en SQL, **nunca** materializar el diario para una cifra; lecturas **en
@@ -1723,7 +1730,7 @@ las alternativas descartadas están allí.
 | **D2** | Amortización **lineal**, mes entero, residuo a la última cuota, revisión prospectiva, cuadro no almacenado; **cuota cero sin asiento** (O-22); **baja y venta automatizadas** con `543`/`253` (O-24); amortización fiscal fuera del diario (O-23); criterio uniforme escrito (O-30); **`JournalLine.fixedAssetId`** para que I-E9-5 sea computable | Precisada |
 | **D3** | Periodificación 480/485/567/568, ACT/ACT con extremos incluidos, residuo a la última fila, reversión periodo a periodo; **567/568 por tipo efectivo** cuando el principal varía (O-25) | Precisada |
 | **D4** | **Reescrita**: base del ajuste corregida (O-9), derivación de numerador y denominador (O-10), momento y periodo con **I-E9-10b** (O-11), **guardia bloqueante de bienes de inversión** (O-12), **mapa completo del 303** (O-13), prorrata especial y sectores diferenciados **bloqueados** | **Reescrita** |
-| **D5** | **Reescrita**: **desglose de vencimientos obligatorio** con T-37 y FAIL bloqueante (O-6), **23 pares** (O-7, **R2-1**: 176↔5595, 177↔500, cuatro de partes vinculadas sin 514, y 527/528 fuera), contra-asiento como nº 2 de N+1 (O-8), FIFO con los matices del art. 1174 CC y la **no compensación** del art. 35.6 CCom | **Reescrita** |
+| **D5** | **Reescrita**: **desglose de vencimientos obligatorio** con T-37 y FAIL bloqueante (O-6), **22 pares** (O-7, **R2-1**: 176↔5595, 177↔500, cuatro de partes vinculadas sin 514, y 527/528 fuera), contra-asiento como nº 2 de N+1 (O-8), FIFO con los matices del art. 1174 CC y la **no compensación** del art. 35.6 CCom | **Reescrita** |
 | **D6** | **Reescrita**: universo **monetario** por **`LedgerAccount.isMonetary`** (O-4, **R2-3**) y **tasa de cierre = último día publicado** dentro de una ventana, sellada y visible (O-5). `Δ = D×r − S` se mantiene | **Reescrita** |
 | **D7** | **Reescrita**: el valor actual es **valoración inicial**, con los tres casos de corrección (O-1); tipo **mensual declarado** (O-2); `762` del lado activo (O-3); umbral derivado de la materialidad | **Reescrita** |
 | **D8** | **Reescrita**: puentes al 303 con `4728`/`4778` (O-14), **cobro/pago parcial proporcional** (O-15), **diferimiento del IVA a la importación** (O-16), 4728/4778 como **hijas** de 472/477, columnas del art. 61 *decies*/*undecies* | **Reescrita** |
@@ -1817,14 +1824,14 @@ las alternativas descartadas están allí.
     amortizados sobre el bruto), *then* el plan de corrección reduce el coste
     (`173 (D) 1 100 036 / 2131 (H)`), **recalcula el cuadro desde `inServiceDate`**
     —no crea una `AssetRevision`—, revierte el exceso (`2813 (D) 183 340 / 6813
-    (H)`) y devenga `662` 454 133; *and then* I-E9-5 **no** queda en FAIL. *And
+    (H)`) y devenga `662` **442 817** —no 454 133: ver la nota de la ronda 1 en §4.7—; *and then* I-E9-5 **no** queda en FAIL. *And
     given* el caso B (ejercicio cerrado), *then* va por **T-22 contra `113`**.
     *And* el tipo se declara **mensual**: con el efectivo anual la diferencia
     serían 28 051 c.
 23. **Interés del lado activo (O-3).** *Given* un `253` descontado, *then* su
     interés implícito es **ingreso** en `762`.
 24. **Reclasificación suma cero y correcta (O-6, R2-1, I-E9-16).** *Then* se
-    siembran **23 pares**, `176` va a **`5595`** y no a `526`, `177` a **`500`**,
+    siembran **22 pares**, `176` va a **`5595`** y no a `526`, `177` a **`500`**,
     y una posición viva en **`527`/`528` no se mueve**: reclasificarla duplicaría
     el pasivo corriente. *And given* un `523` con
     250 000 a 30-09-2027 y 500 000 a 30-06-2028 y cierre a 31-12-2026, *then* los
@@ -1908,19 +1915,19 @@ autorizaba antes de la firma y las que arrancan la ola A.
 | **T1** | ~~Validación contable~~ · **HECHA**: `E9-validacion-cierre.md`, **NO CONFORME** con O-1…O-30 y respuestas a Q-1…Q-14 | — | experto-contable | 2 | 16 |
 | **T2** | ~~**ADR-0016 (D1–D12) a firma humana**~~ · **HECHA**: **APROBADO** el 2026-09-07 (permiso delegado de 2026-09-04), con D4–D8 reescritas, D9–D12 nuevas y R2-1/R2-2/R2-3 incorporadas. Desbloquea T4, T8, T9, T10, T13 y T14 | T1 | arquitecto | 2 | 12 |
 | **T3** ▶ | Prisma: los doce modelos, catorce enums, diecinueve `AccountKey`, nueve `TemplateCode`; **`JournalLine.fixedAssetId`** (O-19), **`LedgerAccount.isMonetary`** (O-4), `VatRegimePeriod.importDeferral` (O-16), columnas de `FiscalYear`/`Organization`/`Counterparty`/`Transaction`; `TENANT_MODELS`; **`lib/closing/**` y `lib/recurring/**` en el guard de pureza, ESLint y CI** | — | dev-backend | 2 | 16 |
-| **T4** | Migraciones **M1…M6**: enums solos; tablas con FK compuesta y `enforce_tenant_rls`; append-only; `app.iva_period` **IMMUTABLE**, columna, trigger, CHECK y backfill con el baile `NO FORCE`/`FORCE`; `EXCLUDE` de vigencias; índices únicos parciales; siembra de `is_monetary`, de los **23 pares** y de las claves (sólo donde la cuenta exista y sea postable); trigger **B-6**; **M6 numeración viva** (O-20). Tests de integración del SQL | T2, T3 | dev-backend | 2 | 36 |
+| **T4** | Migraciones **M1…M6**: enums solos; tablas con FK compuesta y `enforce_tenant_rls`; append-only; `app.iva_period` **IMMUTABLE**, columna, trigger, CHECK y backfill con el baile `NO FORCE`/`FORCE`; `EXCLUDE` de vigencias; índices únicos parciales; siembra de `is_monetary`, de los **22 pares** y de las claves (sólo donde la cuenta exista y sea postable); trigger **B-6**; **M6 numeración viva** (O-20). Tests de integración del SQL | T2, T3 | dev-backend | 2 | 36 |
 | **T5** ▶ | `lib/recurring/schedule.ts` (R-REC-1…8, con **R-REC-8/cuota cero**) + tests de determinismo | T3 | dev-backend | 2 | 16 |
 | **T6** ▶ | `lib/closing/depreciation.ts` (R-AM-1…10) + `build_cuadros_esperados.py` con los **ocho** casos + test byte a byte | T3 | dev-backend | 2 | 24 |
 | **T7** ▶ | `lib/closing/accrual.ts` (R-PE-1…6, con el WARN de 567/568) + fixture Python + test byte a byte | T3 | dev-backend | 2 | 14 |
 | **T8** | `lib/closing/vat.ts`: `vatPeriodOf`, `vatSettlement`, **`prorrataTerms`** (O-10), ajuste con la base corregida (O-9), **`capitalGoodsGuard`** (O-12), **RECC con cobro parcial y barrido 31/12** (O-14, O-15), **DUA bifurcado** (O-16) y `model303.map.ts` **completo y versionado** (O-13); puentes **15a′/15c′**; tests con los quince documentos del fixture de E8 | T2, T3 | dev-backend | 2 | 44 |
-| **T9** | `lib/closing/{reclass,fx,present-value}.ts`: FIFO con los matices del art. 1174 y la no compensación (R-RC-3), **desglose obligatorio** (O-6), **23 pares** (O-7), orden de reversión (O-8); universo **monetario** (O-4) y **tasa efectiva con ventana** (O-5); **valor actual como valoración inicial con los tres casos** (O-1), tipo mensual (O-2) y `762` (O-3) + fixture Python | T2, T3 | dev-backend | 2 | 38 |
+| **T9** | `lib/closing/{reclass,fx,present-value}.ts`: FIFO con los matices del art. 1174 y la no compensación (R-RC-3), **desglose obligatorio** (O-6), **22 pares** (O-7), orden de reversión (O-8); universo **monetario** (O-4) y **tasa efectiva con ventana** (O-5); **valor actual como valoración inicial con los tres casos** (O-1), tipo mensual (O-2) y `762` (O-3) + fixture Python | T2, T3 | dev-backend | 2 | 38 |
 | **T10** | Plantillas **T-29…T-37** + schemas zod + **modificación de T-08/T-09** (bloque RECC) y **T-25** (`6300` y cancelación de `473`, O-26); `TEMPLATE_CODES` a **37** e I-E3-5 a 37/37 | T2, T3 | dev-backend | 2 | 30 |
 | **T11** | `lib/closing/invariants-e9.ts` (**I-E9-1…26**, con 10b y los cuatro nuevos, y las seis correcciones ⟳) + `CheckFamily.CIERRE` + los **diez** motivos de sello + cableado en `runLedgerInvariants` y `scripts/run-invariants.ts`; fixtures adversariales | T5–T10 | dev-backend | 2 | 34 |
 | **T12** | `models/{recurring,assets,accruals,debt,vat,closing,distribution}.ts`: agregados SQL, `readClosingInput` en una transacción, `readFxPositions` acotado por `is_monetary`, `readMaturityPositions` con las deudas sin desglose, sin N+1, lecturas en serie | T4, T11 | dev-backend | 2 | 30 |
-| **T13** | `lib/closing/checklist.ts` con los **41 pasos y nueve bloqueantes** (O-29) + `closeFiscalYear` envuelto con **el orden de O-17** (doce asientos) + `reopenFiscalYear` con **T-25 y `PENDIENTE_RECOMPUTO`** (O-21) y numeración viva (O-20) + `ClosingRun` sellado | T2, T12 | dev-backend | 2 | 30 |
+| **T13** | `lib/closing/checklist.ts` con los **43 pasos y nueve bloqueantes** (O-29) + `closeFiscalYear` envuelto con **el orden de O-17** (doce asientos) + `reopenFiscalYear` con **T-25 y `PENDIENTE_RECOMPUTO`** (O-21) y numeración viva (O-20) + `ClosingRun` sellado | T2, T12 | dev-backend | 2 | 30 |
 | **T14** | `lib/closing/distribution.ts` + **T-35** + `ProfitDistribution` + `setAccountsApprovalAction` → diálogo de distribución (O-18) | T2, T12 | dev-backend | 2 | 16 |
 | **T15** | `forms/*` + las seis `actions.ts`: matriz de roles, recomputo en servidor antes de liquidar y de cerrar, `dryRun` con el mismo código, cola con progreso | T13, T14 | dev-backend | 2 | 26 |
-| **T16** | UI **`/ledger/closing`**: asistente con los 41 pasos en nueve bloques, evidencia y drill-down, vista previa por asiento, sello, reapertura con doble confirmación y **mensaje con salida** | T15 | dev-frontend | 1 | 30 |
+| **T16** | UI **`/ledger/closing`**: asistente con los 43 pasos en nueve bloques, evidencia y drill-down, vista previa por asiento, sello, reapertura con doble confirmación y **mensaje con salida** | T15 | dev-frontend | 1 | 30 |
 | **T17** | UI **`/ledger/recurring`** + **`/settings/assets`** (cuadro con enlace al asiento, revisión, **baja y venta** con el aviso del art. 110, sugerencia del art. 12.1 LIS) | T15 | dev-frontend | 1 | 30 |
 | **T18** | UI **`/reports/vat`** (libro con columnas RECC, casillas con fórmula y origen, **pestaña Prorrata** con los documentos sin clasificar, liquidaciones) + **`/settings/debt`** (O-6) + **`/settings/periods`** | T15 | dev-frontend | 1 | 34 |
 | **T19** | `/audit` gana la familia **CIERRE** | T16 | dev-frontend | 1 | 8 |
@@ -1936,7 +1943,7 @@ autorizaba antes de la firma y las que arrancan la ola A.
 actual como valoración inicial con sus tres casos, el mapa completo del 303, RECC
 con cobro parcial y barrido, la guardia de bienes de inversión, el desglose de
 deuda con T-37, la distribución del resultado, la atribución por activo, la baja
-y la venta, y un checklist que pasa de 16 a 41 pasos).
+y la venta, y un checklist que pasa de 16 a 43 pasos).
 
 **Camino crítico:** T1 → T2 → T4 → T8/T9 → T10 → T11 → T12 → T13/T14 → T15 →
 T16/T18 → T23 → T24/T25 → T26. **En paralelo desde ya** (▶): T3, T5, T6, T7,

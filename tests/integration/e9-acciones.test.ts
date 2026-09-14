@@ -314,8 +314,21 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T15 — server actions del cierre, lo
   // El checklist y el cierre (criterios 31 y 25)
   // ───────────────────────────────────────────────────────────────────────────
 
-  it("el checklist devuelve los 43 pasos con los nueve bloqueantes marcados", async () => {
+  it("DEBE 9: el checklist que PERSISTE es EDITOR; el VIEWER lo LEE y no lo crea", async () => {
+    // `runClosingChecklistAction` inserta una fila en `closing_runs`
+    // (append-only) y su AuditLog: §10 concede al VIEWER *ver* el checklist, no
+    // crearlo. Con VIEWER se rechaza; la lectura sigue abierta.
     asUser(VIEWER)
+    expect(await runClosingChecklistAction({ fiscalYearId, answers: [] })).toEqual({
+      success: false,
+      error: "Sin permiso",
+    })
+    const lectura = await getClosingRunAction({ fiscalYearId })
+    expect(lectura.success).toBe(true)
+  })
+
+  it("el checklist devuelve los 43 pasos con los nueve bloqueantes marcados", async () => {
+    asUser(EDITOR)
     const run = await runClosingChecklistAction({ fiscalYearId, answers: [] })
     expect(run.success).toBe(true)
     expect(run.data!.run!.steps).toHaveLength(43)
@@ -328,7 +341,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T15 — server actions del cierre, lo
   }, 60_000)
 
   it("O-6: la deuda de 170 sin cuadro NO bloquea cuando su DebtSchedule existe", async () => {
-    asUser(VIEWER)
+    asUser(EDITOR)
     const run = await runClosingChecklistAction({ fiscalYearId, answers: [] })
     const paso = run.data!.run!.steps.find((s) => s.step === "RECLASIFICACION_VENCIMIENTOS")!
     expect(paso.status).not.toBe("FAIL")

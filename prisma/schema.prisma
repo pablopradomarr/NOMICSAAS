@@ -1291,6 +1291,10 @@ model JournalLine {
   @@index([organizationId, entryDate])
   @@index([organizationId, accountCode, entryDate])
   @@index([organizationId, entryId])
+  /// E9 · ronda 1: el semijoin del libro registro (`readVatBook`) por cuenta de
+  /// IVA y asiento. Sin él, el techo de 800 ms de §9 se iba a ~1 500 ms sobre
+  /// una `journal_lines` grande porque el `EXISTS` acababa en recorrido de tabla.
+  @@index([organizationId, accountCode, entryId])
   @@index([organizationId, projectId, entryDate])
   @@index([organizationId, costCenterId, entryDate])
   @@index([organizationId, businessLineId, entryDate])

@@ -304,7 +304,18 @@ describe("T-31 AJUSTE_VALOR_ACTUAL", () => {
         excessDepreciationCents: 183_340,
         accumulatedAccountCode: ACUMULADA,
         depreciationExpenseAccountCode: DOTACION,
-        implicitInterestCents: 454_133,
+        // **DEBE 8 del revisor, resuelto.** El criterio 22 de §12 decía 454 133 y
+        // el fixture sellado `valor-actual-esperado.json` dice **442 817** para
+        // el MISMO caso A. Recomputado a mano con la convención de **ADR-0016
+        // D7.3** —un ÚNICO tipo **mensual** declarado, el mismo para descontar y
+        // para devengar—: el tipo que produce el valor actual 8 899 964 desde un
+        // nominal de 10 000 000 a 24 meses es `1,06^(1/12) − 1`, y devengarlo
+        // diez meses con truncamiento mensual da **442 817** exacto. Los
+        // 454 133 salían de **mezclar dos tipos**: descontar al efectivo y
+        // devengar al nominal 6 %/12 = 0,5 % mensual (que da 455 139), que es
+        // justo la ambigüedad que D7.3 existe para eliminar. Manda el fixture;
+        // §12 y §4.7 quedan corregidos con su nota fechada.
+        implicitInterestCents: 442_817,
       },
       ctx
     )
@@ -313,8 +324,8 @@ describe("T-31 AJUSTE_VALOR_ACTUAL", () => {
       [MAQUINARIA, 0, 1_100_036],
       [ACUMULADA, 183_340, 0],
       [DOTACION, 0, 183_340],
-      [INTERESES, 454_133, 0],
-      [DEUDA_LP, 0, 454_133],
+      [INTERESES, 442_817, 0],
+      [DEUDA_LP, 0, 442_817],
     ])
     expect(balanced(r)).toBe(true)
   })

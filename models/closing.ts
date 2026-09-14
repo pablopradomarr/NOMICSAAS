@@ -26,13 +26,16 @@ import { readAccrualBalances, readAccruals } from "@/models/accruals"
 import type { AssetWithRevisions } from "@/models/assets"
 import { assetsWithoutAttribution, readAssetsWithRevisions, readCapitalGoods, type CapitalGoodRow } from "@/models/assets"
 import type { ChecklistInput, InvariantSnapshot, ManualAnswer, StepEvidence } from "@/lib/closing/checklist"
+import type { ClosingInvariantInput } from "@/lib/closing/invariants-e9"
+import { legalReserveCents } from "@/lib/closing/distribution"
 import { duePeriods } from "@/lib/recurring/schedule"
 import { periodBounds, type AllocPeriod } from "@/lib/analytics/allocate"
 import { badgeForFigure } from "@/lib/audit/confidence"
 import { isCashAccount, isUnderAccount } from "@/lib/bank/types"
-import { depreciationSchedule } from "@/lib/closing/depreciation"
+import { accrualSchedule } from "@/lib/closing/accrual"
+import { depreciationSchedule, scheduleHashOf } from "@/lib/closing/depreciation"
 import { fxClosingAdjustments, fxStep as fxStepOf, type ClosingRate, type FxPosition } from "@/lib/closing/fx"
-import { reclassStep as reclassStepOf, reclassifyMaturities } from "@/lib/closing/reclass"
+import { reclassStep as reclassStepOf, reclassifyMaturities, TEMPLATE_RECLASIFICACION } from "@/lib/closing/reclass"
 import { capitalGoodsGuard, withholdingAccountKey, type ClosingStepResult, type WithholdingModel } from "@/lib/closing/vat"
 import { getAccountMapByKey } from "@/models/account-map"
 import { allocationRunStaleness, listAllocationRules, listAllocationRuns } from "@/models/allocations"
@@ -44,7 +47,7 @@ import { centsFromDb } from "@/lib/money"
 import type { Actor } from "@/models/accounts"
 import { writeAuditLog } from "@/models/audit-log"
 import type { MaturityRow, PositionWithoutScheduleRow } from "@/models/debt"
-import { readMaturities, readPositionsWithoutSchedule } from "@/models/debt"
+import { debtScheduleHashOf, readDebtSchedules, readMaturities, readPositionsWithoutSchedule } from "@/models/debt"
 import { e9Abort } from "@/models/e9-errors"
 import { readRecurringDue, type RecurringDueRow } from "@/models/recurring"
 import type { ClosingRunStatus, Seal } from "@/prisma/client"
@@ -74,6 +77,17 @@ export type FxPositionRow = {
   rateDate: LocalDate | null
   /** Lo ya reconocido en `668`/`768` por asientos que tocan esta posición. */
   recognizedDifferenceCents: Cents
+  /**
+   * **O-4 / I-E9-24.** Lo dice el PLAN (`accounts.is_monetary`), nunca el motor.
+   *
+   * Las posiciones NO monetarias viajan igualmente —un anticipo de `407` en USD
+   * es una de ellas— para que `fxClosingAdjustments` pueda **excluirlas y
+   * decirlo**: hasta la ronda 1 de corrección la consulta las filtraba en SQL,
+   * `result.excludedNonMonetary` llegaba siempre vacío y el aviso de la NRV
+   * 11ª.2.2 no se mostraba jamás (H-5). La exclusión no cambia: la decide el
+   * mismo dato, sólo que ahora además se explica.
+   */
+  isMonetary: boolean
 }
 
 /** Ventana declarada de búsqueda de la tasa de cierre (O-5): siete días. */
@@ -110,6 +124,7 @@ export async function readFxPositions(
       rate_micro: bigint | null
       rate_date: Date | null
       recognized_cents: bigint
+      is_monetary: boolean
     }[]
   >`
     WITH posiciones AS (
@@ -118,7 +133,8 @@ export async function readFxPositions(
              upper(l.original_currency) AS currency,
              SUM(l.debit_cents - l.credit_cents)::bigint                   AS base_balance_cents,
              SUM(CASE WHEN l.debit_cents > 0 THEN l.original_amount_cents
-                      ELSE -l.original_amount_cents END)::bigint           AS original_balance_cents
+                      ELSE -l.original_amount_cents END)::bigint           AS original_balance_cents,
+             a.is_monetary                                                 AS is_monetary
         FROM journal_lines l
         JOIN accounts a
           ON a.organization_id = l.organization_id AND a.code = l.account_code
@@ -127,9 +143,10 @@ export async function readFxPositions(
          AND l.entry_kind <> 'CLOSING'
          AND l.original_currency IS NOT NULL
          AND upper(l.original_currency) <> ${base}
-         -- **O-4 / I-E9-24**: el universo lo fija el PLAN, no el motor.
-         AND a.is_monetary = TRUE
-       GROUP BY l.account_code, l.counterparty_id, upper(l.original_currency)
+       -- **O-4 / I-E9-24**: el universo lo fija el PLAN, no el motor. Las no
+       -- monetarias NO se filtran aquí: viajan con su marca para que el motor
+       -- las excluya **y lo explique** (H-5).
+       GROUP BY l.account_code, l.counterparty_id, upper(l.original_currency), a.is_monetary
       HAVING SUM(l.debit_cents - l.credit_cents) <> 0
           OR SUM(CASE WHEN l.debit_cents > 0 THEN l.original_amount_cents ELSE -l.original_amount_cents END) <> 0
     )
@@ -171,6 +188,7 @@ export async function readFxPositions(
     rateMicro: r.rate_micro,
     rateDate: r.rate_date ? fromUtcDate(r.rate_date) : null,
     recognizedDifferenceCents: centsFromDb(r.recognized_cents, "diferencia de cambio reconocida"),
+    isMonetary: r.is_monetary,
   }))
 }
 
@@ -193,46 +211,95 @@ export async function readReclassificationPairs(db: AnyClient): Promise<Reclassi
   }))
 }
 
-/** Saldo vivo por `(cuenta, contraparte, divisa)` con su vencimiento declarado. */
+/**
+ * Saldo vivo por `(cuenta, contraparte, divisa)` con su vencimiento declarado.
+ *
+ * **La convención del signo, escrita donde se lee (H-1).** `openCents` es
+ * **`debe − haber`**, igual que `MaturityPosition.openCents` de
+ * `lib/closing/reclass.ts`: **positivo = saldo DEUDOR** (un crédito de `25x`,
+ * `54x`, `43x`), **negativo = saldo ACREEDOR** (una deuda de `17x`, `52x`). Es
+ * la misma convención que declara la propia evidencia del paso
+ * (`sum(l.debit_cents - l.credit_cents) AS abierto`) y la que decide `debtor` y,
+ * con él, **la dirección del asiento T-32**.
+ *
+ * Hasta la ronda 1 de corrección de E9 esta función devolvía `credit − debit` y
+ * los dos llamantes lo pasaban tal cual a `reclassifyMaturities`: el motor leía
+ * una deuda como un crédito y **posteaba T-32 al revés** (`523 (D) / 173 (H)`
+ * en vez de `173 (D) / 523 (H)`), inflando el pasivo no corriente y dejando el
+ * corriente en negativo. Silencioso: I-E9-16 (`Σ largo + Σ corto`) seguía
+ * cuadrando y el paso salía PASS. El campo se llama `openCents` —y no
+ * `balanceCents`— precisamente para que nadie vuelva a asumir un signo.
+ */
 export type MaturityPositionRow = {
   accountCode: string
   counterpartyId: string | null
   currency: string | null
   dueDate: LocalDate | null
-  balanceCents: Cents
+  /** **`debe − haber`**: > 0 deudor, < 0 acreedor. Ver el docblock del tipo. */
+  openCents: Cents
+  /** Nº del asiento vivo MÁS ANTIGUO del grupo: desempate del FIFO (R-RC-3, P7). */
+  entryNumber: number
 }
 
 /**
  * **O-6.** Saldos vivos de las cuentas de los pares de reclasificación, por
- * contraparte, divisa **y vencimiento**, agregados en SQL. Con `dueDate = null`
- * la posición **no se reclasifica y se nombra**: I-E9-16 exige que toda posición
- * reclasificada tenga vencimiento, y adivinarlo está prohibido.
+ * contraparte, divisa **y vencimiento**, agregados en SQL, en la convención
+ * `debe − haber` del motor. Con `dueDate = null` la posición **no se reclasifica
+ * y se nombra**: I-E9-16 exige que toda posición reclasificada tenga
+ * vencimiento, y adivinarlo está prohibido.
  */
 export async function readMaturityPositions(
   tx: TenantTransactionClient,
-  opts: { cutoff: LocalDate; accountCodes: readonly string[] }
+  opts: {
+    cutoff: LocalDate
+    accountCodes: readonly string[]
+    /**
+     * Asientos a EXCLUIR del agregado. Lo usa I-E9-16 para reconstruir las
+     * posiciones **antes** de T-32 y compararlas con las de después: sin ese
+     * «antes» el invariante se recomputaría contra sí mismo y sería tautológico
+     * (§6.1).
+     */
+    excludeEntryIds?: readonly string[]
+  }
 ): Promise<MaturityPositionRow[]> {
   const codes = [...opts.accountCodes]
   if (codes.length === 0) return []
+  const excluded = [...(opts.excludeEntryIds ?? [])]
   const rows = await tx.$queryRaw<
-    { account_code: string; counterparty_id: string | null; currency: string | null; due_date: Date | null; balance_cents: bigint }[]
+    {
+      account_code: string
+      counterparty_id: string | null
+      currency: string | null
+      due_date: Date | null
+      open_cents: bigint
+      first_entry_number: number | null
+    }[]
   >`
     SELECT l.account_code, l.counterparty_id, upper(l.original_currency) AS currency, l.due_date,
-           SUM(l.credit_cents - l.debit_cents)::bigint AS balance_cents
+           SUM(l.debit_cents - l.credit_cents)::bigint AS open_cents,
+           MIN(e.entry_number)                         AS first_entry_number
       FROM journal_lines l
+      JOIN journal_entries e
+        ON e.organization_id = l.organization_id AND e.id = l.entry_id
      WHERE l.organization_id = ${tx.$organizationId}::uuid
        AND l.entry_date <= ${toUtcDate(opts.cutoff)}::date
        AND l.entry_kind <> 'CLOSING'
        AND l.account_code = ANY(${codes}::text[])
+       AND (cardinality(${excluded}::uuid[]) = 0 OR NOT (l.entry_id = ANY(${excluded}::uuid[])))
      GROUP BY l.account_code, l.counterparty_id, upper(l.original_currency), l.due_date
-    HAVING SUM(l.credit_cents - l.debit_cents) <> 0
+    HAVING SUM(l.debit_cents - l.credit_cents) <> 0
      ORDER BY l.account_code, l.due_date NULLS FIRST`
   return rows.map((r) => ({
     accountCode: r.account_code,
     counterpartyId: r.counterparty_id,
     currency: r.currency,
     dueDate: r.due_date ? fromUtcDate(r.due_date) : null,
-    balanceCents: centsFromDb(r.balance_cents, "posición viva"),
+    openCents: centsFromDb(r.open_cents, "posición viva"),
+    // **H-4.** El desempate del FIFO que R-RC-3 declara: el asiento vivo más
+    // antiguo del grupo. Antes los dos llamantes pasaban `0` para todas las
+    // posiciones y la garantía no existía —inocua mientras el eje viniera
+    // agregado por `(cuenta, contraparte, divisa, vencimiento)`, pero declarada—.
+    entryNumber: Number(r.first_entry_number ?? 0),
   }))
 }
 
@@ -344,6 +411,305 @@ export async function readClosingInput(
     maturityPositions,
     fxPositions,
     balances,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H-2 · el bloque `closing` de los invariantes, que nadie rellenaba
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * **H-2 (BLOQUEANTE de la auditoría de E9).** §6.3 dice que los veintisiete
+ * `I-E9-*` entran en `runLedgerInvariants`, en `InvariantRun`, en
+ * `ReportRun.validation` y en `/audit` bajo la familia `CIERRE`.
+ * `lib/ledger/invariants.ts` los ejecuta `if (input.closing)` **y nadie
+ * rellenaba `closing`**: sobre un ejercicio realmente cerrado, 0 de 215 checks
+ * llevaban un id `I-E9-*`. Eran código muerto en producción, con tests
+ * unitarios pero sin vigilar un solo dato real — incluida **I-E9-16**, que es
+ * justo la que debería haber cazado la reclasificación con el signo invertido.
+ *
+ * Esta función es el puente. Reutiliza el `ClosingInput` que ya lee el
+ * checklist —una transacción, lecturas en serie, sin N+1 (§9)— y añade lo que
+ * los invariantes necesitan **y el checklist no**: las ocurrencias regla a
+ * regla, las posiciones vivas ANTES del asiento de reclasificación, los
+ * `ClosingRun` sellados y la distribución del resultado.
+ *
+ * Lo que no se puede componer **no se inventa**: el bloque se omite y el
+ * invariante sale `INFO` diciendo qué falta, que es el contrato de
+ * `lib/closing/invariants-e9.ts`. Un PASS por vacuidad sería peor que el
+ * silencio que esto viene a cerrar.
+ */
+export async function readClosingInvariantInput(
+  tx: TenantTransactionClient,
+  opts: { fiscalYearId: string; refDate: LocalDate; baseCurrency: string; closing?: ClosingInput }
+): Promise<ClosingInvariantInput> {
+  const closing = opts.closing ?? (await readClosingInput(tx, { ...opts }))
+  const fy = await tx.fiscalYear.findFirst({ where: { id: opts.fiscalYearId } })
+  if (!fy) e9Abort("FISCAL_YEAR_NOT_FOUND", "fiscalYearId", "El ejercicio no existe en esta organización")
+  const end = fromUtcDate(fy.endDate)
+
+  // ── Recurrentes (I-E9-1a, 1b, 2) ────────────────────────────────────────
+  const occurrenceRows = await tx.recurringOccurrence.findMany({
+    orderBy: [{ recurringEntryId: "asc" }, { period: "asc" }],
+    select: { id: true, recurringEntryId: true, period: true, status: true, entryId: true, reason: true, inputHash: true },
+  })
+  const ruleById = new Map(closing.recurring.map((r) => [r.id, r]))
+  const recurring = {
+    rules: closing.recurring.map((r) => ({ id: r.id, code: r.code, kind: r.kind })),
+    occurrences: occurrenceRows.map((o) => ({
+      ruleId: o.recurringEntryId,
+      ruleCode: ruleById.get(o.recurringEntryId)?.code ?? o.recurringEntryId,
+      period: o.period,
+      status: o.status as "GENERADA" | "OMITIDA" | "FALLIDA",
+      entryId: o.entryId,
+      reason: o.reason,
+      inputHash: o.inputHash,
+    })),
+  }
+
+  // ── Inmovilizado (I-E9-3, 4, 5) ─────────────────────────────────────────
+  const assets = closing.assets.map((a) => {
+    const cuadro = depreciationSchedule(a.asset, a.revisions)
+    // **Un activo dado de baja o vendido no tiene cuadro vivo que comparar.** El
+    // asiento de la enajenación (T-33/T-34) CANCELA su `28x` y su cuadro queda
+    // truncado en la fecha de baja, así que `Σ cuotas = base` (I-E9-4) y
+    // `Σ 68x = 28x` (I-E9-5) dejan de cumplirse **por construcción**, no por un
+    // descuadre. Se omiten las dos magnitudes —no se falsean—: los invariantes
+    // los excluyen de `comparables` y siguen vigilando los activos vivos, que
+    // es donde el riesgo R14 existe.
+    const vivo = a.asset.status === "EN_USO" || a.asset.status === "TOTALMENTE_AMORTIZADO"
+    const scheduleTotalCents = cuadro.reduce((acc, row) => acc + row.quotaCents, 0)
+    return {
+      id: a.asset.id,
+      code: a.asset.code,
+      scheduleHash: a.asset.scheduleHash,
+      recomputedScheduleHash: scheduleHashOf(cuadro),
+      ...(vivo
+        ? {
+            scheduleTotalCents,
+            amortizableBaseCents: a.asset.acquisitionCostCents - a.asset.residualValueCents,
+            expensePostedCents: a.expenseCents,
+            accumulatedCents: a.accumulatedCents,
+          }
+        : {}),
+      hasNegativeQuota: cuadro.some((row) => row.quotaCents < 0),
+      fullyAttributed: !closing.assetsWithoutAttribution.some((x) => x.id === a.asset.id),
+    }
+  })
+
+  // ── Periodificaciones (I-E9-6, 7) ───────────────────────────────────────
+  // Lo devengado por periodificación se **deriva del diario** (nunca se
+  // almacena): Σ de las líneas de su cuenta de PyG atribuidas a la fila.
+  const periodosGenerados = await tx.recurringOccurrence.findMany({
+    where: { status: "GENERADA", recurringEntry: { accrualId: { not: null } } },
+    select: { period: true, recurringEntry: { select: { accrualId: true } } },
+  })
+  const generadosPorAccrual = new Map<string, Set<string>>()
+  for (const o of periodosGenerados) {
+    const id = o.recurringEntry?.accrualId
+    if (!id) continue
+    const set = generadosPorAccrual.get(id) ?? new Set<string>()
+    set.add(o.period)
+    generadosPorAccrual.set(id, set)
+  }
+  const accruals = {
+    accruals: closing.accruals.map((a) => {
+      // Lo devengado se **deriva del cuadro** (§3.6: el cuadro no se almacena)
+      // sumando las cuotas de los periodos con ocurrencia GENERADA.
+      const generados = generadosPorAccrual.get(a.id) ?? new Set<string>()
+      const cuadro = accrualSchedule(a, "MENSUAL")
+      const devengado = cuadro.rows
+        .filter((row) => generados.has(row.period))
+        .reduce((acc, row) => acc + row.quotaCents, 0)
+      return {
+        id: a.id,
+        code: a.code,
+        periodEnd: a.periodEnd,
+        totalCents: a.totalCents,
+        accruedCents: devengado,
+        status: a.status as "VIVA" | "AGOTADA" | "CANCELADA",
+        pendingCents: a.totalCents - devengado,
+      }
+    }),
+    accountBalanceCents: closing.accrualBalances.reduce((acc, b) => acc + b.balanceCents, 0),
+  }
+
+  // ── Reclasificación (I-E9-16, 25) ───────────────────────────────────────
+  //
+  // I-E9-16 **no es tautológico**: compara las posiciones ANTES y DESPUÉS del
+  // asiento T-32. El «antes» se obtiene excluyendo del agregado las líneas del
+  // propio asiento de reclasificación vivo del ejercicio; si no hay ninguno,
+  // antes y después coinciden y el invariante comprueba lo que puede —que
+  // ninguna posición viva con vencimiento dentro de la frontera esté en una
+  // cuenta de largo—, que es justamente lo que caza el signo invertido.
+  const reclassEntry = await tx.journalEntry.findFirst({
+    where: { fiscalYearId: opts.fiscalYearId, templateCode: TEMPLATE_RECLASIFICACION, voidedAt: null },
+    orderBy: { entryNumber: "desc" },
+    select: { id: true },
+  })
+  const reclassCodes = [...new Set(closing.reclassificationPairs.flatMap((p) => [p.longAccountCode, p.shortAccountCode]))]
+  const positionsBefore = reclassEntry
+    ? await readMaturityPositions(tx, { cutoff: opts.refDate, accountCodes: reclassCodes, excludeEntryIds: [reclassEntry.id] })
+    : closing.maturityPositions
+  const toMaturity = (p: MaturityPositionRow) => ({
+    accountCode: p.accountCode,
+    counterpartyId: p.counterpartyId,
+    currency: p.currency ?? opts.baseCurrency,
+    dueDate: p.dueDate,
+    openCents: p.openCents,
+    entryNumber: p.entryNumber,
+  })
+  const reclass = {
+    cutoff: opts.refDate,
+    pairs: closing.reclassificationPairs.map((p) => ({ longCode: p.longAccountCode, shortCode: p.shortAccountCode })),
+    positionsBefore: positionsBefore.map(toMaturity),
+    positionsAfter: closing.maturityPositions.map(toMaturity),
+    debtsWithoutSchedule: closing.positionsWithoutSchedule.map((p) => ({
+      reference: p.accountCode,
+      accountCode: p.accountCode,
+      openCents: p.balanceCents,
+      declaredReason: null,
+    })),
+    // **H-6.** El sello del cuadro contra sus vencimientos de hoy.
+    tamperedSchedules: (await readDebtSchedules(tx, {}))
+      .filter((d) => debtScheduleHashOf(d.installments) !== d.scheduleHash)
+      .map((d) => ({
+        reference: d.code,
+        sealedHash: d.scheduleHash,
+        recomputedHash: debtScheduleHashOf(d.installments),
+      })),
+  }
+
+  // ── Diferencias de cambio (I-E9-17, 24) ─────────────────────────────────
+  const fx = {
+    cutoff: opts.refDate,
+    rates: closing.fxPositions
+      .filter((p): p is FxPositionRow & { rateMicro: bigint; rateDate: LocalDate } => p.rateMicro !== null && p.rateDate !== null)
+      .map((p) => ({ currency: p.currency, rateMicro: p.rateMicro, rateDate: p.rateDate })),
+    positionsAfter: closing.fxPositions
+      .filter((p) => p.isMonetary)
+      .map((p) => ({
+        accountCode: p.accountCode,
+        counterpartyId: p.counterpartyId,
+        currency: p.currency,
+        baseBalanceCents: p.baseBalanceCents,
+        currencyBalanceCents: p.originalBalanceCents,
+        isMonetary: true,
+      })),
+    // **I-E9-24.** Cuentas NO monetarias que hayan quedado dentro del barrido:
+    // se detecta comparando la marca del plan con las líneas de 668/768 del
+    // ejercicio, no con una lista escrita en el motor.
+    nonMonetaryInSweep: closing.fxPositions
+      .filter((p) => !p.isMonetary && p.recognizedDifferenceCents !== 0)
+      .map((p) => ({ accountCode: p.accountCode, currency: p.currency })),
+  }
+
+  // ── El acto de cerrar (I-E9-12, 13, 14, 15) ─────────────────────────────
+  const regularizacion = await tx.journalEntry.findFirst({
+    where: { fiscalYearId: opts.fiscalYearId, templateCode: "REGULARIZACION_RESULTADO", voidedAt: null },
+    select: { id: true, entryDate: true },
+  })
+  let balancesAfterRegularization: Record<string, Cents> | null = null
+  let balance129Cents: Cents | null = null
+  if (regularizacion) {
+    const saldos = await readAccountBalances(tx, { cutoff: end, prefixes: ["6", "7", "129"] })
+    balancesAfterRegularization = Object.fromEntries(saldos)
+    balance129Cents = saldos.get("129") ?? 0
+  }
+  const siguiente = await tx.fiscalYear.findFirst({
+    where: { startDate: { gt: fy.startDate } },
+    orderBy: { startDate: "asc" },
+    select: { id: true },
+  })
+  const nextYearEntries = siguiente
+    ? (
+        await tx.journalEntry.findMany({
+          where: { fiscalYearId: siguiente.id },
+          orderBy: { entryNumber: "asc" },
+          take: 20,
+          select: { entryNumber: true, kind: true, templateCode: true, reversesEntryId: true },
+        })
+      ).map((e) => ({
+        entryNumber: e.entryNumber,
+        kind: e.kind as string,
+        templateCode: e.templateCode,
+        reversesEntryId: e.reversesEntryId,
+      }))
+    : []
+  const closingEntries = {
+    ...(balancesAfterRegularization ? { balancesAfterRegularization } : {}),
+    ...(balance129Cents !== null ? { balance129Cents } : {}),
+    nextYearEntries,
+  }
+
+  // ── Los `ClosingRun` sellados (I-E9-20) ─────────────────────────────────
+  const runs = await tx.closingRun.findMany({
+    where: { fiscalYearId: opts.fiscalYearId },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    select: { id: true, status: true, ledgerHash: true, configHash: true, steps: true },
+  })
+  const closingRuns = runs.map((r) => ({
+    id: r.id,
+    fiscalYearCode: fy.code,
+    status: r.status as "BORRADOR" | "CERRADO" | "REABIERTO" | "FALLIDO",
+    ledgerHash: r.ledgerHash,
+    configHash: r.configHash,
+    stepsHash: stepsHashOf((Array.isArray(r.steps) ? r.steps : []) as ClosingStepRecord[]),
+    recomputedStepsHash: stepsHashOf((Array.isArray(r.steps) ? r.steps : []) as ClosingStepRecord[]),
+  }))
+
+  // ── Distribución del resultado (I-E9-23) ────────────────────────────────
+  const distribuciones = await tx.profitDistribution.findMany({
+    where: { fiscalYearId: opts.fiscalYearId },
+    select: {
+      resultCents: true,
+      legalReserveCents: true,
+      voluntaryReserveCents: true,
+      carryForwardCents: true,
+      dividendCents: true,
+      interimDividendCents: true,
+      lossCarryForwardCents: true,
+    },
+  })
+  const capital = closing.balances.get("100") ?? 0
+  const reservaLegalPrevia = closing.balances.get("112") ?? 0
+  const distribution = distribuciones.map((d) => ({
+    fiscalYearCode: fy.code,
+    approvalStatus: fy.accountsApprovalStatus as "BORRADOR" | "FORMULADAS" | "APROBADAS" | "DEPOSITADAS",
+    pending129Cents: closing.balances.get("129") ?? 0,
+    profitCents: Number(d.resultCents),
+    destinationsCents:
+      Number(d.legalReserveCents) +
+      Number(d.voluntaryReserveCents) +
+      Number(d.carryForwardCents) +
+      Number(d.dividendCents) +
+      Number(d.lossCarryForwardCents) -
+      Number(d.interimDividendCents),
+    legalReserveCents: Number(d.legalReserveCents),
+    legalReserveRequiredCents: legalReserveCents({
+      profitCents: Number(d.resultCents),
+      capital: { cents: capital, source: "DIARIO" as const, accountCode: "100" },
+      currentReserveCents: reservaLegalPrevia,
+    }),
+    // El capital se deriva del saldo acreedor de `100` (R2-2); el `DECLARADO`
+    // es la contingencia y la registra la propia acción con su WARN.
+    capitalSource: "DIARIO" as const,
+  }))
+
+  return {
+    cutoff: opts.refDate,
+    recurring,
+    assets,
+    accruals,
+    reclass,
+    fx,
+    closing: closingEntries,
+    closingRuns,
+    ...(distribution.length > 0 ? { distribution } : {}),
+    // `vat`, `presentValue` y `reopening` los aporta quien los tiene: la
+    // pantalla de IVA, el asistente y la reapertura. Sin ellos, sus invariantes
+    // salen INFO diciendo qué falta; jamás PASS por vacuidad.
   }
 }
 
@@ -1046,6 +1412,26 @@ export async function readChecklistInput(
   })
   const byTemplate = (code: string) => sistema.find((e) => e.templateCode === code)?.id ?? null
 
+  // **DEBE 2 del revisor.** La apertura vive en **N+1**, así que `byTemplate`
+  // —que sólo mira el ejercicio N— la daba siempre por ausente y el paso
+  // `CIERRE_APERTURA` salía «Cierre incompleto: sólo hay regularización, cierre»
+  // **para siempre**; como el WARN mueve el sello, un ejercicio bien cerrado
+  // quedaba permanentemente en `REQUIERE_REVISION`. Se busca donde está.
+  const ejercicioSiguiente = await tx.fiscalYear.findFirst({
+    where: { startDate: { gt: fy.startDate } },
+    orderBy: { startDate: "asc" },
+    select: { id: true },
+  })
+  const aperturaEntryId = ejercicioSiguiente
+    ? ((
+        await tx.journalEntry.findFirst({
+          where: { fiscalYearId: ejercicioSiguiente.id, voidedAt: null, templateCode: "APERTURA_EJERCICIO" },
+          orderBy: { entryNumber: "asc" },
+          select: { id: true },
+        })
+      )?.id ?? null)
+    : null
+
   // ── Societario y analítica ─────────────────────────────────────────────
   const distribution = await tx.profitDistribution.findFirst({
     where: { fiscalYearId: opts.fiscalYearId },
@@ -1076,9 +1462,9 @@ export async function readChecklistInput(
     currency: p.currency,
     baseBalanceCents: p.baseBalanceCents,
     currencyBalanceCents: p.originalBalanceCents,
-    // `readFxPositions` YA acota el universo por `accounts.is_monetary` (O-4):
-    // lo que llega aquí es monetario por definición del PLAN.
-    isMonetary: true,
+    // **O-4 / H-5.** Lo dice el plan (`accounts.is_monetary`) y viaja tal cual:
+    // el motor excluye las no monetarias **y lo explica** en la evidencia.
+    isMonetary: p.isMonetary,
   }))
   const rates: ClosingRate[] = closing.fxPositions
     .filter((p): p is typeof p & { rateMicro: bigint; rateDate: LocalDate } => p.rateMicro !== null && p.rateDate !== null)
@@ -1094,8 +1480,10 @@ export async function readChecklistInput(
         counterpartyId: p.counterpartyId,
         currency: p.currency ?? opts.baseCurrency,
         dueDate: p.dueDate,
-        openCents: p.balanceCents,
-        entryNumber: 0,
+        // `debe − haber`, la convención del motor: `readMaturityPositions` ya la
+        // devuelve así (H-1). Negar aquí volvería a invertir la dirección.
+        openCents: p.openCents,
+        entryNumber: p.entryNumber,
       })),
       closing.reclassificationPairs.map((p) => ({ longCode: p.longAccountCode, shortCode: p.shortAccountCode })),
       opts.refDate
@@ -1253,7 +1641,7 @@ export async function readChecklistInput(
     balance6300Cents,
     regularizacionEntryId: byTemplate("REGULARIZACION_RESULTADO"),
     cierreEntryId: byTemplate("CIERRE_EJERCICIO"),
-    aperturaEntryId: null,
+    aperturaEntryId,
 
     distributionEntryId: distribution?.entryId ?? null,
     previousResultPendingCents,

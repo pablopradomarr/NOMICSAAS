@@ -147,8 +147,29 @@ export function planForVariant(variant: "GENERAL" | "PYMES"): Plan {
  */
 export function planWithExtras(file: FixtureFile): Plan {
   const base = planForVariant(file.organization.pgcVariant)
-  if (file.accountsExtra.length === 0) return base
-  const extras: PlanAccount[] = file.accountsExtra.map((extra) => {
+
+  /**
+   * **`ejercicio-completo-v2` sigue sin poder cargarse, y por qué** (DEBE 3).
+   *
+   * Su bloque `accountsExtra` declara `4728` y `4778` (RECC) pero **no `47513`**,
+   * que su asiento `DIV-PAGO` necesita por la clave `IRPF_A_PAGAR_123`. Y crearla
+   * al vuelo **no arregla el fichero**: al colgar `47513` de `4751`, la cuenta
+   * madre pasa a tener subcuentas y deja de admitir apuntes por derivación del
+   * plan —lo comprueba `resolveAccount`—, con lo que las nóminas del propio
+   * fixture, que apuntan a `4751` directamente, dejan de entrar
+   * (`ACCOUNT_NOT_POSTABLE`). El fichero es **internamente incoherente**: usa las
+   * dos cuentas a la vez.
+   *
+   * Arreglarlo exige **reversionar el fixture** (es inmutable) y escribir el
+   * `build_ejercicio_completo_v2.py` que nunca se hizo. Queda fechado en
+   * `docs/ESTADO.md` con épica de cierre; los cuatro techos de §9 que dependían
+   * de él se miden en `perf-closing.test.ts` sembrando el volumen que describen,
+   * que es lo que el techo mide de verdad.
+   */
+  const declaradas = new Map(file.accountsExtra.map((a) => [a.code, a]))
+  if (declaradas.size === 0) return base
+
+  const extras: PlanAccount[] = [...declaradas.values()].map((extra) => {
     const parent = extra.parentCode ? base.byCode.get(extra.parentCode) : undefined
     if (!parent) throw new Error(`La cuenta extra ${extra.code} declara el padre ${extra.parentCode}, que el plan no tiene`)
     return {

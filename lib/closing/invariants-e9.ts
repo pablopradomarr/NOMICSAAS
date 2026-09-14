@@ -326,6 +326,18 @@ export type ReclassBlock = {
   positionsAfter: readonly MaturityPosition[]
   /** Deudas de 17x/52x sin desglose, y las declaradas por una persona (I-E9-25). */
   debtsWithoutSchedule?: readonly { reference: string; accountCode: string; openCents: Cents; declaredReason?: string | null }[]
+  /**
+   * **H-6 de la auditoría.** Cuadros de deuda cuyo `scheduleHash` **sellado** no
+   * coincide con el recomputado sobre sus vencimientos actuales.
+   *
+   * Cambiar `debt_installments.due_date` después de posteada T-32 se aceptaba
+   * sin traza y el paso volvía a salir PASS: sólo el borrado completo del cuadro
+   * producía FAIL (I-E9-25 por existencia). El sello ya estaba —
+   * `DebtSchedule.scheduleHash` es el sha256 canónico de
+   * `seq|dueDate|principal|interest`— pero **nadie lo comparaba**. Ahora la
+   * discrepancia es un FAIL, con el cuadro nombrado.
+   */
+  tamperedSchedules?: readonly { reference: string; sealedHash: string; recomputedHash: string }[]
 }
 
 export type FxBlock = {
@@ -858,6 +870,16 @@ export function checkIE916(block: ReclassBlock | undefined): CheckResult {
 /** **I-E9-25 (O-6)** — toda posición de `17x`/`52x` viva tiene desglose, o está declarada con motivo. */
 export function checkIE925(block: ReclassBlock | undefined): CheckResult {
   if (!block?.debtsWithoutSchedule) return missing("I-E9-25", "falta la lista de deudas de 17x/52x sin desglose")
+  // **H-6.** Un cuadro alterado después del cierre es peor que un cuadro que
+  // falta: el que falta se ve, el alterado sostiene una reclasificación que ya
+  // no explica. Se comprueba primero.
+  const tampered = (block.tamperedSchedules ?? []).map(
+    (t) =>
+      `${t.reference}: el cuadro de vencimientos ha cambiado desde que se selló ` +
+      `(hash sellado ${t.sealedHash.slice(0, 12)}…, recomputado ${t.recomputedHash.slice(0, 12)}…). ` +
+      "La reclasificación posteada ya no se explica con este cuadro"
+  )
+  if (tampered.length > 0) return failed("I-E9-25", cut(tampered))
   const undeclared = block.debtsWithoutSchedule
     .filter((d) => !d.declaredReason)
     .map((d) => `${d.reference} (${d.accountCode}, ${d.openCents} c): declare el cuadro de vencimientos de la deuda`)
