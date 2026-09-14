@@ -88,6 +88,15 @@ const BUSINESS_DELEGATES = [
   "bankStatementLine",
   "bankMatchGroup",
   "bankReconciliation",
+  // E10: las siete tablas de presupuesto y horas. Sin ellas, un
+  // `prisma.budgetLine…` fuera de `tenantDb` devolvería VACÍO en silencio.
+  "budget",
+  "budgetLine",
+  "budgetHoursLine",
+  "timeEntry",
+  "employee",
+  "employeeRate",
+  "headcountSnapshot",
 ];
 
 const NO_BARE_PRISMA_DELEGATE = {
@@ -122,6 +131,11 @@ const PURE_ENGINE_DIRS = [
   // E9 (docs/design/E9-cierre-recurrentes.md §4): recurrentes y cierre.
   "lib/closing/**/*.ts",
   "lib/recurring/**/*.ts",
+  // E10 (docs/design/E10-presupuesto-horas.md §2.2): los dos motores nuevos.
+  // `lib/budget/**` calcula la matriz, el sello y la desviación; `lib/time/**`,
+  // los minutos agregados y el coste-hora. Ninguno toca reloj, IO, BD ni LLM.
+  "lib/budget/**/*.ts",
+  "lib/time/**/*.ts",
 ];
 
 const PURE_ENGINE_MESSAGE =

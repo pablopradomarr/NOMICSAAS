@@ -151,6 +151,17 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "ReclassificationPair",
   "ProfitDistribution",
   "ClosingRun",
+  // E10 — presupuesto y horas (docs/design/E10-presupuesto-horas.md §2.2). Las
+  // SIETE nacen con `SELECT app.enforce_tenant_rls('<tabla>')` en M2/M3: o están
+  // aquí o la barrera 1 no las acota y una consulta fuera de `tenantDb` devuelve
+  // VACÍO en silencio.
+  "Budget",
+  "BudgetLine",
+  "BudgetHoursLine",
+  "TimeEntry",
+  "Employee",
+  "EmployeeRate",
+  "HeadcountSnapshot",
 ])
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */

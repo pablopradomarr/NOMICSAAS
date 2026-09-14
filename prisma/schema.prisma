@@ -110,6 +110,26 @@ model Organization {
   /// dos cifras.
   capitalStockOverrideCents   BigInt? @map("capital_stock_override_cents")
 
+  // E10 — presupuesto y horas (docs/design/E10-presupuesto-horas.md §2.2, ADR-0018)
+  /// El registro de horas es OPCIONAL (`SPEC-FUNCIONAL.md` §3.4): sin él, los
+  /// drivers `HOURS` y el coste-hora quedan simplemente sin base.
+  timeTrackingEnabled               Boolean           @default(false) @map("time_tracking_enabled")
+  /// Base por defecto del coste-hora al crear una tarifa (Q-1).
+  defaultRateBasis                  EmployeeRateBasis @default(COSTE_EMPRESA_CON_SS) @map("default_rate_basis")
+  /// **O-E10-19.** Denominador de RESPALDO del coste-hora derivado, en minutos
+  /// productivos al año: 90 000 = 1 500 h, la cifra tras vacaciones, festivos,
+  /// formación y absentismo. El default de la ronda 0 (1 700 h) era jornada
+  /// anual, no horas productivas, e infravaloraba la tarifa ~12 %. Se usa sólo
+  /// cuando no hay partes reales, nunca por delante de ellos.
+  referenceProductiveMinutesPerYear Int               @default(90000) @map("reference_productive_minutes_per_year")
+  /// Prefijos de cuenta que componen la nómina para la derivación (Q-1):
+  /// `640` + `642` + `645` + `649`, **sin `641`** (O-E10-11). Es política de
+  /// controlling: configuración versionada, nunca código.
+  payrollAccountPrefixes            String[]          @default(["640", "642", "645", "649"]) @map("payroll_account_prefixes")
+  /// **O-E10-12.** Cobertura mínima en puntos básicos para que una derivación de
+  /// ámbito `EMPLOYEE` sea proponible; por debajo, no evaluable.
+  derivationMinCoverageBps          Int               @default(7500) @map("derivation_min_coverage_bps")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -182,6 +202,15 @@ model Organization {
   reclassificationPairs ReclassificationPair[]
   profitDistributions   ProfitDistribution[]
   closingRuns           ClosingRun[]
+
+  // E10 — presupuesto y horas (docs/design/E10-presupuesto-horas.md §2.2)
+  budgets            Budget[]
+  budgetLines        BudgetLine[]
+  budgetHoursLines   BudgetHoursLine[]
+  timeEntries        TimeEntry[]
+  employees          Employee[]
+  employeeRates      EmployeeRate[]
+  headcountSnapshots HeadcountSnapshot[]
 
   @@map("organizations")
 }
@@ -445,7 +474,12 @@ model Project {
   /// O-A8: sin fecha de cierre, I-E4-10 no es comprobable.
   closedAt           DateTime?     @map("closed_at") @db.Date
   closedById         String?       @map("closed_by_id") @db.Uuid
+  /// @deprecated **E10** — dos verdades para la misma cifra. El presupuesto del
+  /// proyecto se DERIVA de la versión vigente de `Budget`; la ficha deja de
+  /// admitir su edición. Las columnas se conservan para no romper la UI
+  /// heredada, con un WARN de calidad de datos si difieren del vigente (T18).
   budgetRevenueCents Int?          @map("budget_revenue_cents")
+  /// @deprecated **E10** — ver `budgetRevenueCents`.
   budgetCostCents    Int?          @map("budget_cost_cents")
   sortOrder          Int           @default(0) @map("sort_order")
   isActive           Boolean       @default(true) @map("is_active")
@@ -455,6 +489,11 @@ model Project {
   lines       JournalLine[]
   fixedAssets FixedAsset[]
   accruals    Accrual[]
+
+  // E10
+  budgetLines      BudgetLine[]
+  budgetHoursLines BudgetHoursLine[]
+  timeEntries      TimeEntry[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -1074,6 +1113,8 @@ model FiscalYear {
   // E9
   closingRuns         ClosingRun[]
   profitDistributions ProfitDistribution[]
+  // E10 — una versión de presupuesto pertenece a UN ejercicio.
+  budgets             Budget[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -1365,6 +1406,10 @@ model BusinessLine {
   projects Project[]
   lines    JournalLine[]
 
+  // E10
+  budgetLines BudgetLine[]
+  timeEntries TimeEntry[]
+
   @@unique([organizationId, code])
   @@unique([organizationId, id])
   @@index([organizationId, isActive, sortOrder])
@@ -1402,6 +1447,13 @@ model CostCenter {
   allocationLinesAsSource AllocationLine[] @relation("AllocationLineSource")
   fixedAssets             FixedAsset[]
   accruals                Accrual[]
+
+  // E10 — presupuesto, horas y plantilla
+  budgetLines        BudgetLine[]
+  budgetHoursLines   BudgetHoursLine[]
+  timeEntries        TimeEntry[]
+  headcountSnapshots HeadcountSnapshot[]
+  employeesByDefault Employee[]          @relation("EmployeeDefaultCostCenter")
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -1520,6 +1572,12 @@ model ReportRun {
   /// clave: en PostgreSQL NULL <> NULL y un `@@unique` con columnas nullables no
   /// impide duplicados (lección O-A6 de E4). Lo escribe un trigger.
   analyticsKey         String  @default("∅") @map("analytics_key") @db.VarChar(210)
+  /// **E10.** Dos `PRESUPUESTO_REAL` del mismo periodo y el mismo diario con
+  /// **versiones distintas de presupuesto** son informes distintos: sin el hash
+  /// en la clave, la caché serviría el de la versión equivocada. Mismo
+  /// razonamiento que `paramsHash` (O-5) y `allocationRunSetHash` (O-E5-7).
+  /// `'∅'` en todo lo que no es presupuesto vs real (CHECK en M5).
+  budgetHash           String  @default("∅") @map("budget_hash") @db.VarChar(64)
 
   gitSha String @map("git_sha") @db.VarChar(64)
 
@@ -1540,7 +1598,7 @@ model ReportRun {
   createdById String?  @map("created_by_id") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at")
 
-  @@unique([organizationId, type, periodStart, periodEnd, paramsHash, ledgerHash, analyticsKey, gitSha], map: "report_runs_cache_key")
+  @@unique([organizationId, type, periodStart, periodEnd, paramsHash, ledgerHash, analyticsKey, gitSha, budgetHash], map: "report_runs_cache_key")
   @@index([organizationId, type, periodStart, periodEnd, createdAt(sort: Desc)])
   @@index([organizationId, type, ledgerHash])
   @@map("report_runs")
@@ -1586,9 +1644,11 @@ enum TargetKind {
   PROJECTS
   BUSINESS_LINES
   COST_CENTERS
-  /// Contrato; DESACONSEJADO (§2.4 del experto). Con `sourceShareBps` toda
-  /// mezcla se expresa como N reglas de un solo `targetKind` y un solo driver.
-  MIXED
+  // **E10 · deuda §0-bis #3.** `MIXED` se RETIRA: era contrato desaconsejado
+  // desde E5, sin una sola fila en ninguna organización. Con `sourceShareBps`
+  // toda mezcla se expresa como N reglas de un solo `targetKind` y un solo
+  // driver. Lo retira `20260924140000_e10_deuda_heredada` con guardia que aborta
+  // si alguien lo usa: la migración nunca pierde un dato.
 
   @@map("target_kind")
 }
@@ -1630,7 +1690,9 @@ enum ZeroBaseFallback {
 /// sellos del run con los del periodo (§3.5). `DRAFT` es contrato y E5 nunca lo
 /// persiste: la simulación es un dry-run en memoria (`previewAllocation`).
 enum AllocationRunStatus {
-  DRAFT
+  // **E10 · deuda §0-bis #4.** `DRAFT` se RETIRA: E5 nunca lo persistió —la
+  // simulación es un dry-run en memoria (`previewAllocation`, ADR-0013 D5)— y un
+  // valor de enum sin persistencia es una puerta que alguien acabará abriendo.
   SEALED
   SUPERSEDED
   REVERSED
@@ -1735,15 +1797,28 @@ model AllocationRun {
 
   /// Los TRES sellos + el del código. `analyticsHash` aquí es el de DIMENSIONES
   /// (§3.5): se calcula con `allocationRunSetHash = ∅` para no ser circular.
-  ledgerHash    String  @map("ledger_hash") @db.Char(64)
-  analyticsHash String  @map("analytics_hash") @db.Char(64)
-  rulesHash     String  @map("rules_hash") @db.Char(64)
+  ledgerHash          String    @map("ledger_hash") @db.Char(64)
+  analyticsHash       String    @map("analytics_hash") @db.Char(64)
+  rulesHash           String    @map("rules_hash") @db.Char(64)
   /// Auditoría E5, hallazgo 1 — sello de la SALIDA: sha256 de las líneas del run
   /// en forma canónica. Sin él, un `UPDATE` que mueva el céntimo de remanente
   /// entre dos receptores del mismo (run, regla, nivel) es indetectable: Σ,
   /// cierre a 0, cota de I-E5-4 y total se mantienen. NULL en runs previos.
-  linesHash     String? @map("lines_hash") @db.Char(64)
-  gitSha        String  @map("git_sha") @db.VarChar(64)
+  linesHash           String?   @map("lines_hash") @db.Char(64)
+  /// **E10 · D1 + O-E10-1 — el CUARTO sello.** La base de `HOURS`/`HEADCOUNT`
+  /// **no está en el diario**: no entra ni en `ledgerHash`, ni en
+  /// `analyticsHash`, ni en `rulesHash`. Sin él, aprobar un parte de un periodo
+  /// ya liquidado dejaría el run desfasado sin que nada lo dijera. `'∅'` cuando
+  /// ninguna regla del run usa un driver de actividad.
+  timeHash            String    @default("∅") @map("time_hash") @db.VarChar(64)
+  /// **O-E10-1 — la VENTANA efectivamente consumida.** Una regla con
+  /// `zeroBaseFallback = YTD` reparte con partes de todo el ejercicio, así que
+  /// aprobar en mayo un parte de enero no cambiaba el `timeHash` de marzo y el
+  /// run seguía luciendo vigente. Se persiste para que la staleness sea
+  /// reproducible **sin releer las reglas**. `NULL` con `timeHash = '∅'`.
+  timeHashWindowStart DateTime? @map("time_hash_window_start") @db.Date
+  timeHashWindowEnd   DateTime? @map("time_hash_window_end") @db.Date
+  gitSha              String    @map("git_sha") @db.VarChar(64)
 
   /// Resumen denormalizado. `lineCount = 0` es legítimo: un run vacío es la
   /// PRUEBA de que el periodo se liquidó y no había nada que repartir.
@@ -3163,4 +3238,454 @@ model ClosingRun {
   @@unique([organizationId, id])
   @@index([organizationId, fiscalYearId, createdAt(sort: Desc)])
   @@map("closing_runs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E10 — Presupuesto y horas (docs/design/E10-presupuesto-horas.md §2.2, ADR-0018)
+//
+// Siete tablas, siete enums. `@@map`/`@map` en snake_case (O-A5), `organizationId`
+// en todas (RLS, ADR-0009), dinero en céntimos `Int` (ADR-0006), tiempo en
+// MINUTOS ENTEROS (Q-2: la fuente primaria es el registro de jornada del art.
+// 34.9 ET, que se lleva en `hh:mm`), FTE en milésimas (`fteMilli`), fechas de
+// periodo y vigencia en `@db.Date` y `DateTime` sólo para auditoría técnica.
+// `@@unique([organizationId, id])` en toda tabla destino de FK compuesta (O-A1).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `BASE` es la versión aprobada al abrir el ejercicio; `REVISADO` son las
+/// reproyecciones sucesivas, numeradas por `revision`. No hay más escenarios: un
+/// «optimista/pesimista» es otra `REVISADO` con su vigencia, y tratarlo como
+/// dimensión obligaría a elegir cuál es «el» presupuesto en cada informe —
+/// decisión que debe tomar una persona y quedar escrita (D2).
+enum BudgetScenario {
+  BASE
+  REVISADO
+
+  @@map("budget_scenario")
+}
+
+/// `BORRADOR` se edita; `VIGENTE` está sellado y es inmutable; `SUSTITUIDO` lo
+/// reemplazó otra versión. **No existe `ANULADO`**: una versión sellada no se
+/// retira, se sustituye — misma doctrina que `AllocationRun` (ADR-0013 D5).
+enum BudgetStatus {
+  BORRADOR
+  VIGENTE
+  SUSTITUIDO
+
+  @@map("budget_status")
+}
+
+enum BudgetLineSource {
+  MANUAL
+  CSV_IMPORT
+  COPIED_FROM_VERSION
+
+  @@map("budget_line_source")
+}
+
+/// Cabecera de UNA versión de presupuesto. Versionada, sellada e inmutable en
+/// `VIGENTE` (patrón `AllocationRun` + `ReportRun`).
+model Budget {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  fiscalYearId String     @map("fiscal_year_id") @db.Uuid
+  fiscalYear   FiscalYear @relation(fields: [organizationId, fiscalYearId], references: [organizationId, id])
+
+  scenario BudgetScenario
+  /// 0 en `BASE`; 1..n en `REVISADO`. `(ejercicio, escenario, revisión)` es la
+  /// identidad y produce el código visible `2026-BASE` / `2026-REV2`.
+  revision Int            @default(0)
+  name     String         @db.VarChar(120)
+  note     String?        @db.VarChar(1000)
+
+  status BudgetStatus @default(BORRADOR)
+
+  /// **Vigencia** (D2): desde qué fecha esta versión es la que manda para los
+  /// informes. `validTo` **lo cierra `sealBudget` en la misma transacción** con
+  /// `validFrom(nueva) − 1 día` (O-E10-8): el `EXCLUDE` impide el solape, pero no
+  /// impedía el **hueco**, y un mes sin versión vigente disparaba
+  /// `PRESUPUESTO_AUSENTE` teniendo presupuesto. I-E10-15 exige la continuidad.
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+
+  /// **O-E10-9.** `NULL` = la versión cubre los DOCE meses del ejercicio. Con
+  /// valor (primer día de un mes), la versión es **parcial**: sustituye desde ese
+  /// mes y el informe **compone** BASE(ene–jun) + REVISADO(jul–dic) diciendo de
+  /// qué versión sale cada mes. Sin esto, una revisión de julio que sólo trae
+  /// jul–dic desinfla el año a la mitad **y nada lo dice** (I-E10-16).
+  partialFrom DateTime? @map("partial_from") @db.Date
+
+  /// Sello de la versión. `NULL` mientras es `BORRADOR`; NOT NULL en cuanto se
+  /// sella, y a partir de ahí **I-E10-6** lo recomputa sobre lo que la fila tiene
+  /// hoy: editar una línea por SQL delata la versión.
+  budgetHash       String? @map("budget_hash") @db.Char(64)
+  /// El nivel de cada línea depende de `MarginLevelConfig`: si cambia, el
+  /// presupuesto se lee en otra fila de la matriz. Entra en `budgetHash`.
+  marginConfigHash String? @map("margin_config_hash") @db.Char(64)
+  gitSha           String? @map("git_sha") @db.VarChar(64)
+
+  sealedAt       DateTime? @map("sealed_at")
+  sealedById     String?   @map("sealed_by_id") @db.Uuid
+  supersededById String?   @map("superseded_by_id") @db.Uuid
+  supersededBy   Budget?   @relation("BudgetSupersedes", fields: [supersededById], references: [id])
+  supersedes     Budget[]  @relation("BudgetSupersedes")
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  lines      BudgetLine[]
+  hoursLines BudgetHoursLine[]
+
+  @@unique([organizationId, fiscalYearId, scenario, revision], map: "budgets_version_unique")
+  @@unique([organizationId, id])
+  @@index([organizationId, fiscalYearId, status])
+  @@map("budgets")
+}
+
+/// Una celda de presupuesto: **cuenta × mes × dimensión**.
+///
+/// **Convención de signo (D2): `amountCents` es el APORTE**, `haber − debe`,
+/// igual que R-P1 de ADR-0012 y que la matriz analítica de E4. Ingreso
+/// presupuestado **positivo**, gasto presupuestado **negativo**. Así
+/// `desviación = real − presupuesto` se calcula sin una sola conversión de signo,
+/// y un gasto por encima de lo previsto da desviación **negativa**, que es lo que
+/// un controller espera leer.
+model BudgetLine {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  budgetId       String       @map("budget_id") @db.Uuid
+  budget         Budget       @relation(fields: [organizationId, budgetId], references: [organizationId, id], onDelete: Cascade)
+
+  /// Primer día del mes presupuestado, dentro del ejercicio de la versión.
+  month DateTime @map("month") @db.Date
+
+  /// `NULL` = la celda es del total de la dimensión, sin desglose por cuenta
+  /// (O-A6 lo contempla explícitamente).
+  accountCode String? @map("account_code") @db.VarChar(12)
+
+  /// **Exactamente uno** de los dos
+  /// (O-A6: `CHECK ((project_id IS NULL) <> (cost_center_id IS NULL))`).
+  projectId      String?       @map("project_id") @db.Uuid
+  project        Project?      @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  costCenterId   String?       @map("cost_center_id") @db.Uuid
+  costCenter     CostCenter?   @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
+  /// **Denormalizada del proyecto (R-A9)**: la escribe el código, la verifica un
+  /// trigger y no se recalcula nunca. `NULL` con CECO.
+  businessLineId String?       @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine? @relation(fields: [organizationId, businessLineId], references: [organizationId, id], onDelete: Restrict)
+
+  /// Tipo **efectivo** ya resuelto al guardar, con las mismas reglas R-A2/R-A3/
+  /// R-A4 que usa el diario: la matriz de presupuesto lee, no decide.
+  ///
+  /// **O-E10-23 — NOT NULL, siempre**, tenga cuenta la línea o no. Con el tipo
+  /// nulo, el CHECK de signo de O-E10-6 no evaluaba nada y la celda no tenía
+  /// nivel de margen: era el hueco por el que un gasto en positivo seguía
+  /// entrando. Lo resuelve `resolveEffectiveAnalyticType` al guardar.
+  analyticType AnalyticType @map("analytic_type")
+
+  /// **O-E10-7 — el nivel viaja con la línea**, exactamente como
+  /// `AllocationLine.marginLevel` desde E5-D1 y por la misma razón. Con
+  /// `INDIRECTO_CECO` el nivel lo pone `CostCenter.marginLevel`, que **no está
+  /// cubierto por `marginConfigHash`**: si un CECO pasa de MC3 a EBITDA después
+  /// de sellar, el `budgetHash` no cambiaría y el mismo presupuesto sellado se
+  /// leería en otra fila — la desviación de MC3 se movería sola.
+  marginLevel MarginLevel @map("margin_level")
+
+  /// **APORTE** (`haber − debe`). El signo NO es libre: lo fuerza el tipo
+  /// analítico efectivo (O-E10-6), con validación al guardar, CHECK de refuerzo
+  /// y las tres excepciones declaradas (§2.3 M2). Un `6400` tecleado en positivo
+  /// duplicaba la desviación con ejecución exacta y no lo detectaba nada.
+  amountCents   Int              @map("amount_cents")
+  /// Sólo se rellena en las excepciones de signo admitidas (R-B-5), para que
+  /// I-E10-14 las liste en vez de callarlas.
+  signException Boolean          @default(false) @map("sign_exception")
+  source        BudgetLineSource @default(MANUAL)
+  note          String?          @db.VarChar(400)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Los cuatro índices únicos PARCIALES van en la MIGRACIÓN (§2.3 M2): un
+  // `@@unique` con columnas nullables NO impide duplicados (NULL <> NULL). Es
+  // literalmente la deuda O-A6 y allí es donde se cierra.
+  @@index([organizationId, budgetId, month])
+  @@index([organizationId, budgetId, projectId, month])
+  @@index([organizationId, budgetId, costCenterId, month])
+  @@index([organizationId, budgetId, accountCode])
+  @@map("budget_lines")
+}
+
+/// Horas presupuestadas. Tabla aparte de `BudgetLine` a propósito: las horas no
+/// tienen cuenta contable, no llevan signo de aporte y no entran en ningún nivel
+/// de margen. Meterlas en la misma tabla con un `kind` obligaría a un CHECK
+/// excluyente sobre `amount_cents`/`minutes` y a meter `kind` en los cuatro
+/// índices únicos de O-A6, que es exactamente el enredo que O-A6 existe para
+/// evitar.
+model BudgetHoursLine {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  budgetId       String       @map("budget_id") @db.Uuid
+  budget         Budget       @relation(fields: [organizationId, budgetId], references: [organizationId, id], onDelete: Cascade)
+
+  month DateTime @map("month") @db.Date
+
+  /// **O-E10-10** — las tres con FK COMPUESTA por tenant y `onDelete: Restrict`,
+  /// como `budget_lines`. En la ronda 0 eran uuid sueltos, sin integridad
+  /// referencial, sin CHECK de día 1 y sin trigger de mes dentro del ejercicio.
+  projectId    String?     @map("project_id") @db.Uuid
+  project      Project?    @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  costCenterId String?     @map("cost_center_id") @db.Uuid
+  costCenter   CostCenter? @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
+  /// Opcional: presupuesto de horas por empleado dentro de la dimensión.
+  employeeId   String?     @map("employee_id") @db.Uuid
+  employee     Employee?   @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+
+  /// **Minutos enteros y ≥ 0** (Q-2). Alimentan dos cosas: el KPI de horas
+  /// presupuestadas y la **liquidación presupuestaria** de los drivers de
+  /// actividad (O-E10-4, §3.2).
+  minutes Int              @map("minutes")
+  source  BudgetLineSource @default(MANUAL)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, budgetId, month])
+  @@map("budget_hours_lines")
+}
+
+// ── Horas ────────────────────────────────────────────────────────────────────
+
+enum TimeEntrySource {
+  MANUAL
+  CSV_IMPORT
+
+  @@map("time_entry_source")
+}
+
+/// `ANULADO` no existe: una entrada aprobada se corrige con un **contra-apunte**
+/// (otra entrada de horas negativas que la referencia), igual que un asiento se
+/// anula con un contra-asiento (ADR-0003). Un `BORRADOR` sí se puede borrar,
+/// porque nadie ha afirmado nada todavía.
+enum TimeEntryStatus {
+  BORRADOR
+  APROBADO
+
+  @@map("time_entry_status")
+}
+
+model TimeEntry {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  employeeId String   @map("employee_id") @db.Uuid
+  employee   Employee @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Restrict)
+
+  /// Fecha del trabajo, no de la captura. Debe caer dentro de un `FiscalYear`.
+  date DateTime @map("date") @db.Date
+
+  /// **Exactamente uno** (CHECK), misma regla que una línea 6/7 del diario.
+  projectId      String?       @map("project_id") @db.Uuid
+  project        Project?      @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  costCenterId   String?       @map("cost_center_id") @db.Uuid
+  costCenter     CostCenter?   @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
+  /// Denormalizada del proyecto (R-A9), verificada por trigger.
+  businessLineId String?       @map("business_line_id") @db.Uuid
+  businessLine   BusinessLine? @relation(fields: [organizationId, businessLineId], references: [organizationId, id], onDelete: Restrict)
+
+  /// **Minutos enteros** (Q-2). 7 h 20 min = `440`, exacto — en centésimas de
+  /// hora serían 733,33 y habría que redondear, perdiendo 0,2 min por parte
+  /// (≈ 29 h al año con 8 800 partes, y un descuadre permanente con el registro
+  /// de jornada del art. 34.9 ET). Nunca un decimal, nunca un `Float`: la misma
+  /// regla que el céntimo (ADR-0006) aplicada al tiempo.
+  /// Positivo en una entrada normal; **negativo sólo en un contra-apunte**.
+  minutes Int @map("minutes")
+
+  /// Productiva / no productiva (vacaciones, formación, baja, comercial no
+  /// facturable). **Sólo las productivas alimentan el driver `HOURS`** y el
+  /// denominador del coste-hora (Q-3, **modelo A de absorción plena**): la tarifa
+  /// ya absorbe el coste de las no productivas, así que ese coste **no se vuelve
+  /// a repartir**. El reparto lo hace la regla `HOURS` sobre el saldo real del
+  /// CECO, que ya contiene la nómina íntegra.
+  productive Boolean @default(true)
+
+  note   String?         @db.VarChar(400)
+  source TimeEntrySource @default(MANUAL)
+  status TimeEntryStatus @default(BORRADOR)
+
+  approvedAt   DateTime? @map("approved_at")
+  approvedById String?   @map("approved_by_id") @db.Uuid
+
+  /// Contra-apunte: apunta a la entrada APROBADA que corrige. Mismo día, misma
+  /// dimensión, mismo empleado y horas con el signo contrario (trigger).
+  correctsEntryId  String?     @map("corrects_entry_id") @db.Uuid
+  corrects         TimeEntry?  @relation("TimeEntryCorrects", fields: [correctsEntryId], references: [id])
+  correctedBy      TimeEntry[] @relation("TimeEntryCorrects")
+  correctionReason String?     @map("correction_reason") @db.VarChar(1000)
+
+  /// Idempotencia del import CSV: `sha256(fichero ‖ nº de línea)`.
+  importKey   String?  @map("import_key") @db.VarChar(64)
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, id])
+  @@index([organizationId, date])
+  @@index([organizationId, employeeId, date])
+  @@index([organizationId, projectId, date])
+  @@index([organizationId, costCenterId, date])
+  @@map("time_entries")
+}
+
+// ── Empleados y coste-hora ───────────────────────────────────────────────────
+
+model Employee {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  code String @db.VarChar(24)
+  name String @db.VarChar(120)
+
+  /// Enlace OPCIONAL al maestro documental de E8 (`Counterparty.isEmployee`) y al
+  /// usuario de la aplicación. Ninguno de los dos es obligatorio: hay empleados
+  /// que no entran en la aplicación y notas de gasto de personas que no imputan
+  /// horas.
+  counterpartyId String? @map("counterparty_id") @db.Uuid
+  userId         String? @map("user_id") @db.Uuid
+
+  /// CECO por defecto al capturar un parte y base del `HeadcountSnapshot`
+  /// derivado.
+  defaultCostCenterId String?     @map("default_cost_center_id") @db.Uuid
+  defaultCostCenter   CostCenter? @relation("EmployeeDefaultCostCenter", fields: [organizationId, defaultCostCenterId], references: [organizationId, id], onDelete: Restrict)
+
+  /// Jornada en milésimas de FTE (1000 = completa). Entra en el `HEADCOUNT`.
+  fteMilli Int @default(1000) @map("fte_milli")
+
+  hireDate DateTime? @map("hire_date") @db.Date
+  endDate  DateTime? @map("end_date") @db.Date
+
+  isActive   Boolean   @default(true) @map("is_active")
+  archivedAt DateTime? @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  rates            EmployeeRate[]
+  timeEntries      TimeEntry[]
+  budgetHoursLines BudgetHoursLine[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, id])
+  @@index([organizationId, isActive])
+  @@map("employees")
+}
+
+/// De dónde sale la cifra. `DERIVADO_NOMINA` guarda **además** la procedencia del
+/// cálculo (`derivation`), porque un coste-hora derivado sin sus términos no se
+/// puede auditar y acabaría siendo un número de origen desconocido.
+enum EmployeeRateSource {
+  DECLARADO
+  DERIVADO_NOMINA
+
+  @@map("employee_rate_source")
+}
+
+/// Qué contiene el coste-hora. La elección es **de la organización** y viaja en la
+/// tarifa, nunca implícita: `BRUTO_SIN_SS` y `COSTE_EMPRESA_CON_SS` difieren en
+/// torno al **31,9 %** (Q-1), y un proyecto de 1 000 h medido con una y comparado
+/// con otro medido con la otra difiere en ~851 000 c de margen sin que nada haya
+/// pasado.
+///
+///   BRUTO_SIN_SS               → 640                       (negociación salarial)
+///   COSTE_EMPRESA_CON_SS       → 640 + 642 + 645 + 649      **DEFAULT** (Q-1)
+///   COSTE_TOTAL_CON_ESTRUCTURA → lo anterior + estructura   (ver abajo)
+///
+/// **`641` (indemnizaciones) queda FUERA** de todas ellas (O-E10-11): es un coste
+/// no recurrente y ligado a personas que dejan de generar horas, así que incluirlo
+/// dispara la tarifa del último periodo del empleado y contamina el margen de los
+/// proyectos que casualmente tocó ese mes.
+///
+/// **`COSTE_TOTAL_CON_ESTRUCTURA` es EXCLUYENTE con las reglas de actividad**
+/// (O-E10-14): si la tarifa ya lleva estructura imputada y además una regla
+/// `HOURS`/`HEADCOUNT` reparte los CECOs a los proyectos, la estructura se carga
+/// **dos veces**. Se valida al fijar la tarifa (`RATE_BASIS_CONFLICT`) y el
+/// informe lleva aviso permanente.
+enum EmployeeRateBasis {
+  BRUTO_SIN_SS
+  COSTE_EMPRESA_CON_SS
+  COSTE_TOTAL_CON_ESTRUCTURA
+
+  @@map("employee_rate_basis")
+}
+
+model EmployeeRate {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employeeId     String       @map("employee_id") @db.Uuid
+  employee       Employee     @relation(fields: [organizationId, employeeId], references: [organizationId, id], onDelete: Cascade)
+
+  /// Céntimos por hora, entero y > 0.
+  hourlyCostCents Int                @map("hourly_cost_cents")
+  basis           EmployeeRateBasis
+  source          EmployeeRateSource @default(DECLARADO)
+
+  /// Sólo con `DERIVADO_NOMINA`. `{ scope: "COST_CENTER" | "EMPLOYEE",
+  /// costCenterCode?, periodStart, periodEnd, payrollCents, accountPrefixes,
+  /// productiveMinutes, coverageBps, linesTotal, linesMatched, formula }` — los
+  /// términos exactos con los que salió la cifra, para que el número se pueda
+  /// **rehacer a mano** (O-E10-12: `coverageBps` y el recuento de líneas son
+  /// obligatorios en el ámbito `EMPLOYEE`; sin ellos la propuesta extrapolaría en
+  /// silencio desde una fracción de la nómina).
+  derivation Json? @map("derivation")
+
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+
+  note        String?  @db.VarChar(400)
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Sin solape de vigencias por empleado: `EXCLUDE USING gist` en la migración
+  // (mismo patrón que `TaxRate` de E2 y `AllocationRule` de E5).
+  @@index([organizationId, employeeId, validFrom])
+  @@map("employee_rates")
+}
+
+/// Plantilla a fin de mes por CECO. Es un **hecho declarado**, no un derivado: se
+/// puede calcular desde `Employee` (`DERIVADO_EMPLEADOS`) o teclear (`MANUAL`), y
+/// en los dos casos queda sellado con quién y cuándo. El driver `HEADCOUNT` lee
+/// esta tabla y sólo esta tabla.
+enum HeadcountSource {
+  MANUAL
+  DERIVADO_EMPLEADOS
+
+  @@map("headcount_source")
+}
+
+model HeadcountSnapshot {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  costCenterId String     @map("cost_center_id") @db.Uuid
+  costCenter   CostCenter @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
+
+  /// **Último día** del mes: el stock es a fin de periodo (contrato del experto en
+  /// E5, confirmado en D1). La base del driver es Σ `fteMilli` de los snapshots
+  /// del periodo — **FTE·mes** (Q-7), no una media.
+  periodEnd DateTime @map("period_end") @db.Date
+
+  fteMilli  Int             @map("fte_milli")
+  headcount Int
+  source    HeadcountSource @default(MANUAL)
+  note      String?         @db.VarChar(400)
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, costCenterId, periodEnd])
+  @@index([organizationId, periodEnd])
+  @@map("headcount_snapshots")
 }
