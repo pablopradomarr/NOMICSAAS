@@ -1,6 +1,54 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-07 (**✅ E7 CERRADA** tras dos rondas de corrección · **SIGUIENTE: `/epica E9`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-14 (**✅ E9 CERRADA** tras tres rondas de corrección · **SIGUIENTE: `/epica E10`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## ✅ E9 CERRADA (2026-09-14) — siguiente: `/epica E10`
+
+Cierre de ejercicio, recurrentes y fiscalidad periódica, cerrada tras **tres
+rondas de corrección**:
+
+- **auditor-fiabilidad: CONFORME** (ronda 3). En la ronda 0, DISCREPANCIA con
+  H-1…H-6 —tres bloqueantes: el **signo de T-32 invertido** (inflaba el pasivo no
+  corriente en silencio), los **27 `I-E9-*` que no corrían nunca** (0 de 215
+  checks) y la **reapertura imposible** por CA-1—; en la ronda 1, DISCREPANCIA por
+  **R-1** (los contra-asientos de la reapertura se fechaban fuera del ejercicio y
+  el recierre marcaba `CLOSED` **sin postear** T-26/T-27/T-28) y **R-2** (los 22
+  pares sólo existían por el backfill: I-E9-16 pasaba **por vacuidad**); en la
+  ronda 2, **CONFORME** con un menor —tras reabrir, el impuesto no quedaba
+  pendiente y el recierre podía dejar el ejercicio sin T-25, con `129` recogiendo
+  el resultado **antes** de impuestos—, cerrado con `PENDIENTE_RECOMPUTO` en el
+  paso, guardia en `closeFiscalYearTx` y test.
+- **revisor-codigo: APROBADO** (ronda 2). En la ronda 1, 1 BLOQUEA —el **paso 12
+  de O-17** no existía: se sellaba T-32 como su propio contra-asiento— y 8 DEBE.
+- **QA**: BUG-E9-1 (`reviseAssetAction` admitía revisiones **retroactivas**,
+  contra la NRV 22ª) cerrado con test propio.
+
+Tests del cierre: unit **1 968 ✓** · integración **2 551 ✓** · RLS **185 ✓** ·
+lint sin errores · build **OK** · e2e por fichero `cierre` **8/8** y
+`recurrentes-iva` **9/9** · los **ocho** techos de `perf-closing` activos.
+
+Lo que queda escrito y no se negocia: **43 pasos / 9 bloqueantes** en el
+checklist (el diseño enumeraba 41 en su cabecera y 43 en el detalle; manda el
+detalle), **22 pares** de reclasificación (R2-1 hablaba de 23; 527/528 quedan
+fuera), clave de periodo canónica **`AAAA-Qn`**, y el interés implícito del
+criterio 22 recalculado a mano: **442 817**, el del fixture sellado.
+
+**Siguiente**: `/epica E10` — presupuesto y horas.
+
+### Deuda de E9, fechada en E10
+
+1. **`ejercicio-completo-v2` no se puede cargar**: el fixture es internamente
+   incoherente (usa `4751` en sus nóminas **y** la clave `IRPF_A_PAGAR_123` →
+   `47513`; al crear la subcuenta la madre deja de admitir apuntes). Exige
+   **reversionar el fixture** —es inmutable— y escribir el
+   `build_ejercicio_completo_v2.py` que nunca se hizo. → **E10**.
+2. **El N+1 de la staleness de CECOs**: sigue derivándose run a run. Medido y
+   dentro del techo con doce runs mensuales sellados; agregar los hashes por
+   periodo en una sola consulta. → **E10**.
+3. **El formulario de alta de inmovilizado no ofrece proyecto ni CECO**: el
+   schema los admite desde T15, así que un activo dado de alta **por pantalla**
+   en una organización con destino analítico obligatorio no se puede vender
+   hasta que alguien le declare el destino por SQL. → **E10**.
 
 ## ✅ E7 CERRADA (2026-09-07) — siguiente: `/epica E9`
 
@@ -387,13 +435,13 @@ Entradas: `docs/design/E9-auditoria-informe.md` (DISCREPANCIA, H-1…H-6),
    (`ACCOUNT_NOT_POSTABLE`). Arreglarlo exige **reversionar el fixture** (es
    inmutable) y escribir el `build_ejercicio_completo_v2.py` que nunca se hizo.
    El cargador ya lo **acepta** y `planWithExtras` resuelve sus `accountsExtra`;
-   falta el fichero coherente. → **T24**.
+   falta el fichero coherente. → **E10** (era T24; E9 cerró sin él).
 2. **La staleness de CECOs sigue derivándose run a run.** Medida y dentro del
    techo con doce runs mensuales sellados; agregar los hashes por periodo en una
-   sola consulta → **T26**.
+   sola consulta → **E10** (era T26; el cierre documental de T26 se hizo y la
+   agregación no).
 3. **PUEDE 12** (Σ Debe / Σ Haber sumadas en cliente para pintar el cuadre) sigue
-   abierto: es feedback visual sobre líneas que compone el servidor. → **ola de
-   UI de E9**.
+   abierto: es feedback visual sobre líneas que compone el servidor. → **E10**.
 
 ## E9 — ronda 2 de corrección (2026-09-14): R-1, R-2 y los tres PUEDE
 
@@ -414,8 +462,10 @@ Entradas: la «Re-auditoría (ronda 1)» de `docs/design/E9-auditoria-informe.md
 | **PUEDE (b)** | No había prueba del rollback | Test con fallo inyectado **después** de postear T-26/T-27/T-28 (contador del ejercicio adelantado → I7 en FAIL): mismo nº de asientos, mismos bloqueos, ejercicio `OPEN` |
 | **PUEDE (c)** | El PASS de I-E9-4/5 callaba lo que omitía | Nombra cuántos activos dados de baja o vendidos quedan fuera |
 
-Tests: `tests/integration/e9-ronda2.test.ts` (9). La deuda del **N+1 de la
-staleness de CECOs** sigue fechada en **T26** (arriba, sin cambios).
+| **menor del auditor** (ronda 2) | Tras reabrir, `IMPUESTO_BENEFICIOS` no quedaba pendiente y el recierre podía dejar el ejercicio **sin T-25**, con `129` recogiendo el resultado ANTES de impuestos: el paso sólo daba WARN y no es bloqueante | El impuesto —y el paso declarado del impuesto diferido— entran en `PENDING_RECOMPUTE_STEP_CODES`, así que la reapertura los marca `PENDIENTE_RECOMPUTO` en el `ClosingRun` sellado; y `closeFiscalYearTx` **se niega a recerrar** un ejercicio reabierto que tenga resultado y no tenga T-25 vivo |
+
+Tests: `tests/integration/e9-ronda2.test.ts` (10). La deuda del **N+1 de la
+staleness de CECOs** queda fechada en **E10**.
 
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
 

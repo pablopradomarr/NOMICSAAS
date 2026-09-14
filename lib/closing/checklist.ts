@@ -172,14 +172,24 @@ export const CLOSING_STEP_CODES: readonly string[] = CLOSING_STEPS.map((s) => s.
 export const BLOCKING_STEP_CODES: readonly string[] = CLOSING_STEPS.filter((s) => s.blocking).map((s) => s.step)
 
 /**
- * **O-21.** Los tres pasos que la reapertura **no revierte** —son idempotentes—
- * y que quedan marcados `PENDIENTE_RECOMPUTO` para que el asistente los reevalúe
- * y sólo postee delta si lo hay.
+ * **O-21.** Los pasos que hay que **reevaluar antes de recerrar**, marcados
+ * `PENDIENTE_RECOMPUTO` por la reapertura. Son de dos clases:
+ *
+ *  · los tres ajustes que la reapertura **no revierte** —son idempotentes— y que
+ *    sólo postean delta si lo hay;
+ *  · y el **impuesto**, que la reapertura **sí revierte** (T-25 es el cuarto
+ *    contra-asiento de O-21) y que por tanto hay que volver a calcular sobre el
+ *    resultado nuevo. Sin marcarlo, el paso salía WARN —no bloqueante— y el
+ *    recierre podía dejar el ejercicio **sin impuesto**, con `129` recogiendo el
+ *    resultado ANTES de impuestos (menor del auditor, ronda 2). Con él viaja el
+ *    paso declarado del impuesto diferido, que se deriva del mismo cálculo.
  */
 export const PENDING_RECOMPUTE_STEP_CODES: readonly string[] = [
   "VALOR_ACTUAL_APLAZAMIENTO",
   "DIFERENCIAS_DE_CAMBIO",
   "RECLASIFICACION_VENCIMIENTOS",
+  "IMPUESTO_BENEFICIOS",
+  "IMPUESTO_DIFERIDO_RESPONDIDO",
 ]
 
 export const stepDef = (code: string): ClosingStepDef | undefined => CLOSING_STEPS.find((s) => s.step === code)

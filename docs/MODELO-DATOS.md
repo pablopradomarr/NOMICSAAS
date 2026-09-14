@@ -291,6 +291,71 @@ enum InvoiceSeriesKind { ORDINARIA RECTIFICATIVA SIMPLIFICADA }   // `kind` INMU
 // `files.sha256` pasa a NOT NULL y `files.cached_parse_result` **se elimina** (P4/G-03).
 ```
 
+## Cierre, recurrentes y fiscalidad periódica (E9)
+
+> Trece tablas nuevas (migraciones `20260920100000_e9_recurrentes`,
+> `…120000_e9_cierre` y las de la ronda de corrección). Diseño en
+> `docs/design/E9-cierre-recurrentes.md`; decisiones en `docs/adr/0016-*.md`.
+> Las trece llevan `organizationId`, RLS estricta (`app.enforce_tenant_rls`) y
+> están en `TENANT_MODELS`.
+
+```
+// ── A · Asientos recurrentes ────────────────────────────────────────────────
+RecurringEntry       code, plantilla + parámetros, calendario (MENSUAL|TRIMESTRAL|ANUAL…),
+                     validFrom/validTo, inputHash de la versión de la regla, estado
+RecurringOccurrence  (recurringEntryId, period) ÚNICO ⇒ idempotencia por índice, no por `if`.
+                     status PREVISTA|GENERADA|OMITIDA con CHECK `entry_id ⟺ GENERADA`:
+                     el asiento se postea PRIMERO y la ocurrencia nace ya enlazada
+                     (la tabla es append-only: no hay UPDATE que la enlace después).
+
+// ── B · Inmovilizado ────────────────────────────────────────────────────────
+FixedAsset      cuentas 21x/28x/68x, coste, vida útil, valor residual, fechas, destino
+                analítico, `scheduleHash` del cuadro derivado (lineal, residuo a la última
+                cuota). Baja y venta por T-33/T-34; `JournalLine.fixedAssetId` atribuye
+                el gasto y la amortización acumulada POR ACTIVO, y entra **en el INSERT**
+                de la línea (la tabla es append-only).
+AssetRevision   revisión PROSPECTIVA (NRV 22ª): nunca retroactiva; suelo = max(mes siguiente
+                al último dotado, mes en curso).
+
+// ── C · Periodificaciones y deuda ───────────────────────────────────────────
+Accrual          480/485/567/568, devengo lineal por periodo, estado VIVA|AGOTADA
+DebtSchedule     cuadro declarado con `scheduleHash` sellado sobre sus vencimientos
+DebtInstallment  (schedule, seq) con principal e intereses; Σ principal = principal del
+                 cuadro por constraint trigger DIFERIDO (G-17)
+
+// ── D · IVA ─────────────────────────────────────────────────────────────────
+VatRegimePeriod  régimen fechado GENERAL|RECC|REDEME por intervalo
+VatSettlement    liquidación por periodo con `ledgerHash` + `bookHash`; una VIVA por
+                 periodo (índice único PARCIAL `WHERE status = 'LIQUIDADA'`: revertir y
+                 re-liquidar tiene que ser posible)
+ProrrataYear     prorrata definitiva del año natural (arts. 104-105 LIVA); sin clave de
+                 operación en algún documento el resultado es INFO y **nunca** un %
+```
+Clave canónica de periodo: **`AAAA-Qn`** (trimestral) y `AAAA-MM` (mensual), con
+CHECK de formato en `journal_entries.iva_period` y en las tablas de IVA — la misma
+forma que usan el motor (`lib/closing/vat.ts`), ADR-0014 D8 y los fixtures sellados.
+
+```
+// ── E · Cierre ──────────────────────────────────────────────────────────────
+ReclassificationPair  los 22 pares largo↔corto (17x↔52x, 25x↔54x…). Se **siembran en el
+                      alta de la organización**, junto al plan y al mapa; el motor cae a
+                      `RECLASS_PAIRS` si faltan, para que I-E9-16 nunca pase por vacuidad
+ProfitDistribution    129 → 112/113/120/526/557, con la reserva legal derivada
+ClosingRun            el checklist de 43 pasos (9 bloqueantes) sellado: `steps` JSON,
+                      ledgerHash + planHash + accountMapHash + configHash + gitSha,
+                      las doce columnas de los asientos de O-17, `seal` y `sealReasons`,
+                      y el rastro de la reapertura (`reopenedAt`, `reopenEntryIds`)
+PeriodLock            bloqueo de mes con motivo (B-6/B-7/B-8), en secuencia
+```
+
+**Reapertura (O-21, ADR-0016 D1).** Un ejercicio sólo se reabre desde un
+`ClosingRun` **CERRADO**, y la reapertura se registra en él. Los cuatro
+contra-asientos —T-28 → T-27 → T-26 → **T-25**— se fechan **dentro del ejercicio
+que se reabre** (el de la apertura, en el suyo), y el espejo de un asiento de
+sistema **hereda su `kind`**, de modo que el par netea en todos los filtros por
+`kind`. La base lo admite sólo con el GUC `app.reopening_run_id` respaldado por un
+`ClosingRun` real del tenant.
+
 ## Integridad (resumen)
 | Regla | Dónde |
 |---|---|
@@ -333,4 +398,13 @@ enum InvoiceSeriesKind { ORDINARIA RECTIFICATIVA SIMPLIFICADA }   // `kind` INMU
 | El importe de una línea de extracto es inmutable: sólo cambia su estado | `app.bank_statement_lines_only_status()` + `GRANT` de columna |
 | El `File` de un extracto no se borra nunca | FK `RESTRICT` + comprobación en `scripts/prune-runs.ts` |
 | Importes del diario en `bigint`, sin pérdida silenciosa en el borde | `centsFromDb`/`centsToDb` con `Number.isSafeInteger` y excepción |
+| Una ocurrencia por `(regla, periodo)`; `entry_id ⟺ GENERADA` en TODO momento | índice único + CHECK `recurring_occurrences_entry_iff_generada` + tabla append-only (el asiento se postea antes) |
+| Σ principal de los vencimientos = principal del cuadro de deuda | constraint trigger DIFERIDO (G-17) + `scheduleHash` recomputable (I-E9-25) |
+| Una liquidación de IVA VIVA por periodo, con su `ledgerHash` y `bookHash` | índice único PARCIAL `WHERE status = 'LIQUIDADA'` (G-8) + I-E9-8a′/8b/9 |
+| Clave de periodo canónica `AAAA-Qn` / `AAAA-MM` en todo el sistema | CHECK de formato + `app.iva_period()` + `lib/closing/vat.ts` (ADR-0014 D8) |
+| Los 22 pares de reclasificación existen en TODA organización | siembra en el alta (`seedReclassificationPairs`) + *fallback* a `RECLASS_PAIRS` en el motor y en los invariantes (I-E9-16 nunca pasa por vacuidad) |
+| Apertura, cierre y regularización **no** se anulan con contra-asiento salvo en una reapertura registrada | trigger `journal_entries_reversal_target` (exige `app.reopening_run_id` = `ClosingRun` CERRADO/REABIERTO del tenant **y** espejo con el `kind` del original) + CA-1 en `lib/ledger/void.ts` + I-E3-4 |
+| Una apertura y un cierre VIVOS por ejercicio, sin contar los contra-asientos | dos índices únicos PARCIALES (`kind` + `voided_at IS NULL` + `reverses_entry_id IS NULL`) |
+| Un ejercicio no se marca `CLOSED` sin sus asientos de cierre, ni se recierra sin recomputar el impuesto | guardias en `closeFiscalYearTx` + I-E9-21 (CERRADO sin T-26/T-27/T-28 ⇒ FAIL) |
+| Un mes bloqueado no admite asientos; el bloqueo es en secuencia y con motivo | trigger `journal_entries_period_open` + `PeriodLock` (B-6/B-7/B-8) |
 | Tenant | `tenantDb` + RLS |

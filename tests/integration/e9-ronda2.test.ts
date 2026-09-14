@@ -673,6 +673,70 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · ronda 2 — R-1, R-2 y los tres PUEDE
     expect(i5.evidencia).toContain("1 dado(s) de baja o vendido(s) quedan fuera")
   }, 60_000)
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // Menor del auditor (ronda 2) · el impuesto del RECIERRE
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it("menor · la reapertura deja el impuesto PENDIENTE_RECOMPUTO y el recierre sin T-25 no pasa", async () => {
+    const { PENDING_RECOMPUTE_STEP_CODES } = await import("@/lib/closing/checklist")
+    expect(PENDING_RECOMPUTE_STEP_CODES, "T-25 lo revierte O-21: hay que volver a calcularlo").toContain(
+      "IMPUESTO_BENEFICIOS"
+    )
+
+    // El ejercicio quedó CERRADO en el ciclo de arriba. Se reabre otra vez: la
+    // reapertura anula T-25 y marca el paso en el `ClosingRun` sellado.
+    const reabierto = await reopenFiscalYear(
+      ORG,
+      {
+        fiscalYearId: fy2026,
+        reason: "segunda reapertura para comprobar que el impuesto no se da por hecho al recerrar",
+        confirmCode: "2026",
+        acknowledgeNextYear: true,
+      },
+      { userId: ADMIN }
+    )
+    expect(reabierto.ok, reabierto.ok ? "" : JSON.stringify(reabierto.errors)).toBe(true)
+    expect(reabierto.value.pendingRecompute).toContain("IMPUESTO_BENEFICIOS")
+    expect(await vivosPorPlantilla(fy2026, "IMPUESTO_BENEFICIOS"), "T-25 está anulado tras reabrir").toBe(0)
+    const runReabierto = await prisma.closingRun.findFirst({
+      where: { fiscalYearId: fy2026, status: "REABIERTO" },
+      orderBy: { createdAt: "desc" },
+    })
+    const pasos = (runReabierto!.steps as { step: string; status: string }[]).filter(
+      (s) => s.step === "IMPUESTO_BENEFICIOS"
+    )
+    expect(pasos[0]?.status, "el paso queda marcado en el run sellado").toBe("PENDIENTE_RECOMPUTO")
+
+    // Y el recierre SIN recomputarlo se niega: con resultado y sin T-25 vivo, el
+    // ejercicio quedaría con 129 = resultado ANTES de impuestos.
+    const sinImpuesto = await closeFiscalYear(ORG, fy2026, { userId: ADMIN }, "recierre sin recomputar el impuesto")
+    expect(sinImpuesto.ok).toBe(false)
+    if (!sinImpuesto.ok) expect(JSON.stringify(sinImpuesto.errors)).toContain("IMPUESTO_BENEFICIOS")
+    expect((await prisma.fiscalYear.findFirst({ where: { id: fy2026 } }))!.status).toBe("OPEN")
+
+    // Recomputado el paso, el recierre vuelve a pasar y 129 lleva el resultado
+    // DESPUÉS de impuestos.
+    const impuesto = await postClosingStepAction({
+      fiscalYearId: fy2026,
+      step: "IMPUESTO_BENEFICIOS",
+      dryRun: false,
+      params: { taxRateBps: 2_500 },
+    })
+    expect(impuesto.success, impuesto.error).toBe(true)
+    const recierre = await cerrar("Recierre del ejercicio 2026 con el impuesto recomputado")
+    expect(recierre.ok, recierre.ok ? "" : JSON.stringify(recierre.errors)).toBe(true)
+    const resultado = RESULTADO_ANTES_IMPUESTOS - 100_000
+    const [saldo129] = await prisma.$queryRawUnsafe<{ saldo: bigint | null }[]>(
+      `SELECT SUM(l.credit_cents - l.debit_cents)::bigint AS saldo
+         FROM journal_lines l WHERE l.organization_id = $1::uuid AND l.account_code = '129' AND l.entry_id = $2::uuid`,
+      ORG,
+      recierre.value.regularizacion!.id
+    )
+    expect(Number(saldo129.saldo ?? 0), "129 lleva el resultado DESPUÉS de impuestos").toBe(
+      resultado - Math.trunc((resultado * 25) / 100)
+    )
+  }, 300_000)
+
   it("H-5 · el paso del checklist declara las posiciones en divisa NO monetarias excluidas", async () => {
     const { fxClosingAdjustments, fxStep } = await import("@/lib/closing/fx")
     const resultado = fxClosingAdjustments(

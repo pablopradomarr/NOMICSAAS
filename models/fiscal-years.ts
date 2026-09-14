@@ -218,6 +218,33 @@ async function closeFiscalYearTx(
         ([code, saldo]) => (code.startsWith("6") || code.startsWith("7")) && saldo !== 0
       )
 
+      // ── 0b. El impuesto del RECIERRE (menor del auditor, ronda 2) ─────────
+      //
+      // O-21 revierte T-25 junto con el cierre: tras reabrir, el ejercicio se
+      // queda **sin impuesto**, y como el paso `IMPUESTO_BENEFICIOS` sólo da
+      // WARN —no es bloqueante— nada impedía recerrar sin volver a calcularlo.
+      // El resultado del ejercicio quedaba entonces ANTES de impuestos y `129`
+      // recogía el BAI, que es una cifra que no existe en las cuentas anuales.
+      // La reapertura marca el paso `PENDIENTE_RECOMPUTO` (O-21) y aquí se
+      // exige de verdad: con resultado y sin T-25 vivo, el recierre no pasa.
+      const reabiertoAntes = await tx.closingRun.count({ where: { fiscalYearId, status: "REABIERTO" } })
+      if (reabiertoAntes > 0) {
+        const resultadoCents = pnl.reduce((total, [, saldo]) => total + saldo, 0)
+        const impuestoVivo = await tx.journalEntry.count({
+          where: { fiscalYearId, templateCode: "IMPUESTO_BENEFICIOS", voidedAt: null },
+        })
+        if (resultadoCents !== 0 && impuestoVivo === 0) {
+          abort(
+            modelErr(
+              "INVARIANTS_FAILED",
+              "fiscalYearId",
+              `No se recierra el ejercicio ${fy.code}: la reapertura anuló el impuesto (T-25) y el ejercicio vuelve ` +
+                "a tener resultado. Recompute el paso IMPUESTO_BENEFICIOS antes de cerrar (O-21, O-26, art. 10.3 LIS)"
+            )
+          )
+        }
+      }
+
       let regularizacion: PostedEntry | null = null
       if (pnl.length > 0) {
         const ctx = await getLedgerContext(tx, refDate, { balances })

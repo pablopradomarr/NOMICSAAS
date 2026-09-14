@@ -50,7 +50,10 @@ diciendo qué falta — jamás en verde.
 | **Analítica y liquidación** | `I4`, `I5`, `I-E7-9`, `I-E7-10` | La matriz analítica suma exactamente la PyG contable, por nivel de margen; el reparto de CECOs es Hamilton con tolerancia 0 y desempate determinista; una `allocation_lines` alterada bajo un informe vigente **se delata** |
 | **Camino documental** | `I-E8-1`…`I-E8-20` | El asiento se apoya en un run que lo sostiene; los bytes del documento son los que vio la extracción **y los de hoy**; el libro registro de IVA cuadra con el diario por los **tres puentes al 303**; la divisa se convierte con residuo cero; las series de facturación no tienen huecos |
 | **Conciliación bancaria** | `I-E7-1`…`I-E7-6b`, `I-E7-11`…`I-E7-13` | `E − B = Ue − Ub` con los pendientes enumerados y tipados; el grupo N-a-M cuadra en la **moneda de la cuenta**; la cadena de extractos cubre el periodo sin huecos; los ignorados están acotados y son visibles |
-| **Cierre de ejercicio** | `I-E7-14`…`I-E7-16` | La apertura de N cuadra cuenta a cuenta con el cierre de N−1 (art. 25 CCom); no hay saldos contrarios a su naturaleza sin explicación; las cuentas puente (`555`, `551`, `4749`) están a cero al cierre |
+| **Cierre de ejercicio** | `I-E7-14`…`I-E7-16`, `I-E9-12`…`I-E9-15`, `I-E9-20`, `I-E9-21`, `I-E9-23` | La apertura de N cuadra cuenta a cuenta con el cierre de N−1 (art. 25 CCom) y **línea a línea** con el asiento de cierre; tras la regularización, todas las cuentas de los grupos 6 y 7 —la `6300` incluida— quedan a 0 y `129` lleva exactamente el resultado; un ejercicio no se marca cerrado **sin sus asientos de cierre**; el `ClosingRun` es reproducible y hay uno solo sellado; no hay saldos contrarios a su naturaleza sin explicación; las cuentas puente (`555`, `551`, `4749`) están a cero al cierre |
+| **Recurrentes, inmovilizado y periodificaciones** | `I-E9-1a`…`I-E9-7`, `I-E9-25` | Una ocurrencia por regla y periodo, y ninguna `GENERADA` sin asiento; el cuadro de amortización es determinista y su sello se recomputa, con la amortización acumulada cuadrada **por activo**; toda periodificación vencida está agotada; todo cuadro de deuda tiene desglose y no se puede alterar sin que se note |
+| **IVA periódico** | `I-E9-8a′`…`I-E9-11`, `I-E9-22`, `I-E9-26`, `I-E8-15a′/15c′` | La liquidación se reproduce línea a línea desde el libro registro; el libro, el diario y la liquidación sellada cuadran **también bajo RECC** (con 4728/4778); la prorrata definitiva se deriva del libro y nunca se inventa un porcentaje; ningún asiento con IVA entra en un periodo ya liquidado |
+| **Ajustes de cierre** | `I-E9-16`…`I-E9-19`, `I-E9-24` | La reclasificación largo↔corto no mueve el total y **ninguna deuda que venza dentro del año queda a largo**; las diferencias de cambio se reconocen sólo sobre partidas **monetarias** y a la tasa sellada; el valor actual devenga exactamente su descuento hasta el nominal |
 | **Integridad del propio control** | `I-E7-7`, `I-E7-8`, `I7`–`I10` | El barrido no se puede editar sin que se note (`checksHash` recomputado); todo fichero del almacén tiene veredicto; no hay duplicados, ni fechas fuera de ejercicio abierto, ni una sola fila que cruce de organización |
 
 La lista completa, con su tolerancia y su redacción exacta, está en
@@ -70,9 +73,11 @@ la implementa, no la reinventa.
 
 Un motivo de sello es un **código cerrado**, no una frase: se filtra, se cuenta y
 se compara entre periodos. E8 aporta seis (documento alterado, tasa forzada,
-retención no practicada…) y E7 cuatro: `CONCILIACION_PENDIENTE`,
+retención no practicada…), E7 cuatro: `CONCILIACION_PENDIENTE`,
 `PARTIDA_EN_TRANSITO_ANTIGUA`, `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER` y
-`ALMACEN_NO_BARRIDO`.
+`ALMACEN_NO_BARRIDO`; y E9 cinco más, que viajan en el `ClosingRun`:
+`IVA_NO_LIQUIDADO`, `IMPUESTO_DIFERIDO_NO_RECONOCIDO`, `RESULTADO_SIN_DISTRIBUIR`,
+`MODELO_200_PRESENTADO` y `CIERRE_REABIERTO`.
 
 > **Todos mueven el sello.** Un aviso que no lo mueve es decorativo: firmar
 > «validado automáticamente» un periodo con la conciliación abierta es
@@ -124,10 +129,15 @@ Decirlo importa tanto como lo anterior:
   cuenta bancaria el cuadre sale `INFO`, no PASS.
 - **No puntea solo.** Las sugerencias de conciliación son deterministas, se
   recomputan en cada carga y **una persona las acepta**. No hay `AUTO`.
-- **No reconoce la diferencia de cambio**: E7 la **mide** y avisa (I-E7-12,
-  NRV 11ª.2.2); el asiento de `768`/`668` que la recoge es de **E9**.
-- **No decide la deducibilidad del IVA** ni contabiliza automáticamente regímenes
-  especiales (RECC/REDEME): los bloquea y lo dice.
+- **No decide la deducibilidad del IVA**: la deja pendiente y lo dice con su
+  motivo de sello (art. 96 LIVA).
+- **No regulariza los bienes de inversión** (arts. 107-110 LIVA): el cierre no
+  avanza en silencio —la guardia es determinista y lo avisa—, pero el ajuste es
+  de una épica posterior.
+- **No cierra un ejercicio por su cuenta.** El cierre es un **checklist de 43
+  pasos** con nueve bloqueantes: sin PASS en los nueve no se cierra, y los pasos
+  declarados sin responder son WARN, nunca PASS. Reabrir exige motivo, el código
+  del ejercicio y deja el `ClosingRun` en `REQUIERE REVISIÓN` para siempre.
 
 ---
 

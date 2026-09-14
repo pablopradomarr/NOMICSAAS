@@ -282,3 +282,31 @@ amortización bruta 10 m 1 666 660, corregida 1 483 320, exceso 183 340. El anti
 2. **R-2**: sembrar los 22 pares al dar de alta la organización (o dar a
    `readClosingInvariantInput` el mismo *fallback* a `RECLASS_PAIRS` que ya tiene la
    acción), para que I-E9-16 no pueda pasar por vacuidad.
+
+---
+
+# Verificación final — diff `5632ee5…43386eb`
+
+Base aislada `erp_audit_e9` (clon de `erp_test`, 57 migraciones), organización nueva
+montada por `postEntry`, con **0 filas** en `reclassification_pairs` (el caso que
+destapó R-2). Reconstrucción propia en Python/`decimal` y SQL. Todo borrado al terminar.
+
+| Comprobación | Resultado |
+|---|---|
+| **R-1 · reapertura y recierre** | Los contra-asientos se fechan **31-12-2026**, dentro del ejercicio reabierto, y **heredan el kind** (nº 50 `CLOSING`, 51 `REGULARIZATION`, 52 `REVERSAL` de T-25; nº 3 de 2027 `OPENING` de T-28). Dentro de 2026 los grupos 6/7 vuelven a su saldo previo (`705 = 6 050 000`, `6813 = −1 973 655`…), `129 = 0`, `6300 = 0`, y **I-E9-21 sale PASS** con evidencia (antes `INFO`). El recierre postea **cuatro asientos nuevos** (nº 53 T-26, 54 T-27, 2027 nº 4 T-28) y deja 2026 `CLOSED` |
+| **129 y PyG** | PyG del ejercicio recalculada por SQL (espejos neutralizándose entre sí) = **2 946 345** = `129` del asiento de cierre nuevo. `6300` neto = **0** porque la reapertura anuló T-25 y el paso 8 no se repitió; ningún asiento descuadrado (0) |
+| **Apertura y numeración** | Apertura de 2027 **regenerada** y cuadrada (9 950 000 = 9 950 000); espejo exacto del cierre en **14 de 14** cuentas; con todos los asientos, el ejercicio cierra a **0 en todas** las cuentas; numeración viva y sin huecos (2026: 1–54; 2027: 1–4, con el `OPENING` anulado conservando su nº 1) |
+| **R-2 · I-E9-16** | Con `reclassification_pairs` **vacía**, invertido T-32 por SQL → **I-E9-16 FAIL** («173 vence 2027-03-31 ≤ 2027-12-31 y sigue en la cuenta de largo», y la de 2027-09-30); restaurado → **PASS**. El *fallback* a `RECLASS_PAIRS` cierra el hueco |
+| **H-5** | El aviso ya se emite: «407 en USD queda fuera del barrido: la cuenta no es monetaria en el plan (O-4, I-E9-24)» |
+| **Puertas de la reapertura** | `voidEntry` público sobre el `CLOSING` → **CA-1**; como `app_runtime` con `app.reopening_run_id` **inventado** → **23514**; con el de **otro tenant** → **23514**; tenant: 0 filas ajenas |
+| **Las 11 cifras** | Δ = **0** en todas: 8 cuadros (164 filas + `scheduleHash`), 9 periodificaciones, 4 liquidaciones con sus 176 casillas y la 71 = T-23, 5 prorratas, RECC, 5 guardias de bienes de inversión, 7 valores actuales. Los cuatro generadores `--check` siguen byte a byte. Caso A de D7.3: **442 817** recomputado a mano |
+
+**Observación menor (no bloqueante).** Tras una reapertura, el recierre **no repone
+T-25**: `IMPUESTO_BENEFICIOS` no es uno de los nueve bloqueantes, así que el ejercicio
+se puede volver a cerrar sin impuesto corriente (`129` pasa a ser el resultado **antes**
+de impuestos, aquí 2 946 345 frente a 2 209 759). Es coherente y visible en el
+checklist, pero conviene que el paso salga marcado como pendiente tras reabrir.
+
+```
+VEREDICTO: CONFORME
+```

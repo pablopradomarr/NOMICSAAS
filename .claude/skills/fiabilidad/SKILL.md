@@ -178,6 +178,95 @@ Consecuencias que no se negocian:
   en febrero con un movimiento de diciembre tiene que poder retirar un badge ya
   concedido sobre diciembre.
 
+## Invariantes de cierre, recurrentes y fiscalidad periódica (E9, `lib/closing/invariants-e9.ts`)
+
+Mismo contrato que los anteriores: **nunca un PASS que no se haya comprobado**;
+lo no evaluable sale `INFO` diciendo **qué falta**, y todo lo que compara importes
+va con **tolerancia 0**. Son **27 ids** (I-E9-1a y 1b cuentan por separado, igual
+que 10b), y los corre el barrido de auditoría cuando el alcance lleva ejercicio.
+
+| Id | Qué garantiza | Tol. |
+|---|---|---|
+| **I-E9-1a** | `(regla, periodo)` único; toda ocurrencia `GENERADA` tiene asiento; ninguna `OMITIDA`/`FALLIDA` sin motivo | — |
+| **I-E9-1b** | El `inputHash` de la ocurrencia recomputado coincide: dice qué ocurrencia nació con otra versión de la regla | — |
+| **I-E9-2** | Lo posteado por cada regla de amortización = su cuadro | 0 |
+| **I-E9-3** | El `scheduleHash` del cuadro del activo recomputado = el sellado | — |
+| **I-E9-4** (O-28) | `Σ cuotas = coste + mejoras − residual vigente`; ninguna cuota negativa. Los activos **dados de baja o vendidos** quedan fuera, y el PASS dice **cuántos** | 0 |
+| **I-E9-5** | Σ 68x atribuida = saldo de `28x` **por activo** y ≤ base amortizable. Sin `fixed_asset_id`, **INFO nombrando los activos**, jamás PASS por agregado (riesgo R14) | 0 |
+| **I-E9-6** | Toda periodificación con periodo terminado está agotada y con saldo 0 | 0 |
+| **I-E9-7** | Saldo de 480/485/567/568 = pendiente de devengo de las periodificaciones vivas | 0 |
+| **I-E9-8a′** | Libro registro ↔ diario ↔ liquidación sellada (vive en `lib/closing/vat.ts`, con la regla que comprueba) | 0 |
+| **I-E9-8b** | El `iva_period` persistido = `app.iva_period(...)` recomputado (clave canónica `AAAA-Qn`) | — |
+| **I-E9-9** | La liquidación de IVA es reproducible **línea a línea** | 0 |
+| **I-E9-10** (O-9/O-10) | Prorrata definitiva recomputada, múltiplo de 100 y derivada del libro; con documentos sin clave de operación, `INFO` y **nunca** un % | — |
+| **I-E9-10b** (O-11) | Momento, importe y arrastre de la regularización de prorrata (634/639) | 0 |
+| **I-E9-11** | Ningún asiento con línea de IVA en un periodo ya liquidado (B-6) | — |
+| **I-E9-12** | Tras T-26, **todas** las cuentas de los grupos 6 y 7, **`6300` incluida**, a 0 | 0 |
+| **I-E9-13** | `129` tras T-26 = I3 del ejercicio | 0 |
+| **I-E9-14** (O-8) | Apertura = cierre **línea a línea**, con los saldos ya reclasificados | 0 |
+| **I-E9-15** | Ningún asiento en un ejercicio `CLOSED` posterior a su `closedAt` | — |
+| **I-E9-16** | Reclasificación largo↔corto: la suma por contraparte no cambia, toda posición reclasificada tiene vencimiento y **ninguna que venza dentro de la frontera queda en la cuenta de largo**. El universo son los **22 pares**, sembrados en el alta y con *fallback* en el motor: **nunca pasa por vacuidad** | 0 |
+| **I-E9-17** (O-4/O-5) | Tras T-30, `D × r − S = 0` con la tasa **sellada** | 0 |
+| **I-E9-18** | El asiento de diferencias de cambio no mueve ninguna posición **en divisa** | 0 |
+| **I-E9-19** (O-1) | Valor actual: `descuento inicial = Σ intereses` y a vencimiento el pasivo vale su **nominal** | 0 |
+| **I-E9-20** | El `ClosingRun` es reproducible y un ejercicio cerrado tiene exactamente uno `CERRADO` | — |
+| **I-E9-21** | El acto de cerrar y de reabrir: un ejercicio `CLOSED` tiene su **regularización, su cierre y la apertura del siguiente posteados** (marcarlo sin ellos es FAIL); tras reabrir, los cuatro contra-asientos, los grupos 1 a 7 en su saldo previo y `129 = 0` —`6300` vuelve a 0 salvo que ya se haya recontabilizado el impuesto— | 0 |
+| **I-E9-22** (O-16) | DUA: la base es la del DUA y el 477 depende del diferimiento | 0 |
+| **I-E9-23** (O-18) | Distribución del resultado: reserva legal hasta el 20 % del capital, sin repartir por encima de lo distribuible | 0 |
+| **I-E9-24** (O-4) | Ninguna cuenta **no monetaria** entra en el barrido de diferencias de cambio; las excluidas se **declaran** en la evidencia | — |
+| **I-E9-25** (O-6) | Toda posición viva de `17x`/`52x` tiene desglose declarado, o motivo escrito; y el `scheduleHash` del cuadro de deuda recomputado = el sellado | — |
+| **I-E9-26** | Barrido del 31/12: el devengo de RECC y lo pendiente quedan donde tienen que quedar (vive en `lib/closing/vat.ts`) | 0 |
+
+### Familia `CIERRE` de la pestaña Auditoría
+
+Los 27 ids entran en la familia **`CIERRE`** de `lib/audit/families.ts`, con la
+misma regla que las otras siete: **una familia sin evaluar sale `SIN_EVALUAR`,
+jamás en verde**. El bloque que los alimenta lo compone `readClosingInvariantInput`
+en una sola transacción; si falta el dato, el check dice qué falta y no inventa.
+
+### Motivos de sello que aporta el cierre (E9)
+
+Código cerrado, como los de E7 y E8; los declara el catálogo de pasos
+(`lib/closing/checklist.ts`) y viajan en `ClosingRun.sealReasons`. Un paso
+**bloqueante** sin PASS no sella: impide cerrar.
+
+| Motivo | Qué dice |
+|---|---|
+| `IVA_NO_LIQUIDADO` | Queda algún periodo de IVA del ejercicio sin liquidar |
+| `IMPUESTO_DIFERIDO_NO_RECONOCIDO` | Diferencias temporarias, BIN o deducciones sin responder |
+| `RESULTADO_SIN_DISTRIBUIR` | El resultado del ejercicio anterior sigue en `129` |
+| `MODELO_200_PRESENTADO` | El impuesto se tocó con el modelo 200 ya presentado (art. 122 LGT: complementaria) |
+| `CIERRE_REABIERTO` | El ejercicio se reabrió: el `ClosingRun` pasa a `REABIERTO` y a `REQUIERE REVISIÓN` |
+
+### La reapertura (O-21, ADR-0016 D1)
+
+Sólo se reabre un cierre **sellado**, y la reapertura se **registra** en él. Los
+cuatro contra-asientos —T-28 → T-27 → T-26 → **T-25**— se fechan **dentro del
+ejercicio que se reabre** y el espejo de un asiento de sistema **hereda su
+`kind`**, de modo que el par netea en todos los filtros por `kind`. La base sólo
+lo admite con el GUC `app.reopening_run_id` respaldado por un `ClosingRun` real
+del tenant. Los pasos que hay que **recomputar antes de recerrar** quedan en
+`PENDIENTE_RECOMPUTO`: los tres ajustes idempotentes **y el impuesto**, que O-21
+revierte; sin él, `129` recogería el resultado **antes** de impuestos.
+
+### Los puentes al 303, reformulados por el RECC (O-14)
+
+Bajo RECC, `477` sólo recoge **lo cobrado** mientras el libro anota la factura
+íntegra en su expedición (arts. 63 y 61 *decies* RIVA), así que los puentes de E8
+daban **FAIL por diseño** en toda organización acogida. E9 los reformula con las
+cuentas de pendiente incluidas:
+
+- **I-E8-15a′** — `Σ 472 + Σ 4728 = Σ` cuota **deducible** del libro de recibidas
+  del periodo, **más** el ajuste de prorrata del art. 105 (que se postea contra
+  `472` con el `ivaPeriod` del último periodo del año, O-11).
+- **I-E8-15c′** — `Σ 477 + Σ 4778 = Σ` cuota **repercutida** del libro de
+  emitidas del periodo.
+
+Un invariante que falla por hacer lo correcto es peor que no tenerlo: los
+enunciados originales (`Σ 472` y `Σ 477` a secas) se conservan para el régimen
+general, y `lib/closing/vat.ts` los sustituye por los primados cuando hay RECC
+vigente.
+
 ## Provenance por cifra
 ```json
 {"valor": 1245032, "moneda": "EUR", "metrica": "mc3.proyecto.P-2026-004", "run_id": "…", "ledgerHash": "…",

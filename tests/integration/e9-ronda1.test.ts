@@ -666,7 +666,13 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · ronda 1 — los bloqueantes de la aud
 
     // Los pasos 5-7 quedan a recomputar (O-21) y el run, REABIERTO.
     expect([...reabierto.value.pendingRecompute].sort()).toEqual(
-      ["DIFERENCIAS_DE_CAMBIO", "RECLASIFICACION_VENCIMIENTOS", "VALOR_ACTUAL_APLAZAMIENTO"].sort()
+      [
+        "DIFERENCIAS_DE_CAMBIO",
+        "IMPUESTO_BENEFICIOS",
+        "IMPUESTO_DIFERIDO_RESPONDIDO",
+        "RECLASIFICACION_VENCIMIENTOS",
+        "VALOR_ACTUAL_APLAZAMIENTO",
+      ].sort()
     )
     const run = await prisma.closingRun.findFirst({ where: { id: reabierto.value.closingRunId! } })
     expect(run!.status).toBe("REABIERTO")

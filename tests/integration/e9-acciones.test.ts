@@ -434,10 +434,14 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T15 — server actions del cierre, lo
       confirmCode: "2026",
     })
     expect(reopened.error ?? null).toBeNull()
+    // Los tres ajustes idempotentes **y** el impuesto, que O-21 sí revierte y
+    // hay que volver a calcular sobre el resultado nuevo (menor del auditor).
     expect(reopened.data!.pendingRecompute).toEqual([
       "VALOR_ACTUAL_APLAZAMIENTO",
       "DIFERENCIAS_DE_CAMBIO",
       "RECLASIFICACION_VENCIMIENTOS",
+      "IMPUESTO_BENEFICIOS",
+      "IMPUESTO_DIFERIDO_RESPONDIDO",
     ])
     expect((await prisma.fiscalYear.findFirst({ where: { id: fiscalYearId } }))!.status).toBe("OPEN")
 

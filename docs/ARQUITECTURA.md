@@ -10,13 +10,14 @@
 │        │                       │                        │
 │  lib/ledger/*  ◄── motor contable puro (post, void,     │
 │  lib/analytics/*    invariants, reports, allocate)      │
+│  lib/closing/*, lib/recurring/*, lib/audit/*            │
 │        │                       │                        │
 │  ai/* (LLM extract → ExtractionRun)  lib/fx (ExchangeRate)│
 └────────────────────────┬────────────────────────────────┘
                          │ Prisma 7 (+ RLS, triggers)
                  Supabase Postgres 17
 ```
-Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Dominio** (`models/`, acceso a datos por tenant vía `tenantDb`) → **Motor** (`lib/ledger`, `lib/analytics`: funciones puras, testeadas, sin IO) → **BD** (constraints + triggers + RLS como última barrera).
+Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Dominio** (`models/`, acceso a datos por tenant vía `tenantDb`) → **Motor** (`lib/ledger`, `lib/analytics`, `lib/closing`, `lib/recurring`, `lib/audit`: funciones puras, testeadas, sin IO) → **BD** (constraints + triggers + RLS como última barrera).
 
 ## 2. Decisiones clave (ADRs)
 | ADR | Decisión | Nivel |
@@ -51,6 +52,13 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | `lib/audit/confidence.ts` | El badge **`✓ validado contra fuente`** por COMPOSICIÓN y el criterio verificable de «pendiente explicado» (§3.6) | Puro |
 | `lib/audit/{families,diff,bank-match}.ts` | Las siete familias de checks (una familia sin evaluar sale `SIN_EVALUAR`, jamás en verde), el diff entre dos barridos con su `cause`, y las sugerencias de punteo **deterministas** (nunca producto cartesiano; una sugerencia es un cálculo, no un hecho) | Puro |
 | `lib/bank/{n43,csv}.ts` | Parsers de extracto: Norma 43 por posiciones y CSV con **mapeo por banco**. Un fichero que no cuadra se rechaza **entero**; el periodo es el que DECLARA el banco | Puro |
+| `lib/closing/checklist.ts` | El **checklist de cierre**: 43 pasos en nueve bloques, nueve **bloqueantes**, `canCloseFiscalYear` (PASS en los nueve) y los pasos que la reapertura deja en `PENDIENTE_RECOMPUTO` (O-21, incluido el impuesto) | Puro |
+| `lib/closing/{depreciation,accrual,present-value,fx,reclass,distribution}.ts` | Los ajustes de cierre: cuadro de amortización determinista (lineal, residuo a la última cuota, revisión prospectiva), devengo de periodificaciones, valor actual del aplazamiento (ADR-0016 D7.3, un solo tipo mensual declarado), diferencias de cambio 668/768 sobre partidas **monetarias**, reclasificación largo↔corto por los 22 pares y distribución del resultado | Puro |
+| `lib/closing/{vat,model303.map}.ts` | Liquidación de IVA desde el libro registro (clave canónica `AAAA-Qn`), RECC/REDEME con 4728/4778, prorrata definitiva con 634/639, guardia del art. 107 y el **mapa completo del 303** como vista derivada | Puro |
+| `lib/closing/invariants-e9.ts` | **I-E9-1…26** (27 ids con los desdobles 1a/1b, 8a′/8b y 10/10b): recurrentes, inmovilizado, periodificaciones, IVA y sus tres puentes, reclasificación, el acto de cerrar, la reapertura y la distribución | Puro |
+| `lib/recurring/schedule.ts` | Calendario de una regla recurrente: periodos debidos entre dos fechas, con su clave canónica. La idempotencia la impone el índice único, no el motor | Puro |
+| `models/closing.ts` | Todo lo que los 43 pasos y los 27 invariantes necesitan **en una transacción** (`readChecklistInput`, `readClosingInvariantInput`), los saldos y posiciones por SQL agregado, y la siembra de los 22 pares de reclasificación en el alta | IO, tenant |
+| `models/{recurring,assets,accruals,debt,vat}.ts` | Reglas y ocurrencias (asiento primero, ocurrencia enlazada después), inmovilizado con revisión prospectiva y atribución por activo, periodificaciones, cuadros de deuda sellados y liquidaciones de IVA | IO, tenant |
 | `lib/bank/{types,hash,proposal}.ts` | Tipos planos del dominio bancario y el borde `bigint` (`centsFromBigInt`), `sha256` de línea con ordinal del día, y la propuesta de asiento desde un movimiento sin libros | Puro |
 | `models/audit.ts` | `InvariantRun` **append-only**, `headlineFigures` (las cuatro cifras por agregado SQL, `kind ∉ {CLOSING}`), `auditConfigSnapshot` y `auditBlock` (corre I-E7-1…17 con lecturas en serie y sin N+1) | IO, tenant |
 | `models/bank.ts` | Cuentas bancarias con **anclaje**, importación idempotente por `fileSha256`, grupos N-a-M revalidados en servidor **en la divisa de la cuenta**, ignorado con vocabulario cerrado, tipado de pendientes y el cierre en divisa para I-E7-12 | IO, tenant |
@@ -63,6 +71,8 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | `ai/*` | Extracción LLM → `ExtractionRun` (modelo, proveedor, prompt sha256, schema version, tokens, raw, partial) | IO; nunca cifras finales |
 | `ai/prompts/*.md` | Prompts base versionados en git; overrides por organización con `version` | — |
 | `app/(app)/{unsorted,transactions,apps,dashboard,settings}` (heredadas) + `app/(app)/{ledger,reports,analytics,audit}` (nuevas); configuración contable bajo `settings/` | Rutas y server actions | `requireOrg(role)` |
+| `app/(app)/ledger/closing/` | **El asistente de cierre**: los 43 pasos por bloque con su evidencia y drill-down en ≤ 3 clics, la vista previa obligatoria de cada uno de los doce asientos de O-17, el sello del `ClosingRun`, la reapertura con motivo y código del ejercicio, y la distribución del resultado | `requireOrg(role)`; VIEWER lee, EDITOR ejecuta el checklist y postea pasos, ADMIN cierra, reabre y distribuye |
+| `app/(app)/ledger/recurring/`, `app/(app)/settings/{assets,debt,periods}`, `app/(app)/reports/vat` | Reglas recurrentes y su calendario, inmovilizado con su cuadro, cuadros de deuda, rejilla de bloqueo de periodos y el 303 con sus casillas enlazadas al asiento | `requireOrg(role)` |
 | `app/(app)/audit/` | **La pestaña Auditoría**: `/audit` (sello con sus motivos y los cinco hashes, las siete familias con drill-down en ≤ 3 clics, calidad del dato, barrido del almacén, §Registro paginado por cursor), `/audit/runs/[id]` y `/audit/runs/diff` (dos barridos comparados con su `cause`), `/audit/bank` (cuadre por cuenta) y `/audit/bank/[id]` (dos columnas enfrentadas, selección múltiple N-a-M, sugerencias marcadas como tales, conciliar/desconciliar/ignorar con motivo, tipar pendientes y **Proponer asiento**) | `requireOrg(role)`; VIEWER lee, EDITOR concilia, ADMIN barre y fuerza revisión |
 | `components/reports/*`, `components/ledger/*`, `components/ui/{money-cell,confidence-badge,check-status}.tsx` | UI financiera | Sin cálculo contable |
 | `scripts/run-invariants.ts`, `scripts/report.ts` | CLI para CI/auditor | — |
@@ -120,7 +130,7 @@ sellos del run recomputados) y **I-E8-15a/b/c** (los tres puentes al 303). Un FA
 | C1 snapshot | `ledgerHash` + `ReportRun` inmutable; `files.sha256` NOT NULL y **comparado con los bytes del almacén** (I-E8-2); `ExtractionRun` append-only con sus sellos recomputados (I-E8-11) |
 | C2 motor | `lib/ledger`, `lib/analytics` puros; hook PreToolUse `.claude/hooks/guard.sh` bloquea impurezas antes de escribir; mismo check en CI; tests con casos fijos |
 | C3 provenance | Cada celda de informe: `{valor, metrica, run_id, ledgerHash, calculado_por, registros_origen(query), confianza}` |
-| C4 validación | Capa 1 `invariants.ts` (I1–I10), `invariants-e8.ts` (camino documental) y `lib/audit/invariants-e7.ts` (**I-E7-1…17**: conciliación bancaria, integridad de los propios barridos y cuadres de cierre); Capa 2 agente `auditor-fiabilidad` + pestaña Auditoría; Capa 3 revisión por excepción (sello) |
+| C4 validación | Capa 1 `invariants.ts` (I1–I10), `invariants-e8.ts` (camino documental), `lib/audit/invariants-e7.ts` (**I-E7-1…17**: conciliación bancaria, integridad de los propios barridos y cuadres de cierre) y `lib/closing/invariants-e9.ts` (**I-E9-1…26**: cierre, recurrentes, inmovilizado, IVA y reapertura); Capa 2 agente `auditor-fiabilidad` + pestaña Auditoría; Capa 3 revisión por excepción (sello) |
 | C4b conciliación | El cuadre `E − B = Ue − Ub` con **una sola derivación** para el invariante, el panel y el badge. Las cuatro cifras, en la moneda de la cuenta. Un grupo sólo cancela si TODOS sus miembros caen dentro del corte |
 | C5 confianza | `ConfidenceBadge` en toda cifra no derivada del diario; en el camino documental, **cuatro niveles por CAMPO** (`calculado`/`verificado`/`interpretacion_ia`/`no_verificado`) sellados en `fieldOrigins`, y motivo obligatorio **en servidor** para confirmar con algún `no_verificado` |
 | C6 memoria | Ninguna cifra en memoria de agentes ni `cachedParseResult`; `AuditLog` y `runs/registro.jsonl` estructurados |

@@ -43,6 +43,54 @@ Creación de organización = `importNPGC(orgId, variant: "GENERAL" | "PYMES")` (
 | Regularización cierre | 7xx → 129 ; 129 → 6xx | |
 | Cierre / apertura | Asiento de cierre (todas las cuentas de balance) y apertura del ejercicio siguiente | |
 
+
+### Bloque de cierre y fiscalidad periódica (E9, ADR-0016) — T-29…T-37
+
+El catálogo pasa de 28 a **37 plantillas**. Todas parametrizadas por
+`OrganizationAccountMap`, deterministas y con su motor puro en `lib/closing/`.
+
+| Cód. | Plantilla | Debe | Haber |
+|---|---|---|---|
+| T-29 | `DUA_IMPORTACION` | 600/21x base del **DUA** · 472 IVA del DUA | 400 proveedor · 4751/572 (y 477 si hay diferimiento, O-16) |
+| T-30 | `DIFERENCIAS_CAMBIO_CIERRE` | 668 (pérdida) o la posición en divisa | 768 (beneficio) o la posición. **Sólo partidas monetarias** a tasa de cierre (NRV 11ª.2.2) |
+| T-31 | `AJUSTE_VALOR_ACTUAL` | 662 intereses devengados | 17x/52x pasivo, hasta que a vencimiento vale su **nominal** (O-1) |
+| T-32 | `RECLASIFICACION_VENCIMIENTOS` | 17x largo (pasivo) o 54x corto (activo) | 52x corto (pasivo) o 25x largo (activo). Por los **22 pares**, medido **desde el cierre** |
+| T-33 | `BAJA_INMOVILIZADO` | 28x amortización acumulada · 671 pérdida | 21x coste |
+| T-34 | `VENTA_INMOVILIZADO` | 28x · 543/572 precio · 671 si pérdida | 21x coste · 771 si beneficio |
+| T-35 | `DISTRIBUCION_RESULTADO` | 129 resultado | 112 reserva legal (hasta el 20 % del capital) · 113 · 120 · 526 dividendo · 557 a cuenta |
+| T-36 | `DEVENGO_RECC` | 4728 IVA soportado pendiente → 472 | 4778 IVA repercutido pendiente → 477, al **cobro** (arts. 163 *terdecies* LIVA) |
+| T-37 | `ALTA_PRESTAMO` | 572 efectivo recibido | 17x/52x según vencimiento, con su `DebtSchedule` declarado |
+
+**Los doce asientos del cierre, en orden (O-17).** Recurrentes pendientes →
+devengo RECC → prorrata definitiva → liquidación de IVA → valor actual (T-31) →
+diferencias de cambio (T-30) → reclasificación de vencimientos (T-32) →
+**impuesto sobre beneficios (T-25)** → regularización (T-26) → cierre (T-27) →
+apertura del siguiente (T-28) → contra-asiento de T-32 como **nº 2 de N+1**.
+El impuesto va después de **todo** movimiento de 6/7 (art. 10.3 LIS) y antes de
+la regularización, que barre también la `6300`.
+
+### IVA periódico: RECC, prorrata y el 303
+
+- **Clave de periodo canónica `AAAA-Qn`** (o `AAAA-MM`), la del asiento derivada
+  de `max(receptionDate, documentDate)` (ADR-0014 D8).
+- **RECC** (arts. 163 *terdecies* y ss. LIVA): el devengo sigue al **cobro**; la
+  factura se anota íntegra en el libro en su expedición y lo no cobrado vive en
+  **4728/4778** hasta T-36. El barrido del 31/12 es I-E9-26.
+- **Prorrata** (arts. 104-105 LIVA): el porcentaje **definitivo** se deriva del
+  libro de emitidas con las exclusiones del art. 104.Tres marcadas **en el
+  documento**; se redondea **por exceso** al entero superior; la regularización
+  va contra **634** (ajuste negativo) o **639** (positivo). Con documentos sin
+  clave de operación el resultado es `INFO` y **nunca** un porcentaje.
+- **Bienes de inversión** (arts. 107-110): la regularización queda fuera de E9,
+  pero `capitalGoodsGuard` es **determinista** y avisa; una casilla en blanco con
+  una nota es honesta frente al usuario, no frente a la AEAT.
+- **Modelo 303**: `lib/closing/model303.map.ts` es una **vista derivada** del
+  libro registro y del diario, casilla a casilla, con drill-down al asiento. Los
+  puentes que lo sostienen son I-E8-15a′/15c′ e I-E9-8a′.
+- **Retenciones**: 111 (rendimientos del trabajo y profesionales), 115
+  (arrendamientos) y 123 (capital mobiliario), con lo practicado abonado a 4751
+  (I-E8-17).
+
 Tipos IVA e IRPF en tabla `TaxRate` por organización (código, %, cuenta, vigencia), no hardcodeados.
 
 ## Comprobaciones al postear (determinista, `lib/ledger/post.ts`)
