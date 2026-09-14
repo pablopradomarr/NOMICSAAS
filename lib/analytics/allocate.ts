@@ -22,10 +22,22 @@ import {
   MarginLevel,
 } from "@/lib/analytics/types"
 import { contribution, isPnlLine, resolveDestination } from "@/lib/analytics/margins"
+import {
+  EMPTY_TIME_HASH,
+  fteMonthsByCostCenter,
+  isActivityDriver,
+  minutesByTarget,
+  timeHash,
+  timeWindowOf,
+  unapprovedMinutesByTarget,
+  type HeadcountRow,
+  type TimeEntryRow,
+} from "@/lib/time/aggregate"
 import { formatBps } from "@/lib/money"
 import type { AllocPeriod, Driver, TargetKind, ZeroBaseFallback } from "@/prisma/client"
 
 export type { AllocPeriod, Driver, TargetKind, ZeroBaseFallback }
+export type { HeadcountRow, TimeEntryRow }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -107,6 +119,17 @@ export type AllocationInput = {
   priorAllocations: readonly PriorAllocation[]
   /** Id del run que se está simulando o sellando; sólo etiqueta la salida. */
   runId?: string
+  /**
+   * **E10 (ADR-0018 D1).** Partes del EJERCICIO, **aprobados y sin aprobar** (no
+   * sólo del periodo: `YTD` y `PRIOR_PERIOD` los necesitan, igual que las
+   * líneas). El driver `HOURS` usa **sólo los aprobados y productivos**; los
+   * demás viajan para poder emitir `W-E10-UNAPPROVED-HOURS` con su importe y su
+   * % sobre la base (O-E10-2). Ausente o vacío ⇒ los drivers de actividad caen
+   * en su `zeroBaseFallback`, nunca en un reparto silencioso.
+   */
+  timeEntries?: readonly TimeEntryRow[]
+  /** **E10.** Snapshots de plantilla del ejercicio, por CECO y fin de mes. */
+  headcount?: readonly HeadcountRow[]
 }
 
 export type AllocationTargetRef =
@@ -143,6 +166,40 @@ export type AllocationWarning =
     }
   | { code: "W-E5-NEG-BASE"; ruleCode: string; period: string; targets: readonly string[]; detail: string }
   | { code: "W-E5-ARCHIVED-TARGET"; ruleCode: string; period: string; targets: readonly string[]; detail: string }
+  /**
+   * **E10 · ADR-0018 D1.** Los cuatro avisos de los drivers de actividad, del
+   * mismo vocabulario cerrado que los `W-E5-*`. Dos de ellos **mueven el sello
+   * del propio `AllocationRun`** y llevan escrito su motivo: una regla de
+   * actividad **nunca queda muda**, ni repartiendo 0 € ni repartiendo sobre una
+   * parte de la actividad.
+   */
+  | {
+      code: "W-E10-NO-HOURS"
+      ruleCode: string
+      period: string
+      fallback: ZeroBaseFallback
+      detail: string
+    }
+  | {
+      code: "W-E10-NO-HEADCOUNT"
+      ruleCode: string
+      period: string
+      targets: readonly string[]
+      sealReason: "PLANTILLA_AUSENTE"
+      detail: string
+    }
+  | {
+      code: "W-E10-UNAPPROVED-HOURS"
+      ruleCode: string
+      period: string
+      unapprovedMinutes: number
+      /** Sobre la base aprobada del driver. `null` con base 0. */
+      shareOfBaseBps: number | null
+      targets: readonly string[]
+      sealReason: "HORAS_SIN_APROBAR"
+      detail: string
+    }
+  | { code: "W-E10-HEADCOUNT-TRAPPED"; ruleCode: string; period: string; targets: readonly string[]; detail: string }
 
 export type AllocationErrorCode =
   | "ALLOCATION_CYCLE"
@@ -193,6 +250,27 @@ export type AllocationResult = {
   /** Códigos, en orden de ejecución. */
   rulesApplied: readonly string[]
   totalAllocatedCents: Cents
+  /**
+   * **E10 · ADR-0018 D1 — el cuarto sello, con su ventana.** Lo que el run
+   * persiste en `time_hash`, `time_hash_window_start` y `time_hash_window_end`,
+   * y lo que la derivación de `STALE` recomputa (cuarta causa).
+   */
+  timeSeal: RunTimeSeal
+}
+
+/**
+ * El cuarto sello del `AllocationRun`. `timeHash = "∅"` y ventana `null` cuando
+ * **ninguna** regla del run usa un driver de actividad.
+ *
+ * La ventana se **persiste** además de recomputarse (O-E10-1): con el sello
+ * acotado al periodo, un run de marzo con `zeroBaseFallback = YTD` reparte con
+ * partes de enero y aprobar en mayo un parte de enero **no** lo caducaba. Y
+ * contiene siempre el periodo del run, que es lo que exige el CHECK de M4.
+ */
+export type RunTimeSeal = {
+  timeHash: string
+  timeHashWindowStart: LocalDate | null
+  timeHashWindowEnd: LocalDate | null
 }
 
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E }
@@ -624,16 +702,14 @@ type DriverWeights = {
  * peso 0 y queda excluido (§1.3): un peso negativo daría cuotas > 100 % a los
  * demás y un **ingreso** de estructura al que devolvió.
  */
-export function driverWeights(
-  rule: AllocationRuleSpec,
-  input: AllocationInput,
-  ctx: {
-    classified: readonly Classified[]
-    indexes: Indexes
-    warnings: AllocationWarning[]
-    unallocatedCents: Cents
-  }
-): DriverWeights {
+type DriverCtx = {
+  classified: readonly Classified[]
+  indexes: Indexes
+  warnings: AllocationWarning[]
+  unallocatedCents: Cents
+}
+
+export function driverWeights(rule: AllocationRuleSpec, input: AllocationInput, ctx: DriverCtx): DriverWeights {
   const { indexes } = ctx
   const label = input.period.label
   const window: DateWindow = { from: input.period.start, to: input.period.end }
@@ -651,6 +727,12 @@ export function driverWeights(
     }
     return { rows, fallbackApplied: null }
   }
+
+  // **E10 · D1** — las DOS ramas nuevas. Todo lo demás de esta función, y del
+  // motor, queda intacto: Hamilton, el grafo, la cascada, `sourceShareBps`, el
+  // nivel que viaja con el importe y la forma canónica de la salida.
+  if (rule.driver === "HOURS") return hoursWeights(rule, input, ctx, window, label)
+  if (rule.driver === "HEADCOUNT") return headcountWeights(rule, input, ctx, window, label)
 
   const source: ReadonlyMap<string, Cents> | null =
     rule.driver === "REVENUE_SHARE"
@@ -718,6 +800,239 @@ export function driverWeights(
   return { rows: widenedRows, fallbackApplied: fallback }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// E10 · D1 — los dos drivers de actividad
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Los textos de los avisos son los del fixture sellado (`D6`, contrato de cifras
+ * congelado): cambiarlos rompe el test byte a byte de T10, que es exactamente lo
+ * que debe pasar si alguien los cambia sin pasar por el generador.
+ */
+const NO_HOURS_DETAIL = "no hay minutos aprobados y productivos de receptores elegibles en la ventana"
+const UNAPPROVED_HOURS_DETAIL = "hay minutos sin aprobar de receptores elegibles en la ventana del driver"
+const NO_HEADCOUNT_DETAIL = "receptor sin ningun snapshot de plantilla en el periodo: peso 0"
+const HEADCOUNT_TRAPPED_DETAIL = "el receptor no tiene regla posterior con la que repartir lo recibido"
+
+/** Clave del receptor en el agregado de horas: la LN no tiene id en el parte. */
+const targetKeyOf = (ref: AllocationTargetRef): string => (ref.kind === "BUSINESS_LINE" ? ref.code : ref.id)
+
+/** Los destinos DECLARADOS de una regla, en su orden de declaración. */
+function declaredTargets(rule: AllocationRuleSpec, indexes: Indexes): AllocationTargetRef[] {
+  const out: AllocationTargetRef[] = []
+  for (const target of [...rule.targets].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))) {
+    const ref = targetRefOf(target, indexes)
+    if (ref) out.push(ref)
+  }
+  return out
+}
+
+/**
+ * **`HOURS`** (ADR-0018 D1). Peso de un receptor = `Σ minutes` de los partes
+ * **`APROBADO` y `productive`** con ese receptor y `date` dentro de la ventana,
+ * **contra-apuntes incluidos con su signo**, y `max(0, ·)` como en el resto de
+ * drivers.
+ *
+ * Tres cosas que el contrato del experto fija y aquí se cumplen al pie de la
+ * letra: **minutos enteros** (Q-2), **sólo aprobadas** —una hora sin firmar no
+ * reparte dinero (R-H-3)— y **las horas de personal ya imputado directamente a
+ * MC2 cuentan igual**, porque el driver mide *consumo de estructura*, no coste.
+ *
+ * Y la que la ronda 1 añadió, **O-E10-2**: con base > 0 pero minutos sin firmar
+ * de receptores elegibles, se emite `W-E10-UNAPPROVED-HOURS` **siempre**, con su
+ * % sobre la base. Repartir sobre el 75 % de la actividad sin decirlo es tan malo
+ * como repartir 0 € en silencio, y es mucho más frecuente.
+ */
+function hoursWeights(
+  rule: AllocationRuleSpec,
+  input: AllocationInput,
+  ctx: DriverCtx,
+  window: DateWindow,
+  label: string
+): DriverWeights {
+  const entries = input.timeEntries ?? []
+
+  /** Minutos productivos por receptor, aprobados o sin aprobar, en una ventana. */
+  const minutesIn = (w: DateWindow, approved: boolean): ReadonlyMap<string, number> => {
+    const out = new Map<string, number>()
+    if (rule.targetKind === "BUSINESS_LINES") {
+      // La LN del parte es la del proyecto (denormalizada): el agregado por
+      // receptor de `lib/time` no la conoce, y aquí se agrupa por su código.
+      for (const row of entries) {
+        if (row.approved !== approved || !row.productive || !row.businessLineCode) continue
+        if (row.date < w.from || row.date > w.to) continue
+        out.set(row.businessLineCode, (out.get(row.businessLineCode) ?? 0) + row.minutes)
+      }
+      return out
+    }
+    const wanted = rule.targetKind === "COST_CENTERS" ? "COST_CENTER" : "PROJECT"
+    if (approved) {
+      for (const t of minutesByTarget(entries, w, { productiveOnly: true, approvedOnly: true })) {
+        if (t.kind === wanted) out.set(t.id, t.minutes)
+      }
+      return out
+    }
+    for (const t of unapprovedMinutesByTarget(entries, w, { productiveOnly: true })) {
+      if (t.kind === wanted) out.set(t.id, t.unapprovedMinutes)
+    }
+    return out
+  }
+
+  const base = minutesIn(window, true)
+
+  // Proyectos: los elegibles del filtro, con la regla de §1.3 —un proyecto
+  // CERRADO que consumió horas en el periodo sigue absorbiendo su estructura—.
+  // CECOs y líneas de negocio: los DECLARADOS; `validate()` ya lo ha exigido.
+  const refs: { target: AllocationTargetRef; eligibilityReason: "ACTIVITY_IN_PERIOD" | null }[] =
+    rule.targetKind === "PROJECTS"
+      ? eligibleProjects(rule, input.config, base).map((e) => ({
+          target: { kind: "PROJECT" as const, id: e.project.id, code: e.project.code },
+          eligibilityReason: e.eligibilityReason,
+        }))
+      : declaredTargets(rule, ctx.indexes).map((target) => ({ target, eligibilityReason: null }))
+
+  const rows: WeightRow[] = refs.map((r) => ({ ...r, weight: Math.max(0, base.get(targetKeyOf(r.target)) ?? 0) }))
+  const baseTotal = rows.reduce((a, r) => a + r.weight, 0)
+
+  if (baseTotal === 0) {
+    // ADR-0013 D4, punto 2: con base cero la regla **nunca queda muda**. El
+    // fallback es configuración declarada, y el aplicado se escribe en cada línea.
+    const fallback = rule.zeroBaseFallback
+    ctx.warnings.push({ code: "W-E10-NO-HOURS", ruleCode: rule.code, period: label, fallback, detail: NO_HOURS_DETAIL })
+    if (fallback === "SKIP_WARN") return { rows: [], fallbackApplied: null }
+    if (fallback === "EQUAL") return { rows: rows.map((r) => ({ ...r, weight: 1 })), fallbackApplied: "EQUAL" }
+    const widened: DateWindow =
+      fallback === "YTD"
+        ? { from: input.period.fiscalYearStart, to: input.period.end }
+        : priorPeriodWindow(input.period.kind, label)
+    const widenedBase = minutesIn(widened, true)
+    const widenedRows = rows.map((r) => ({ ...r, weight: Math.max(0, widenedBase.get(targetKeyOf(r.target)) ?? 0) }))
+    if (widenedRows.reduce((a, r) => a + r.weight, 0) === 0) return { rows, fallbackApplied: null }
+    return { rows: widenedRows, fallbackApplied: fallback }
+  }
+
+  // **O-E10-2** — el caso peligroso es el PARCIAL, no el cero.
+  const unapproved = minutesIn(window, false)
+  const pending = rows
+    .map((r) => ({ code: r.target.code, minutes: unapproved.get(targetKeyOf(r.target)) ?? 0 }))
+    .filter((p) => p.minutes > 0)
+  if (pending.length > 0) {
+    const unapprovedMinutes = pending.reduce((a, p) => a + p.minutes, 0)
+    ctx.warnings.push({
+      code: "W-E10-UNAPPROVED-HOURS",
+      ruleCode: rule.code,
+      period: label,
+      unapprovedMinutes,
+      shareOfBaseBps: Math.floor((unapprovedMinutes * 10000) / baseTotal),
+      targets: pending.map((p) => p.code).sort(),
+      sealReason: "HORAS_SIN_APROBAR",
+      detail: UNAPPROVED_HOURS_DETAIL,
+    })
+  }
+  return { rows, fallbackApplied: null }
+}
+
+/**
+ * **`HEADCOUNT`** (ADR-0018 D1, Q-7). Peso = **`Σ fteMilli` de los snapshots
+ * cuyo fin de mes cae dentro del periodo del run** —«FTE·mes»—, sin media, sin
+ * división y sin redondeo, y **sólo a CECOs declarados**.
+ *
+ * Para un run `MONTH` hay **un solo snapshot** por receptor, así que es
+ * exactamente el «stock a fin de periodo» que fijó E5 y el fixture no se mueve;
+ * para `QUARTER` y `YEAR` deja de ser falso: un CECO que vive de febrero a
+ * noviembre tenía **peso 0** en el run anual y no absorbía nada de sus diez
+ * meses vivos, trasladando esa estructura a los demás.
+ *
+ * Y distingue lo que la ronda 0 confundía: un receptor **sin ningún snapshot** es
+ * un hueco de datos (`W-E10-NO-HEADCOUNT`, sello `PLANTILLA_AUSENTE`); uno con
+ * `fteMilli = 0` es **un dato**, y no mueve ningún sello.
+ */
+function headcountWeights(
+  rule: AllocationRuleSpec,
+  input: AllocationInput,
+  ctx: DriverCtx,
+  window: DateWindow,
+  label: string
+): DriverWeights {
+  const declared = declaredTargets(rule, ctx.indexes)
+  const fte = fteMonthsByCostCenter(input.headcount ?? [], window, {
+    eligible: declared.map((ref) => ({ id: ref.id, code: ref.code })),
+  })
+  const byId = new Map(fte.map((f) => [f.id, f]))
+  const rows: WeightRow[] = declared.map((target) => ({
+    target,
+    weight: Math.max(0, byId.get(target.id)?.fteMilli ?? 0),
+    eligibilityReason: null,
+  }))
+
+  const missing = declared.filter((ref) => byId.get(ref.id)?.declared !== true).map((ref) => ref.code).sort()
+  if (missing.length > 0) {
+    ctx.warnings.push({
+      code: "W-E10-NO-HEADCOUNT",
+      ruleCode: rule.code,
+      period: label,
+      targets: missing,
+      sealReason: "PLANTILLA_AUSENTE",
+      detail: NO_HEADCOUNT_DETAIL,
+    })
+  }
+
+  // **O-E10-16** — el saldo atrapado un nivel más abajo: el receptor no tiene
+  // regla POSTERIOR del mismo periodo con la que repartir lo que recibe. I5.b
+  // acaba detectándolo, pero tarde y sin decir por qué; esto lo dice al simular.
+  const siblings = effectiveRules(input.rules, input.period)
+  const trapped = declared
+    .filter(
+      (ref) =>
+        !siblings.some(
+          (r) =>
+            r.sourceCostCenterId === ref.id &&
+            r.period === rule.period &&
+            (r.priority > rule.priority || (r.priority === rule.priority && r.code > rule.code))
+        )
+    )
+    .map((ref) => ref.code)
+    .sort()
+  if (trapped.length > 0) {
+    ctx.warnings.push({
+      code: "W-E10-HEADCOUNT-TRAPPED",
+      ruleCode: rule.code,
+      period: label,
+      targets: trapped,
+      detail: HEADCOUNT_TRAPPED_DETAIL,
+    })
+  }
+
+  if (rows.reduce((a, r) => a + r.weight, 0) !== 0) return { rows, fallbackApplied: null }
+
+  // Base cero con la plantilla DECLARADA a cero: no es un hueco, es un dato, así
+  // que el motivo de sello no aplica; lo que sí aplica es el mecanismo de E5 —el
+  // fallback declarado y su aviso—, para que la regla no reparta 0 € en silencio.
+  const fallback = rule.zeroBaseFallback
+  ctx.warnings.push({
+    code: "W-E5-ZERO-BASE",
+    ruleCode: rule.code,
+    period: label,
+    fallback,
+    unallocatedCents: ctx.unallocatedCents,
+    detail: "base del driver = 0 en el periodo",
+  })
+  if (fallback === "SKIP_WARN") return { rows: [], fallbackApplied: null }
+  if (fallback === "EQUAL") return { rows: rows.map((r) => ({ ...r, weight: 1 })), fallbackApplied: "EQUAL" }
+  const widened: DateWindow =
+    fallback === "YTD"
+      ? { from: input.period.fiscalYearStart, to: input.period.end }
+      : priorPeriodWindow(input.period.kind, label)
+  const widenedFte = new Map(
+    fteMonthsByCostCenter(input.headcount ?? [], widened, {
+      eligible: declared.map((ref) => ({ id: ref.id, code: ref.code })),
+    }).map((f) => [f.id, f.fteMilli])
+  )
+  const widenedRows = rows.map((r) => ({ ...r, weight: Math.max(0, widenedFte.get(r.target.id) ?? 0) }))
+  if (widenedRows.reduce((a, r) => a + r.weight, 0) === 0) return { rows, fallbackApplied: null }
+  return { rows: widenedRows, fallbackApplied: fallback }
+}
+
 function targetRefOf(target: RuleTargetSpec, indexes: Indexes): AllocationTargetRef | null {
   if (target.projectId) {
     const p = indexes.projectById.get(target.projectId)
@@ -765,11 +1080,27 @@ function validate(
   }
 
   for (const rule of rules) {
-    if (rule.driver === "HOURS" || rule.driver === "HEADCOUNT") {
-      return {
-        code: "DRIVER_UNAVAILABLE",
-        message: `el driver ${rule.driver === "HOURS" ? "HORAS" : "PLANTILLA"} de la regla ${rule.code} necesita partes de horas, que llegan en E10. Elige otro driver o deja el CECO sin liquidar`,
-        ruleCodes: [rule.code],
+    // **E10 · D1** — `HEADCOUNT` sólo reparte a CECOs, y con destinos
+    // DECLARADOS: la plantilla de un centro es un dato suyo, no algo que se
+    // descubra del diario. Con proyectos no hay plantilla y derivarla de las
+    // horas sería `HOURS` con otro nombre.
+    if (rule.driver === "HEADCOUNT") {
+      if (rule.targetKind !== "COST_CENTERS") {
+        return {
+          // **E10 · D1** — `HEADCOUNT` sólo reparte a CECOs: con proyectos no hay
+          // plantilla declarada y derivarla de las horas sería `HOURS` con otro
+          // nombre. Lo impiden también el CHECK de M4 y la acción.
+          code: "DRIVER_UNAVAILABLE",
+          message: `la regla ${rule.code} reparte por PLANTILLA a ${rule.targetKind === "PROJECTS" ? "proyectos" : "líneas de negocio"}: el driver HEADCOUNT sólo admite centros de coste, porque sólo ellos tienen plantilla declarada (ADR-0018 D1)`,
+          ruleCodes: [rule.code],
+        }
+      }
+      if (rule.targets.length === 0) {
+        return {
+          code: "TARGETS_REQUIRED",
+          message: `la regla ${rule.code} reparte por PLANTILLA y no declara ningún centro de coste destino: no repartiría un céntimo`,
+          ruleCodes: [rule.code],
+        }
       }
     }
     // BLOQUEA #1 / ADR-0013 D4 — CONTRATO de `targetKind` × `driver`.
@@ -781,8 +1112,13 @@ function validate(
     // declara con destinos EXPLÍCITOS (`FIXED_PERCENT`, `MANUAL`). Antes, la
     // combinación se guardaba y repartía 0 € sin decir nada: exactamente la
     // «regla inerte» que D4 prohíbe.
+    //
+    // **E10** abre una excepción acotada: `HOURS` y `HEADCOUNT` sí saben ponderar
+    // un CECO o una línea de negocio, porque el parte de horas lleva su receptor
+    // y su LN, y el snapshot de plantilla su centro. Siguen exigiendo **destinos
+    // declarados**: un receptor que no es proyecto no se descubre del diario.
     if (rule.targetKind === "COST_CENTERS" || rule.targetKind === "BUSINESS_LINES") {
-      if (rule.driver !== "FIXED_PERCENT" && rule.driver !== "MANUAL") {
+      if (!isActivityDriver(rule.driver) && rule.driver !== "FIXED_PERCENT" && rule.driver !== "MANUAL") {
         return {
           code: "TARGETS_REQUIRED",
           message: `la regla ${rule.code} reparte a ${rule.targetKind === "COST_CENTERS" ? "centros de coste" : "líneas de negocio"} con el driver ${rule.driver}, que calcula sus pesos por proyecto desde el diario: declara los destinos con porcentaje fijo (FIXED_PERCENT) o con importes (MANUAL)`,
@@ -962,9 +1298,12 @@ export function allocate(input: AllocationInput): Result<AllocationResult, Alloc
     const warningsBefore = warnings.length
     const weights = driverWeights(rule, input, { classified, indexes, warnings, unallocatedCents: unallocated })
     const weightTotal = weights.rows.reduce((a, r) => a + r.weight, 0)
+    // Una base cero DECLARADA —`W-E5-ZERO-BASE` o, con un driver de actividad,
+    // `W-E10-NO-HOURS`— es un caso previsto con su fallback; no tener receptores
+    // con peso sin haberlo declarado es una regla inerte, y se rechaza.
     const declaredZeroBase = warnings
       .slice(warningsBefore)
-      .some((w) => w.code === "W-E5-ZERO-BASE" && w.ruleCode === rule.code)
+      .some((w) => (w.code === "W-E5-ZERO-BASE" || w.code === "W-E10-NO-HOURS") && w.ruleCode === rule.code)
 
     if (rule.driver === "MANUAL") {
       // I-E5-10: Σ importes = base liquidable, comprobado ANTES de persistir.
@@ -1107,7 +1446,56 @@ export function allocate(input: AllocationInput): Result<AllocationResult, Alloc
     warnings,
     rulesApplied,
     totalAllocatedCents: lines.reduce((a, l) => a + l.amountCents, 0),
+    // El cuarto sello se calcula sobre las reglas VIGENTES del run, que son las
+    // que declaran la ventana que el reparto puede llegar a consumir.
+    timeSeal: timeSealOf(rules, input.period, input.timeEntries ?? []),
   })
+}
+
+/**
+ * **El cuarto sello del run y su ventana** (ADR-0018 D1, O-E10-1).
+ *
+ * `W = timeWindowOf(reglas vigentes, periodo)` y
+ * `timeHash = sha256(forma canónica de las entradas APROBADAS con date ∈ W)`,
+ * o `"∅"` y ventana `NULL` cuando ninguna regla del run usa un driver de
+ * actividad. La ventana **contiene siempre** el periodo del run —lo exige el
+ * CHECK de M4— y se persiste para que la staleness no dependa de releer unas
+ * reglas que también cambian.
+ */
+export function timeSealOf(
+  rules: readonly AllocationRuleSpec[],
+  period: AllocationPeriodRef,
+  timeEntries: readonly TimeEntryRow[]
+): RunTimeSeal {
+  const window = timeWindowOf(
+    rules.map((r) => ({ driver: r.driver, zeroBaseFallback: r.zeroBaseFallback })),
+    { kind: period.kind, label: period.label, start: period.start, end: period.end, fiscalYearStart: period.fiscalYearStart }
+  )
+  if (window === null) {
+    return { timeHash: EMPTY_TIME_HASH, timeHashWindowStart: null, timeHashWindowEnd: null }
+  }
+  return {
+    timeHash: timeHash(timeEntries, window),
+    timeHashWindowStart: window.from,
+    timeHashWindowEnd: window.to,
+  }
+}
+
+/**
+ * **La cuarta causa de `STALE`** (ADR-0013 D5 + ADR-0018 D1): el `timeHash`
+ * recomputado **sobre la ventana que el propio run persiste** difiere del
+ * sellado. Aprobar en enero un parte de diciembre cambia la base del reparto de
+ * diciembre, y sin esto el run seguiría luciendo vigente con un reparto que ya
+ * no se puede reproducir.
+ *
+ * Un run sin ventana sellada (`timeHash = "∅"`) no usó ningún driver de
+ * actividad: ningún parte lo puede caducar.
+ */
+export function isTimeSealStale(sealed: RunTimeSeal, timeEntries: readonly TimeEntryRow[]): boolean {
+  if (sealed.timeHashWindowStart === null || sealed.timeHashWindowEnd === null) {
+    return sealed.timeHash !== EMPTY_TIME_HASH
+  }
+  return timeHash(timeEntries, { from: sealed.timeHashWindowStart, to: sealed.timeHashWindowEnd }) !== sealed.timeHash
 }
 
 /**
@@ -1324,10 +1712,49 @@ export const canonicalLine = (line: AppliedAllocation): CanonicalAllocationLine 
 
 /** Fila serializable de `liquidacion-esperada.json` (`warnings`). */
 export function canonicalWarning(w: AllocationWarning): Record<string, unknown> {
-  if (w.code === "W-E5-ZERO-BASE") {
+  if (w.code === "W-E5-ZERO-BASE" || w.code === "W-E10-NO-HOURS") {
     return { code: w.code, rule: w.ruleCode, period: w.period, fallback: w.fallback, detail: w.detail }
   }
+  // **E10**: los dos avisos que mueven el sello llevan su motivo DENTRO, para que
+  // quien sella no tenga que reconstruirlo de un `code` (lección H-4 de E7).
+  if (w.code === "W-E10-UNAPPROVED-HOURS") {
+    return {
+      code: w.code,
+      rule: w.ruleCode,
+      period: w.period,
+      unapprovedMinutes: w.unapprovedMinutes,
+      shareOfBaseBps: w.shareOfBaseBps,
+      targets: [...w.targets],
+      sealReason: w.sealReason,
+      detail: w.detail,
+    }
+  }
+  if (w.code === "W-E10-NO-HEADCOUNT") {
+    return {
+      code: w.code,
+      rule: w.ruleCode,
+      period: w.period,
+      targets: [...w.targets],
+      sealReason: w.sealReason,
+      detail: w.detail,
+    }
+  }
   return { code: w.code, rule: w.ruleCode, period: w.period, targets: [...w.targets], detail: w.detail }
+}
+
+/**
+ * Los motivos de sello que un run aporta por sus avisos (EV-15 y EV-16). Un
+ * aviso que no mueve el sello es decorativo: es la lección H-4 de E7, y aquí la
+ * correspondencia aviso → motivo se escribe **una sola vez**.
+ */
+export function allocationSealReasons(
+  warnings: readonly AllocationWarning[]
+): readonly ("HORAS_SIN_APROBAR" | "PLANTILLA_AUSENTE")[] {
+  const out = new Set<"HORAS_SIN_APROBAR" | "PLANTILLA_AUSENTE">()
+  for (const w of warnings) {
+    if (w.code === "W-E10-UNAPPROVED-HOURS" || w.code === "W-E10-NO-HEADCOUNT") out.add(w.sealReason)
+  }
+  return [...out].sort()
 }
 
 export type CanonicalRunRow = {
