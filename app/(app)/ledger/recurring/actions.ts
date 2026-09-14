@@ -35,7 +35,7 @@ import { tenantTransaction } from "@/lib/db"
 import { accrualSchedule, accrualScheduleHashOf } from "@/lib/closing/accrual"
 import { depreciationSchedule } from "@/lib/closing/depreciation"
 import { buildFromTemplate } from "@/lib/ledger/templates"
-import type { EntryDraft, LocalDate, ResolvedLine } from "@/lib/ledger/types"
+import type { LocalDate, ResolvedLine } from "@/lib/ledger/types"
 import {
   buildOccurrenceDraft,
   duePeriods,
@@ -43,7 +43,6 @@ import {
   occurrenceInputHash,
   postingDateOf,
   type PeriodKey,
-  type RecurringRuleRef,
   type ScheduleRowRef,
 } from "@/lib/recurring/schedule"
 import { readAccruals, createAccrualTx, setAccrualStatusTx, type AccrualRow } from "@/models/accruals"
@@ -502,4 +501,8 @@ function buildSource(
   }
 }
 
-export type { EntryDraft, RecurringRuleRef }
+// Nota (T17): un fichero `"use server"` NO puede reexportar tipos. Turbopack
+// recoge **todos** los exports del módulo para construir la tabla de acciones
+// antes de borrar los tipos, y el `build` falla con «Export EntryDraft doesn't
+// exist in target module» en cuanto una página lo importa. Los tipos se importan
+// de su origen (`@/lib/ledger/types`, `@/lib/recurring/schedule`).
