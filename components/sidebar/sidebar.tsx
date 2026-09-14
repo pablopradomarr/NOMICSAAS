@@ -22,11 +22,13 @@ import config from "@/lib/config"
 import {
   Banknote,
   BookOpenCheck,
+  Boxes,
   Building2,
   CalendarRange,
   ClockArrowUp,
   Coins,
   Contact,
+  DoorClosed,
   DatabaseBackup,
   FileText,
   FolderKanban,
@@ -37,11 +39,15 @@ import {
   Hourglass,
   House,
   Import,
+  Landmark,
   Layers,
   ListTree,
+  LockKeyhole,
   NotebookPen,
   Percent,
+  ReceiptEuro,
   ReceiptText,
+  Repeat,
   Scale,
   ScrollText,
   ShieldCheck,
@@ -85,6 +91,14 @@ const settingsItems = [
   // E3 · T12 — los ejercicios y su rejilla de meses los LEE cualquier rol; abrir,
   // bloquear y cerrar es de ADMIN, y eso lo deciden las acciones, no el menú.
   { title: "Ejercicios", href: "/settings/fiscal-years", icon: CalendarRange, adminOnly: false },
+  // E9 · T17/T18 — inmovilizado, cuadros de deuda y rejilla de bloqueo de
+  // periodos. Los tres los LEE cualquier rol: el cuadro de amortización, el de
+  // vencimientos y el estado de cada mes son información de revisión. Dar de
+  // alta y revisar es de EDITOR; la baja, la venta y el bloqueo son de ADMIN, y
+  // lo exigen las acciones, no el menú.
+  { title: "Inmovilizado", href: "/settings/assets", icon: Boxes, adminOnly: false },
+  { title: "Deuda", href: "/settings/debt", icon: Landmark, adminOnly: false },
+  { title: "Bloqueo de periodos", href: "/settings/periods", icon: LockKeyhole, adminOnly: false },
   { title: "Mapa de cuentas", href: "/settings/account-map", icon: Waypoints, adminOnly: false },
   { title: "Impuestos", href: "/settings/taxes", icon: Percent, adminOnly: false },
   // E8 · T23 — calificación fiscal de terceros y de la organización (ADR-0014
@@ -249,6 +263,11 @@ export function AppSidebar({
                   { title: "Nuevo asiento", href: "/ledger/new", icon: NotebookPen, editorOnly: true },
                   { title: "Mayor", href: "/ledger/mayor", icon: ListTree, editorOnly: false },
                   { title: "Sumas y saldos", href: "/ledger/sumas-saldos", icon: Scale, editorOnly: false },
+                  // E9 · T16 — el asistente de cierre lo LEE cualquier rol (§10).
+                  { title: "Cierre del ejercicio", href: "/ledger/closing", icon: DoorClosed, editorOnly: false },
+                  // E9 · T17 — reglas recurrentes y periodificaciones. Las LEE
+                  // cualquier rol; generar es de EDITOR y revertir de ADMIN.
+                  { title: "Recurrentes", href: "/ledger/recurring", icon: Repeat, editorOnly: false },
                 ]
                   .filter((item) => !item.editorOnly || canEdit)
                   .map((item) => (
@@ -280,6 +299,10 @@ export function AppSidebar({
                   { title: "Pérdidas y ganancias", href: "/reports/pyg", icon: TrendingUp },
                   { title: "Cashflow", href: "/reports/cashflow", icon: Banknote },
                   { title: "Antigüedad de saldos", href: "/reports/aging", icon: Hourglass },
+                  // E9 · T18 — libro registro, casillas del 303, prorrata y
+                  // liquidaciones. Se LEEN con cualquier rol; liquidar, revertir
+                  // y cerrar la prorrata son de ADMIN y lo exige la acción.
+                  { title: "IVA", href: "/reports/vat", icon: ReceiptEuro },
                   { title: "Histórico de informes", href: "/reports/runs", icon: History },
                 ].map((item) => (
                   <SidebarMenuItemWithHighlight key={item.href} href={item.href}>

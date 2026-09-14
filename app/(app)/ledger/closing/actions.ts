@@ -42,12 +42,19 @@ import {
   type ManualAnswer,
 } from "@/lib/closing/checklist"
 import { distributionPlan } from "@/lib/closing/distribution"
+import { fxClosingAdjustments, type ClosingRate, type FxPosition } from "@/lib/closing/fx"
+import { RECLASS_PAIRS, reclassifyMaturities } from "@/lib/closing/reclass"
+import { discountCents as pvDiscountCents, presentValueCents } from "@/lib/closing/present-value"
 import { buildFromTemplate } from "@/lib/ledger/templates"
-import { fromUtcDate } from "@/lib/ledger/dates"
+import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import type { AccountKey, EntryDraft, LocalDate } from "@/lib/ledger/types"
 import {
+  FX_RATE_WINDOW_DAYS,
   latestClosingRun,
   readAccountBalances,
+  readMaturityPositions,
+  readReclassificationPairs,
+  readFxPositions,
   updateClosingRunTx,
   type ClosingRunRow,
   type ClosingStepRecord,
@@ -100,7 +107,69 @@ export type PostClosingStepResult = {
   draft: EntryDraft | null
   entryId: string | null
   entryNumber: number | null
+  /**
+   * **T16.** Lo que la pantalla tiene que enseñar junto a la vista previa: de
+   * dónde salieron las cifras que el servidor ha derivado. Nunca las calcula el
+   * cliente; aquí sólo se le dice qué se usó (la tasa de cierre efectiva y su
+   * fecha, la frontera de vencimiento, la base y el tipo del impuesto…).
+   */
+  parametros: readonly { etiqueta: string; valor: string }[]
+  /** Avisos del motor que no impiden postear pero que hay que leer. */
+  avisos: readonly string[]
 }
+
+/**
+ * **Los cuatro pasos que el asistente postea uno a uno** (órdenes 5, 6, 7 y 8
+ * de O-17). Antes se buscaban por coincidencia de texto sobre
+ * `CLOSING_ENTRY_ORDER` (`paso.toUpperCase().includes(step.split("_")[0])`), y
+ * eso hacía dos cosas mal: «RECLASIFICACION_VENCIMIENTOS» no casaba con
+ * «Reclasificación por vencimiento» —la tilde—, y «CIERRE_APERTURA» o
+ * «IVA_LIQUIDADO» casaban con asientos que **no** se postean por esta vía.
+ * Un mapa explícito no se equivoca de asiento.
+ */
+const POSTABLE_STEPS: Readonly<Record<string, number>> = {
+  VALOR_ACTUAL_APLAZAMIENTO: 5,
+  DIFERENCIAS_DE_CAMBIO: 6,
+  RECLASIFICACION_VENCIMIENTOS: 7,
+  IMPUESTO_BENEFICIOS: 8,
+}
+
+/**
+ * **El input fino de T-30/T-31/T-32/T-25 (aviso de C1).** La pantalla recoge
+ * los **parámetros** del paso —la ventana de la tasa de cierre, el caso del
+ * valor actual, el tipo del impuesto y los pagos fraccionados— y **nunca** las
+ * cifras: el importe del ajuste, el descuento, los movimientos de
+ * reclasificación y la cuota los deriva este fichero **en servidor**, con los
+ * mismos motores puros que evalúan el paso en el checklist.
+ */
+const closingStepParamsSchema = z
+  .object({
+    /** T-30 · ventana en días naturales para buscar la tasa de cierre (O-5). */
+    fxWindowDays: z.number().int().min(1).max(31).optional(),
+    /** T-32 · frontera corriente / no corriente, norma 6ª: doce meses. */
+    reclassThresholdMonths: z.number().int().min(1).max(60).optional(),
+    /** T-31 · el caso del ajuste y la posición aplazada. */
+    pvCase: z.enum(["A_EJERCICIO_CORRIENTE", "C_NO_INMOVILIZADO"]).optional(),
+    pvSide: z.enum(["PASIVO", "ACTIVO"]).optional(),
+    pvPositionAccountCode: z.string().trim().min(3).max(20).optional(),
+    pvAssetAccountCode: z.string().trim().min(3).max(20).optional(),
+    pvOriginAccountCode: z.string().trim().min(3).max(20).optional(),
+    pvCounterpartyId: z.string().uuid().optional(),
+    /** Nominal aplazado y meses hasta el vencimiento: los declara quien cierra. */
+    pvNominalCents: z.number().int().min(1).optional(),
+    pvMonths: z.number().int().min(1).max(600).optional(),
+    /** T-25 · tipo de gravamen en puntos básicos (25 % = 2500). */
+    taxRateBps: z.number().int().min(0).max(10000).optional(),
+    /** T-25 · pagos fraccionados; por defecto, el saldo deudor de `473`. */
+    taxPrepaymentsCents: z.number().int().min(0).optional(),
+  })
+  .default({})
+
+const postClosingStepParamsSchema = z.object({ params: closingStepParamsSchema })
+type ClosingStepParams = z.infer<typeof closingStepParamsSchema>
+
+const eur = (cents: number): string =>
+  `${new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(cents / 100)} €`
 
 export type DistributionPreview = {
   fiscalYearId: string
@@ -222,8 +291,13 @@ export const postClosingStepAction = withOrg(
   async (ctx, input: unknown): Promise<ActionState<PostClosingStepResult>> => {
     const parsed = postClosingStepSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
+    const parsedParams = postClosingStepParamsSchema.safeParse(input ?? {})
+    if (!parsedParams.success) return invalid(parsedParams.error)
     const v = parsed.data
-    const orden = CLOSING_ENTRY_ORDER.find((o) => o.paso.toUpperCase().includes(v.step.split("_")[0]))
+    const params = parsedParams.data.params
+
+    const ordenNo = POSTABLE_STEPS[v.step]
+    const orden = ordenNo ? CLOSING_ENTRY_ORDER.find((o) => o.orden === ordenNo) : undefined
     if (!orden?.templateCode) {
       return {
         success: false,
@@ -234,11 +308,34 @@ export const postClosingStepAction = withOrg(
     const result = await runLedgerTransaction(ctx.org.id, ctx.user.id, async (tx) => {
       const fy = await getFiscalYear(tx, v.fiscalYearId)
       if (!fy) throw new Error("El ejercicio no existe en esta organización")
-      const entryDate = v.entryDate ?? fromUtcDate(fy.endDate)
+      const cutoff = fromUtcDate(fy.endDate)
+      const entryDate = v.entryDate ?? cutoff
       const lctx = await getLedgerContext(tx, entryDate)
-      const built = buildFromTemplate(orden.templateCode as Parameters<typeof buildFromTemplate>[0], { entryDate }, lctx)
+      const derived = await deriveStepTemplateInput(tx, {
+        step: v.step,
+        cutoff,
+        entryDate,
+        organizationId: ctx.org.id,
+        params,
+      })
+
+      const built = buildFromTemplate(
+        orden.templateCode as Parameters<typeof buildFromTemplate>[0],
+        derived.input as never,
+        lctx
+      )
       if (!built.ok) throw new Error(formatLedgerErrors(built.errors as never))
-      if (v.dryRun) return { step: v.step, dryRun: true, draft: built.value, entryId: null, entryNumber: null }
+      if (v.dryRun) {
+        return {
+          step: v.step,
+          dryRun: true,
+          draft: built.value,
+          entryId: null,
+          entryNumber: null,
+          parametros: derived.parametros,
+          avisos: derived.avisos,
+        }
+      }
 
       const posted = await postEntryTx(tx, built.value, { userId: ctx.user.id })
       const run = await latestClosingRun(tx, v.fiscalYearId)
@@ -252,13 +349,240 @@ export const postClosingStepAction = withOrg(
           { userId: ctx.user.id }
         )
       }
-      return { step: v.step, dryRun: false, draft: built.value, entryId: posted.id, entryNumber: posted.entryNumber }
+      return {
+        step: v.step,
+        dryRun: false,
+        draft: built.value,
+        entryId: posted.id,
+        entryNumber: posted.entryNumber,
+        parametros: derived.parametros,
+        avisos: derived.avisos,
+      }
     })
 
     if (result.ok && !v.dryRun) revalidatePath(CLOSING_PATH)
     return toActionState(result)
   }
 )
+
+type DerivedStepInput = {
+  input: Record<string, unknown>
+  parametros: { etiqueta: string; valor: string }[]
+  avisos: string[]
+}
+
+/**
+ * **Aquí es donde vive el input fino.** Cuatro pasos, cuatro derivaciones, todas
+ * con el motor puro correspondiente y **ninguna** con una cifra que venga del
+ * navegador: lo que llega de la pantalla son parámetros (ventana, caso, tipo,
+ * meses), no importes contables.
+ */
+async function deriveStepTemplateInput(
+  tx: Parameters<typeof readFxPositions>[0],
+  opts: {
+    step: string
+    cutoff: LocalDate
+    entryDate: LocalDate
+    organizationId: string
+    params: ClosingStepParams
+  }
+): Promise<DerivedStepInput> {
+  const { step, cutoff, entryDate, params } = opts
+  const org = await tx.organization.findFirst({
+    where: { id: opts.organizationId },
+    select: { baseCurrency: true, discountRateMonthlyMicroBps: true, pvMaterialityCents: true },
+  })
+  const baseCurrency = org?.baseCurrency ?? "EUR"
+
+  // ── T-30 · diferencias de cambio (O-4/O-5) ─────────────────────────────
+  if (step === "DIFERENCIAS_DE_CAMBIO") {
+    const windowDays = params.fxWindowDays ?? FX_RATE_WINDOW_DAYS
+    const positions = await readFxPositions(tx, { cutoff, baseCurrency, windowDays })
+    const puras: FxPosition[] = positions.map((p) => ({
+      accountCode: p.accountCode,
+      counterpartyId: p.counterpartyId,
+      currency: p.currency,
+      baseBalanceCents: p.baseBalanceCents,
+      currencyBalanceCents: p.originalBalanceCents,
+      isMonetary: true,
+    }))
+    const rates: ClosingRate[] = positions
+      .filter((p): p is typeof p & { rateMicro: bigint; rateDate: LocalDate } => p.rateMicro !== null && p.rateDate !== null)
+      .map((p) => ({ currency: p.currency, rateMicro: p.rateMicro, rateDate: p.rateDate }))
+    const result = fxClosingAdjustments(puras, rates, cutoff, windowDays)
+    if (result.missingRates.length > 0) {
+      throw new Error(
+        `Sin tasa publicada en la ventana de ${windowDays} días para ${result.missingRates.join(", ")}: ` +
+          `amplíe la ventana o cargue la tasa. No se inventa ninguna (R-FX-5)`
+      )
+    }
+    const moving = result.byPosition.filter((a) => a.deltaCents !== 0)
+    if (moving.length === 0) throw new Error("Ninguna posición monetaria en divisa tiene diferencia al corte: no hay asiento que postear")
+
+    // La tasa se **sella** en el asiento: hay que resolver su `exchangeRateId`.
+    const adjustments: Record<string, unknown>[] = []
+    for (const a of moving) {
+      const rate = await tx.exchangeRate.findFirst({
+        where: { from: a.currency, to: baseCurrency, date: toUtcDate(a.rateDate) },
+        orderBy: { fetchedAt: "desc" },
+        select: { id: true },
+      })
+      if (!rate) throw new Error(`La tasa ${a.currency}/${baseCurrency} de ${a.rateDate} no está persistida: no se puede sellar el asiento`)
+      adjustments.push({
+        accountCode: a.accountCode,
+        counterpartyId: a.counterpartyId ?? undefined,
+        currency: a.currency,
+        deltaCents: a.deltaCents,
+        exchangeRateId: rate.id,
+        rateDate: a.rateDate,
+      })
+    }
+    return {
+      input: { cutoff, entryDate, adjustments },
+      parametros: [
+        { etiqueta: "Ventana de la tasa de cierre", valor: `${windowDays} días naturales hasta ${cutoff}` },
+        ...result.usedRates.map((r) => ({
+          etiqueta: `Tasa de cierre ${r.currency}/${baseCurrency}`,
+          valor: `${(Number(r.rateMicro) / 1_000_000).toFixed(6)} de ${r.rateDate}`,
+        })),
+        { etiqueta: "Posiciones ajustadas", valor: `${moving.length} de ${result.byPosition.length}` },
+      ],
+      avisos: result.excludedNonMonetary.map(
+        (p) => `${p.accountCode} en ${p.currency} queda fuera del barrido: la cuenta no es monetaria en el plan (O-4, I-E9-24)`
+      ),
+    }
+  }
+
+  // ── T-32 · reclasificación por vencimiento (O-6/O-7) ───────────────────
+  if (step === "RECLASIFICACION_VENCIMIENTOS") {
+    const thresholdMonths = params.reclassThresholdMonths ?? 12
+    const pairs = await readReclassificationPairs(tx)
+    const pairRefs = (pairs.length > 0
+      ? pairs.map((p) => ({ longCode: p.longAccountCode, shortCode: p.shortAccountCode }))
+      : RECLASS_PAIRS.map((p) => ({ longCode: p.longCode, shortCode: p.shortCode })))
+    const positions = await readMaturityPositions(tx, {
+      cutoff,
+      accountCodes: [...new Set(pairRefs.flatMap((p) => [p.longCode, p.shortCode]))],
+    })
+    const result = reclassifyMaturities(
+      positions.map((p) => ({
+        accountCode: p.accountCode,
+        counterpartyId: p.counterpartyId,
+        currency: p.currency ?? baseCurrency,
+        dueDate: p.dueDate,
+        openCents: p.balanceCents,
+        entryNumber: 0,
+      })),
+      pairRefs,
+      cutoff,
+      { thresholdMonths }
+    )
+    if (result.blocking.length > 0) {
+      throw new Error(
+        `Hay ${result.blocking.length} posición(es) de 17x/52x sin desglose de vencimientos (O-6, I-E9-25): ` +
+          `${result.blocking.map((b) => b.accountCode).join(", ")}. Dé de alta el cuadro en Configuración › Deuda`
+      )
+    }
+    if (result.moved.length === 0) throw new Error("Ninguna posición cambia de tramo al corte: no hay reclasificación que postear")
+    return {
+      input: {
+        cutoff,
+        entryDate,
+        moves: result.moved.map((m) => ({
+          fromAccountCode: m.fromCode,
+          toAccountCode: m.toCode,
+          amountCents: m.amountCents,
+          side: m.debtor ? "ACTIVO" : "PASIVO",
+          counterpartyId: m.counterpartyId ?? undefined,
+          currency: m.currency,
+          dueDate: m.dueDate,
+        })),
+      },
+      parametros: [
+        { etiqueta: "Frontera corriente / no corriente", valor: `${thresholdMonths} meses · ${result.boundaryDate} (norma 6ª de elaboración)` },
+        { etiqueta: "Movimientos", valor: `${result.moved.length}` },
+      ],
+      avisos: [
+        ...result.warnings.map((w) => w.mensaje),
+        ...result.unknownMaturity.map((p) => `${p.accountCode} no se reclasifica: la posición no tiene vencimiento (I-E9-16)`),
+      ],
+    }
+  }
+
+  // ── T-31 · valor actual del aplazamiento (O-1/O-2) ─────────────────────
+  if (step === "VALOR_ACTUAL_APLAZAMIENTO") {
+    const rate = org?.discountRateMonthlyMicroBps ?? null
+    if (rate === null) {
+      throw new Error(
+        "La organización no tiene declarado el tipo de descuento mensual: fíjelo en Configuración antes de valorar un aplazamiento (O-2)"
+      )
+    }
+    const { pvCase, pvSide, pvPositionAccountCode, pvNominalCents, pvMonths } = params
+    if (!pvCase || !pvPositionAccountCode || !pvNominalCents || !pvMonths) {
+      throw new Error("Faltan los parámetros del ajuste: caso, cuenta de la posición aplazada, nominal y meses hasta el vencimiento")
+    }
+    const presentValue = presentValueCents(pvNominalCents, rate, pvMonths)
+    const descuento = pvDiscountCents(pvNominalCents, presentValue)
+    const materiality = Number(org?.pvMaterialityCents ?? 0)
+    if (pvMonths <= 12) throw new Error(`El aplazamiento es de ${pvMonths} meses: por debajo de doce no se descuenta (R-VA-1)`)
+    if (descuento < materiality) {
+      throw new Error(
+        `El descuento (${eur(descuento)}) no alcanza la materialidad declarada (${eur(materiality)}): no procede el ajuste (R-VA-2)`
+      )
+    }
+    return {
+      input: {
+        entryDate,
+        case: pvCase,
+        side: pvSide ?? "PASIVO",
+        positionAccountCode: pvPositionAccountCode,
+        assetAccountCode: params.pvAssetAccountCode,
+        originAccountCode: params.pvOriginAccountCode,
+        counterpartyId: params.pvCounterpartyId,
+        discountCents: descuento,
+      },
+      parametros: [
+        { etiqueta: "Tipo de descuento mensual declarado", valor: `${(rate / 10_000).toFixed(4)} % mensual (O-2)` },
+        { etiqueta: "Nominal aplazado", valor: eur(pvNominalCents) },
+        { etiqueta: "Meses hasta el vencimiento", valor: `${pvMonths}` },
+        { etiqueta: "Valor actual calculado en servidor", valor: eur(presentValue) },
+        { etiqueta: "Descuento (nominal − valor actual)", valor: eur(descuento) },
+        { etiqueta: "Materialidad declarada", valor: eur(materiality) },
+      ],
+      avisos: [],
+    }
+  }
+
+  // ── T-25 · impuesto sobre beneficios (O-26) ────────────────────────────
+  if (step === "IMPUESTO_BENEFICIOS") {
+    const rateBps = params.taxRateBps ?? 2500
+    const acreedores = await readAccountBalances(tx, { cutoff, prefixes: ["6", "7"], sign: "ACREEDOR" })
+    let resultado = 0
+    for (const [code, cents] of acreedores) if (!code.startsWith("6300")) resultado += cents
+    const deudores = await readAccountBalances(tx, { cutoff, prefixes: ["473"], sign: "DEUDOR" })
+    const pagosFraccionados =
+      params.taxPrepaymentsCents ?? Math.max(0, [...deudores.values()].reduce((a, b) => a + b, 0))
+    return {
+      input: {
+        documentDate: entryDate,
+        entryDate,
+        taxableBaseCents: resultado,
+        rateBps,
+        prepaymentsCents: pagosFraccionados,
+      },
+      parametros: [
+        { etiqueta: "Resultado contable antes de impuestos (derivado del diario)", valor: eur(resultado) },
+        { etiqueta: "Tipo de gravamen", valor: `${(rateBps / 100).toFixed(2)} %` },
+        { etiqueta: "Pagos fraccionados y retenciones (saldo deudor de 473)", valor: eur(pagosFraccionados) },
+      ],
+      avisos: [
+        "La base es el resultado contable: los ajustes extracontables, las BIN y las diferencias temporarias no están soportados todavía (E10). Si los hay, la cuota que se postee será la del resultado contable y hay que revisarla.",
+      ],
+    }
+  }
+
+  throw new Error(`El paso ${step} no tiene derivación de parámetros`)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cerrar y reabrir (ADMIN)

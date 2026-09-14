@@ -175,6 +175,58 @@ const CLOSING_BLOCKS: readonly { key: string; title: string; legal: string; ids:
     legal: "Modelos 303, 111 y 115 contra el diario · I-E8-15a/b/c e I-E8-17",
     ids: ["I-E8-15a", "I-E8-15b", "I-E8-15c", "I-E8-17"],
   },
+
+  // ── E9 · T19 — la familia CIERRE, en lenguaje contable (§6.3, §7) ────────
+  // Los I-E9-* ya caen en `CheckFamily.CIERRE` por prefijo (`lib/audit/families`),
+  // así que la tarjeta existe sola; lo que faltaba era decir aquí lo que un
+  // contable busca al cerrar, agrupado por materia y con su artículo. No es una
+  // segunda fuente: son los mismos checks del run, nombrados de otra manera.
+  {
+    key: "recurrentes",
+    title: "Asientos recurrentes",
+    legal: "Idempotencia por regla y periodo, y la versión de la regla con la que se generó · I-E9-1a e I-E9-1b",
+    ids: ["I-E9-1a", "I-E9-1b"],
+  },
+  {
+    key: "amortizacion",
+    title: "Amortización del inmovilizado",
+    legal:
+      "Cuadro reproducible, Σ cuotas = base amortizable y amortización acumulada POR ACTIVO · I-E9-2, I-E9-3, I-E9-4 e I-E9-5",
+    ids: ["I-E9-2", "I-E9-3", "I-E9-4", "I-E9-5"],
+  },
+  {
+    key: "periodificaciones",
+    title: "Periodificaciones",
+    legal: "Devengo agotado al vencer y saldos de 480/485/567/568 cuadrados · I-E9-6 e I-E9-7",
+    ids: ["I-E9-6", "I-E9-7"],
+  },
+  {
+    key: "iva-cierre",
+    title: "IVA: liquidación, prorrata y bienes de inversión",
+    legal:
+      "Liquidación reproducible, periodo de IVA sellado, prorrata definitiva del art. 105 LIVA y RECC · I-E9-8a′/8b, I-E9-9, I-E9-10/10b, I-E9-11, I-E9-22 e I-E9-26",
+    ids: ["I-E9-8a′", "I-E9-8b", "I-E9-9", "I-E9-10", "I-E9-10b", "I-E9-11", "I-E9-22", "I-E9-26"],
+  },
+  {
+    key: "valoracion-cierre",
+    title: "Valoración al cierre",
+    legal:
+      "Diferencias de cambio de las partidas monetarias (NRV 11ª.2.2), valor actual del aplazamiento (NRV 9ª) y reclasificación por vencimiento (norma 6ª) · I-E9-16, I-E9-17, I-E9-18, I-E9-19, I-E9-24 e I-E9-25",
+    ids: ["I-E9-16", "I-E9-17", "I-E9-18", "I-E9-19", "I-E9-24", "I-E9-25"],
+  },
+  {
+    key: "acto-de-cerrar",
+    title: "El acto de cerrar",
+    legal:
+      "Grupos 6 y 7 a cero tras la regularización, 129 = resultado, apertura espejo del cierre, run reproducible y reapertura completa · I-E9-12, I-E9-13, I-E9-14, I-E9-15, I-E9-20 e I-E9-21",
+    ids: ["I-E9-12", "I-E9-13", "I-E9-14", "I-E9-15", "I-E9-20", "I-E9-21"],
+  },
+  {
+    key: "distribucion-resultado",
+    title: "Distribución del resultado",
+    legal: "Σ destinos = resultado regularizado y reserva legal del art. 274 LSC sobre el capital derivado · I-E9-23",
+    ids: ["I-E9-23"],
+  },
 ]
 
 export function toClosingBlocks(views: readonly CheckView[]): ClosingBlockView[] {
