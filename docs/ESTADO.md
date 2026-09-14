@@ -314,6 +314,50 @@ entera o no vale: el cheque contabilizado el 20-12 y cargado por el banco el
 falla por su importe exacto— aunque ya esté punteado. Lo que sí queda es
 **explicado**, que es para lo que existen los criterios 1 y 2 de §3.6.
 
+## E9 — ronda de integración (2026-09-14): los cuatro bloqueantes de UI y el arnés
+
+Los agentes de interfaz destaparon cinco defectos de backend. Todos cerrados con
+test propio; ninguno queda anotado como deuda.
+
+| # | Defecto | Cierre |
+|---|---|---|
+| 1 | `RECC_DEVENGADO_31_12` devolvía **`NA`** fuera del régimen de caja y `canCloseFiscalYear` exige PASS en los nueve: **ninguna organización en régimen general podía cerrar el ejercicio**. Y `capitalGoodsGuard` salía WARN —bloqueante— con un activo > 3 005,06 € en cuanto **no** había prorrata declarada, contra la letra de R-IVA-16 | **Decisión contable**: fuera del RECC el paso devuelve **PASS** con evidencia «régimen de caja no aplica en el ejercicio»; `NA` queda sólo para los pasos informativos (los societarios posteriores al cierre, ninguno bloqueante). La guardia del art. 107 sólo se dispara si existe algún año con prorrata ≠ 100 %. `models/closing.ts` calcula ya `reccPendingCents` de verdad: `null` si no hay `VatRegimePeriod` RECC vigente en el ejercicio, y el saldo pendiente de `4778`/`4728` de N−1 si lo hay. Tests: `lib/closing/checklist.test.ts` (ejercicio vacío cerrable, ningún bloqueante puede salir `NA`), `lib/closing/vat.test.ts` y el nuevo `tests/integration/e9-cierre-completo.test.ts` |
+| 2 | **Dos formas para la clave de periodo**: la base escribía `AAAA-Tn` (`app.iva_period`, el trigger y seis CHECK de T4) y el motor leía `AAAA-Qn`. Con régimen trimestral el libro registro salía **vacío** y no se podía dar de alta una regla trimestral | Forma canónica **`AAAA-Qn`** — la del diseño §4.1 y §5.3, la de ADR-0014 D8 (`quarterOf` de E8) y la de los fixtures sellados. Migración **aditiva** `20260921090000_e9_periodo_iva_canonico`: reemplaza la función, suelta los seis CHECK, reescribe lo guardado bajo `NO FORCE`/`FORCE` y los vuelve a poner. El rodeo del régimen mensual del e2e desaparece: `recurrentes-iva.spec.ts` corre **trimestral** de extremo a extremo |
+| 3 | `recurring_occurrences_entry_iff_generada` (T4) contra el orden de `recordOccurrenceTx` (T12): la ocurrencia se insertaba `GENERADA` con `entry_id` nulo y el CHECK abortaba. Además el `UPDATE` posterior era imposible por la política append-only. **Ninguna generación real se contabilizaba** | Orden invertido: **asiento primero**, ocurrencia después **ya enlazada** en un solo `INSERT`. La restricción de la base sigue garantizando `entry ⇔ GENERADA` **en todo momento** —garantía más fuerte que un trigger diferido— y la idempotencia sigue siendo el índice único, reforzada por la clave de idempotencia del asiento |
+| 4 | `sellAssetAction` / `disposeAssetAction` no reenviaban el destino analítico del activo a T-33/T-34: con `analyticsRequired`, «la cuenta 771 exige exactamente un destino analítico» y **no se podía contabilizar ninguna baja ni venta** | El resultado de la enajenación hereda el destino **del activo** (`FixedAsset.projectId`/`costCenterId`), y las dos acciones admiten además uno explícito que manda sobre él (`forms/assets.ts`). Test de integración con `analyticsRequired = true` |
+| 5 | `scripts/load-fixture.ts --reset-org` no conocía las tablas de E9 | Las trece, en orden de FK: once antes del diario y `asset_revisions`/`fixed_assets` después (`journal_lines.fixed_asset_id` es RESTRICT). Los `beforeAll` de `cierre.spec.ts` y `recurrentes-iva.spec.ts` ya no limpian a mano —el `resetE9` del segundo ni siquiera funcionaba: iba con el rol propietario y las políticas RESTRICTIVE lo dejaban en nada, con el error tragado por un `.catch()`— y los dos `test.fixme` están activos |
+
+**Además**: `tests/support/fixtures.ts` carga ya los `accountsExtra` del fixture en
+el plan (`planWithExtras`) y las `DEFERRED_ACCOUNT_KEYS` de E9 con su código
+exacto (`fixtureAccountMap`). Sin eso `ejercicio-completo-v2` no resolvía ni su
+primer asiento.
+
+### Anotado para T26 (no se decide aquí)
+
+Tres discrepancias **documentales** entre el diseño, el ADR y los fixtures
+sellados. Ninguna bloquea, ninguna es un error de código, y las tres las tiene
+que cerrar T26 con el `experto-contable`:
+
+1. **22 vs 23 pares de reclasificación.** T9 declaró el desajuste; §4.8/criterio
+   24 dice «23 pares» y la enumeración da 22.
+2. **41 vs 43 pasos del checklist.** §4.8 y ADR-0016 D9.3 dicen «41 pasos en
+   nueve bloques» y la tabla que los enumera contiene **43** (8·3·7·5·3·7·2·6·2).
+   Se implementan los 43 enumerados; los **nueve bloqueantes** sí coinciden.
+3. **Interés implícito: 442 817 vs 454 133.** El criterio 22 de §12 dice `662`
+   **454 133** para el caso A (nominal 10 000 000, 24 meses, valor actual
+   8 899 964); el fixture sellado `docs/design/fixtures/valor-actual-esperado.json`
+   dice **442 817** para el mismo caso, y su generador explica que es «el devengo
+   por tipo efectivo mensual coherente con ese valor actual». `cierre-e9.test.ts`
+   sigue al criterio. Hay que decidir cuál es la cifra buena y alinear la otra.
+
+### Deuda de UI que esto deja a la vista (dev-frontend)
+
+`createAssetSchema` admite `projectId`/`costCenterId` desde T15, pero el
+formulario de alta del inmovilizado **no los ofrece**, así que un activo dado de
+alta por pantalla en una organización con destino analítico obligatorio no se
+puede vender hasta que alguien le declare el destino. El e2e lo declara por SQL
+con su comentario. Cerrar en la ola de UI de E9.
+
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
 
 `tests/e2e/session.ts` **siembra** lo que necesita en vez de darlo por hecho

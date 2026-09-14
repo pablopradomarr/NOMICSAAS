@@ -350,6 +350,38 @@ describe("R-IVA-16 (O-12) · guardia de bienes de inversión", () => {
   it("sin bienes en ventana, el paso pasa", () => {
     expect(capitalGoodsGuard({ year: 2026, prorrataByYear: [{ year: 2026, bps: 8_500 }], assets: [] }).status).toBe("PASS")
   })
+
+  /**
+   * **Ronda de integración de E9.** La guardia de R-IVA-16 exige `∃ año con
+   * prorrataBps ≠ 10000`. Sin ninguna prorrata declarada esa condición NO se
+   * cumple y el paso tiene que salir PASS: salía WARN, y como `BIENES_DE_INVERSION`
+   * es uno de los nueve bloqueantes, una organización en régimen general con una
+   * máquina de 12 000 € no podía cerrar el ejercicio.
+   */
+  it("sin prorrata declarada en ningún año, un bien de inversión en ventana NO bloquea", () => {
+    const guard = capitalGoodsGuard({
+      year: 2026,
+      prorrataByYear: [],
+      assets: [
+        { code: "ACT-1", accountCode: "213", acquisitionYear: 2026, costCents: 1_200_000, realEstate: false },
+      ],
+    })
+    expect(guard.status).toBe("PASS")
+    expect(guard.evidencia).toContain("no declara prorrata")
+    expect(guard.sealReason).toBeUndefined()
+  })
+
+  it("con prorrata declarada pero sin la definitiva del año, sigue avisando (art. 107 no medible)", () => {
+    const guard = capitalGoodsGuard({
+      year: 2026,
+      prorrataByYear: [{ year: 2024, bps: 8_500 }],
+      assets: [
+        { code: "ACT-1", accountCode: "213", acquisitionYear: 2024, costCents: 1_200_000, realEstate: false },
+      ],
+    })
+    expect(guard.status).toBe("WARN")
+    expect(guard.evidencia).toContain("art. 107")
+  })
 })
 
 describe("R-IVA-18 (O-16) · DUA", () => {

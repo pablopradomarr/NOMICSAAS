@@ -28,15 +28,23 @@ import { adminUserId, analyticsOrganization, APP_ENV, DATABASE_URL as DATABASE_U
  *     cuentas no están en borrador.
  *  7. **`VIEWER` lo ve todo, sin un solo botón de mutación.**
  *
- * **Lo que este fichero NO cubre y por qué.** El recorrido completo —vista
- * previa real de T-30/T-31/T-32/T-25, cierre con los doce asientos, sello
- * CERRADO, reapertura con los cuatro contra-asientos y distribución
- * contabilizada— necesita el fixture `ejercicio-completo` **ampliado** de T20
- * (posiciones en divisa, deuda con vencimientos y un ejercicio sin regularizar):
- * sobre el fixture actual no hay ni una posición monetaria, ni una deuda con
- * vencimiento, ni base imponible positiva, así que los cuatro motores devuelven
- * «no hay nada que postear» —correctamente—. Queda para **T24**, con la nota de
- * `RECC_DEVENGADO_31_12` que se anota en el resumen de la ola.
+ * **Lo que este fichero NO cubre y por qué.** El recorrido completo —cierre con
+ * los doce asientos de O-17, sello CERRADO, reapertura con los cuatro
+ * contra-asientos y distribución contabilizada— ya **no es inalcanzable**: los
+ * dos bloqueantes que lo impedían (`RECC_DEVENGADO_31_12` en `NA` y la guardia
+ * del art. 107 en WARN sin prorrata) están corregidos en la ronda de
+ * integración de E9 y el recorrido entero se ejercita en
+ * `tests/integration/e9-cierre-completo.test.ts`: nueve bloqueantes en PASS,
+ * T-25 por `postClosingStepAction`, T-26/T-27/T-28 y el contra-asiento en una
+ * transacción, `129` y `6300` a cero y la apertura como espejo del cierre.
+ *
+ * Aquí no se repite porque **sobre el fixture v1 no sale barato**: el ejercicio
+ * de `ejercicio-completo` llega con sus cuatro liquidaciones de IVA ya
+ * posteadas y sin `vat_settlements`, así que `IVA_LIQUIDADO` exige sembrar las
+ * cuatro a mano antes de poder pulsar «Cerrar». Ejercitar el cierre completo
+ * **por pantalla** sigue siendo T24, sobre el fixture ampliado
+ * `ejercicio-completo-v2` (que hoy tampoco carga: le falta `47513` en sus
+ * `accountsExtra` y no tiene script de regeneración — anotado en ESTADO).
  */
 
 test.describe.configure({ mode: "serial" })
@@ -53,14 +61,8 @@ test.beforeAll(async () => {
   organizationId = org.id
   const userId = await adminUserId()
 
-  // `--reset-org` es de E4 y no conoce las tablas de E9: sin vaciarlas antes, el
-  // borrado de los ejercicios choca con `closing_runs_fiscal_year_fkey`. Mismo
-  // patrón que `liquidacion.spec.ts` con las de E5 (BUG-E7-1).
-  await withDb(async (client) => {
-    await client.query(`DELETE FROM profit_distributions WHERE organization_id = $1`, [organizationId])
-    await client.query(`DELETE FROM closing_runs WHERE organization_id = $1`, [organizationId])
-  })
-
+  // Nada que limpiar a mano: `--reset-org` conoce ya las tablas de E9 y las
+  // vacía en orden de FK (ronda de integración; era el BUG-E7-1 repetido).
   execFileSync(
     "npx",
     [

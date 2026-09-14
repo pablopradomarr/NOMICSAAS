@@ -303,15 +303,32 @@ export type OccurrenceResult = {
 /**
  * **R-REC-3 · la idempotencia, escrita como es.**
  *
- * 1. `INSERT` de la ocurrencia — **primero**. Dos generaciones simultáneas del
- *    mismo `(regla, periodo)`: la segunda choca contra G-1 (23505) y su
- *    transacción entera muere. No hay asiento huérfano porque el asiento aún no
- *    existe.
- * 2. Sólo si el `INSERT` pasó se postea el asiento, con
- *    `idempotencyKey = recurring:<code>:<period>` como segunda red.
- * 3. `UPDATE` de la ocurrencia con su `entry_id`. Es la **única** columna que la
- *    política append-only deja tocar en el mismo `INSERT`…`UPDATE` de la
- *    transacción que la creó (patrón de `journal_entries.voided_*`).
+ * 1. El **asiento primero**, con `idempotencyKey = recurring:<code>:<period>`.
+ * 2. Y la ocurrencia **después, ya enlazada**: un solo `INSERT` con su
+ *    `entry_id` dentro. Si choca contra G-1 (23505) la transacción entera
+ *    muere y el asiento se va con ella: no hay asiento huérfano porque
+ *    **nada se ha confirmado todavía**. Nunca «mirar y luego insertar».
+ *
+ * **Por qué este orden y no el contrario (ronda de integración de E9).** La
+ * versión de T12 insertaba la ocurrencia primero, con `status = 'GENERADA'` y
+ * `entry_id` nulo, y la enlazaba con un `UPDATE` posterior. Chocaba con dos
+ * cosas que T4 dejó escritas en la base y que son correctas:
+ *
+ *  · el CHECK `recurring_occurrences_entry_iff_generada` —`(entry_id IS NOT
+ *    NULL) = (status = 'GENERADA')`, inmediato, porque un CHECK no se puede
+ *    diferir en PostgreSQL—, que aborta ese `INSERT` intermedio; y
+ *  · la política **append-only** `recurring_occurrences_no_update`
+ *    (RESTRICTIVE, `USING (false)`, sin `GRANT UPDATE` a `app_runtime`), que
+ *    hace que el `UPDATE` del paso 3 no pudiera existir de ninguna manera.
+ *
+ * Ninguna generación real llegaba a contabilizarse. Con el orden invertido, la
+ * ocurrencia nace con su asiento y la restricción de la base sigue garantizando
+ * `entry ⇔ GENERADA` **en todo momento**, no sólo al COMMIT — que es una
+ * garantía más fuerte que la del trigger diferido.
+ *
+ * La idempotencia no se debilita: sigue siendo el índice único
+ * `(organization_id, recurring_entry_id, period)`, reforzado ahora por la clave
+ * de idempotencia del propio asiento, que muerde antes.
  *
  * Quien llama está DENTRO de `runLedgerTransaction`: aquí se aborta lanzando,
  * nunca devolviendo.
@@ -329,7 +346,19 @@ export async function recordOccurrenceTx(
 ): Promise<OccurrenceResult> {
   const { rule, period, outcome } = input
 
-  // (1) la ocurrencia PRIMERO: el índice único es la idempotencia.
+  // (1) el asiento, con su clave de idempotencia como primera red. Sólo cuando
+  //     hay algo que contabilizar: una ocurrencia OMITIDA o FALLIDA no postea.
+  const entry =
+    outcome.status === "GENERADA"
+      ? await postEntryTx(tx, outcome.draft, actor, {
+          idempotencyKey: occurrenceIdempotencyKey(rule.code, period),
+        })
+      : null
+
+  // (2) la ocurrencia, YA enlazada: `entry_id` entra en el mismo INSERT, de modo
+  //     que el CHECK `entry_iff_generada` se cumple desde el primer instante y
+  //     la tabla sigue siendo estrictamente append-only. El índice único es la
+  //     idempotencia: si muerde, la transacción entera —asiento incluido— muere.
   const occurrence = await tx.recurringOccurrence.create({
     data: {
       organizationId: tx.$organizationId,
@@ -338,6 +367,7 @@ export async function recordOccurrenceTx(
       postingDate: toUtcDate(input.postingDate),
       status: outcome.status,
       reason: outcome.status === "GENERADA" ? null : outcome.reason,
+      entryId: entry?.id ?? null,
       inputHash: input.inputHash,
       generatedById: actor.userId ?? null,
     },
@@ -346,14 +376,6 @@ export async function recordOccurrenceTx(
   if (outcome.status !== "GENERADA") {
     return { occurrenceId: occurrence.id, period, status: outcome.status, entry: null, reason: outcome.reason }
   }
-
-  // (2) el asiento, con su clave de idempotencia como segunda red.
-  const entry = await postEntryTx(tx, outcome.draft, actor, {
-    idempotencyKey: occurrenceIdempotencyKey(rule.code, period),
-  })
-
-  // (3) el enlace.
-  await tx.recurringOccurrence.update({ where: { id: occurrence.id }, data: { entryId: entry.id } })
 
   return { occurrenceId: occurrence.id, period, status: "GENERADA", entry, reason: null }
 }

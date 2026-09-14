@@ -1102,6 +1102,33 @@ export async function readChecklistInput(
     )
   )
 
+  // ── RECC_DEVENGADO_31_12 (art. 163 terdecies) ───────────────────────────
+  // El paso es BLOQUEANTE, así que lo que aquí se devuelva decide si el
+  // ejercicio se puede cerrar. `null` significa **el régimen de caja no aplica
+  // en el ejercicio** —no hay ningún `VatRegimePeriod` con `regime = RECC`
+  // vigente en el intervalo del ejercicio— y el checklist lo traduce a PASS con
+  // esa evidencia; no a `NA`, que bloquearía a toda organización en régimen
+  // general (ronda de integración de E9).
+  //
+  // Con RECC vigente, lo pendiente es el saldo de las cuentas puente
+  // `4778`/`4728` que arrastra el **año inmediato anterior**: el art. 163
+  // terdecies obliga a devengarlo el 31/12 de ese año posterior, esté cobrado o
+  // no, y es exactamente lo que T-36 barre. Se mide con corte a 31/12 de N−1
+  // para no confundirlo con lo devengado durante el propio ejercicio.
+  const reccVigente = await tx.vatRegimePeriod.count({
+    where: {
+      regime: "RECC",
+      validFrom: { lte: toUtcDate(end) },
+      OR: [{ validTo: null }, { validTo: { gte: toUtcDate(start) } }],
+    },
+  })
+  let reccPendingCents: Cents | null = null
+  if (reccVigente > 0) {
+    const previoCutoff = `${Number(end.slice(0, 4)) - 1}-12-31` as LocalDate
+    const puente = await readAccountBalances(tx, { cutoff: previoCutoff, prefixes: ["4778", "4728"] })
+    reccPendingCents = [...puente.values()].reduce((a, b) => a + Math.abs(b), 0)
+  }
+
   const prorrataYear = await tx.prorrataYear.findFirst({ where: { year: Number(opts.refDate.slice(0, 4)) } })
   const prorrataStep: ClosingStepResult =
     prorrataYear === null
@@ -1218,7 +1245,7 @@ export async function readChecklistInput(
     unsettledVatPeriods,
     prorrataStep,
     capitalGoodsStep,
-    reccPendingCents: null,
+    reccPendingCents,
     withholdingPendingModels: withholding.pendientes,
     balance473Cents,
 

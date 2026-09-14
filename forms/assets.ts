@@ -85,6 +85,13 @@ export const disposeAssetSchema = z.object({
   disposalDate: localDateSchema,
   reason: z.string().trim().min(10, "La baja exige un motivo de al menos 10 caracteres").max(512),
   lossAccountCode: accountSchema.nullish(),
+  /**
+   * Destino analítico del resultado de la baja (`671`/`771`). Por defecto lo
+   * hereda **del activo** —es su coste el que se da de baja—; aquí sólo se
+   * declara cuando la pérdida va a otro sitio. Ver `resolveDisposalDestination`.
+   */
+  projectId: uuidSchema.nullish(),
+  costCenterId: uuidSchema.nullish(),
 })
 export type DisposeAssetFormInput = z.infer<typeof disposeAssetSchema>
 
@@ -103,6 +110,9 @@ export const sellAssetSchema = z
     taxRateCode: z.string().trim().max(32).nullish(),
     counterpartyId: uuidSchema.nullish(),
     reason: z.string().trim().min(10, "La venta exige un motivo de al menos 10 caracteres").max(512),
+    /** Destino analítico del resultado de la venta; por defecto, el del activo. */
+    projectId: uuidSchema.nullish(),
+    costCenterId: uuidSchema.nullish(),
   })
   .refine((v) => !v.receivableAccountCode.startsWith("430"), {
     message: "La contrapartida de la venta de inmovilizado es 543 o 253, nunca 430 (O-24)",

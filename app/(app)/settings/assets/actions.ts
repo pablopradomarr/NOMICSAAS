@@ -156,6 +156,32 @@ export const reviseAssetAction = withOrg(
   }
 )
 
+/**
+ * **El destino analítico de T-33 y T-34** (ronda de integración de E9).
+ *
+ * `671` y `771` son cuentas del grupo 6/7 y, con `analyticsRequired`, C-9 exige
+ * exactamente un destino: sin él, `buildFromTemplate` devolvía «La cuenta 771
+ * exige exactamente un destino analítico» y **ninguna baja ni venta se podía
+ * contabilizar**. El destino no se inventa: es el **del propio activo**
+ * (`FixedAsset.projectId` / `costCenterId`, declarados al alta), porque el
+ * resultado de la enajenación pertenece al mismo proyecto o centro de coste que
+ * soportó su amortización. La acción admite además un destino explícito, que
+ * manda sobre el del activo cuando el resultado se imputa a otro sitio.
+ *
+ * Si ni el activo ni la acción lo traen, aquí no se rellena nada: la línea sale
+ * sin destino y decide C-9 —bloquear con `analyticsRequired`, rutear a `CC-NA`
+ * sin él (R-A8)—. Un destino inventado sería peor que el error.
+ */
+function resolveDisposalDestination(
+  asset: { projectId?: string | null; costCenterId?: string | null },
+  given: { projectId?: string | null; costCenterId?: string | null }
+): { projectId?: string; costCenterId?: string } {
+  if (given.projectId) return { projectId: given.projectId }
+  if (given.costCenterId) return { costCenterId: given.costCenterId }
+  if (asset.projectId) return { projectId: asset.projectId }
+  return asset.costCenterId ? { costCenterId: asset.costCenterId } : {}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Baja y venta (ADMIN) — T-33 y T-34
 // ─────────────────────────────────────────────────────────────────────────────
@@ -185,6 +211,7 @@ export const disposeAssetAction = withOrg(
           acquisitionCostCents: asset.asset.acquisitionCostCents,
           accumulatedCents: accumulated,
           description: `Baja de ${asset.asset.code} · ${v.reason}`,
+          ...resolveDisposalDestination(asset.asset, v),
         },
         lctx
       )
@@ -242,6 +269,7 @@ export const sellAssetAction = withOrg(
           taxRateCode: v.taxRateCode ?? undefined,
           receivableAccountCode: v.receivableAccountCode,
           description: `Venta de ${asset.asset.code} · ${v.reason}`,
+          ...resolveDisposalDestination(asset.asset, v),
         },
         lctx
       )

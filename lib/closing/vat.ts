@@ -846,13 +846,22 @@ export function capitalGoodsGuard(input: CapitalGoodsInput): ClosingStepResult {
   const yearsWithProrrata = input.prorrataByYear.filter(
     (p) => p.year >= input.year - CAPITAL_GOODS_WINDOW_YEARS_REAL_ESTATE && p.year <= input.year && p.bps !== 10000
   )
-  if (yearsWithProrrata.length === 0 && current !== null) {
+  // **R-IVA-16 literal.** La guardia sólo se dispara si `∃ año Y ∈ [N−8, N] con
+  // prorrataBps(Y) ≠ 10000`. Sin ningún año con prorrata distinta del 100 % no
+  // hay art. 107 que aplicar, **tampoco cuando no hay prorrata declarada en
+  // absoluto** —el caso normal—: exigir además `current !== null` dejaba el paso
+  // en WARN y, como es uno de los nueve bloqueantes, impedía cerrar a cualquier
+  // organización sin prorrata que tuviera un activo de más de 3 005,06 €.
+  if (yearsWithProrrata.length === 0) {
     return {
       step,
       block,
       status: "PASS",
       blocking: true,
-      evidencia: `${inWindow.length} bien(es) de inversión en ventana, pero la prorrata fue del 100 % en todos los años: no hay nada que regularizar (art. 107.Uno)`,
+      evidencia:
+        input.prorrataByYear.length === 0
+          ? `${inWindow.length} bien(es) de inversión en ventana, pero la organización no declara prorrata en ningún año de [${input.year - CAPITAL_GOODS_WINDOW_YEARS_REAL_ESTATE}, ${input.year}]: deducción íntegra y nada que regularizar (art. 107.Uno)`
+          : `${inWindow.length} bien(es) de inversión en ventana, pero la prorrata fue del 100 % en todos los años: no hay nada que regularizar (art. 107.Uno)`,
     }
   }
 

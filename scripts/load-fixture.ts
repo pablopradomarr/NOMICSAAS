@@ -303,7 +303,8 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
 }
 
 /**
- * Vacía diario, ejercicios y dimensiones de UNA organización, en una sola
+ * Vacía el cierre y los recurrentes de E9, el diario, los ejercicios y las
+ * dimensiones de UNA organización, en una sola
  * transacción y en orden de dependencias. No toca el plan de cuentas ni los
  * tipos impositivos: `importNpgc` ya es idempotente y volver a sembrarlos sería
  * trabajo para nada.
@@ -333,6 +334,43 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
     await client.query(`DELETE FROM allocation_runs WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM allocation_rule_targets WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM allocation_rules WHERE organization_id = $1::uuid`, [organizationId])
+    // E9 (ronda de integración) — lo que la épica del cierre deja en la
+    // organización, en orden estricto de FK y ANTES del diario, de los
+    // ejercicios y de `invariant_runs`:
+    //
+    //  · `closing_runs.(fiscal_year_id, invariant_run_id)` y
+    //    `profit_distributions.(fiscal_year_id, entry_id)`: sin vaciarlas, el
+    //    borrado de los ejercicios muere con `closing_runs_fiscal_year_fkey`
+    //    —que es exactamente lo que `cierre.spec.ts` y `recurrentes-iva.spec.ts`
+    //    venían esquivando a mano en su `beforeAll`, un BUG-E7-1 repetido—.
+    //  · `recurring_occurrences` cae antes que `recurring_entries` y que el
+    //    diario (`entry_id` es RESTRICT); `recurring_entries` antes que
+    //    `accruals` y `fixed_assets`, a los que apunta.
+    //  · `debt_installments` antes que `debt_schedules`, y `accruals` antes que
+    //    los cuadros de deuda de los que deriva su devengo.
+    //  · `vat_settlements.entry_id` es RESTRICT: la liquidación cae antes que su
+    //    asiento. `prorrata_years`, `reclassification_pairs` y
+    //    `vat_regime_periods` no atan a nada del diario, pero son estado fiscal
+    //    de la organización y dejarlos vivos hace que el siguiente fixture
+    //    liquide sobre un régimen de otra prueba.
+    //
+    // `fixed_assets` y `asset_revisions` NO van aquí: `journal_lines.fixed_asset_id`
+    // los referencia (O-19), así que caen DESPUÉS del diario.
+    for (const table of [
+      "profit_distributions",
+      "closing_runs",
+      "recurring_occurrences",
+      "recurring_entries",
+      "accruals",
+      "debt_installments",
+      "debt_schedules",
+      "vat_settlements",
+      "prorrata_years",
+      "reclassification_pairs",
+      "vat_regime_periods",
+    ]) {
+      await client.query(`DELETE FROM ${table} WHERE organization_id = $1::uuid`, [organizationId])
+    }
     // E7 (BUG-E7-1) — la conciliación bancaria y el barrido, ANTES del diario y
     // de los ejercicios, en orden estricto de FK:
     //
@@ -389,6 +427,10 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
     // diferido de cuadre sólo se calla si el asiento tampoco existe al COMMIT.
     await client.query(`DELETE FROM journal_lines WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM journal_entries WHERE organization_id = $1::uuid`, [organizationId])
+    // E9 — el inmovilizado, DESPUÉS del diario: `journal_lines.fixed_asset_id`
+    // (O-19) lo referencia y borrarlo antes deja el RESTRICT colgando.
+    await client.query(`DELETE FROM asset_revisions WHERE organization_id = $1::uuid`, [organizationId])
+    await client.query(`DELETE FROM fixed_assets WHERE organization_id = $1::uuid`, [organizationId])
     // `journal_entries.(file_id, extraction_run_id)` son `RESTRICT`: la
     // evidencia documental cae DESPUÉS del diario que la referenciaba.
     await client.query(`DELETE FROM extraction_runs WHERE organization_id = $1::uuid`, [organizationId])
@@ -433,8 +475,8 @@ ni de parte de quién):
 Opcionales:
   --fixture <ruta>    tests/fixtures/ejercicio-minimo.json (por defecto) o
                       tests/fixtures/ejercicio-completo.json
-  --reset-org         Vacía la liquidación, el diario, los ejercicios y las
-                      dimensiones de esa
+  --reset-org         Vacía la liquidación, el cierre y los recurrentes de E9,
+                      el diario, los ejercicios y las dimensiones de esa
                       organización ANTES de cargar. Sin esto, cargar dos veces
                       sobre la misma organización falla al chocar la numeración,
                       que es lo correcto: el script NO sobrescribe un diario.

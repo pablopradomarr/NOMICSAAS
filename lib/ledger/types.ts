@@ -119,6 +119,16 @@ export type DraftLine = {
   dueDate?: LocalDate | null
   /** Se persiste ya: es un enum, no una FK (§2.3, D-E3-1). */
   analyticType?: AnalyticType | null
+  /**
+   * **E9 · O-19 / D11.** El activo al que pertenece la línea de `68x`, `28x`,
+   * `671` o `771`. Se persiste en el **INSERT** de `postEntryTx`, nunca por un
+   * `UPDATE` posterior: `journal_lines` es append-only —política RESTRICTIVE
+   * `journal_lines_no_update` y sin `GRANT UPDATE` a `app_runtime`—, así que la
+   * atribución tenía que entrar con la línea o no entraba (ronda de integración
+   * de E9). En cualquier otra cuenta se ignora: lo exige el CHECK
+   * `journal_lines_fixed_asset_account` de T4.
+   */
+  fixedAssetId?: string | null
   /** E4: el motor los acepta en el tipo y los RECHAZA al validar (§2.3). */
   projectId?: string | null
   costCenterId?: string | null

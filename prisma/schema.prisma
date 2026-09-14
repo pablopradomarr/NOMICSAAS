@@ -1181,7 +1181,7 @@ model JournalEntry {
   entryHash   String @map("entry_hash") @db.VarChar(64)
   hashVersion Int    @default(2) @map("hash_version")
 
-  /// **E9 · ADR-0016 D8.** Periodo de liquidación de IVA (`AAAA-T1`…`AAAA-T4`,
+  /// **E9 · ADR-0016 D8.** Periodo de liquidación de IVA (`AAAA-Q1`…`AAAA-Q4`,
   /// `AAAA-01`…`AAAA-12`) DERIVADO por el trigger de M3 a partir de
   /// `app.iva_period(document_date, reception_date, period_kind)` y del
   /// `VatRegimePeriod` vigente. Es columna y no cálculo en memoria porque B-6

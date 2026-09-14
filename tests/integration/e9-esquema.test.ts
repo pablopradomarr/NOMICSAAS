@@ -487,11 +487,11 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T4 — CHECK, triggers e índices de 
                 app.iva_period('2026-01-31'::date, '2026-04-02'::date, 'TRIMESTRAL') AS posterior,
                 app.iva_period(NULL, NULL, 'TRIMESTRAL') AS nulo`
       )
-      expect(row.trimestral).toBe("2026-T2")
+      expect(row.trimestral).toBe("2026-Q2")
       expect(row.mensual).toBe("2026-05")
       // R-IVA-8: manda la RECEPCIÓN cuando es posterior — una factura de enero
       // recibida en abril se deduce en el segundo trimestre, no en el primero.
-      expect(row.posterior).toBe("2026-T2")
+      expect(row.posterior).toBe("2026-Q2")
       expect(row.nulo).toBeNull()
     })
 
@@ -502,10 +502,13 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T4 — CHECK, triggers e índices de 
         [entry]
       )
       // La vigencia por defecto que siembra M3 es TRIMESTRAL.
-      expect(row.iva_period).toBe("2026-T3")
+      expect(row.iva_period).toBe("2026-Q3")
 
+      // `AAAA-Tn` era la forma que escribía T4 y que el motor nunca supo leer:
+      // desde la migración `20260921090000_e9_periodo_iva_canonico` es un
+      // formato inventado como cualquier otro y el CHECK lo rechaza.
       const malFormato = await failure(
-        `UPDATE journal_entries SET iva_period = '2026-Q3' WHERE id = $1::uuid`,
+        `UPDATE journal_entries SET iva_period = '2026-T3' WHERE id = $1::uuid`,
         [entry]
       )
       expect(malFormato).toContain("journal_entries_iva_period_format")
@@ -553,7 +556,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T4 — CHECK, triggers e índices de 
         `INSERT INTO vat_settlements
            (id, organization_id, period_kind, period, period_start, period_end, regime, entry_id,
             output_cents, input_cents, result_cents, ledger_hash, book_hash, git_sha)
-         VALUES ('e9000000-0000-4000-8000-00000000ee11'::uuid, $1::uuid, 'TRIMESTRAL', '2026-T1',
+         VALUES ('e9000000-0000-4000-8000-00000000ee11'::uuid, $1::uuid, 'TRIMESTRAL', '2026-Q1',
                  '2026-01-01', '2026-03-31', 'GENERAL', $2::uuid,
                  1000, 400, 600, repeat('a', 64), repeat('b', 64), 'abc123')`,
         [ORG, entry1]
@@ -562,7 +565,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T4 — CHECK, triggers e índices de 
         `INSERT INTO vat_settlements
            (organization_id, period_kind, period, period_start, period_end, regime, entry_id,
             output_cents, input_cents, result_cents, ledger_hash, book_hash, git_sha)
-         VALUES ($1::uuid, 'TRIMESTRAL', '2026-T1', '2026-01-01', '2026-03-31', 'GENERAL', $2::uuid,
+         VALUES ($1::uuid, 'TRIMESTRAL', '2026-Q1', '2026-01-01', '2026-03-31', 'GENERAL', $2::uuid,
                  1000, 400, 600, repeat('a', 64), repeat('b', 64), 'abc123')`,
         [ORG, await newEntry()]
       )
@@ -580,7 +583,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T4 — CHECK, triggers e índices de 
         `INSERT INTO vat_settlements
            (organization_id, period_kind, period, period_start, period_end, regime, entry_id,
             output_cents, input_cents, result_cents, ledger_hash, book_hash, git_sha)
-         VALUES ($1::uuid, 'TRIMESTRAL', '2026-T1', '2026-01-01', '2026-03-31', 'GENERAL', $2::uuid,
+         VALUES ($1::uuid, 'TRIMESTRAL', '2026-Q1', '2026-01-01', '2026-03-31', 'GENERAL', $2::uuid,
                  1100, 400, 700, repeat('a', 64), repeat('b', 64), 'abc123')`,
         [ORG, await newEntry()]
       )
@@ -796,12 +799,12 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T4 — CHECK, triggers e índices de 
   describe("M5 · B-6 (G-13): no se contabiliza IVA en un periodo liquidado", () => {
     it("una línea de 472/477 en un periodo LIQUIDADO se rechaza; una de 628, no", async () => {
       await q("SAVEPOINT b6")
-      const liquidado = await newEntry("NORMAL", "2026-11-15") // 2026-T4
+      const liquidado = await newEntry("NORMAL", "2026-11-15") // 2026-Q4
       await q(
         `INSERT INTO vat_settlements
            (organization_id, period_kind, period, period_start, period_end, regime, entry_id,
             output_cents, input_cents, result_cents, ledger_hash, book_hash, git_sha)
-         VALUES ($1::uuid, 'TRIMESTRAL', '2026-T4', '2026-10-01', '2026-12-31', 'GENERAL', $2::uuid,
+         VALUES ($1::uuid, 'TRIMESTRAL', '2026-Q4', '2026-10-01', '2026-12-31', 'GENERAL', $2::uuid,
                  1000, 400, 600, repeat('a', 64), repeat('b', 64), 'abc')`,
         [ORG, liquidado]
       )

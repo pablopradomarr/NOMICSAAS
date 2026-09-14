@@ -72,6 +72,7 @@ async function postEntry(
     originalAmountCents?: number | null
     exchangeRateId?: string | null
     taxBaseCents?: number | null
+    fixedAssetId?: string | null
   }[],
   opts: { kind?: string; ivaPeriod?: string | null } = {}
 ): Promise<string> {
@@ -95,9 +96,9 @@ async function postEntry(
         `INSERT INTO journal_lines
          (organization_id, entry_id, line_no, account_code, debit_cents, credit_cents,
           counterparty_id, due_date, original_currency, original_amount_cents, exchange_rate_id,
-          tax_base_cents, entry_date, fiscal_year_id, entry_kind)
+          tax_base_cents, entry_date, fiscal_year_id, entry_kind, fixed_asset_id)
        VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::uuid, $8::date, $9, $10, $11::uuid, $12,
-               $13::date, $14::uuid, $15::entry_kind)`,
+               $13::date, $14::uuid, $15::entry_kind, $16::uuid)`,
         [
           org,
           entry.id,
@@ -114,6 +115,7 @@ async function postEntry(
           entryDate,
           fyId,
           opts.kind ?? "NORMAL",
+          l.fixedAssetId ?? null,
         ]
       )
     }
@@ -367,11 +369,18 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T12 — inmovilizado: la atribución 
     expect(rows.map((r) => r.code)).toEqual(["ACT-SIN"])
   })
 
-  it("`attributeLinesToAssetTx` sólo toca `68x`/`28x`/`671`/`771` — la base lo repite (G-15)", async () => {
+  /**
+   * **Ronda de integración de E9.** La atribución entra **con la línea**, en el
+   * `INSERT`: `journal_lines` es append-only y el `UPDATE` de la versión de T15
+   * moría con `permission denied`. `attributeLinesToAssetTx` ya sólo **cuenta**,
+   * y el CHECK G-15 sigue impidiendo atribuir una cuenta que no sea
+   * `68x`/`28x`/`671`/`771`.
+   */
+  it("el activo entra CON la línea y sólo en `68x`/`28x`/`671`/`771` — la base lo repite (G-15)", async () => {
     const { attributeLinesToAssetTx } = await import("@/models/assets")
     const entry = await postEntry(ORG, fiscalYearId, "2026-04-30", [
-      { accountCode: "6813", debitCents: 1000, creditCents: 0 },
-      { accountCode: "2811", debitCents: 0, creditCents: 1000 },
+      { accountCode: "6813", debitCents: 1000, creditCents: 0, fixedAssetId: assetB },
+      { accountCode: "2811", debitCents: 0, creditCents: 1000, fixedAssetId: assetB },
       { accountCode: "600", debitCents: 500, creditCents: 0 },
       { accountCode: "572", debitCents: 0, creditCents: 500 },
     ])
@@ -384,6 +393,14 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T12 — inmovilizado: la atribución 
       [entry]
     )
     expect(marcadas.map((r) => r.account_code)).toEqual(["2811", "6813"])
+
+    // G-15: la base rechaza el activo en una cuenta que no es atribuible.
+    await expect(
+      postEntry(ORG, fiscalYearId, "2026-04-30", [
+        { accountCode: "600", debitCents: 500, creditCents: 0, fixedAssetId: assetB },
+        { accountCode: "572", debitCents: 0, creditCents: 500 },
+      ])
+    ).rejects.toThrow(/journal_lines_fixed_asset_accounts/)
   })
 
   it("`readCapitalGoods` trae los bienes de inversión con su prorrata de adquisición (O-12)", async () => {

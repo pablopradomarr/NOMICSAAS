@@ -12,17 +12,13 @@ import { adminUserId, analyticsOrganization, APP_ENV, DATABASE_URL as DATABASE_U
  *
  *  1. **Regla → calendario → vista previa del lote**: alta de una regla mensual
  *     de importe fijo, sus celdas pendientes en el calendario y el `dryRun` del
- *     lote, que recorre el mismo código que la generación real sin escribir. La
- *     generación real y el drill-down al asiento están en un `test.fixme` con su
- *     motivo: los bloquea una contradicción entre la migración de T4 y el modelo
- *     de T12, no la interfaz.
+ *     lote, que recorre el mismo código sin escribir, y la **generación real**
+ *     con su drill-down hasta el asiento contabilizado.
  *  2. **Activo → cuadro**: alta con la sugerencia del art. 12.1 LIS, cuadro mes
  *     a mes derivado (no almacenado) y `scheduleHash` a la vista.
  *  3. **Venta con `543`**: la contrapartida que la pantalla ofrece es el crédito
  *     por enajenación, **nunca** `430` (O-24), y el aviso del art. 110 LIVA se
- *     enseña **antes** de contabilizar. La contabilización va en un `test.fixme`
- *     con su motivo: la bloquea que T15 no reenvíe el destino analítico del
- *     activo a la plantilla.
+ *     enseña **antes** de contabilizar, y la contabilización se ejecuta.
  *  4. **Deuda**: cuadro de vencimientos por T-37 con su parte corriente y no
  *     corriente separadas.
  *  5. **Liquidar IVA → casillas → documento**: liquidación del periodo con su
@@ -35,22 +31,20 @@ import { adminUserId, analyticsOrganization, APP_ENV, DATABASE_URL as DATABASE_U
  *     desbloquear uno cuyo periodo de IVA está liquidado.
  *  8. **VIEWER**: ve las cinco pantallas y ninguno de los botones de mutación.
  *
- * ## Por qué el arnés fuerza el régimen MENSUAL
+ * ## El régimen del arnés
  *
- * `app.iva_period()` (migración `20260920110000_e9_iva`) escribe el trimestre
- * como **`AAAA-T n`** y `lib/closing/vat.vatPeriodOf()` lo lee como
- * **`AAAA-Qn`**: con liquidación trimestral el libro registro sale vacío porque
- * las dos claves no casan. Es un defecto **de backend** entre T4 y T8, ajeno a
- * esta tarea, y está reportado. Con liquidación **mensual** las dos claves
- * coinciden (`AAAA-MM`), así que el arnés declara el régimen mensual y
- * normaliza `iva_period` de los asientos ya cargados por el fixture — con el
- * baile `NO FORCE` / `FORCE` que exige la RLS estricta, y sólo en la
- * organización de pruebas.
+ * **TRIMESTRAL**, que es el caso general de una PYME. Hasta la ronda de
+ * integración de E9 había que forzar el MENSUAL: `app.iva_period()` escribía el
+ * trimestre como `AAAA-Tn` y `lib/closing/vat.vatPeriodOf()` lo leía como
+ * `AAAA-Qn`, así que con liquidación trimestral el libro registro salía vacío
+ * porque las dos claves no casaban. La migración
+ * `20260921090000_e9_periodo_iva_canonico` unifica la forma canónica en
+ * `AAAA-Qn` —la del diseño §4.1 y la de ADR-0014 D8— y el rodeo sobra.
  */
 
 const SHOTS = process.env.E2E_SHOTS_DIR || "/tmp/e9-screens"
-/** Mes sobre el que se ejercita todo el IVA. */
-const IVA_PERIOD = "2026-07"
+/** Trimestre sobre el que se ejercita todo el IVA (forma canónica `AAAA-Qn`). */
+const IVA_PERIOD = "2026-Q3"
 
 test.describe.configure({ mode: "serial" })
 
@@ -58,7 +52,6 @@ test.beforeAll(async () => {
   mkdirSync(SHOTS, { recursive: true })
   const org = await analyticsOrganization()
   const userId = await adminUserId()
-  await resetE9(org.id)
   execFileSync(
     "npx",
     [
@@ -82,7 +75,8 @@ test.beforeAll(async () => {
       },
     }
   )
-  await useMonthlyVatRegime(org.id)
+  await useQuarterlyVatRegime(org.id)
+  await abrirTrimestreParaLiquidar(org.id, IVA_PERIOD)
 })
 
 test.beforeEach(async ({ page, baseURL }) => {
@@ -131,30 +125,38 @@ test("una regla mensual se da de alta, se ve en el calendario y su lote se previ
   expect(await occurrenceCount()).toBe(0)
 
   await page.keyboard.press("Escape")
+
+  // Y una regla **TRIMESTRAL**, que antes ni se podía dar de alta: el CHECK
+  // `recurring_entries_start_period_format` esperaba `AAAA-Tn` y el motor
+  // escribía `AAAA-Qn`. Con la forma canónica unificada, entra.
+  await abrir(page, page.getByTestId("open-rule-form"), page.getByTestId("rule-form"))
+  await page.getByTestId("rule-code").fill("REC-E2E-T")
+  await page.getByTestId("rule-name").fill("Traspaso recurrente trimestral e2e")
+  await page.getByTestId("rule-kind").selectOption("IMPORTE_FIJO")
+  await page.getByTestId("rule-freq").selectOption("TRIMESTRAL")
+  await page.getByTestId("rule-amount").fill("500,00")
+  await page.getByTestId("rule-start").fill("2026-Q1")
+  await page.getByTestId("rule-end").fill("2026-Q2")
+  await page.getByTestId("rule-template").selectOption("TRASPASO_TESORERIA")
+  await page
+    .getByTestId("rule-template-input")
+    .fill('{"documentDate":"2026-03-31","fromAccountCode":"572","toAccountCode":"570"}')
+  await page.getByTestId("rule-submit").click()
+  await expect(page.locator('[data-rule-code="REC-E2E-T"]')).toBeVisible({ timeout: 30_000 })
+
   await page.screenshot({ path: `${SHOTS}/recurrentes.png`, fullPage: true, caret: "initial" })
 })
 
 /**
- * **BLOQUEADO por un defecto de backend, no por la interfaz.** Al generar de
- * verdad, `recordOccurrenceTx` (T12) inserta la ocurrencia **antes** que el
- * asiento —la idempotencia es el índice único, R-REC-3— y por tanto con
- * `status = 'GENERADA'` y `entry_id` todavía nulo; el CHECK
- * `recurring_occurrences_entry_iff_generada` de la migración
- * `20260920100000_e9_recurrentes` (T4) exige justo lo contrario y la
- * transacción aborta:
- *
- * ```
- * new row for relation "recurring_occurrences" violates check constraint
- * "recurring_occurrences_entry_iff_generada"
- * ```
- *
- * La contradicción es entre T4 y T12 y se cierra o difiriendo el CHECK
- * (`DEFERRABLE INITIALLY DEFERRED`) o insertando la ocurrencia con un estado
- * intermedio. Está reportado. En cuanto se corrija, este test se activa tal
- * cual: la interfaz que necesita —el botón, la tabla del lote, el detalle de la
- * celda y su enlace— ya está y la vista previa la ejercita entera.
+ * **Desbloqueado en la ronda de integración de E9.** `recordOccurrenceTx` (T12)
+ * insertaba la ocurrencia ANTES que el asiento, con `status = 'GENERADA'` y
+ * `entry_id` nulo, contra el CHECK `recurring_occurrences_entry_iff_generada`
+ * de T4 —y contra la política append-only de la tabla, que además hacía
+ * imposible el `UPDATE` posterior—. Ninguna generación real se contabilizaba.
+ * Ahora el asiento va primero y la ocurrencia nace ya enlazada: la restricción
+ * de la base sigue garantizando `entry ⇔ GENERADA` en todo momento.
  */
-test.fixme("la generación real contabiliza el asiento y la celda enlaza con él", async ({ page }) => {
+test("la generación real contabiliza el asiento y la celda enlaza con él", async ({ page }) => {
   await page.goto("/ledger/recurring")
   await abrir(page, page.getByTestId("open-generate"), page.getByTestId("generate-up-to"))
   await page.getByTestId("generate-up-to").fill("2026-02")
@@ -227,24 +229,23 @@ test("un activo enseña su cuadro sellado y su venta ofrece 543, nunca 430", asy
 })
 
 /**
- * **BLOQUEADO por un defecto de backend, no por la interfaz.** En una
- * organización con destino analítico obligatorio, `VENTA_INMOVILIZADO` (T-34) y
- * `BAJA_INMOVILIZADO` (T-33) fallan al construir el asiento:
- *
- * ```
- * [línea 4] La cuenta 771 exige exactamente un destino analítico (proyecto o
- * centro de coste)
- * ```
- *
- * El activo **sí** lleva proyecto y centro de coste (`createAssetSchema`), pero
- * ni `sellAssetAction` ni `disposeAssetAction` (T15) los reenvían a la
- * plantilla, y `sellAssetSchema` tampoco los admite: el resultado de la
- * enajenación se queda sin destino y `analyticsRequired` lo rechaza. Está
- * reportado; se cierra reenviando el destino del activo al `input` de la
- * plantilla. La interfaz que lo consume —vista previa del asiento con `543`, los
- * avisos del art. 110 y del art. 20.Uno.22º y el enlace al asiento— ya está.
+ * **Desbloqueado en la ronda de integración de E9.** Con destino analítico
+ * obligatorio, `VENTA_INMOVILIZADO` (T-34) y `BAJA_INMOVILIZADO` (T-33) fallaban
+ * con «La cuenta 771 exige exactamente un destino analítico» porque
+ * `sellAssetAction` y `disposeAssetAction` no reenviaban a la plantilla el
+ * proyecto ni el centro de coste que el activo ya declara. Ahora el resultado de
+ * la enajenación hereda el destino del activo, y la acción admite además uno
+ * explícito cuando se imputa a otro sitio.
  */
-test.fixme("la venta se contabiliza con 543 y el aviso del art. 110 acompaña al asiento", async ({ page }) => {
+test("la venta se contabiliza con 543 y el aviso del art. 110 acompaña al asiento", async ({ page }) => {
+  // La organización de fixtures exige destino analítico y el resultado de la
+  // enajenación (771/671) lo hereda **del activo**. `createAssetSchema` admite
+  // `costCenterId` desde T15, pero el formulario todavía no lo ofrece: hasta que
+  // lo haga (deuda de UI anotada en ESTADO), el arnés se lo declara al activo
+  // como lo haría el alta. Con el baile NO FORCE / FORCE que exige la RLS
+  // estricta, y sólo en la organización de pruebas.
+  await darDestinoAnalitico("ACT-E2E")
+
   await page.goto("/settings/assets")
   await page.getByTestId("open-asset-ACT-E2E").click()
   await abrir(page, page.getByTestId("open-dispose-asset"), page.getByTestId("dispose-form"))
@@ -254,12 +255,18 @@ test.fixme("la venta se contabiliza con 543 y el aviso del art. 110 acompaña al
   await page.getByTestId("dispose-reason").fill("Venta a un tercero por renovación del parque de maquinaria")
   await page.getByTestId("dispose-submit").click()
 
-  const draft = page.getByTestId("disposal-draft")
-  await expect(draft).toBeVisible({ timeout: 30_000 })
-  await expect(draft).toContainText("543")
-  await expect(draft).not.toContainText("430")
-  await expect(page.getByTestId("disposal-warnings")).toContainText("110")
-  await expect(page.getByTestId("disposal-entry-link")).toBeVisible()
+  // El panel se lee de UNA vez: al contabilizar, la acción llama a
+  // `router.refresh()` y el activo pasa a VENDIDO, con lo que el diálogo deja de
+  // existir. Encadenar aserciones contra nodos que se están desmontando es la
+  // clase de test que falla por el reloj y no por el producto.
+  const resultado = page.getByTestId("disposal-result")
+  await expect(resultado).toBeVisible({ timeout: 30_000 })
+  const texto = await resultado.innerText()
+  expect(texto).toContain("Venta contabilizada")
+  expect(texto).toContain("Ver el asiento")
+  expect(texto).toContain("543")
+  expect(texto).not.toContain("430")
+  expect(texto).toContain("110")
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,7 +308,7 @@ test("un préstamo declara su cuadro y separa la parte corriente de la no corrie
 test("el periodo se liquida y sus casillas llevan al asiento en tres clics", async ({ page }) => {
   await page.goto(`/reports/vat?tab=libro&period=${IVA_PERIOD}&year=2026`)
   await expect(page.getByRole("heading", { name: "IVA", exact: true })).toBeVisible({ timeout: 90_000 })
-  await expect(page.getByTestId("vat-regime")).toContainText("mensual")
+  await expect(page.getByTestId("vat-regime")).toContainText("trimestral")
 
   const libro = page.getByTestId("vat-book")
   await expect(libro).toBeVisible({ timeout: 30_000 })
@@ -486,61 +493,91 @@ async function occurrenceCount(): Promise<number> {
 }
 
 /**
- * Vacía lo que E9 deja en la organización. Dos motivos, y los dos ya conocidos
- * (BUG-E7-1): una segunda pasada chocaría con los códigos únicos, y
- * `--reset-org` no conoce las tablas de E9 — `closing_runs` y
- * `profit_distributions` referencian `fiscal_years`, así que sin vaciarlas el
- * borrado de los ejercicios muere con `closing_runs_fiscal_year_fkey`.
+ * Declara el régimen **TRIMESTRAL** desde 2020. Ya no hay que realinear nada:
+ * la base y el motor escriben la MISMA clave canónica `AAAA-Qn` desde la
+ * migración `20260921090000_e9_periodo_iva_canonico`, así que el libro registro
+ * del trimestre sale con sus anotaciones y la liquidación funciona de extremo a
+ * extremo. El rodeo del régimen mensual —y el `UPDATE` de `iva_period` con el
+ * baile `NO FORCE` / `FORCE`— desaparecen con él.
  */
-async function resetE9(organizationId: string): Promise<void> {
+async function useQuarterlyVatRegime(organizationId: string): Promise<void> {
   await withDb(async (client) => {
-    for (const sql of [
-      `DELETE FROM recurring_occurrences WHERE organization_id = $1`,
-      `DELETE FROM recurring_entries WHERE organization_id = $1`,
-      `DELETE FROM asset_revisions WHERE organization_id = $1`,
-      `DELETE FROM fixed_assets WHERE organization_id = $1`,
-      `DELETE FROM accruals WHERE organization_id = $1`,
-      `DELETE FROM debt_installments WHERE organization_id = $1`,
-      `DELETE FROM debt_schedules WHERE organization_id = $1`,
-      `DELETE FROM vat_settlements WHERE organization_id = $1`,
-      `DELETE FROM profit_distributions WHERE organization_id = $1`,
-      `DELETE FROM closing_runs WHERE organization_id = $1`,
-      `DELETE FROM period_locks WHERE organization_id = $1`,
-      `DELETE FROM prorrata_years WHERE organization_id = $1`,
-      `DELETE FROM vat_regime_periods WHERE organization_id = $1`,
-    ]) {
-      await client.query(sql, [organizationId]).catch(() => undefined)
+    await client.query(
+      `INSERT INTO vat_regime_periods
+         (organization_id, regime, period_kind, import_deferral, valid_from, valid_to, reason)
+       VALUES ($1, 'GENERAL', 'TRIMESTRAL', false, DATE '2020-01-01', NULL, 'Arnés e2e de E9')`,
+      [organizationId]
+    )
+  })
+}
+
+/**
+ * Declara al activo su centro de coste, que es de donde T-33 y T-34 sacan el
+ * destino del resultado de la enajenación (ronda de integración de E9).
+ */
+async function darDestinoAnalitico(assetCode: string): Promise<void> {
+  const org = await analyticsOrganization()
+  await withDb(async (client) => {
+    await client.query(`ALTER TABLE fixed_assets NO FORCE ROW LEVEL SECURITY`)
+    try {
+      await client.query(
+        `UPDATE fixed_assets
+            SET cost_center_id = (SELECT id FROM cost_centers
+                                   WHERE organization_id = $1 AND is_active
+                                   ORDER BY sort_order, code LIMIT 1)
+          WHERE organization_id = $1 AND code = $2`,
+        [org.id, assetCode]
+      )
+    } finally {
+      await client.query(`ALTER TABLE fixed_assets FORCE ROW LEVEL SECURITY`)
     }
   })
 }
 
 /**
- * Declara el régimen **mensual** desde 2026 y realinea el `iva_period` de los
- * asientos que el fixture acaba de postear. Ver el docblock de cabecera: el
- * trimestre lo escribe la base como `T n` y lo lee el motor como `Qn`, así que
- * el único camino que hoy casa de punta a punta es el mensual.
+ * Deja **un** trimestre sin liquidar para que el recorrido de la liquidación
+ * tenga algo que liquidar.
  *
- * El `UPDATE` va con el baile `NO FORCE` / `FORCE` que CLAUDE.md exige para
- * escribir datos con RLS estricta, y sólo sobre la organización de pruebas.
+ * `ejercicio-completo` trae ya los cuatro asientos T-23 de 2026 —el ejercicio
+ * está liquidado de principio a fin—, así que con el régimen TRIMESTRAL ningún
+ * trimestre queda abierto: `472` y `477` están barridos y `vatSettlement`
+ * rechaza con **R-IVA-9** («el libro y el diario no dicen lo mismo»), que es
+ * exactamente lo que tiene que hacer. Antes esto no se veía porque el arnés
+ * forzaba el régimen mensual y reescribía `iva_period`, con lo que la
+ * liquidación del 3T caía en `2026-09` y el mes elegido (`2026-07`) quedaba
+ * limpio por accidente.
+ *
+ * Aquí se retira ese asiento como una operación de OPERADOR —igual que
+ * `--reset-org`—, con el baile `NO FORCE` / `FORCE` y sólo en la organización de
+ * pruebas: las líneas y el asiento en la MISMA transacción, porque el cuadre es
+ * un constraint diferido.
  */
-async function useMonthlyVatRegime(organizationId: string): Promise<void> {
+async function abrirTrimestreParaLiquidar(organizationId: string, period: string): Promise<void> {
   await withDb(async (client) => {
-    await client.query(
-      `INSERT INTO vat_regime_periods
-         (organization_id, regime, period_kind, import_deferral, valid_from, valid_to, reason)
-       VALUES ($1, 'GENERAL', 'MENSUAL', false, DATE '2020-01-01', NULL, 'Arnés e2e de E9')`,
-      [organizationId]
-    )
+    await client.query(`ALTER TABLE journal_lines NO FORCE ROW LEVEL SECURITY`)
     await client.query(`ALTER TABLE journal_entries NO FORCE ROW LEVEL SECURITY`)
     try {
+      await client.query("BEGIN")
       await client.query(
-        `UPDATE journal_entries
-            SET iva_period = to_char(GREATEST(COALESCE(document_date, entry_date), COALESCE(reception_date, entry_date)), 'YYYY-MM')
-          WHERE organization_id = $1 AND iva_period IS NOT NULL`,
-        [organizationId]
+        `DELETE FROM journal_lines
+          WHERE organization_id = $1
+            AND entry_id IN (SELECT id FROM journal_entries
+                              WHERE organization_id = $1 AND iva_period = $2
+                                AND template_code = 'REGULARIZACION_IVA')`,
+        [organizationId, period]
       )
+      await client.query(
+        `DELETE FROM journal_entries
+          WHERE organization_id = $1 AND iva_period = $2 AND template_code = 'REGULARIZACION_IVA'`,
+        [organizationId, period]
+      )
+      await client.query("COMMIT")
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined)
+      throw error
     } finally {
       await client.query(`ALTER TABLE journal_entries FORCE ROW LEVEL SECURITY`)
+      await client.query(`ALTER TABLE journal_lines FORCE ROW LEVEL SECURITY`)
     }
   })
 }

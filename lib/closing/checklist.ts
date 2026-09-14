@@ -497,7 +497,18 @@ function evaluate(def: ClosingStepDef, input: ChecklistInput, refDate: LocalDate
     case "BIENES_DE_INVERSION":
       return fromMotor(input.capitalGoodsStep, "no hay bienes de inversión declarados en la ventana del art. 107")
     case "RECC_DEVENGADO_31_12":
-      if (input.reccPendingCents === null) return { status: "NA", evidencia: "La organización no está en el régimen especial del criterio de caja" }
+      // **Decisión contable (ronda de integración de E9).** Un paso BLOQUEANTE
+      // no puede salir `NA` porque su supuesto no se dé: `NA` no es PASS y
+      // `canCloseFiscalYear` exige PASS en los nueve, así que ninguna
+      // organización fuera del RECC podía cerrar el ejercicio —que son casi
+      // todas—. Fuera del régimen de caja no hay barrido del art. 163
+      // *terdecies* que practicar y **eso es cumplimiento**, no un «no
+      // aplicable»: el paso sale PASS con la evidencia que lo dice. `NA` queda
+      // sólo para los pasos INFORMATIVOS (los societarios posteriores al
+      // cierre, que nacen así por diseño y no bloquean).
+      if (input.reccPendingCents === null) {
+        return pass("Régimen de caja no aplica en el ejercicio: no hay VatRegimePeriod RECC vigente y, por tanto, nada que devengar a 31/12 (art. 163 terdecies LIVA)")
+      }
       return input.reccPendingCents === 0
         ? pass("Barrido del 31/12 practicado: nada pendiente de devengar del art. 163 terdecies")
         : fail(`Quedan ${fmt(input.reccPendingCents)} de RECC del año anterior sin devengar a 31/12: postee T-36`)

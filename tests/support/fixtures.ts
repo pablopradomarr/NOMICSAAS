@@ -21,8 +21,8 @@ import path from "node:path"
 
 import { buildPlan } from "@/lib/accounts/codes"
 import { filterByVariant, parseNpgcCsv, seedRowsToPlanAccounts } from "@/lib/accounts/csv"
-import { defaultAccountMap } from "@/lib/accounts/map"
-import type { AccountKey, AnalyticType, Plan } from "@/lib/accounts/types"
+import { ACCOUNT_KEY_DEFAULT_CODE, DEFERRED_ACCOUNT_KEYS, defaultAccountMap } from "@/lib/accounts/map"
+import type { AccountKey, AnalyticType, Plan, PlanAccount } from "@/lib/accounts/types"
 import { resolveEffectiveAnalyticType } from "@/lib/analytics/margins"
 import type { BusinessLineRef, CostCenterMarginLevel, CostCenterRef, ProjectRef } from "@/lib/analytics/types"
 import { entryHash, HASH_VERSION_CURRENT, HashableLine } from "@/lib/ledger/hash"
@@ -134,6 +134,63 @@ export function planForVariant(variant: "GENERAL" | "PYMES"): Plan {
   return buildPlan(seedRowsToPlanAccounts(filtered.value, "SEED"))
 }
 
+/**
+ * El plan del fixture: el del seed **más sus `accountsExtra`**.
+ *
+ * Sin esto, `ejercicio-completo-v2` no cargaba: sus cuentas `4728` y `4778`
+ * —las del RECC, que **no son del PGC** y nacen como hijas de `472`/`477`
+ * (O-14)— no estaban en el plan, `defaultAccountMap` dejaba
+ * `IVA_SOPORTADO_PENDIENTE_RECC` e `IVA_REPERCUTIDO_PENDIENTE_RECC` sin
+ * resolver y el primer asiento del fixture moría con «no resuelve a ninguna
+ * cuenta». La cuenta hija **hereda del padre** naturaleza, estado y epígrafes,
+ * que es exactamente lo que hace `importNpgc` al crearlas en la base.
+ */
+export function planWithExtras(file: FixtureFile): Plan {
+  const base = planForVariant(file.organization.pgcVariant)
+  if (file.accountsExtra.length === 0) return base
+  const extras: PlanAccount[] = file.accountsExtra.map((extra) => {
+    const parent = extra.parentCode ? base.byCode.get(extra.parentCode) : undefined
+    if (!parent) throw new Error(`La cuenta extra ${extra.code} declara el padre ${extra.parentCode}, que el plan no tiene`)
+    return {
+      ...parent,
+      code: extra.code,
+      name: extra.name,
+      level: extra.code.length,
+      parentCode: extra.parentCode,
+      isPostable: true,
+      isSystem: false,
+      origin: "MANUAL" as const,
+    }
+  })
+  return buildPlan([...base.byCode.values(), ...extras])
+}
+
+/**
+ * El mapa del fixture: el automático **más las claves diferidas de E9** que el
+ * plan del fichero sí tiene.
+ *
+ * `DEFERRED_ACCOUNT_KEYS` (ADR-0016) queda fuera de `defaultAccountMap` a
+ * propósito: `resolvePostable` sube al ancestro y `4728` acabaría en `472`,
+ * mezclando el IVA pendiente de devengo con el ya deducible. Quien las siembra
+ * en la base es la migración M4, y **sólo donde la cuenta existe y es
+ * postable**. Aquí se hace lo mismo, con el código EXACTO y sin subir a ningún
+ * ancestro: es la única forma de que `ejercicio-completo-v2` —cuyos asientos de
+ * RECC usan esas claves— resuelva igual en el motor puro y en la base.
+ */
+export function fixtureAccountMap(file: FixtureFile, plan: Plan): Map<string, string> {
+  const { entries } = defaultAccountMap(plan, {
+    useSubaccounts: file.organization.useSubaccounts,
+    createSoftwareAccounts: file.organization.createSoftwareAccounts,
+  })
+  const byKey = new Map<string, string>(entries.map((e) => [e.key as string, e.accountCode]))
+  for (const key of DEFERRED_ACCOUNT_KEYS) {
+    const code = ACCOUNT_KEY_DEFAULT_CODE[key]
+    const account = plan.byCode.get(code)
+    if (account?.isPostable && account.isActive) byKey.set(key, code)
+  }
+  return byKey
+}
+
 /** Ids deterministas: el fixture debe producir el MISMO hash en dos ejecuciones. */
 const stableId = (prefix: string, key: string): string => `${prefix}-${key}`
 
@@ -170,13 +227,9 @@ export type LoadedFixture = {
  */
 export function loadFixture(name: FixtureName, opts: { refDate?: LocalDate } = {}): LoadedFixture {
   const file = readFixture(name)
-  const plan = planForVariant(file.organization.pgcVariant)
+  const plan = planWithExtras(file)
 
-  const { entries: mapEntries } = defaultAccountMap(plan, {
-    useSubaccounts: file.organization.useSubaccounts,
-    createSoftwareAccounts: file.organization.createSoftwareAccounts,
-  })
-  const mapByKey = new Map<string, string>(mapEntries.map((e) => [e.key, e.accountCode]))
+  const mapByKey = fixtureAccountMap(file, plan)
   const map = (key: AccountKey): string | null => mapByKey.get(key) ?? null
 
   const organizationId = stableId("org", file.organization.slug)
@@ -609,15 +662,10 @@ const mapCache = new Map<string, Map<string, string>>()
 
 function accountCodeForKey(file: FixtureFile, key: string | undefined): string {
   if (!key) throw new Error("Línea del fixture sin cuenta ni clave")
-  const cacheKey = `${file.organization.pgcVariant}|${file.organization.useSubaccounts}|${file.organization.createSoftwareAccounts}`
+  const cacheKey = `${file.organization.pgcVariant}|${file.organization.useSubaccounts}|${file.organization.createSoftwareAccounts}|${file.accountsExtra.map((a) => a.code).join(",")}`
   let byKey = mapCache.get(cacheKey)
   if (!byKey) {
-    const plan = planForVariant(file.organization.pgcVariant)
-    const { entries } = defaultAccountMap(plan, {
-      useSubaccounts: file.organization.useSubaccounts,
-      createSoftwareAccounts: file.organization.createSoftwareAccounts,
-    })
-    byKey = new Map(entries.map((e) => [e.key as string, e.accountCode]))
+    byKey = fixtureAccountMap(file, planWithExtras(file))
     mapCache.set(cacheKey, byKey)
   }
   const code = byKey.get(key)

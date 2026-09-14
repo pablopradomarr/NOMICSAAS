@@ -478,32 +478,32 @@ export async function readCapitalGoods(
 }
 
 /**
- * **O-19 · la atribución.** Marca con `fixed_asset_id` las líneas de un asiento
- * que pertenecen a este activo.
+ * **O-19 · la atribución, contada.** Devuelve cuántas líneas del asiento han
+ * quedado atribuidas a este activo.
  *
- * Existe aquí, y no en el camino de escritura del diario, por la frontera de
- * §4.10: **`lib/ledger/post.ts` no se toca** en E9. El motor postea el asiento y
- * la capa de inmovilizado dice a qué activo pertenece cada línea, en la **misma
- * transacción**. El CHECK **G-15** de la base sólo lo admite en líneas cuyo
- * `account_code` empieza por `68`, `28`, `671` o `771`, así que un intento de
- * atribuir una línea de tesorería no se cuela: lo rechaza Postgres.
+ * **Ya no escribe** (ronda de integración de E9). La versión de T15 hacía
+ * `UPDATE journal_lines SET fixed_asset_id = …` después de postear, y eso no
+ * podía funcionar en ningún entorno real: `journal_lines` es **append-only**
+ * —política RESTRICTIVE `journal_lines_no_update` y sin `GRANT UPDATE` a
+ * `app_runtime`, tal y como la propia migración de T4 dejó escrito— de modo que
+ * toda baja y toda venta morían con `permission denied for table journal_lines`.
+ * La atribución entra ahora **con la línea**, en el `INSERT` de `postEntryTx`
+ * (`DraftLine.fixedAssetId`), que es donde una columna inmutable tiene que
+ * escribirse.
  *
- * Devuelve cuántas líneas quedaron atribuidas. **Cero es un dato**: significa que
- * el asiento no tiene ninguna línea atribuible y que I-E9-5 saldrá `INFO` para
- * este activo, no PASS por vacuidad.
+ * Aquí queda la comprobación, que sigue siendo útil y sigue estando en la misma
+ * transacción: **cero es un dato**: significa que el asiento no tiene ninguna
+ * línea atribuible y que I-E9-5 saldrá `INFO` para este activo, no PASS por
+ * vacuidad. El CHECK **G-15** de la base sólo admite el activo en líneas cuyo
+ * `account_code` empieza por `68`, `28`, `671` o `771`.
  */
 export async function attributeLinesToAssetTx(
   tx: TenantTransactionClient,
   input: { entryId: string; fixedAssetId: string; accountPrefixes?: readonly string[] }
 ): Promise<number> {
-  const prefixes = [...(input.accountPrefixes ?? ["68", "28", "671", "771"])]
-  const updated = await tx.$executeRaw`
-    UPDATE journal_lines l
-       SET fixed_asset_id = ${input.fixedAssetId}::uuid
-     WHERE l.organization_id = ${tx.$organizationId}::uuid
-       AND l.entry_id = ${input.entryId}::uuid
-       AND EXISTS (SELECT 1 FROM unnest(${prefixes}::text[]) p WHERE l.account_code LIKE p || '%')`
-  return Number(updated)
+  return await tx.journalLine.count({
+    where: { entryId: input.entryId, fixedAssetId: input.fixedAssetId },
+  })
 }
 
 /** sha256 canónico de una lista de códigos: sella qué activos entraron. */

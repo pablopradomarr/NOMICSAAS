@@ -29,6 +29,7 @@ import {
   closingSeal,
   type ChecklistInput,
 } from "@/lib/closing/checklist"
+import { capitalGoodsGuard } from "@/lib/closing/vat"
 
 const REF = "2026-12-31"
 
@@ -96,6 +97,49 @@ function inputPerfecto(over: Partial<ChecklistInput> = {}): ChecklistInput {
     answers: declarados,
     ...over,
   }
+}
+
+/**
+ * El ejercicio **vacío**: ni un asiento, ni una posición, ni un régimen
+ * especial. Los motores puros devuelven PASS «no hay nada» —`fxStep`,
+ * `reclassStep` y `capitalGoodsGuard` lo hacen— y los invariantes se han
+ * ejecutado sobre él, que es lo único que el usuario tiene que haber hecho.
+ */
+function inputEjercicioVacio(): ChecklistInput {
+  return inputPerfecto({
+    answers: {},
+    monthsWithEntries: [],
+    invariants: [{ id: "I1", status: "PASS" }],
+    i4i5: [],
+    fxStep: {
+      step: "DIFERENCIAS_DE_CAMBIO",
+      block: "VALORACION",
+      status: "PASS",
+      blocking: true,
+      evidencia: "Ninguna posición monetaria en divisa a la fecha de cierre",
+    },
+    reclassStep: {
+      step: "RECLASIFICACION_VENCIMIENTOS",
+      block: "PRESENTACION",
+      status: "PASS",
+      blocking: true,
+      evidencia: "0 posición(es) reclasificada(s)",
+    },
+    prorrataStep: {
+      step: "PRORRATA_DEFINITIVA",
+      block: "FISCAL",
+      status: "PASS",
+      blocking: true,
+      evidencia: "La organización no tiene prorrata declarada en el año",
+    },
+    capitalGoodsStep: capitalGoodsGuard({ year: 2026, prorrataByYear: [], assets: [] }),
+    reccPendingCents: null,
+    incomeTaxEntryId: null,
+    balance6300Cents: 0,
+    regularizacionEntryId: null,
+    cierreEntryId: null,
+    aperturaEntryId: null,
+  })
 }
 
 describe("El catálogo de pasos (§4.8, O-29)", () => {
@@ -203,12 +247,50 @@ describe("closingChecklist", () => {
     }
   })
 
-  it("RECC: sin régimen de caja el paso es NA; con cuota pendiente, FAIL que pide T-36", () => {
-    expect(closingChecklist(inputPerfecto({ reccPendingCents: null }), REF).find((s) => s.step === "RECC_DEVENGADO_31_12")!.status).toBe("NA")
+  it("RECC: fuera del régimen de caja el paso es PASS con su evidencia; con cuota pendiente, FAIL que pide T-36", () => {
+    // Ronda de integración de E9: era `NA`, y como es uno de los NUEVE
+    // bloqueantes y `canCloseFiscalYear` exige PASS en los nueve, ninguna
+    // organización en régimen general podía cerrar el ejercicio.
+    const sinRecc = closingChecklist(inputPerfecto({ reccPendingCents: null }), REF).find(
+      (s) => s.step === "RECC_DEVENGADO_31_12"
+    )!
+    expect(sinRecc.status).toBe("PASS")
+    expect(sinRecc.evidencia).toContain("Régimen de caja no aplica en el ejercicio")
+
     const conPendiente = closingChecklist(inputPerfecto({ reccPendingCents: 86_776 }), REF)
     const paso = conPendiente.find((s) => s.step === "RECC_DEVENGADO_31_12")!
     expect(paso.status).toBe("FAIL")
     expect(paso.evidencia).toContain("T-36")
+  })
+
+  /**
+   * **El defecto de fondo, no sólo su caso.** Un paso bloqueante que sale `NA`
+   * porque su supuesto no se da bloquea el cierre para siempre: `NA` no es
+   * PASS. `NA` es de los pasos INFORMATIVOS —los societarios posteriores al
+   * cierre—, y ninguno de ellos es bloqueante.
+   */
+  it("ningún paso BLOQUEANTE puede salir NA, ni siquiera sobre un ejercicio vacío", () => {
+    const naBloqueante = CLOSING_STEPS.filter((s) => s.blocking && s.nature === "POSTERIOR")
+    expect(naBloqueante).toEqual([])
+
+    for (const input of [inputPerfecto(), inputPerfecto({ answers: {} }), inputEjercicioVacio()]) {
+      for (const paso of closingChecklist(input, REF)) {
+        if (paso.blocking) expect(`${paso.step}:${paso.status}`).not.toContain(":NA")
+      }
+    }
+  })
+
+  /**
+   * **Un ejercicio sin un solo movimiento tiene que poder cerrarse.** Es el caso
+   * de la sociedad inactiva, y es también la prueba de que ningún bloqueante
+   * exige un hecho que no ha ocurrido: sin posiciones en divisa, sin deuda, sin
+   * prorrata, sin bienes de inversión y sin RECC, los nueve están en PASS.
+   */
+  it("un ejercicio vacío se puede cerrar: los nueve bloqueantes en PASS", () => {
+    const steps = closingChecklist(inputEjercicioVacio(), REF)
+    const { ok, blockers } = canCloseFiscalYear(steps)
+    expect(blockers.map((b) => `${b.step} ${b.status}`)).toEqual([])
+    expect(ok).toBe(true)
   })
 
   it("473 con saldo deja el impuesto en WARN nombrando la sobrevaloración (O-26)", () => {

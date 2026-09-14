@@ -1076,6 +1076,15 @@ export async function postEntryTx(
         // E4: el tipo EFECTIVO y las tres dimensiones ya resueltas por
         // `resolveAnalytics` (R-A2/R-A3/R-A4/R-A9) se persisten tal cual.
         analyticType: l.analyticType ?? null,
+        // **E9 · O-19, ronda de integración.** El activo entra CON la línea. La
+        // vía anterior —postear y luego `UPDATE journal_lines SET
+        // fixed_asset_id`— no podía funcionar: la tabla es append-only
+        // (`journal_lines_no_update` RESTRICTIVE, sin `GRANT UPDATE` a
+        // `app_runtime`) y toda baja o venta moría con «permission denied for
+        // table journal_lines». Se filtra por las cuentas que el CHECK
+        // `journal_lines_fixed_asset_accounts` admite: en cualquier otra —la
+        // `2xx` del coste, por ejemplo— el activo no se persiste.
+        fixedAssetId: lineCarriesAsset(l.accountCode) ? (l.fixedAssetId ?? null) : null,
         projectId: l.projectId ?? null,
         costCenterId: l.costCenterId ?? null,
         businessLineId: l.businessLineId ?? null,
@@ -1959,6 +1968,16 @@ async function readDocumentsInvariantInput(
  * DELATA un cruce sólo puede hacerlo `scripts/run-invariants.ts` como
  * `app_maintenance` (ADR-0009 §6).
  */
+/**
+ * Cuentas que pueden llevar `journal_lines.fixed_asset_id` (O-19): las de
+ * dotación, amortización acumulada y resultado de la enajenación. Es la MISMA
+ * lista del CHECK `journal_lines_fixed_asset_accounts` de T4, escrita una vez.
+ */
+export const FIXED_ASSET_LINE_PREFIXES: readonly string[] = ["68", "28", "671", "771"]
+
+export const lineCarriesAsset = (accountCode: string | null | undefined): boolean =>
+  typeof accountCode === "string" && FIXED_ASSET_LINE_PREFIXES.some((p) => accountCode.startsWith(p))
+
 export async function runLedgerInvariants(
   organizationId: string,
   opts: {
