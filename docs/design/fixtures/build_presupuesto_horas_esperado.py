@@ -92,6 +92,13 @@ REFERENCE_PRODUCTIVE_MINUTES_YEAR = 90_000         # O-E10-19, solo respaldo
 DERIVATION_MIN_COVERAGE_BPS = 7_500                # O-E10-12
 
 
+
+def _trunc_bps(num: int, den: int) -> int:
+    """Puntos basicos truncados hacia cero (convencion varianceBps del diseno:
+    suelo de la magnitud y luego el signo), no suelo matematico."""
+    q = abs(num) * 10_000 // abs(den)
+    return -q if (num < 0) != (den < 0) else q
+
 def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -963,7 +970,7 @@ def build_absorption() -> dict[str, Any]:
         "payrollCents": payroll_total,
         "absorptionCents": valued_total - payroll_total,
         "absorptionBps": (None if payroll_total == 0
-                          else (valued_total - payroll_total) * 10_000 // payroll_total),
+                          else _trunc_bps(valued_total - payroll_total, payroll_total)),
         "byCostCenter": by_ceco,
         "note": ("Informacion de gestion, NO un invariante: I-E10-12 solo garantiza que el "
                  "personal imputado no EXCEDA al contabilizado, asi que una infraabsorcion "

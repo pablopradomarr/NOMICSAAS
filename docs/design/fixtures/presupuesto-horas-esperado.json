@@ -17257,7 +17257,7 @@
     "valuedCents": 2617213,
     "payrollCents": 2640000,
     "absorptionCents": -22787,
-    "absorptionBps": -87,
+    "absorptionBps": -86,
     "byCostCenter": [
       {
         "costCenterCode": "CC-GA",
