@@ -129,6 +129,26 @@ jobs:
       # (NOBYPASSRLS): es la única que demuestra que la barrera 2 filtra.
       - run: npm run test:integration:rls
 
+  fixtures-sellados:
+    name: Fixtures sellados reproducibles (E10 · T10 y T20)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Un fixture sellado que ya no se puede REGENERAR deja de ser un contrato:
+      # a partir de ahí nadie sabe si la cifra esperada sigue saliendo del
+      # generador o la tocó alguien a mano. `--check` lo rehace en memoria y lo
+      # compara byte a byte, sin escribir nada.
+      - name: Los dos fixtures de E10 se reproducen byte a byte
+        run: |
+          set -e
+          python3 docs/design/fixtures/build_ejercicio_completo_v2.py --check
+          python3 docs/design/fixtures/build_presupuesto_horas_esperado.py --check
+
   pureza-motor:
     name: Guard de pureza (lib/ledger, lib/analytics, lib/audit, lib/bank, lib/closing, lib/recurring, lib/budget, lib/time)
     runs-on: ubuntu-latest

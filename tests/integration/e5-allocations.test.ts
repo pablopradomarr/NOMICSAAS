@@ -231,15 +231,34 @@ describe.skipIf(!TEST_DATABASE_URL)("E5 · liquidación de CECOs en base de dato
   // Reglas: criterios 8, 9, 10, 12, 13
   // ───────────────────────────────────────────────────────────────────────────
 
-  it("criterio 12 · `HOURS` se rechaza en la acción Y en la BD: nunca queda una regla inerte", async () => {
+  /**
+   * **E10 · T4 actualiza este criterio.** Hasta E9, `HOURS` se rechazaba en la
+   * acción **y** en la base (`allocation_rules_driver_available`), porque no
+   * había partes de horas: una regla así habría repartido sobre una base cero
+   * que nadie veía. `20260924120000_e10_drivers_horas` **retira el CHECK** —es la
+   * deuda §0-bis #2— y a cambio E10 aporta los datos (`time_entries`), la base
+   * sellada (`allocation_runs.time_hash` + su ventana) y la validación al
+   * sellar, que es lo que ADR-0013 D4 exigía para encenderlo.
+   *
+   * La acción sigue rechazándolo mientras `lib/analytics/allocate.ts` no lea los
+   * partes (T9): la garantía de «ninguna regla inerte» se mantiene en el mismo
+   * sitio de siempre —una capa—, y pasa a las dos en cuanto T9 aterriza.
+   */
+  it("criterio 12 · `HOURS`: la acción lo rechaza hasta T9, y la BD ya no lleva el CHECK (E10, deuda §0-bis #2)", async () => {
     await expect(createRule({ code: "AL-HORAS", driver: "HOURS" })).rejects.toThrow(/HORAS/)
-    // Saltándose la aplicación, el CHECK rechaza el INSERT con 23514.
+
+    const bloqueo = await owner((client) =>
+      client.query(`SELECT count(*)::int AS n FROM pg_constraint WHERE conname = 'allocation_rules_driver_available'`)
+    )
+    expect(bloqueo.rows[0].n).toBe(0)
+
+    // Y el CHECK que SÍ trae M4: `HEADCOUNT` sólo reparte entre CECOs (D1).
     await expect(
       owner((client) =>
         client.query(
           `INSERT INTO allocation_rules
              (organization_id, code, name, source_cost_center_id, target_kind, driver, period, priority, valid_from, updated_at)
-           VALUES ($1, 'AL-RAW-H', 'raw', $2, 'PROJECTS', 'HOURS', 'YEAR', 10, '2026-01-01', now())`,
+           VALUES ($1, 'AL-RAW-HC', 'raw', $2, 'PROJECTS', 'HEADCOUNT', 'YEAR', 10, '2026-01-01', now())`,
           [ORG, ceco["CC-GA"]]
         )
       )

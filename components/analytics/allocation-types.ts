@@ -60,7 +60,7 @@ export const TARGET_KIND_LABELS: Record<string, string> = {
   PROJECTS: "Proyectos",
   BUSINESS_LINES: "Líneas de negocio",
   COST_CENTERS: "Centros de coste (cascada)",
-  MIXED: "Mixto",
+  // E10 · deuda §0-bis #3: `MIXED` se retiró del enum en M6.
 }
 
 export const FALLBACK_LABELS: Record<string, string> = {

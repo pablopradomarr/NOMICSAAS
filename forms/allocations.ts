@@ -21,7 +21,9 @@ export const allocationReasonSchema = z
   .max(1000)
 
 export const allocPeriodSchema = z.enum(["MONTH", "QUARTER", "YEAR"])
-export const targetKindSchema = z.enum(["PROJECTS", "BUSINESS_LINES", "COST_CENTERS", "MIXED"])
+/** **E10 · deuda §0-bis #3**: `MIXED` se retiró del enum de BD (M6). Toda mezcla
+ * se expresa como N reglas de un solo `targetKind` con `sourceShareBps`. */
+export const targetKindSchema = z.enum(["PROJECTS", "BUSINESS_LINES", "COST_CENTERS"])
 export const zeroBaseFallbackSchema = z.enum(["SKIP_WARN", "EQUAL", "YTD", "PRIOR_PERIOD"])
 
 /** Los cinco drivers VIVOS. `HOURS` y `HEADCOUNT` llegan en E10 (ADR-0013). */

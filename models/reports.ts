@@ -647,7 +647,11 @@ async function attemptReportRun(
       -- La clave es un índice único, no una constraint con nombre: se declara
       -- por columnas. Dos peticiones simultáneas del mismo informe no producen
       -- dos runs ni un error al usuario; gana el primero y el segundo relee.
-      ON CONFLICT (organization_id, type, period_start, period_end, params_hash, ledger_hash, analytics_key, git_sha)
+      -- E10 · M5: budget_hash entra en la clave. Mientras PRESUPUESTO_REAL no
+      -- esté implementado (T13) todo run nace con el centinela por DEFAULT, así
+      -- que la lista de columnas tiene que nombrarlo o el ON CONFLICT no
+      -- encuentra el índice (42P10).
+      ON CONFLICT (organization_id, type, period_start, period_end, params_hash, ledger_hash, analytics_key, git_sha, budget_hash)
       DO NOTHING`
 
     const stored = await tx.reportRun.findFirstOrThrow({
