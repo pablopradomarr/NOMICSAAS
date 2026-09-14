@@ -2623,7 +2623,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="no escribe: compara con el fichero en disco")
     args = ap.parse_args()
-    outputs = ((OUT_FULL, FIXTURE), (OUT_MIN, MIN_FIXTURE), (OUT_V2, FIXTURE_V2))
+    # E10 · T20: `ejercicio-completo-v2.json` YA NO SALE DE AQUI. La version 2.0
+    # que este script emitia era internamente incoherente (usaba `4751` y la
+    # clave `IRPF_A_PAGAR_123` a la vez) y no se podia cargar. Quien lo escribe
+    # ahora es `build_ejercicio_completo_v2.py`, que importa este modulo como
+    # libreria, toma `FIXTURE_V2` como corpus de E9 y le aplica ADR-0016 D12 de
+    # forma uniforme mas los seis bloques de E10. Este fichero sigue siendo el
+    # generador de los fixtures v1, que son inmutables.
+    outputs = ((OUT_FULL, FIXTURE), (OUT_MIN, MIN_FIXTURE))
     failed = False
     for path, data in outputs:
         text = dump(data)
