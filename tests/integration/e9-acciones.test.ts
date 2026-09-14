@@ -364,6 +364,34 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T15 — server actions del cierre, lo
   // Reapertura (criterios 33 y 34)
   // ───────────────────────────────────────────────────────────────────────────
 
+  /**
+   * **R-1 (ronda 2).** `reopenFiscalYear` exige un cierre **sellado**: la
+   * reapertura se registra contra el `ClosingRun` CERRADO que deshace, y sin él
+   * no hay nada que reabrir (ADR-0016 D1). Estos criterios simulan el ejercicio
+   * cerrado por SQL, así que también hay que dejarle su sello.
+   */
+  async function sellarCierre(): Promise<void> {
+    await prisma.closingRun.deleteMany({ where: { fiscalYearId, status: "CERRADO" } })
+    await prisma.closingRun.create({
+      data: {
+        organizationId: ORG,
+        fiscalYearId,
+        status: "CERRADO",
+        refDate: new Date("2026-12-31T00:00:00Z"),
+        steps: [],
+        ledgerHash: "0".repeat(64),
+        planHash: "0".repeat(64),
+        accountMapHash: "0".repeat(64),
+        configHash: "0".repeat(64),
+        gitSha: "test",
+        seal: "VALIDADO_AUTOMATICAMENTE",
+        durationMs: 1,
+        closedAt: new Date("2027-01-15T00:00:00Z"),
+        closedById: ADMIN,
+      },
+    })
+  }
+
   it("criterio 34: con las cuentas FORMULADAS la reapertura se rechaza OFRECIENDO la salida", async () => {
     asUser(ADMIN)
     await prisma.fiscalYear.update({ where: { id: fiscalYearId }, data: { status: "CLOSED", accountsApprovalStatus: "FORMULADAS", formulatedAt: new Date("2027-03-25T00:00:00Z") } })
@@ -399,6 +427,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T15 — server actions del cierre, lo
   it("O-21: la reapertura deja el ejercicio OPEN y los pasos 5-7 a recomputar", async () => {
     asUser(ADMIN)
     await prisma.fiscalYear.update({ where: { id: fiscalYearId }, data: { status: "CLOSED" } })
+    await sellarCierre()
     const reopened = await reopenFiscalYearAction({
       fiscalYearId,
       reason: "corrección de la dotación de amortización del cuarto trimestre del ejercicio",
@@ -426,6 +455,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T15 — server actions del cierre, lo
       where: { id: fiscalYearId },
       data: { status: "CLOSED", taxFilingStatus: "PRESENTADO" },
     })
+    await sellarCierre()
     const sinAsumir = await reopenFiscalYearAction({
       fiscalYearId,
       reason: "reapertura tras detectar un error material en la base imponible declarada",

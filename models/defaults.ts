@@ -2,6 +2,7 @@ import { TenantClient, tenantTransaction } from "@/lib/db"
 import type { PgcVariant } from "@/prisma/client"
 import { importNpgc } from "@/models/accounts"
 import { defaultBusinessLineId, seedAnalyticsDefaults } from "@/models/analytics"
+import { seedReclassificationPairs } from "@/models/closing"
 import { DefaultDeductibility } from "@/prisma/client"
 import {
   CATEGORIES_REQUIERE_DECISION,
@@ -111,6 +112,14 @@ export async function createOrganizationDefaults(
     actor: { userId: opts.userId ?? null },
     now: opts.now,
   })
+
+  // E9 · R-2 — los 22 pares de reclasificación (O-7). Van DESPUÉS del plan
+  // porque nombran cuentas suyas, y aquí y no sólo en el backfill de la
+  // migración: sin ellos, una organización nueva deja a I-E9-16 sin universo y
+  // el invariante pasa por vacuidad mientras T-32 sí reclasifica.
+  await tenantTransaction(organizationId, opts.userId ?? undefined, async (tx) =>
+    seedReclassificationPairs(tx, { userId: opts.userId ?? null })
+  )
 }
 
 export async function isDatabaseEmpty(db: TenantClient) {

@@ -68,6 +68,8 @@ export type AuditEntity =
   | "VatSettlement"
   | "ProrrataYear"
   | "ClosingRun"
+  /// E9 · R-2: los 22 pares de reclasificación sembrados al alta (O-7).
+  | "ReclassificationPair"
   | "ProfitDistribution"
 
 export type AuditAction =

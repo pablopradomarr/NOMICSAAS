@@ -625,9 +625,20 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · ronda 1 — los bloqueantes de la aud
     expect(reabierto.value.reversalEntryIds.length, "la reapertura son CUATRO contra-asientos (O-21)").toBe(4)
     const revertidos = await prisma.journalEntry.findMany({
       where: { id: { in: [...reabierto.value.reversalEntryIds] } },
-      select: { kind: true, reversesEntryId: true },
+      select: { kind: true, reversesEntryId: true, templateCode: true },
     })
-    expect(revertidos.every((r) => r.kind === "REVERSAL" && r.reversesEntryId !== null)).toBe(true)
+    // **R-1 (ronda 2).** El espejo de un asiento de sistema hereda su `kind`
+    // —`OPENING`, `CLOSING`, `REGULARIZATION`— para que el par netee en todos los
+    // filtros por `kind`; el de un asiento normal (T-25) sigue siendo `REVERSAL`.
+    // Los cuatro son contra-asientos: `reversesEntryId` y plantilla.
+    expect(
+      revertidos.every(
+        (r) =>
+          r.reversesEntryId !== null &&
+          r.templateCode === "CONTRA_ASIENTO" &&
+          ["REVERSAL", "OPENING", "CLOSING", "REGULARIZATION"].includes(r.kind)
+      )
+    ).toBe(true)
 
     const fy = await prisma.fiscalYear.findFirst({ where: { id: fy2026 } })
     expect(fy!.status).toBe("OPEN")

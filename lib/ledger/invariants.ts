@@ -380,7 +380,12 @@ export function checkIE34(entries: readonly PostedEntry[]): CheckResult {
   const failures: string[] = []
   for (const e of entries) {
     if (!e.reversesEntryId) continue
-    if (e.kind !== "REVERSAL") {
+    const objetivo = byId.get(e.reversesEntryId)
+    const espejoDeSistema =
+      objetivo !== undefined &&
+      e.kind === objetivo.kind &&
+      (objetivo.kind === "OPENING" || objetivo.kind === "CLOSING" || objetivo.kind === "REGULARIZATION")
+    if (e.kind !== "REVERSAL" && !espejoDeSistema) {
       failures.push(`asiento ${e.entryNumber}: referencia reversesEntryId sin ser REVERSAL`)
     }
     const target = byId.get(e.reversesEntryId)
@@ -389,11 +394,28 @@ export function checkIE34(entries: readonly PostedEntry[]): CheckResult {
       failures.push(`asiento ${e.entryNumber}: anula un contra-asiento`)
     }
     if (target.kind === "OPENING" || target.kind === "CLOSING" || target.kind === "REGULARIZATION") {
-      failures.push(`asiento ${e.entryNumber}: anula un asiento de tipo ${target.kind}`)
+      // La única salida que la propia CA-1 nombra: la **reapertura registrada**
+      // (ADR-0016 D1). Su contra-asiento hereda el `kind` del asiento que anula
+      // —para que el par netee en todos los filtros por `kind`— y la base sólo
+      // lo admite con un `ClosingRun` real del tenant detrás (trigger
+      // `journal_entries_reversal_target`, migración
+      // `20260923100000_e9_contra_asiento_de_sistema`). Un espejo con
+      // `kind = REVERSAL` sobre un asiento de sistema sigue siendo FAIL: ése es
+      // el que no pasó por la reapertura.
+      if (e.kind !== target.kind) {
+        failures.push(`asiento ${e.entryNumber}: anula un asiento de tipo ${target.kind}`)
+      }
     }
   }
+  const deReapertura = entries.filter(
+    (e) => e.reversesEntryId && e.kind !== "REVERSAL"
+  ).length
   return failures.length === 0
-    ? pass("I-E3-4", "ningún contra-asiento anula otro contra-asiento ni un asiento de sistema")
+    ? pass(
+        "I-E3-4",
+        "ningún contra-asiento anula otro contra-asiento ni un asiento de sistema" +
+          (deReapertura > 0 ? ` (${deReapertura} espejo(s) de reapertura registrada, con el kind del original)` : "")
+      )
     : fail("I-E3-4", failures.join(" · "))
 }
 

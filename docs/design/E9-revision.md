@@ -88,3 +88,76 @@ reclasificación, paso 12 de O-17, no se postea y la API declara lo contrario),
 ocho DEBE y tres PUEDE. No hay Nivel 2 sin ADR: ADR-0016 está APROBADO y cubre
 D1–D12. La suite completa está en verde, pero el hallazgo 7 explica por qué eso
 no basta: el test del cierre completo no ejercita nueve de las doce posiciones.
+
+---
+
+# Ronda 2 — verificación del commit `5632ee5`
+
+**Diff:** `git diff 98e89cc...5632ee5` · 28 ficheros, +2 972 / −174 ·
+**Fecha:** 2026-09-14
+
+**Suites (todas en verde, ejecutadas de nuevo):** `lint` 0 errores (12 avisos
+preexistentes) · `test` 96/96, 1 968 pasan · `test:integration` **134/134
+(+3), 2 542 pasan (+28)** · `test:integration:rls` 11/11, 185 · `build` OK.
+
+## Cierre por hallazgo
+
+| # | Estado | Evidencia |
+|---|---|---|
+| **1** BLOQUEA | **CERRADO** | `models/fiscal-years.ts:537-552`: el paso 12 se postea con `voidEntryInTx` sobre T-32 **después** de la apertura y se sella en `reclassReversalEntryId`. `resolveReversalDate` lo empuja al primer mes abierto —N está entero bloqueado por B-4 en la misma transacción—, así que cae en N+1. Test real, no de forma: `e9-ronda1.test.ts:444` comprueba `kind = REVERSAL`, `fiscalYearId = N+1`, `entryNumber = 2` (apertura = 1) y, lo que importa, que en N+1 **`523` queda a cero y los 1 500 000 vuelven a `173`** |
+| **2** | **CERRADO** | `models/closing.ts:1420-1432`: `aperturaEntryId` se busca en N+1 por `templateCode = APERTURA_EJERCICIO`. `e9-ronda1.test.ts:492` lo comprueba en el `ClosingRun` |
+| **3** | **CERRADO** | `tests/integration/perf-closing.test.ts`: **los ocho techos** de §9, uno por `it`, con ms y conexiones. Incluye el caso que faltaba: siembra **doce `AllocationRun` mensuales sellados** (`:185-194`, `:346`) para que el checklist se mida con el N+1 encima |
+| **4** | **MITIGADO, no resuelto** | `readCostCenterSettlementBlock` sigue llamando `allocationRunStaleness` **run a run** (`models/closing.ts:1292`). Lo que cambia es que ahora está **medido** bajo el techo de 2 000 ms con doce runs mensuales, que era la salida que la propia sugerencia admitía. Queda como deuda de rendimiento, no de corrección |
+| **5** | **CERRADO** | `actions.ts:350-361`: clave determinista `cierre:` + sha256(`fiscalYearId\|step\|templateCode`), resuelta por el índice único de `idempotency_key` |
+| **6** | **CERRADO** | `closeFiscalYearTx` extraída y `closeFiscalYearE9` reducida a **una** `runLedgerTransaction` (`models/fiscal-years.ts:471-575`): guardias, T-26/27/28, paso 12 y sello dentro. Las guardias pasan de `return string` a `abort()`, que revierte |
+| **7** | **CERRADO** | `e9-ronda1.test.ts:444` recorre el cierre de verdad y **sí** comprueba `balance("473") === 0` tras T-25, que era la promesa incumplida |
+| **8** | **CERRADO con cálculo, no con nota** | Gana el fixture: **442 817**. La corrección se justifica —`454 133` mezclaba descontar al efectivo mensual con devengar al nominal 6 %/12, contra D7.3, que declara **un solo** tipo mensual— y se aplica a `cierre-e9.test.ts:318` y a §4.7/criterio 22; `valor-actual-esperado.json` queda **intacto** |
+| **9** | **CERRADO** | `runClosingChecklistAction` pasa a `Role.EDITOR`; la lectura sigue en `getClosingRunAction` (VIEWER). Test de rol en `e9-modelos.test.ts` |
+| **10 · 11 · 12** | **CERRADOS** | 10 se resuelve en el **tipo** (`ClosingStepResult.blocking` declara que la única fuente es el catálogo) sin reversionar el fixture sellado; 11 corrige los cardinales en el diseño y ADR-0016; 12, sumas del `dryRun` documentadas |
+
+## Lupa pedida
+
+- **`voidEntry` público sigue rechazando CA-1.** Verificado en las dos capas:
+  `lib/ledger/void.ts:94` sólo abre paso con `opts.reopeningRunId`, y la única
+  llamada que lo pasa en todo el árbol es `reopenFiscalYear`
+  (`models/fiscal-years.ts:732-733`). Test `e9-ronda1.test.ts:599`.
+- **El GUC `app.reopening_run_id` SÍ es fijable por `app_runtime`.**
+  Comprobado contra `erp_test`: `SET LOCAL` desde ese rol devuelve el uuid y el
+  trigger deja pasar. La barrera de base es, por tanto, del **mismo grado** que
+  `app.current_org()` —dato de transacción, no privilegio— y la migración lo
+  dice; pero conviene no leerla como más fuerte de lo que es: **antes de
+  `5632ee5` la base cerraba CA-1 a `app_runtime` de forma absoluta y ahora no**.
+  Lo que queda protegiendo el flanco es la capa de aplicación y la prohibición
+  de SQL crudo fuera de `tenantDb`. Aceptable —es la salida que la propia CA-1
+  nombra y el `reopeningRunId` deja constancia de qué reapertura amparó cada
+  contra-asiento— pero **PUEDE**: convendría exigir en el trigger que el uuid
+  corresponda a un `ClosingRun` real del tenant y en estado `CERRADO`, con lo
+  que un `SET LOCAL` inventado no valdría de nada.
+- **Migraciones nuevas** (`20260922090000`, `20260922100000`): `CREATE OR
+  REPLACE FUNCTION` e índice puro; sin SUPERUSER, sin tocar privilegios de rol,
+  sin editar ninguna migración aplicada, y con autocomprobación (`DO $$` que
+  verifica que sin GUC devuelve `NULL` y que un valor no-uuid se rechaza).
+- **Cierre en una transacción:** verificado por lectura —`closeFiscalYearTx`,
+  `voidEntryInTx` y `updateClosingRunTx` reciben el **mismo** `tx`, ninguno abre
+  cliente propio, y todo fallo va por `abort()` (throw)—. **No hay test de fallo
+  inyectado**: el camino que aborta *después* de postear T-26/27/28 (el FAIL de
+  invariantes del paso 5) no se ejercita, y es el único que demostraría el
+  rollback de verdad. **PUEDE.**
+- **Tests debilitados:** ninguno. La omisión de los activos vendidos en I-E9-4 /
+  I-E9-5 (`models/closing.ts:256-268`) **está justificada**: T-33/T-34 cancelan
+  su `28x` y truncan el cuadro, así que `Σ cuotas = base` y `Σ 68x = 28x` dejan
+  de cumplirse **por construcción**. No se falsean las magnitudes: se **omiten**
+  y el invariante los saca de `comparables`; con `comparables = 0` sale `INFO`,
+  nunca PASS por vacuidad. Único reparo (PUEDE): la evidencia del PASS no dice
+  **cuántos** activos se han omitido por estar dados de baja. El resto del
+  diff **refuerza** tests (H-5: `407` viaja marcado y se comprueba la exclusión;
+  H-1: el sentido de T-32 en pasivo y activo; H-6: cuadro manipulado → FAIL).
+
+## Veredicto ronda 2
+
+**APROBADO** — el bloqueante y los ocho DEBE están cerrados con código y con
+test que falla si se revierte; los tres PUEDE, también. Quedan **tres PUEDE
+nuevos**, ninguno de mérito para bloquear: (a) el GUC de reapertura no valida
+que el uuid sea un `ClosingRun` real y `CERRADO`; (b) falta el test de fallo
+inyectado que demuestre el rollback del cierre; (c) el N+1 de la caducidad de
+los runs de CECO sigue ahí, ahora medido. Se anotan para T26.

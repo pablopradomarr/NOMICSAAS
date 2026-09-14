@@ -185,6 +185,14 @@ export type AssetSnapshot = {
   accumulatedCents?: Cents | null
   /** `false` cuando hay líneas de 68x/28x del activo **sin** `fixed_asset_id`. */
   fullyAttributed?: boolean
+  /**
+   * **PUEDE (c) de la ronda 1.** El activo está dado de BAJA o VENDIDO: T-33 y
+   * T-34 cancelan su `28x` y truncan su cuadro, así que `Σ cuotas = base`
+   * (I-E9-4) y `Σ 68x = 28x` (I-E9-5) dejan de cumplirse **por construcción**.
+   * Se omiten sus magnitudes —no se falsean— y el PASS **dice cuántos** se han
+   * dejado fuera: un PASS que no declara su alcance es un PASS a medias.
+   */
+  disposed?: boolean
 }
 
 export type AccrualSnapshot = {
@@ -307,12 +315,37 @@ export type ClosingRunSnapshot = {
 
 export type ReopeningSnapshot = {
   fiscalYearCode: string
+  /**
+   * **R-1 (ronda 2).** Qué se está mirando: un ejercicio **REABIERTO** —donde
+   * hay que comprobar los cuatro contra-asientos y la vuelta de los saldos— o
+   * uno **CERRADO**, donde lo que hay que comprobar es que el cierre exista.
+   *
+   * La ronda 1 sólo componía el bloque para el primer caso, así que I-E9-21
+   * salía `INFO` en todos los barridos y no cazó que un recierre marcara
+   * `CLOSED` **sin postear T-26, T-27 ni T-28**.
+   */
+  status: "REABIERTO" | "CERRADO"
+  /** ¿Existe un asiento de cierre VIVO en el ejercicio? (`CERRADO`). */
+  closingEntryPosted?: boolean
+  /** ¿Y la regularización, y la apertura del siguiente? */
+  regularizationPosted?: boolean
+  openingPosted?: boolean
+  /** El ejercicio tiene movimiento: sin él, cerrar sin asientos es correcto. */
+  hasLiveEntries?: boolean
   /** Plantillas de los contra-asientos encontrados: T-28, T-27, T-26 y **T-25**. */
   reversedTemplates: readonly string[]
   /** Cuentas de los grupos 1 a 7 cuyo saldo NO ha vuelto al previo al cierre. */
   driftedAccounts: readonly { accountCode: string; beforeCents: Cents; afterCents: Cents }[]
   balance129Cents: Cents
   balance6300Cents: Cents
+  /**
+   * ¿Hay un T-25 **vivo** posteado ya en el ejercicio reabierto? Tras reabrir,
+   * el impuesto anulado deja `6300` a cero, pero el usuario reabre precisamente
+   * para volver a contabilizar: en cuanto postea el impuesto nuevo, `6300` deja
+   * de ser cero y sigue siendo correcto. Lo que nunca puede haber es más de un
+   * T-25 vivo (O-26), y de eso responde el propio recierre.
+   */
+  liveTaxEntry?: boolean
   /** Pasos 5-7, que no se revierten y quedan marcados (O-21). */
   pendingRecompute?: readonly string[]
 }
@@ -511,8 +544,13 @@ export function checkIE94(assets: readonly AssetSnapshot[] | undefined): CheckRe
     }
     if (a.hasNegativeQuota) problems.push(`${a.code}: el cuadro tiene alguna cuota negativa`)
   }
+  const dadosDeBaja = assets.filter((a) => a.disposed === true).length
+  const omitidos = dadosDeBaja > 0 ? `; ${dadosDeBaja} activo(s) dados de baja o vendidos quedan fuera (su cuadro se trunca en la baja)` : ""
   return problems.length === 0
-    ? pass("I-E9-4", `${comparables.length} cuadro(s) suman su base amortizable, sin cuotas negativas y con el residuo en la última`)
+    ? pass(
+        "I-E9-4",
+        `${comparables.length} cuadro(s) suman su base amortizable, sin cuotas negativas y con el residuo en la última${omitidos}`
+      )
     : failed("I-E9-4", cut(problems))
 }
 
@@ -550,7 +588,15 @@ export function checkIE95(assets: readonly AssetSnapshot[] | undefined): CheckRe
     )
   }
   if (comparables.length === 0) return info("I-E9-5", "ningún activo trae Σ 68x y saldo de 28x atribuidos", query)
-  return pass("I-E9-5", `${comparables.length} activo(s) con la acumulada igual a su dotación histórica, activo a activo`, query)
+  const dadosDeBaja = assets.filter((a) => a.disposed === true).length
+  return pass(
+    "I-E9-5",
+    `${comparables.length} activo(s) con la acumulada igual a su dotación histórica, activo a activo` +
+      (dadosDeBaja > 0
+        ? `; ${dadosDeBaja} dado(s) de baja o vendido(s) quedan fuera: la enajenación cancela su 28x y la igualdad no aplica`
+        : ""),
+    query
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -848,9 +894,17 @@ export function checkIE916(block: ReclassBlock | undefined): CheckResult {
     if (b !== a) problems.push(`${key}: Σ largo + corto pasa de ${b} a ${a} (la reclasificación no puede mover el total)`)
   }
 
+  // **R-2 (ronda 2).** La falta de vencimiento sólo es un defecto en la cuenta
+  // de **largo**: mantener un saldo en 17x/25x sin fecha es afirmar que vence a
+  // más de un año sin poder demostrarlo, y es la dirección que esconde deuda
+  // corriente. En la cuenta de **corto** el corto plazo ya es la afirmación por
+  // defecto —un crédito de 543 por la venta de un activo nace a corto—, así que
+  // exigirle fecha convertía en FAIL asientos correctos (T-33). La otra
+  // dirección —un corto que en realidad vence a más de un año— la caza la
+  // comparación de totales y el propio T-32 cuando hay cuadro declarado.
   const sinFecha = block.positionsAfter
-    .filter((p) => p.dueDate === null && (longCodes.has(p.accountCode) || pairs.some((x) => x.shortCode === p.accountCode)))
-    .map((p) => `${p.accountCode}/${p.counterpartyId ?? "sin contraparte"} sin vencimiento`)
+    .filter((p) => p.dueDate === null && longCodes.has(p.accountCode))
+    .map((p) => `${p.accountCode}/${p.counterpartyId ?? "sin contraparte"} sin vencimiento en una cuenta de largo plazo`)
   problems.push(...sinFecha)
 
   const malClasificadas = block.positionsAfter
@@ -1033,8 +1087,30 @@ export const REOPENING_REVERSAL_TEMPLATES: readonly string[] = [
  * `6300` quedaba al doble con `4752` duplicado.
  */
 export function checkIE921(reopening: ReopeningSnapshot | null | undefined): CheckResult {
-  if (reopening === undefined) return missing("I-E9-21", "falta la foto de la reapertura")
-  if (reopening === null) return info("I-E9-21", "ningún ejercicio reabierto")
+  if (reopening === undefined) return missing("I-E9-21", "falta la foto del cierre y de la reapertura")
+  if (reopening === null) return info("I-E9-21", "el ejercicio no está cerrado ni se ha reabierto")
+
+  // **R-1.** Un ejercicio CERRADO tiene que tener su cierre POSTEADO. Marcar
+  // `CLOSED` sin T-26/T-27/T-28 deja un ejercicio «cerrado» sin regularizar, sin
+  // asiento de cierre y sin apertura del siguiente, con `129 = 0` por vacuidad:
+  // es exactamente el estado falso que la ronda 1 producía tras una reapertura.
+  if (reopening.status === "CERRADO") {
+    if (reopening.hasLiveEntries === false) {
+      return pass("I-E9-21", `${reopening.fiscalYearCode} cerrado sin movimiento: no hay asientos de cierre que exigir`)
+    }
+    const sinPostear: string[] = []
+    if (reopening.regularizationPosted === false) sinPostear.push("T-26 (regularización)")
+    if (reopening.closingEntryPosted === false) sinPostear.push("T-27 (cierre)")
+    if (reopening.openingPosted === false) sinPostear.push("T-28 (apertura del siguiente)")
+    return sinPostear.length === 0
+      ? pass("I-E9-21", `${reopening.fiscalYearCode} cerrado con su regularización, su cierre y la apertura del siguiente posteados`)
+      : failed(
+          "I-E9-21",
+          `${reopening.fiscalYearCode} está CERRADO pero no tiene ${sinPostear.join(", ")}: un ejercicio no se cierra ` +
+            "sin sus asientos de cierre (O-17)"
+        )
+  }
+
   const problems: string[] = []
   const found = new Set(reopening.reversedTemplates)
   const faltan = REOPENING_REVERSAL_TEMPLATES.filter((t) => !found.has(t))
@@ -1043,12 +1119,18 @@ export function checkIE921(reopening: ReopeningSnapshot | null | undefined): Che
     problems.push(`${d.accountCode}: ${d.beforeCents} antes del cierre, ${d.afterCents} tras la reapertura`)
   }
   if (reopening.balance129Cents !== 0) problems.push(`129 = ${reopening.balance129Cents}, debe quedar a 0`)
-  if (reopening.balance6300Cents !== 0) problems.push(`6300 = ${reopening.balance6300Cents}, debe quedar a 0`)
+  if (reopening.balance6300Cents !== 0 && reopening.liveTaxEntry !== true) {
+    problems.push(`6300 = ${reopening.balance6300Cents}, debe quedar a 0 y no hay ningún T-25 vivo que lo explique`)
+  }
   return problems.length === 0
     ? pass(
         "I-E9-21",
         `${reopening.fiscalYearCode} reabierto con los cuatro contra-asientos, los grupos 1 a 7 en su saldo previo y ` +
-          `129 = 6300 = 0${reopening.pendingRecompute?.length ? `; pasos PENDIENTE_RECOMPUTO: ${reopening.pendingRecompute.join(", ")}` : ""}`
+          `129 = 0` +
+          (reopening.liveTaxEntry === true
+            ? `; 6300 = ${reopening.balance6300Cents} por el T-25 ya recontabilizado`
+            : "; 6300 = 0") +
+          `${reopening.pendingRecompute?.length ? `; pasos PENDIENTE_RECOMPUTO: ${reopening.pendingRecompute.join(", ")}` : ""}`
       )
     : failed("I-E9-21", cut(problems))
 }

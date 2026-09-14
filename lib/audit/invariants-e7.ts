@@ -1164,7 +1164,12 @@ export function checkIE714(input: ClosingInvariantInput): CheckResult {
     const previous = years[i - 1] as (typeof years)[number]
     const current = years[i] as (typeof years)[number]
     const opening = balancesByAccount(input.lines, (l) => l.fiscalYearId === current.id && l.entryKind === "OPENING")
-    if (opening.size === 0) {
+    // **R-1 (E9 ronda 2).** Una apertura anulada por una reapertura registrada
+    // sigue en el diario junto a su espejo —que hereda el `kind` `OPENING`—, así
+    // que las cuentas están presentes pero **netean a cero**: no hay apertura,
+    // hay una apertura deshecha. Exigirle continuidad al ejercicio anterior sería
+    // exigir que el balance de cierre fuese cero.
+    if (opening.size === 0 || [...opening.values()].every((v) => v === 0)) {
       sinApertura.push(current.id)
       continue
     }

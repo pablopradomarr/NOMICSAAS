@@ -395,6 +395,28 @@ Entradas: `docs/design/E9-auditoria-informe.md` (DISCREPANCIA, H-1…H-6),
    abierto: es feedback visual sobre líneas que compone el servidor. → **ola de
    UI de E9**.
 
+## E9 — ronda 2 de corrección (2026-09-14): R-1, R-2 y los tres PUEDE
+
+Entradas: la «Re-auditoría (ronda 1)» de `docs/design/E9-auditoria-informe.md`
+(DISCREPANCIA: **R-1** bloqueante y **R-2** alto) y `docs/design/E9-revision.md`
+(APROBADO con tres PUEDE).
+
+| Punto | Qué estaba mal | Qué se ha hecho |
+|---|---|---|
+| **R-1** BLOQ. | Los contra-asientos de la reapertura se fechaban **01-01-2027** y anulaban asientos de **31-12-2026**: dentro de 2026 el cierre anulado **seguía en vigor**, el recierre no veía saldo que barrer, **omitía T-26/T-27/T-28** y aun así marcaba `CLOSED` y sellaba `CERRADO` (`entryIds` a `null`, `129 = 0`, apertura anulada sin regenerar) | **Decisión (coherente con ADR-0016 D1: la reapertura es un acto contable del ejercicio que se reabre, no del siguiente).** El ejercicio vuelve a `OPEN` **antes** de revertir y se le suelta el primer mes, así que los contra-asientos de T-25/T-26/T-27 caen **dentro** del ejercicio (31-12) y el de T-28 en su propio ejercicio (01-01 de N+1). No se ha tocado el criterio de saldos: los asientos anulados siguen en el diario, netean con su espejo y nada se «excluye» de los informes |
+| **R-1** (2ª mitad) | Con `kind = REVERSAL`, el espejo de una apertura, un cierre o una regularización **no** quedaba excluido por los filtros que dejan fuera los asientos de sistema (PyG de I3/I4, `readAccountBalances`, I-E7-14, cobertura de I-E4-1): el original salía y el espejo entraba, y **el par dejaba de netear** | El contra-asiento de un asiento de sistema **hereda su `kind`** (sigue siendo contra-asiento: `reversesEntryId` + plantilla `CONTRA_ASIENTO` + espejo exacto). La base lo admite sólo en esa forma y con un `ClosingRun` real detrás (`20260923100000_e9_contra_asiento_de_sistema`); los índices «una apertura/un cierre vivo por ejercicio» dejan de contar los espejos (`20260923110000`); I-E3-4 lo distingue y sigue siendo FAIL cualquier otra anulación de los tres kind |
+| **R-1** guardia | Nada impedía marcar `CLOSED` sin asientos de cierre | `closeFiscalYearTx` **aborta** si el ejercicio tiene saldo de 6/7 sin T-26, o saldo de balance sin T-27 (y sin T-28 habiendo ejercicio siguiente). Un ejercicio **vacío** se sigue cerrando sin postear nada |
+| **R-1** I-E9-21 | Devolvía `INFO` en todos los barridos: no cazaba el `CLOSED` sin cierre | El bloque se compone también con el ejercicio **CERRADO** y el invariante **FALLA** nombrando T-26/T-27/T-28 sin postear. Tras reabrir, `6300` deja de exigirse a cero cuando ya hay un T-25 nuevo vivo (reabrir es para volver a contabilizar) |
+| **R-1** idempotencia | Tras reabrir, `postClosingStepAction` devolvía por idempotencia el asiento **anulado** y el recierre se quedaba sin impuesto | La clave lleva la **generación de cierre** (nº de reaperturas registradas): protege del doble envío dentro de un cierre, no entre dos cierres del mismo ejercicio |
+| **R-2** ALTO | Los 22 pares sólo existían por el backfill de la migración: una organización nueva tenía **0 filas** e I-E9-16 pasaba **por vacuidad** mientras la acción sí reclasificaba (caía a `RECLASS_PAIRS`) | `seedReclassificationPairs` en el alta de organización (junto al plan y el mapa, idempotente y auditado) **y** el mismo *fallback* a `RECLASS_PAIRS` en `readClosingInvariantInput`. Además, la falta de vencimiento sólo es defecto en la cuenta de **largo**: en la de corto el corto plazo es la afirmación por defecto (un 543 de T-33 nace a corto) |
+| **H-5** menor | El aviso de partidas **no monetarias** no llegaba al usuario | `fxStep` lo declara en su evidencia (O-4 / I-E9-24) |
+| **PUEDE (a)** | El GUC de reapertura admitía **cualquier** uuid | El trigger exige que sea un `ClosingRun` **del mismo tenant** en `CERRADO`/`REABIERTO` (`20260923090000_e9_reapertura_guc_verificado`) |
+| **PUEDE (b)** | No había prueba del rollback | Test con fallo inyectado **después** de postear T-26/T-27/T-28 (contador del ejercicio adelantado → I7 en FAIL): mismo nº de asientos, mismos bloqueos, ejercicio `OPEN` |
+| **PUEDE (c)** | El PASS de I-E9-4/5 callaba lo que omitía | Nombra cuántos activos dados de baja o vendidos quedan fuera |
+
+Tests: `tests/integration/e9-ronda2.test.ts` (9). La deuda del **N+1 de la
+staleness de CECOs** sigue fechada en **T26** (arriba, sin cambios).
+
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
 
 `tests/e2e/session.ts` **siembra** lo que necesita en vez de darlo por hecho

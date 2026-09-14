@@ -25,6 +25,7 @@ import type { AccrualRow } from "@/models/accruals"
 import { readAccrualBalances, readAccruals } from "@/models/accruals"
 import type { AssetWithRevisions } from "@/models/assets"
 import { assetsWithoutAttribution, readAssetsWithRevisions, readCapitalGoods, type CapitalGoodRow } from "@/models/assets"
+import { PENDING_RECOMPUTE_STEP_CODES as REOPENING_PENDING_RECOMPUTE } from "@/lib/closing/checklist"
 import type { ChecklistInput, InvariantSnapshot, ManualAnswer, StepEvidence } from "@/lib/closing/checklist"
 import type { ClosingInvariantInput } from "@/lib/closing/invariants-e9"
 import { legalReserveCents } from "@/lib/closing/distribution"
@@ -35,7 +36,7 @@ import { isCashAccount, isUnderAccount } from "@/lib/bank/types"
 import { accrualSchedule } from "@/lib/closing/accrual"
 import { depreciationSchedule, scheduleHashOf } from "@/lib/closing/depreciation"
 import { fxClosingAdjustments, fxStep as fxStepOf, type ClosingRate, type FxPosition } from "@/lib/closing/fx"
-import { reclassStep as reclassStepOf, reclassifyMaturities, TEMPLATE_RECLASIFICACION } from "@/lib/closing/reclass"
+import { RECLASS_PAIRS, reclassStep as reclassStepOf, reclassifyMaturities, TEMPLATE_RECLASIFICACION } from "@/lib/closing/reclass"
 import { capitalGoodsGuard, withholdingAccountKey, type ClosingStepResult, type WithholdingModel } from "@/lib/closing/vat"
 import { getAccountMapByKey } from "@/models/account-map"
 import { allocationRunStaleness, listAllocationRules, listAllocationRuns } from "@/models/allocations"
@@ -414,6 +415,48 @@ export async function readClosingInput(
   }
 }
 
+/**
+ * **R-2 (ronda 2) · los 22 pares de reclasificación, al alta de la organización.**
+ *
+ * Se sembraban **sólo por el backfill** de la migración `20260920120000_e9_cierre`:
+ * una organización dada de alta después tenía `reclassification_pairs` **vacía**,
+ * con lo que el universo de `readMaturityPositions` era `[]`, no se leía ninguna
+ * posición y **I-E9-16 salía PASS sobre el conjunto vacío** — justo en la
+ * organización donde la acción SÍ reclasifica, porque ella ya caía al *fallback*
+ * de las constantes. Un invariante con un universo más pobre que el asiento que
+ * vigila no vigila nada.
+ *
+ * La lista es la MISMA constante que usa el motor (`RECLASS_PAIRS` de
+ * `lib/closing/reclass.ts`), que es lo que permite que un test compare las dos.
+ * Idempotente: repetir el alta no duplica ni pisa lo que el ADMIN haya tocado.
+ */
+export async function seedReclassificationPairs(
+  tx: TenantTransactionClient,
+  opts: { userId?: string | null } = {}
+): Promise<{ created: number }> {
+  const existentes = await tx.reclassificationPair.findMany({ select: { longAccountCode: true } })
+  const ya = new Set(existentes.map((p) => p.longAccountCode))
+  const faltan = RECLASS_PAIRS.filter((p) => !ya.has(p.longCode))
+  if (faltan.length === 0) return { created: 0 }
+  await tx.reclassificationPair.createMany({
+    data: faltan.map((p) => ({
+      organizationId: tx.$organizationId,
+      longAccountCode: p.longCode,
+      shortAccountCode: p.shortCode,
+      thresholdMonths: 12,
+      isActive: true,
+    })),
+  })
+  await writeAuditLog(tx, {
+    entity: "ReclassificationPair",
+    entityId: tx.$organizationId,
+    action: "seed",
+    after: { created: faltan.length, pairs: faltan.map((p) => `${p.longCode}/${p.shortCode}`) },
+    userId: opts.userId ?? null,
+  })
+  return { created: faltan.length }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // H-2 · el bloque `closing` de los invariantes, que nadie rellenaba
 // ─────────────────────────────────────────────────────────────────────────────
@@ -493,6 +536,7 @@ export async function readClosingInvariantInput(
           }
         : {}),
       hasNegativeQuota: cuadro.some((row) => row.quotaCents < 0),
+      disposed: !vivo,
       fullyAttributed: !closing.assetsWithoutAttribution.some((x) => x.id === a.asset.id),
     }
   })
@@ -547,10 +591,26 @@ export async function readClosingInvariantInput(
     orderBy: { entryNumber: "desc" },
     select: { id: true },
   })
-  const reclassCodes = [...new Set(closing.reclassificationPairs.flatMap((p) => [p.longAccountCode, p.shortAccountCode]))]
+  /**
+   * **R-2 (ronda 2).** El MISMO *fallback* que la acción que postea T-32.
+   *
+   * Los 22 pares se sembraban sólo por el backfill de la migración: una
+   * organización dada de alta **después** tiene `reclassification_pairs` vacía,
+   * y con ella `accountCodes = []`, ninguna posición leída y **I-E9-16 PASS por
+   * vacuidad** — justo en la organización donde la acción SÍ reclasifica, porque
+   * ella ya caía a las constantes. El invariante no puede tener un universo más
+   * pobre que el asiento que vigila. (El alta de organización los siembra ya:
+   * `seedReclassificationPairs`; esto es la segunda red.)
+   */
+  const paresEfectivos =
+    closing.reclassificationPairs.length > 0
+      ? closing.reclassificationPairs.map((p) => ({ longCode: p.longAccountCode, shortCode: p.shortAccountCode }))
+      : RECLASS_PAIRS.map((p) => ({ longCode: p.longCode, shortCode: p.shortCode }))
+  const reclassCodes = [...new Set(paresEfectivos.flatMap((p) => [p.longCode, p.shortCode]))]
+  const positionsAfter = await readMaturityPositions(tx, { cutoff: opts.refDate, accountCodes: reclassCodes })
   const positionsBefore = reclassEntry
     ? await readMaturityPositions(tx, { cutoff: opts.refDate, accountCodes: reclassCodes, excludeEntryIds: [reclassEntry.id] })
-    : closing.maturityPositions
+    : positionsAfter
   const toMaturity = (p: MaturityPositionRow) => ({
     accountCode: p.accountCode,
     counterpartyId: p.counterpartyId,
@@ -561,9 +621,9 @@ export async function readClosingInvariantInput(
   })
   const reclass = {
     cutoff: opts.refDate,
-    pairs: closing.reclassificationPairs.map((p) => ({ longCode: p.longAccountCode, shortCode: p.shortAccountCode })),
+    pairs: paresEfectivos,
     positionsBefore: positionsBefore.map(toMaturity),
-    positionsAfter: closing.maturityPositions.map(toMaturity),
+    positionsAfter: positionsAfter.map(toMaturity),
     debtsWithoutSchedule: closing.positionsWithoutSchedule.map((p) => ({
       reference: p.accountCode,
       accountCode: p.accountCode,
@@ -642,6 +702,70 @@ export async function readClosingInvariantInput(
     nextYearEntries,
   }
 
+  // ── La reapertura y el propio cierre (I-E9-21) ──────────────────────────
+  //
+  // **R-1.** El bloque se compone también cuando el ejercicio está **CERRADO**,
+  // no sólo cuando se ha reabierto: I-E9-21 devolvía `INFO` en todos los
+  // barridos y por eso no cazó un ejercicio marcado `CLOSED` **sin** T-26, T-27
+  // ni T-28 posteados.
+  const runReabierto = await tx.closingRun.findFirst({
+    where: { fiscalYearId: opts.fiscalYearId, status: "REABIERTO" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, reopenEntryIds: true },
+  })
+  const vivos = await tx.journalEntry.findMany({
+    where: { fiscalYearId: opts.fiscalYearId, voidedAt: null },
+    select: { templateCode: true },
+  })
+  const plantillasVivas = new Set(vivos.map((e) => e.templateCode).filter(Boolean) as string[])
+  const aperturaViva =
+    siguiente === null
+      ? true
+      : (await tx.journalEntry.count({
+          where: { fiscalYearId: siguiente.id, voidedAt: null, templateCode: "APERTURA_EJERCICIO" },
+        })) > 0
+  let reopening: ClosingInvariantInput["reopening"] = null
+  // El estado que manda es el del ejercicio: un ejercicio **recerrado** tiene en
+  // la tabla el `ClosingRun` REABIERTO de la reapertura anterior, y lo que hay
+  // que comprobar de él es el cierre nuevo, no la reapertura ya consumida.
+  if (runReabierto && fy.status !== "CLOSED") {
+    const contraAsientos = await tx.journalEntry.findMany({
+      where: { id: { in: (Array.isArray(runReabierto.reopenEntryIds) ? runReabierto.reopenEntryIds : []) as string[] } },
+      select: { reversesEntryId: true },
+    })
+    const anulados = await tx.journalEntry.findMany({
+      where: { id: { in: contraAsientos.map((c) => c.reversesEntryId).filter(Boolean) as string[] } },
+      select: { templateCode: true },
+    })
+    reopening = {
+      fiscalYearCode: fy.code,
+      status: "REABIERTO",
+      reversedTemplates: anulados.map((a) => a.templateCode).filter(Boolean) as string[],
+      driftedAccounts: [],
+      balance129Cents: (await readAccountBalances(tx, { cutoff: end, prefixes: ["129"] })).get("129") ?? 0,
+      balance6300Cents: [...(await readAccountBalances(tx, { cutoff: end, prefixes: ["6300"], sign: "DEUDOR" })).values()].reduce(
+        (a, b) => a + b,
+        0
+      ),
+      liveTaxEntry: plantillasVivas.has("IMPUESTO_BENEFICIOS"),
+      pendingRecompute: [...REOPENING_PENDING_RECOMPUTE],
+    }
+  } else if (fy.status === "CLOSED") {
+    reopening = {
+      fiscalYearCode: fy.code,
+      status: "CERRADO",
+      hasLiveEntries: vivos.length > 0,
+      regularizationPosted: plantillasVivas.has("REGULARIZACION_RESULTADO"),
+      closingEntryPosted: plantillasVivas.has("CIERRE_EJERCICIO"),
+      // Sin ejercicio siguiente no hay apertura que exigir.
+      openingPosted: aperturaViva,
+      reversedTemplates: [],
+      driftedAccounts: [],
+      balance129Cents: 0,
+      balance6300Cents: 0,
+    }
+  }
+
   // ── Los `ClosingRun` sellados (I-E9-20) ─────────────────────────────────
   const runs = await tx.closingRun.findMany({
     where: { fiscalYearId: opts.fiscalYearId },
@@ -706,6 +830,7 @@ export async function readClosingInvariantInput(
     fx,
     closing: closingEntries,
     closingRuns,
+    reopening,
     ...(distribution.length > 0 ? { distribution } : {}),
     // `vat`, `presentValue` y `reopening` los aporta quien los tiene: la
     // pantalla de IVA, el asistente y la reapertura. Sin ellos, sus invariantes

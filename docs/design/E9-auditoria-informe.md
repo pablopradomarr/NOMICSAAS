@@ -167,3 +167,118 @@ analítica salen `FAIL`, artefacto del montaje del auditor, no del producto).
 3. Permitir el contra-asiento de `OPENING`/`CLOSING`/`REGULARIZATION` **sólo** por la
    vía de la reapertura registrada, y rehacer el test de O-21 sobre un ejercicio con
    sus cuatro asientos.
+
+---
+
+# Re-auditoría (ronda 1) — diff `98e89cc…5632ee5`
+
+Base aislada `erp_audit_e9` (clon de `erp_test`, 54 migraciones), organización propia
+montada **por `postEntry`** —el camino de la aplicación— con tres activos (uno con
+revisión, uno vendido), periodificación `480`, préstamo con `DebtSchedule` de cuatro
+vencimientos, posición monetaria en USD y anticipo `407` no monetario, cierre real,
+reapertura y recierre. Reconstrucción en Python/`decimal` y SQL propios. Todo borrado
+al terminar.
+
+## Estado de los hallazgos de la ronda 0
+
+| # | Estado | Evidencia |
+|---|---|---|
+| **H-1** signo de T-32 | **CORREGIDO** | T-32 postea `173 (D) 200 000 / 523 (H) 200 000` y `173 (D) 300 000 / 523 (H) 300 000`; saldos al corte `173 = 1 000 000`, `523 = 500 000` — exactamente mi FIFO recalculado (frontera 2027-12-31: 200 000 + 300 000 corriente, 400 000 + 600 000 no corriente) |
+| **H-2** I-E9-* muertos | **CORREGIDO, con reserva** | 29 checks `I-E9-*` en el barrido y en `InvariantRun`. Ver R-1 |
+| **H-3** reapertura imposible | **CORREGIDO** | `voidEntry` público sobre el `CLOSING` → `CA-1` («se deshacen reabriendo el ejercicio»); como `app_runtime` con `SET LOCAL app.reopening_run_id` inventado, el `INSERT` → **23514**; la vía registrada devuelve los **cuatro** contra-asientos (T-28, T-27, T-26, **T-25**), `pendingRecompute = [VALOR_ACTUAL_APLAZAMIENTO, DIFERENCIAS_DE_CAMBIO, RECLASIFICACION_VENCIMIENTOS]`, run `REABIERTO` + sello `REQUIERE_REVISION` + `CIERRE_REABIERTO`, y numeración viva y sin huecos (2026: 1–49; 2027: 1–6, con el `OPENING` anulado conservando su nº 1) |
+| **H-4** `entryNumber: 0` | **CORREGIDO** | `readMaturityPositions` devuelve `first_entry_number` y los dos llamantes lo pasan |
+| **H-5** aviso de no monetarias | **SIN CAMBIO** (menor) | `407` sigue correctamente fuera del barrido; el aviso sigue sin poder emitirse |
+| **H-6** cuadro alterado | **CORREGIDO** | Cambiar `debt_installments.due_date` tras el cierre → **I-E9-25 FAIL** nombrando `PREST-1` con hash sellado vs recomputado; al restaurar, `PASS` |
+
+## Hallazgos nuevos
+
+### R-1 · BLOQUEANTE — el recierre tras una reapertura no postea nada y sella un estado falso
+
+Los cuatro contra-asientos de la reapertura se fechan **01-01-2027** (la fecha de
+reversión se empuja al primer periodo abierto, porque el cierre bloqueó el mes 12 de
+2026), mientras que los asientos que anulan son de **31-12-2026**. Visto desde dentro
+del ejercicio 2026, el T-25/T-26/T-27 anulado **sigue plenamente en vigor**:
+
+```
+saldos 6/7 al 2026-12-31 tras la reapertura:  621=0  6300=0  671=0  6813=0  705=0  768=0
+```
+
+`closeFiscalYear` decide con `getAccountBalances(upTo: 31/12/2026)`: no ve saldo de
+6/7, **omite T-26, T-27 y T-28** y aun así pone `status = CLOSED` y el `ClosingRun` en
+`CERRADO`. Resultado medido del recierre: `entryIds = {regularizacion: null, cierre:
+null, apertura: null}`, ningún asiento nuevo, **2026 cerrado sin regularizar, sin
+asiento de cierre y sin apertura de 2027**, con `129 = 0` y el `OPENING` de 2027
+anulado y no regenerado. Es silencioso: los nueve bloqueantes salen `PASS`.
+
+Dos corolarios: **I-E9-21** («el saldo de cada cuenta de los grupos 1 a 7 vuelve al
+previo al cierre») es **falso dentro del ejercicio** y no lo detecta porque devolvió
+`INFO` en todos los barridos; y «no duplicar el IS al recerrar» se cumple sólo por
+vacuidad —no se postea ningún IS— (`6300`: 4 líneas, debe = haber = 1 473 172, neto 0,
+0 asientos de impuesto vivos).
+
+### R-2 · ALTO — I-E9-16 sigue sin poder cazar el signo invertido en una organización nueva
+
+Los 22 pares de reclasificación se siembran **sólo por el backfill** de la migración
+`20260920120000_e9_cierre`; ningún código los crea para una organización dada de alta
+después. Con `reclassification_pairs` vacía —el caso de mi organización, `0` filas—
+`readClosingInvariantInput` deriva `accountCodes = []`, no lee ninguna posición y
+**I-E9-16 devuelve PASS sobre el conjunto vacío**, mientras la *acción* sí reclasifica
+porque cae al *fallback* de las constantes `RECLASS_PAIRS`. Comprobado en las dos
+direcciones: reintroducido el signo invertido por SQL sobre las líneas de T-32,
+
+- con la tabla vacía → `I-E9-16: PASS`;
+- sembrado el par `173/523` → `I-E9-16: FAIL · «173/sin contraparte vence 2027-03-31 ≤ 2027-12-31 y sigue en la cuenta de largo»`.
+
+El invariante es correcto; lo que falla es que su universo puede quedar vacío justo en
+la organización donde el asiento sí se postea.
+
+## Cifras verificadas de nuevo (tolerancia 0)
+
+Las **once** de la ronda 0 se rehicieron contra el motor actual: cuadros de
+amortización (8 casos, 164 filas y `scheduleHash`), periodificaciones (9 casos),
+las cuatro liquidaciones de IVA con sus **176 casillas** y la 71 = T-23
+(39 500 / 420 000 / 114 000 / 86 776), las cinco prorratas, RECC, las cinco guardias
+de bienes de inversión y los siete valores actuales — **Δ = 0 en todas**; la única
+diferencia frente al sellado es un campo `evidencia` nuevo, sin efecto numérico. Los
+cuatro generadores `--check` siguen reproduciendo su JSON byte a byte.
+
+Sobre el cierre real de esta ronda, recalculado a mano: resultado antes de impuestos
+`6 060 000 − 3 113 655 = 2 946 345` (el motor: 29 463,45 €), cuota `25 % ⇒ 736 586`,
+`4752 = 736 586 − 50 000 = 686 586`, `129 = 2 209 759` = Σ 6/7 del ejercicio; **todas
+las 6/7 a 0 tras T-26**, el cierre deja **0** cuentas con saldo, y la apertura es el
+espejo exacto del cierre en **13 de 13** cuentas.
+
+**Paso 12 de O-17** ✓: el contra-asiento de T-32 es el asiento **nº 2 de 2027**,
+después del `OPENING` (nº 1), y es el espejo exacto: `173 (H) 200 000 / 523 (D)
+200 000` y `173 (H) 300 000 / 523 (D) 300 000`.
+
+**Caso A de D7 — 442 817 confirmado.** Con el único tipo mensual de D7.3
+(`i_m = 48 675 506` micro-bps, y `(1+i_m)^12 = 1,06000000` exacto), devengando diez
+meses sobre el coste amortizado desde `PV = 8 899 964` con truncamiento mensual:
+`43 321 + 43 531 + 43 743 + 43 956 + 44 170 + 44 385 + 44 601 + 44 818 + 45 036 +
+45 256 = 442 817`. Las demás cifras del caso también cuadran: descuento 1 100 036,
+amortización bruta 10 m 1 666 660, corregida 1 483 320, exceso 183 340. El antiguo
+454 133 no es reproducible con ninguna de las dos convenciones (al nominal 6 %/12 da
+455 139), lo que confirma la explicación de la nota del ADR.
+
+## Inyecciones (a)–(e)
+
+| Ataque | Resultado |
+|---|---|
+| (a) alterar una cuota `68x` por SQL | **rechazado, 23514** (ADR-0010), incluso como `postgres` |
+| (b) borrar las liquidaciones de IVA | `IVA_LIQUIDADO` → **FAIL** con los cinco periodos nombrados |
+| (c) `UPDATE` de `closing_runs` como `app_runtime` | **42501** (append-only) |
+| (d) asiento en ejercicio `CLOSED` | **rechazado, 23514** |
+| (e) alterar `debt_installments` tras el cierre | **I-E9-25 FAIL** (hash sellado ≠ recomputado) |
+| tenant | `app_runtime` con `app.current_org`: **0** filas de otras organizaciones |
+
+## Recomendación
+
+1. **R-1**: fechar los contra-asientos de T-25/T-26/T-27 **dentro** del ejercicio que
+   se reabre (desbloqueando el mes 12 en la misma transacción), o hacer que
+   `closeFiscalYear` excluya los asientos con `voidedAt` al calcular los saldos; y
+   negarse a marcar `CLOSED` cuando no se ha posteado T-27. Hacer que **I-E9-21** deje
+   de salir `INFO` para que cace este caso.
+2. **R-2**: sembrar los 22 pares al dar de alta la organización (o dar a
+   `readClosingInvariantInput` el mismo *fallback* a `RECLASS_PAIRS` que ya tiene la
+   acción), para que I-E9-16 no pueda pasar por vacuidad.

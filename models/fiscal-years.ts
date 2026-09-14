@@ -56,7 +56,7 @@ import {
   postEntryTx,
   runLedgerTransaction,
 } from "@/models/ledger"
-import { lockedMonths, lockPeriodTx, monthsBetween } from "@/models/period-locks"
+import { lockedMonths, lockPeriodTx, monthsBetween, unlockPeriodTx } from "@/models/period-locks"
 import type { FiscalYear } from "@/prisma/client"
 import { randomUUID } from "node:crypto"
 
@@ -317,6 +317,35 @@ async function closeFiscalYearTx(
             )
           )
         }
+      }
+
+      // ── 5b. R-1 · un ejercicio no se marca CLOSED sin haberse cerrado ─────
+      //
+      // La regresión de la ronda 1 acabó en `status = CLOSED` con
+      // `entryIds = {regularizacion: null, cierre: null, apertura: null}`: el
+      // recierre no vio saldo que barrer —los contra-asientos de la reapertura
+      // vivían fuera del ejercicio— y cerró **sin cerrar**. La causa está
+      // corregida arriba; esta guardia es la que impide que **cualquier** otra
+      // vía deje el mismo estado falso, y se deriva de lo que el ejercicio tiene:
+      //
+      //  · con saldo en los grupos 6 y 7 ⇒ T-26 es obligatorio;
+      //  · con saldo de balance ⇒ T-27, y T-28 si hay ejercicio siguiente abierto.
+      //
+      // Un ejercicio **vacío** no tiene ni una cosa ni la otra y se cierra sin
+      // postear nada, que es correcto y está probado.
+      const faltan: string[] = []
+      if (pnl.length > 0 && !regularizacion) faltan.push("T-26 (regularización del resultado)")
+      if (balanceSheet.size > 0 && !cierre) faltan.push("T-27 (asiento de cierre)")
+      if (balanceSheet.size > 0 && next && !apertura) faltan.push("T-28 (apertura del ejercicio siguiente)")
+      if (faltan.length > 0) {
+        abort(
+          modelErr(
+            "INVARIANTS_FAILED",
+            "fiscalYearId",
+            `No se marca CERRADO el ejercicio ${fy.code}: falta(n) ${faltan.join(", ")}. Un ejercicio no se cierra ` +
+              "sin sus asientos de cierre (O-17, I-E9-21)"
+          )
+        )
       }
 
       // ── 6. CLOSED ─────────────────────────────────────────────────────────
@@ -714,9 +743,69 @@ export async function reopenFiscalYear(
       //  · el motor, con `VoidOptions.reopeningRunId`, que sólo pasa esta función.
       // `voidEntry` —la anulación pública— no toca ninguno de los dos, así que
       // desde fuera CA-1 sigue siendo absoluto.
+      /**
+       * **Sólo un cierre SELLADO se reabre** (D1), y desde la ronda 2 la base lo
+       * exige también: el trigger de CA-1 comprueba que `app.reopening_run_id`
+       * corresponda a un `ClosingRun` real del tenant en `CERRADO`/`REABIERTO`,
+       * de modo que un `SET LOCAL` inventado no abre nada. Se comprueba aquí
+       * antes para dar el mensaje bueno en vez de morir en el trigger.
+       */
       const sealedRun = await sealedClosingRun(tx, input.fiscalYearId)
-      const reopeningRunId = sealedRun?.id ?? input.fiscalYearId
+      if (!sealedRun) {
+        abort(
+          modelErr(
+            "FY_CLOSED",
+            "fiscalYearId",
+            `El ejercicio ${fy.code} no tiene un cierre sellado (ClosingRun CERRADO): no hay reapertura que registrar. ` +
+              "Un checklist en BORRADOR es un checklist, no un cierre"
+          )
+        )
+      }
+      const reopeningRunId = sealedRun.id
       await tx.$executeRaw`SELECT set_config('app.reopening_run_id', ${reopeningRunId}, true)`
+
+      /**
+       * **R-1 (regresión de H-3, ronda 2).** El ejercicio vuelve a `OPEN` y sus
+       * meses se DESBLOQUEAN **antes** de los contra-asientos, no después.
+       *
+       * La ronda 1 los posteaba con el ejercicio todavía `CLOSED` y los doce
+       * meses bloqueados por B-4, así que `resolveReversalDate` empujaba la
+       * fecha al primer periodo abierto —**01-01-2027**— mientras los asientos
+       * anulados eran de **31-12-2026**. Visto desde dentro de 2026, el cierre
+       * anulado **seguía en vigor**: los grupos 6 y 7 salían a cero, el recierre
+       * omitía T-26, T-27 y T-28 y aun así marcaba `CLOSED` y sellaba `CERRADO`.
+       *
+       * Se corrige por donde manda **ADR-0016 D1 / O-21**: la reapertura deshace
+       * el cierre **dentro del ejercicio que se reabre**, que es lo único que
+       * hace verdadera a **I-E9-21** («el saldo de cada cuenta de los grupos 1 a
+       * 7 vuelve al previo al cierre»). La alternativa —excluir los asientos
+       * anulados al calcular los saldos— no valdría: dejaría el diario diciendo
+       * una cosa y el cálculo otra, y el art. 29.1 CCom exige que el libro se
+       * explique solo.
+       *
+       * Desbloquear no es un extra: se reabre para **poder contabilizar** en el
+       * ejercicio, y con los meses cerrados no se puede. B-3 hace que soltar el
+       * primero suelte todos los suyos. La barrera B-8 vive en la acción de la
+       * pantalla y no aquí: la reapertura es un acto registrado y distinto, y no
+       * toca las liquidaciones de IVA, que siguen válidas.
+       */
+      await tx.fiscalYear.update({
+        where: { id: input.fiscalYearId },
+        data: { status: "OPEN", closedAt: null, closedById: null },
+      })
+      const bloqueados = await lockedMonths(tx, input.fiscalYearId)
+      if (bloqueados.length > 0) {
+        const secuencia = monthsBetween(fromUtcDate(fy.startDate), fromUtcDate(fy.endDate))
+        const primero = secuencia.find((m) => bloqueados.includes(m))
+        if (primero !== undefined) {
+          await unlockPeriodTx(
+            tx,
+            { fiscalYearId: input.fiscalYearId, month: primero, reason: `Reapertura de ${fy.code}: ${input.reason}` },
+            actor
+          )
+        }
+      }
+
       const reversalEntryIds: string[] = []
       for (const templateCode of REOPENING_REVERSAL_ORDER) {
         const target = await tx.journalEntry.findFirst({
@@ -735,10 +824,8 @@ export async function reopenFiscalYear(
         reversalEntryIds.push(reversalId)
       }
 
-      const reopened = await tx.fiscalYear.update({
-        where: { id: input.fiscalYearId },
-        data: { status: "OPEN", closedAt: null, closedById: null },
-      })
+      // El ejercicio ya está OPEN (arriba): se relee para devolverlo.
+      const reopened = await tx.fiscalYear.findFirstOrThrow({ where: { id: input.fiscalYearId } })
 
       // Sólo un cierre **sellado** se reabre: un `ClosingRun` en BORRADOR es un
       // checklist, no un cierre, y marcarlo `REABIERTO` rompería
@@ -826,11 +913,21 @@ async function voidEntryInTx(
   )
   if (!built.ok) abortWith(built.errors)
 
+  // **R-1.** El espejo de un asiento de sistema hereda su `kind`, y `OPENING` y
+  // `CLOSING` tienen índice único de «uno vivo por ejercicio»: si se posteara
+  // antes de marcar el original, los dos estarían vivos a la vez y la base lo
+  // rechazaría. Se marca primero el anulado —dentro de la misma transacción, así
+  // que no hay instante observable sin contra-asiento— y se postea después.
+  const anularAntes = built.value.kind !== "REVERSAL"
+  const marcarAnulado = async (): Promise<void> => {
+    await tx.journalEntry.update({
+      where: { id: entryId },
+      data: { voidedAt: new Date(), voidedById: actor.userId ?? null, voidReason: reason },
+    })
+  }
+  if (anularAntes) await marcarAnulado()
   const reversal = await postEntryTx(tx, built.value, actor)
-  await tx.journalEntry.update({
-    where: { id: entryId },
-    data: { voidedAt: new Date(), voidedById: actor.userId ?? null, voidReason: reason },
-  })
+  if (!anularAntes) await marcarAnulado()
   await writeAuditLog(tx, {
     entity: "JournalEntry",
     entityId: entryId,

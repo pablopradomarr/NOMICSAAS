@@ -482,11 +482,17 @@ describe("I-E9-16/25 · reclasificación", () => {
     expect(r.evidencia).toContain("sigue en la cuenta de largo")
   })
 
-  it("16 delata la posición reclasificada sin vencimiento", () => {
-    const p = { accountCode: "523", counterpartyId: "cp", currency: "EUR", dueDate: null, openCents: -500_000, entryNumber: 1 }
-    const r = checkIE916({ ...base, positionsBefore: [p], positionsAfter: [p] })
+  it("16 delata la posición de LARGO sin vencimiento, y deja pasar la de corto", () => {
+    const largo = { accountCode: "173", counterpartyId: "cp", currency: "EUR", dueDate: null, openCents: -500_000, entryNumber: 1 }
+    const r = checkIE916({ ...base, positionsBefore: [largo], positionsAfter: [largo] })
     expect(r.status).toBe("FAIL")
-    expect(r.evidencia).toContain("sin vencimiento")
+    expect(r.evidencia).toContain("sin vencimiento en una cuenta de largo plazo")
+
+    // El corto plazo es la afirmación por defecto: un crédito de 543 por la
+    // venta de un inmovilizado (T-33) nace a corto y no tiene por qué traer
+    // fecha. Exigírsela convertía en FAIL un asiento correcto (R-2, ronda 2).
+    const corto = { accountCode: "543", counterpartyId: null, currency: "EUR", dueDate: null, openCents: 900_000, entryNumber: 2 }
+    expect(checkIE916({ ...base, positionsBefore: [corto], positionsAfter: [corto] }).status).toBe("PASS")
   })
 
   it("25 (O-6) es FAIL sin declaración y WARN con motivo escrito", () => {

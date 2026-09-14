@@ -151,7 +151,18 @@ export function buildReversal(entry: PostedEntry, opts: VoidOptions, ctx: Ledger
     accrualDate: null,
     entryDate,
     description: `Anulación del asiento nº ${entry.entryNumber} de ${entry.entryDate} — ${reason}`.slice(0, 512),
-    kind: "REVERSAL",
+    // **R-1 (ronda 2).** El contra-asiento de una apertura, un cierre o una
+    // regularización —que sólo existe dentro de una reapertura registrada—
+    // **hereda el `kind` del asiento que anula**. Con `kind = REVERSAL` el
+    // espejo se colaba en todos los filtros que excluyen los asientos de
+    // sistema por su `kind` (la PyG de I3/I4, `readAccountBalances`, la
+    // continuidad de I-E7-14, la cobertura analítica de I-E4-1): el original
+    // quedaba fuera y su espejo dentro, así que **el par dejaba de netear** y
+    // el saldo de 129 salía por el cierre anulado. Heredando el `kind`, los dos
+    // entran o los dos salen, que es lo único coherente. Sigue siendo un
+    // contra-asiento a todos los efectos: `reversesEntryId`, plantilla
+    // `CONTRA_ASIENTO` y espejo exacto línea a línea.
+    kind: opts.reopeningRunId && NON_REVERSIBLE_KINDS.has(entry.kind) ? entry.kind : "REVERSAL",
     sourceType: "SYSTEM",
     sourceId: entry.sourceId ?? null,
     transactionId: null,

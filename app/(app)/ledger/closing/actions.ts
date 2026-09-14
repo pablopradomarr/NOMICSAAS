@@ -356,8 +356,18 @@ export const postClosingStepAction = withOrg(
       // `idempotency_key` es `varchar(64)`: el uuid del ejercicio más el paso se
       // pasan, así que la clave es `cierre:` + sha256 de la terna. Determinista
       // y del mismo largo siempre.
+      //
+      // **R-1 (ronda 2).** La clave lleva además la **generación de cierre**: el
+      // número de reaperturas registradas del ejercicio. Sin ella, tras reabrir
+      // —que anula T-25 con su contra-asiento— el mismo paso devolvía el asiento
+      // ANULADO por idempotencia y el recierre se quedaba sin impuesto: la
+      // idempotencia protege de un doble envío dentro de un cierre, no de dos
+      // cierres distintos del mismo ejercicio.
+      const generacion = await tx.closingRun.count({
+        where: { fiscalYearId: v.fiscalYearId, status: "REABIERTO" },
+      })
       const idempotencyKey = `cierre:${createHash("sha256")
-        .update(`${v.fiscalYearId}|${v.step}|${orden.templateCode}`)
+        .update(`${v.fiscalYearId}|${v.step}|${orden.templateCode}|g${generacion}`)
         .digest("hex")
         .slice(0, 56)}`
       const posted = await postEntryTx(tx, built.value, { userId: ctx.user.id }, { idempotencyKey })
