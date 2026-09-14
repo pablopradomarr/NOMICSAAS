@@ -28,6 +28,7 @@ import { centsFromDb, centsFromDbNullable, centsToDb, centsToDbNullable } from "
 import type { Actor } from "@/models/accounts"
 import { writeAuditLog } from "@/models/audit-log"
 import { e9Abort } from "@/models/e9-errors"
+import { e10Abort } from "@/models/e10-errors"
 import type { AssetStatus } from "@/prisma/client"
 
 type AnyClient = TenantClient | TenantTransactionClient
@@ -242,6 +243,47 @@ export function currentScheduleHash(asset: FixedAssetRef, revisions: readonly As
   return scheduleHashOf(depreciationSchedule(asset, revisions))
 }
 
+/**
+ * **E10 · deuda §0-bis #7, la mitad de servidor.** Destino analítico de un
+ * inmovilizado. Son dos cosas distintas y el diseño las separa:
+ *
+ *  - **la regla xor es dura**: un activo se imputa a UN proyecto o a UN centro
+ *    de coste, nunca a los dos. Es la misma regla de las líneas 6/7 del diario
+ *    (R-A9), y el modelo la RECHAZA;
+ *  - **`analyticsRequired` es un AVISO**, no un rechazo (§0-bis #7: «la regla
+ *    xor **y el aviso** de `analyticsRequired`»). Un activo sin dimensión deja
+ *    su dotación en `NO_ANALITICO`, que es un destino legítimo del PGC y una
+ *    decisión del usuario; convertirlo en abort rompería el alta de todo activo
+ *    de estructura y haría imposible dar de alta el edificio de la sede.
+ *
+ * El aviso viaja de vuelta para que el formulario de T17 lo pinte en la celda.
+ */
+export async function assertAssetDimension(
+  tx: TenantTransactionClient,
+  input: { projectId: string | null; costCenterId: string | null }
+): Promise<{ warning: string | null }> {
+  if (input.projectId !== null && input.costCenterId !== null) {
+    e10Abort(
+      "ASSET_DIMENSION_XOR",
+      "projectId",
+      "un inmovilizado se imputa a UN proyecto o a UN centro de coste, nunca a los dos: " +
+        "la dotación es una sola línea y no puede llevar dos dimensiones"
+    )
+  }
+  if (input.projectId !== null || input.costCenterId !== null) return { warning: null }
+  const organization = await tx.organization.findUniqueOrThrow({
+    where: { id: tx.$organizationId },
+    select: { analyticsRequired: true },
+  })
+  if (!organization.analyticsRequired) return { warning: null }
+  return {
+    warning:
+      "la organización exige destino analítico y este inmovilizado no lo lleva: su amortización caerá " +
+      "en NO_ANALITICO y el margen del proyecto o del centro que lo usa quedará incompleto. " +
+      "Elige el proyecto o el centro de coste que lo soporta",
+  }
+}
+
 export async function createAssetTx(
   tx: TenantTransactionClient,
   input: FixedAssetInput,
@@ -262,6 +304,14 @@ export async function createAssetTx(
     projectId: input.projectId ?? null,
     costCenterId: input.costCenterId ?? null,
   }
+  // **E10 · deuda §0-bis #7, mitad de servidor.** El alta por pantalla gana el
+  // selector de destino analítico en T17, pero la regla es del modelo: si la
+  // organización exige analítica, un activo sin proyecto ni CECO deja su
+  // amortización y su venta sin dimensión, y la matriz de E4 las degrada a
+  // `NO_ANALITICO` en silencio — que es exactamente lo que I-E4-1 denuncia
+  // después sin poder decir de dónde viene.
+  await assertAssetDimension(tx, { projectId: draft.projectId ?? null, costCenterId: draft.costCenterId ?? null })
+
   if (draft.method !== "LINEAL") {
     e9Abort(
       "ASSET_NOT_LINEAL",

@@ -98,6 +98,18 @@ export type ReportRunKeyInput = {
   ledgerHash: string
   analyticsKey: string
   gitSha: string
+  /**
+   * **E10 · M5 — el NOVENO componente.** Dos `PRESUPUESTO_REAL` del mismo
+   * periodo y el mismo diario con **versiones distintas de presupuesto** son
+   * informes distintos: sin el hash en la clave, la caché serviría el de la
+   * versión equivocada. `"∅"` en todo lo que no es presupuesto vs real, y el
+   * CHECK `report_runs_budget_hash_required` impide lo contrario.
+   *
+   * Y sólo ahí: el balance, la PyG contable, el cashflow, el diario y la PyG
+   * analítica **conservan su caché** al sellar un presupuesto, porque ni
+   * `ledgerHash` ni `analyticsKey` se mueven (criterio 17).
+   */
+  budgetHash?: string
 }
 
 /** El MISMO string que el `@@unique` de la tabla, para logs y para la caché. */
@@ -111,6 +123,7 @@ export const reportRunKey = (input: ReportRunKeyInput): string =>
     input.ledgerHash,
     input.analyticsKey,
     input.gitSha,
+    input.budgetHash ?? SENTINEL,
   ].join("|")
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,7 +162,31 @@ export const DEFAULT_KPI_THRESHOLDS: Readonly<Record<string, KpiThreshold>> = {
   dso: { pctBps: 2000, minAbsCents: 10 },
   // Se compara en PUNTOS de margen: pasar del 2 % al 3 % es +50 % y es irrelevante.
   margenBruto: { pctBps: null, minAbsCents: null, minPointsBps: 300 },
+  // ── E10 · §5.3 — los CUATRO KPI de desviación presupuestaria ───────────────
+  // Misma forma que los siete de ADR-0012: `pctBps` **y** `minAbsCents`, y
+  // dispara sólo si supera los dos.
+  desviacionIngresos: { pctBps: 1000, minAbsCents: 500_000 },
+  desviacionEbitda: { pctBps: 1500, minAbsCents: 300_000 },
+  desviacionMc3: { pctBps: 1500, minAbsCents: 300_000 },
+  /**
+   * **O-E10-18 — el cuarto, y el que de verdad hacía falta.** Los tres
+   * anteriores son «total compañía», y dos desviaciones grandes de signo
+   * contrario **se anulan**: con MC3 de P-01 a −1 500 000 c y MC3 de P-02 a
+   * +1 500 000 c la desviación total es 0 c y 0 bps, no dispara nada y el
+   * informe se firma `VALIDADO AUTOMÁTICAMENTE` con dos proyectos fuera de
+   * control. Éste mira el **máximo |desviación| POR DIMENSIÓN** en INGRESOS, MC2
+   * y MC3. El coste marginal es nulo: la matriz ya está calculada.
+   */
+  desviacionMaxDimension: { pctBps: 2000, minAbsCents: 500_000 },
 }
+
+/** Los KPI de E10, para que la pantalla de umbrales los agrupe aparte. */
+export const BUDGET_KPIS: readonly string[] = [
+  "desviacionIngresos",
+  "desviacionEbitda",
+  "desviacionMc3",
+  "desviacionMaxDimension",
+]
 
 export type ComparativeBasis = "SAME_PERIOD_PREVIOUS_YEAR" | "PREVIOUS_FISCAL_YEAR_CLOSE" | "PREVIOUS_PERIOD" | "NONE"
 
@@ -234,6 +271,20 @@ export type SealReasonCode =
   | "LEDGER_DRIFT"
   /** #5: el plan de cuentas o el mapa cambiaron desde el informe anterior. */
   | "PLAN_CAMBIADO"
+  // ── E10 · §5.3 — los CINCO motivos del presupuesto y de las horas ──────────
+  // Códigos CERRADOS: la Auditoría filtra por código, nunca hace `LIKE`. Y
+  // **ningún motivo sin regla que lo emita, ninguna regla sin motivo**: es lo
+  // que O-E10-17 exige y lo que el criterio 33 recorre con un test.
+  /** EV-11 y los umbrales `desviacion*`: la desviación supera lo tolerado. */
+  | "DESVIACION_PRESUPUESTO"
+  /** EV-12: no hay versión vigente para el periodo. La columna sale vacía. */
+  | "PRESUPUESTO_AUSENTE"
+  /** EV-15 / O-E10-2: minutos SIN APROBAR que una regla de actividad habría usado. */
+  | "HORAS_SIN_APROBAR"
+  /** EV-16 / O-E10-16: una regla `HEADCOUNT` reparte a un CECO sin snapshot. */
+  | "PLANTILLA_AUSENTE"
+  /** EV-17: partes sin tarifa vigente y el informe publica coste-hora. */
+  | "TARIFA_AUSENTE"
 
 export type ReportSealReasonKind = "ENTORNO" | "INVARIANTE" | "AVISO" | "CONFIGURACION" | "VARIACION"
 
@@ -503,3 +554,163 @@ export function reportSealReasons(input: ReportSealInput): ReportSealReason[] {
 
 export const sealOf = (reasons: readonly ReportSealReason[]): ReportSeal =>
   reasons.length === 0 ? "VALIDADO_AUTOMATICAMENTE" : "REQUIERE_REVISION"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E10 · §5.3 — la familia `EV-11 … EV-17` del presupuesto y de las horas
+//
+// Hermanas de las diez de ADR-0012 y con su mismo contrato: funciones PURAS,
+// código cerrado y **ningún motivo decorativo**. `EV-14` está RETIRADA
+// (O-E10-5): presuponía que un `BORRADOR` puede emitir un `ReportRun`, y el
+// esquema lo impide —`budgets_sealed_marks` obliga a `budget_hash IS NULL`
+// mientras el estado es `BORRADOR` y `report_runs_budget_hash_required` exige
+// `budget_hash <> '∅'` para este tipo—, así que **no hay hash que escribir**.
+// Compararse contra un borrador es una previsualización no sellada, y pedir un
+// informe firmado contra él es el rechazo `BUDGET_NOT_SEALED`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type BudgetReviewContext = {
+  /**
+   * **EV-11 · dispara siempre** — `budgetHash` distinto del del run anterior del
+   * mismo periodo. Cambiar de versión de presupuesto **redefine la medida**, no
+   * es una variación; presentarlo como tal escondería una reproyección detrás de
+   * un «dentro de umbral».
+   */
+  budgetHash?: string | null
+  lastBudgetHash?: string | null
+  /** **EV-12** — meses del periodo sin ninguna versión vigente que los cubra. */
+  monthsWithoutBudget?: readonly string[]
+  /**
+   * **EV-13 · NO dispara** — meses del periodo todavía no cerrados. La
+   * desviación es parcial por construcción y se marca como tal; lo que informa
+   * ahí es el forecast, que para eso existe.
+   */
+  openMonths?: readonly string[]
+  /**
+   * **EV-15 · dispara siempre** (O-E10-2 / O-E10-17) — minutos SIN APROBAR del
+   * periodo que alguna regla de actividad habría usado, y su % sobre la base.
+   * En la ronda 0 el aviso sólo aparecía con base 0, y lo que un receptor dejaba
+   * de absorber se publicaba en silencio.
+   */
+  unapprovedMinutes?: { minutes: number; baseMinutes: number; targets: readonly string[] } | null
+  /**
+   * **EV-16 · dispara siempre** (O-E10-16) — CECOs a los que una regla
+   * `HEADCOUNT` reparte **sin snapshot** en el periodo. Un snapshot con
+   * `fteMilli = 0` **no** entra aquí: es un dato, no un hueco.
+   */
+  costCentersWithoutHeadcount?: readonly string[]
+  /**
+   * **EV-17 · dispara siempre** — partes sin tarifa vigente **y** el informe
+   * publica coste-hora o margen por hora. I-E10-5 puede quedarse en `INFO` —no
+   * es un error de cuadre—, pero un margen por hora calculado con partes sin
+   * tarifa **no es un margen**, así que el sello sí se mueve.
+   */
+  unpricedTime?: { entries: number; employees: readonly string[] } | null
+  publishesHourlyCost?: boolean
+}
+
+/** `⌊parte · 10000 / total⌋` en ENTERO, o `null` sin base. Ni `NaN` ni `∞`. */
+export const shareBps = (part: number, total: number): number | null =>
+  total === 0 ? null : Math.floor((abs(part) * 10_000) / abs(total))
+
+/**
+ * EV-11…EV-13 y EV-15…EV-17. Devuelve los motivos en el mismo formato que
+ * `alwaysReviewReasons`, para que `reportSealReasons` los componga sin saber de
+ * dónde salen.
+ */
+export function budgetReviewReasons(ctx: BudgetReviewContext): ReportSealReason[] {
+  const out: ReportSealReason[] = []
+
+  // EV-11 — cambiar de versión redefine la medida.
+  if (
+    ctx.lastBudgetHash != null &&
+    ctx.lastBudgetHash !== SENTINEL &&
+    ctx.budgetHash != null &&
+    ctx.budgetHash !== ctx.lastBudgetHash
+  ) {
+    out.push({
+      code: "DESVIACION_PRESUPUESTO",
+      kind: "CONFIGURACION",
+      message:
+        `La versión de presupuesto ha cambiado desde el informe anterior ` +
+        `(sha256:${ctx.lastBudgetHash.slice(0, 12)}… → sha256:${ctx.budgetHash.slice(0, 12)}…): ` +
+        "la desviación se mide contra otra medida, no es una variación del negocio",
+    })
+  }
+
+  // EV-12 — sin versión vigente: la columna sale vacía y el sello lo dice. Un
+  // aviso que no mueve el sello es decorativo (lección H-4 de E7).
+  if (ctx.monthsWithoutBudget && ctx.monthsWithoutBudget.length > 0) {
+    out.push({
+      code: "PRESUPUESTO_AUSENTE",
+      kind: "AVISO",
+      message:
+        `No hay versión de presupuesto vigente para ${ctx.monthsWithoutBudget.length} mes(es) del periodo ` +
+        `(${ctx.monthsWithoutBudget.join(", ")}): esas celdas salen VACÍAS, nunca a cero`,
+    })
+  }
+
+  // EV-13 — periodo con meses no cerrados: se declara parcial y NO dispara.
+  // Está aquí para que quede escrito que se comprobó, no para sellar.
+
+  // EV-15 — horas sin aprobar que el driver habría usado.
+  if (ctx.unapprovedMinutes && ctx.unapprovedMinutes.minutes > 0) {
+    const { minutes, baseMinutes, targets } = ctx.unapprovedMinutes
+    const bps = shareBps(minutes, baseMinutes)
+    out.push({
+      code: "HORAS_SIN_APROBAR",
+      kind: "AVISO",
+      message:
+        `Hay ${minutes} minutos SIN APROBAR en el periodo que una regla de actividad habría usado` +
+        `${bps === null ? "" : ` (${bps} puntos básicos sobre la base de ${baseMinutes} minutos)`}` +
+        `${targets.length > 0 ? `, en ${targets.join(", ")}` : ""}: el reparto publicado no los absorbe`,
+      deltaBps: bps,
+    })
+  }
+
+  // EV-16 — receptor de una regla HEADCOUNT sin snapshot: hueco de datos.
+  if (ctx.costCentersWithoutHeadcount && ctx.costCentersWithoutHeadcount.length > 0) {
+    out.push({
+      code: "PLANTILLA_AUSENTE",
+      kind: "AVISO",
+      message:
+        `Una regla PLANTILLA reparte a ${ctx.costCentersWithoutHeadcount.join(", ")} y no hay snapshot de ` +
+        "plantilla en el periodo: su peso es 0 porque falta el dato, no porque no haya nadie. " +
+        "Un snapshot con 0 FTE declarado sí es un dato y no aparecería aquí",
+    })
+  }
+
+  // EV-17 — coste-hora publicado con partes sin tarifa vigente.
+  if (ctx.publishesHourlyCost === true && ctx.unpricedTime && ctx.unpricedTime.entries > 0) {
+    out.push({
+      code: "TARIFA_AUSENTE",
+      kind: "AVISO",
+      message:
+        `${ctx.unpricedTime.entries} parte(s) de horas sin tarifa vigente ` +
+        `(${ctx.unpricedTime.employees.join(", ")}) y el informe publica coste-hora o margen por hora: ` +
+        "un margen por hora calculado con partes sin tarifa no es un margen",
+    })
+  }
+
+  return out
+}
+
+/**
+ * **EV-13** — ¿el periodo comparado contiene meses NO cerrados? No dispara
+ * revisión; marca la desviación como parcial, que es lo honesto.
+ */
+export const varianceIsPartial = (ctx: Pick<BudgetReviewContext, "openMonths">): boolean =>
+  (ctx.openMonths?.length ?? 0) > 0
+
+/**
+ * **O-E10-17 / criterio 33 — un motivo, una regla.** Los motivos de E10 y la
+ * regla que los emite. El test recorre esta tabla contra `SealReasonCode` y
+ * comprueba que **cada** motivo tiene al menos una regla y que **cada** regla
+ * emite un motivo del código cerrado. Ningún motivo decorativo.
+ */
+export const E10_SEAL_REASON_RULES: Readonly<Record<string, readonly string[]>> = {
+  DESVIACION_PRESUPUESTO: ["EV-11", "umbral desviacionIngresos", "umbral desviacionEbitda", "umbral desviacionMc3", "umbral desviacionMaxDimension"],
+  PRESUPUESTO_AUSENTE: ["EV-12"],
+  HORAS_SIN_APROBAR: ["EV-15"],
+  PLANTILLA_AUSENTE: ["EV-16"],
+  TARIFA_AUSENTE: ["EV-17"],
+}

@@ -39,7 +39,7 @@ import { fxClosingAdjustments, fxStep as fxStepOf, type ClosingRate, type FxPosi
 import { RECLASS_PAIRS, reclassStep as reclassStepOf, reclassifyMaturities, TEMPLATE_RECLASIFICACION } from "@/lib/closing/reclass"
 import { capitalGoodsGuard, withholdingAccountKey, type ClosingStepResult, type WithholdingModel } from "@/lib/closing/vat"
 import { getAccountMapByKey } from "@/models/account-map"
-import { allocationRunStaleness, listAllocationRules, listAllocationRuns } from "@/models/allocations"
+import { allocationRunStalenessBatch, listAllocationRules, listAllocationRuns } from "@/models/allocations"
 import { listBankAccounts, pendingItems } from "@/models/bank"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
@@ -1413,9 +1413,15 @@ export async function readCostCenterSettlementBlock(
     }
   }
 
+  // E10 · §3.9 — la staleness de TODOS los runs del ejercicio en **tres**
+  // consultas, no una por run. Es la deuda §0-bis #6: con doce runs mensuales,
+  // el paso del checklist disparaba doce contextos completos por render.
+  const staleness = await allocationRunStalenessBatch(tx, runs)
   for (const run of runs) {
-    const { isStale, reasons } = await allocationRunStaleness(tx, run)
-    if (isStale) pendientes.push(`run ${run.periodStart}…${run.periodEnd}: STALE — ${reasons.join(", ")}`)
+    const found = staleness.get(run.id)
+    if (found?.isStale === true) {
+      pendientes.push(`run ${run.periodStart}…${run.periodEnd}: STALE — ${found.reasons.join(", ")}`)
+    }
   }
 
   return {

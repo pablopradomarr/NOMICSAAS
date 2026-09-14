@@ -82,7 +82,13 @@ describe("analyticsKeyOf", () => {
 })
 
 describe("reportRunKey", () => {
-  it("es el MISMO string que el @@unique de la tabla, con sus ocho campos", () => {
+  // E10 · M5: el `@@unique` de la tabla gana un NOVENO componente,
+  // `budget_hash`, y esta función tiene que seguir siendo su espejo exacto. Sin
+  // él, dos `PRESUPUESTO_REAL` del mismo periodo con versiones distintas de
+  // presupuesto compartirían caché. Para los informes de E6 el componente es el
+  // centinela y la clave es la de siempre más el sufijo constante: **ninguna
+  // caché existente se invalida** (criterio 17).
+  it("es el MISMO string que el @@unique de la tabla, con sus NUEVE campos", () => {
     const key = reportRunKey({
       organizationId: "org",
       type: "BALANCE",
@@ -93,8 +99,8 @@ describe("reportRunKey", () => {
       analyticsKey: "a",
       gitSha: "g",
     })
-    expect(key.split("|")).toHaveLength(8)
-    expect(key).toBe("org|BALANCE|2026-01-01|2026-12-31|p|l|a|g")
+    expect(key.split("|")).toHaveLength(9)
+    expect(key).toBe("org|BALANCE|2026-01-01|2026-12-31|p|l|a|g|∅")
   })
 })
 

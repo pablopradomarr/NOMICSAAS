@@ -1,0 +1,22 @@
+-- E10 · T12 — M7: la familia PRESUPUESTO en el enum `check_family`
+-- (docs/design/E10-presupuesto-horas.md §6, ADR-0018 APROBADO 2026-09-14).
+--
+-- Hallazgo (1) del agente B2 en la ola B. `lib/audit/families.ts` ya declara
+-- `CheckFamily += 'PRESUPUESTO'` y el semáforo de /audit pinta su tarjeta, pero
+-- el enum de base no admitía el valor: persistir un `ManualReviewFlag` de
+-- I-E10-1…18 fallaba con `22P02` en cuanto la Auditoría intentara acotar una
+-- revisión a la familia. La familia existía en TypeScript y no en la base, que
+-- es exactamente la divergencia que el enum está para impedir (O-21 de E7: con
+-- texto libre una errata acota la revisión a NADA y el periodo queda sellado
+-- como si se hubiera revisado).
+--
+-- Va **SOLA**, igual que `20260920090000_e9_enums` con 'CIERRE' y por la misma
+-- razón: `ALTER TYPE … ADD VALUE` no permite USAR el valor nuevo en la misma
+-- transacción que lo añade. Las seis migraciones de E10 (M1…M6) ya están
+-- aplicadas y ninguna lo necesitaba; quien lo usa es la escritura de runtime.
+--
+-- Es ADITIVA y reversible por omisión: no toca una sola fila, no reescribe el
+-- tipo y no invalida ningún índice ni ninguna vista. Ejecutable por un rol NO
+-- superusuario: `ALTER TYPE` lo puede el propietario del esquema.
+
+ALTER TYPE "check_family" ADD VALUE IF NOT EXISTS 'PRESUPUESTO';

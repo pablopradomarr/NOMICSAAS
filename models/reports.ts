@@ -55,7 +55,31 @@ import { buildMayor } from "@/lib/ledger/reports/mayor"
 import { buildSumasSaldos } from "@/lib/ledger/reports/sumas-saldos"
 import { getAnalyticPnl } from "@/models/margins"
 import type { AnalyticPnl } from "@/lib/analytics/margins"
-import { getSealedRunRefs } from "@/models/allocations"
+import {
+  getAllocationRuleSpecs,
+  getAppliedAllocations,
+  getSealedRunRefs,
+  type AppliedAllocations,
+} from "@/models/allocations"
+import { activeBudgetAt, getBudgetVersion } from "@/models/budget"
+import { getEmployeeRateRows, listHeadcount } from "@/models/employees"
+import { getTimeRowsForWindow } from "@/models/time"
+import { budgetHash as computeBudgetHash, type ComposedBudget } from "@/lib/budget/hash"
+import { fiscalYearMonths } from "@/lib/budget/types"
+import { buildBudgetMatrix, settleBudgetMatrix } from "@/lib/budget/matrix"
+import { buildVariance, maxDimensionVariance, type VarianceCell } from "@/lib/budget/variance"
+import { buildForecast } from "@/lib/budget/forecast"
+import { minutesByTarget, unapprovedMinutesByTarget, type HeadcountRow, type TimeEntryRow } from "@/lib/time/aggregate"
+import {
+  DEFAULT_PAYROLL_ACCOUNT_PREFIXES,
+  absorptionVariance,
+  costOfTime,
+  type EmployeeRateRow,
+} from "@/lib/time/cost"
+import { budgetReviewReasons } from "@/lib/ledger/report-run"
+import { buildAnalyticPnl } from "@/lib/analytics/margins"
+import type { AllocationRuleSpec } from "@/lib/analytics/allocate"
+import type { AnalyticLine, AnalyticsConfig } from "@/lib/analytics/types"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
 import { EMPTY_RUN_SET_HASH, allocationRunSetHash, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { getEntries, getLinesForPeriod, computeLedgerHash } from "@/models/ledger"
@@ -153,8 +177,15 @@ const SUMMARY_TYPES: ReadonlySet<ReportType> = new Set([
   ReportType.CASHFLOW_INDIRECTO,
 ])
 
-/** E10. Se declara en el enum y se rechaza en runtime, que es lo honesto. */
-const NOT_IMPLEMENTED: ReadonlySet<ReportType> = new Set([ReportType.PRESUPUESTO_REAL])
+/**
+ * **E10 · T13 — ya no queda ninguno.** `PRESUPUESTO_REAL` sale de aquí (deuda
+ * §0-bis #9) y tiene su propio camino, `budgetVsActual()`: necesita un noveno
+ * componente de clave, un rechazo previo y una previsualización sin fila, tres
+ * cosas que el pipeline genérico no tiene. El conjunto se conserva vacío a
+ * propósito: el día que se declare un tipo nuevo en el enum, rechazarlo en
+ * runtime vuelve a ser una línea.
+ */
+const NOT_IMPLEMENTED: ReadonlySet<ReportType> = new Set<ReportType>()
 
 /**
  * Informes que DEPENDEN de la analítica y por tanto no se pueden sellar sin
@@ -186,7 +217,13 @@ export async function getOrCreateReportRun(
   request: ReportRequest
 ): Promise<ReportRunView> {
   if (NOT_IMPLEMENTED.has(request.type)) {
-    throw new Error(`El informe ${request.type} llega en E10: todavía no se emite`)
+    throw new Error(`El informe ${request.type} no se emite todavía`)
+  }
+  if (request.type === ReportType.PRESUPUESTO_REAL) {
+    throw new Error(
+      "E10 · PRESUPUESTO_REAL se pide con `budgetVsActual()`: necesita la versión de presupuesto, el corte " +
+        "del forecast y la regla de comparabilidad, que no caben en `ReportRequest`"
+    )
   }
   const startedAt = Date.now()
   const gitSha = currentGitSha()
@@ -1717,4 +1754,763 @@ export async function dimensionsInPeriod(
          AND l.cost_center_id IS NOT NULL
     ) AS dims WHERE d IS NOT NULL ORDER BY d`
   return rows.map((r) => r.d)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E10 · T13 — `PRESUPUESTO_REAL` (§5.1 y §5.2)
+//
+// Sale de `NOT_IMPLEMENTED` por la puerta grande: **no es un informe nuevo ni
+// una tabla nueva**, es la matriz de E4 con cinco columnas por celda —la misma
+// retícula `nivel × columna`, la misma provenance y el mismo drill-down— más un
+// bloque de rentabilidad con horas.
+//
+// Tiene camino propio y no se teje dentro de `attemptReportRun` a propósito:
+// necesita un noveno componente de clave (`budgetHash`), un rechazo previo
+// (`BUDGET_NOT_SEALED`) y una **previsualización sin fila en `report_runs`**,
+// tres cosas que el pipeline genérico de E6 no tiene y que, metidas a la fuerza,
+// habrían puesto en riesgo los seis informes que ya funcionan.
+//
+// **La regla de comparabilidad va primero, porque condiciona todo lo demás**
+// (O-E10-4, I-E10-18): presupuesto y real se publican **en el mismo estado de
+// imputación**, o las celdas por dimensión de nivel ≥ MC3 no se publican.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type BudgetGranularity = "MONTH" | "QUARTER" | "YEAR" | "YTD"
+
+export type BudgetVsActualRequest = {
+  fiscalYearId: string
+  periodStart: LocalDate
+  periodEnd: LocalDate
+  granularity?: BudgetGranularity
+  /** Con `true` las DOS matrices pasan por la liquidación (O-E10-4). */
+  withAllocations?: boolean
+  /**
+   * Versión concreta. Sin ella se usa la **efectiva compuesta** a `periodEnd`
+   * (O-E10-9). Con una versión en `BORRADOR` **se rechaza**: un borrador no
+   * firma un informe (O-E10-5); para eso está la previsualización.
+   */
+  budgetId?: string
+  currency?: string
+  comparative?: boolean
+  actor?: Actor
+  noCache?: boolean
+}
+
+export type BudgetProfitabilityRow = {
+  projectCode: string
+  actualMinutes: number
+  budgetMinutes: number | null
+  minutesVariance: number | null
+  /** `null` = **no evaluable**: 0 minutos, sin tarifa vigente o bases en conflicto. */
+  hourlyCostCents: Cents | null
+  /** La `basis` VIAJA con la cifra (Q-1): dos bases difieren ~31,9 %. */
+  basis: string | null
+  notEvaluableReason: string | null
+  marginPerHourMc2Cents: Cents | null
+  marginPerHourMc3Cents: Cents | null
+  billedRatePerHourCents: Cents | null
+}
+
+export type BudgetVsActualResult = {
+  granularity: BudgetGranularity
+  withAllocations: boolean
+  /** O-E10-9: de qué versión sale cada mes. Un año compuesto a medias sin decirlo es un año mal sumado. */
+  budgetComposition: Record<string, string>
+  budgetAllocationState: "NONE" | "SETTLED"
+  /** Motivo de que el presupuesto no haya podido seguir al real (I-E10-18). */
+  notSettleableReason: string | null
+  variance: readonly VarianceCell[]
+  forecast: unknown
+  profitability: readonly BudgetProfitabilityRow[]
+  absorption: unknown
+  monthsWithoutBudget: readonly string[]
+  openMonths: readonly string[]
+  unresolvedBudgetCells: number
+}
+
+export type BudgetVsActualView = {
+  /** `null` en la PREVISUALIZACIÓN: no hay fila en `report_runs` que devolver. */
+  runId: string | null
+  sealed: boolean
+  budgetHash: string
+  budgetRulesHash: string | null
+  forecastCutoff: string | null
+  result: BudgetVsActualResult
+  sealReasons: readonly ReportSealReason[]
+  seal: Seal
+  origen: "fresh" | "cache" | "preview"
+}
+
+/** El error tipado que la acción traduce (§4.2). Nunca un `throw` genérico. */
+export class BudgetReportError extends Error {
+  constructor(
+    readonly code: "BUDGET_NOT_SEALED" | "BUDGET_NOT_FOUND" | "FISCAL_YEAR_NOT_FOUND",
+    message: string
+  ) {
+    super(message)
+    this.name = "BudgetReportError"
+  }
+}
+
+/**
+ * **§3.4 — el corte del forecast lo decide el BORDE.** Es el mayor mes con
+ * `PeriodLock` del ejercicio, o el fin del ejercicio si está `CLOSED`. Viaja
+ * como parámetro y **entra en `paramsHash`**, de modo que dos ejecuciones del
+ * mismo informe con el mismo corte dan el mismo resultado (P7). Nunca se lee un
+ * reloj dentro del motor.
+ */
+export async function forecastCutoffOf(
+  tx: TenantTransactionClient,
+  fiscalYearId: string
+): Promise<string | null> {
+  const fy = await tx.fiscalYear.findFirst({
+    where: { id: fiscalYearId },
+    select: { startDate: true, endDate: true, status: true },
+  })
+  if (!fy) return null
+  if (fy.status === "CLOSED") return fromUtcDate(fy.endDate).slice(0, 7)
+  const lock = await tx.periodLock.findFirst({
+    where: { fiscalYearId },
+    orderBy: { month: "desc" },
+    select: { month: true },
+  })
+  if (!lock) return null
+  const year = fromUtcDate(fy.startDate).slice(0, 4)
+  return `${year}-${String(lock.month).padStart(2, "0")}`
+}
+
+/** Los meses del periodo que NO están cerrados (EV-13). */
+export function openMonthsOf(months: readonly string[], cutoffMonth: string | null): string[] {
+  if (cutoffMonth === null) return [...months]
+  return months.filter((m) => m > cutoffMonth)
+}
+
+/**
+ * **El informe de presupuesto vs real** (§5.1), sellado o en previsualización.
+ *
+ *  · `preview = false` (default) — exige una versión **SELLADA** y emite un
+ *    `ReportRun` con `budgetHash` en la clave. Contra un `BORRADOR` responde
+ *    `BUDGET_NOT_SEALED` y **no escribe ninguna fila** (O-E10-5, criterio
+ *    18-ter): no existe camino que intente escribir `budget_hash = '∅'`.
+ *  · `preview = true` — dry-run puro contra un borrador, **sin fila en
+ *    `report_runs`**, con la banda «borrador, no firmable». Es el patrón de
+ *    `previewAllocation` de E5.
+ */
+export async function budgetVsActual(
+  organizationId: string,
+  request: BudgetVsActualRequest & { preview?: boolean }
+): Promise<BudgetVsActualView> {
+  const gitSha = currentGitSha()
+  const userId = request.actor?.userId ?? undefined
+  const granularity: BudgetGranularity = request.granularity ?? "YTD"
+  const withAllocations = request.withAllocations === true
+  const preview = request.preview === true
+  const startedAt = Date.now()
+
+  // ── FASE 1 — clave, sellos y caché ────────────────────────────────────────
+  const key = await tenantTransaction(organizationId, userId, async (tx) => {
+    const organization = await tx.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { baseCurrency: true, reviewThresholds: true },
+    })
+    const fiscalYear = await tx.fiscalYear.findFirst({
+      where: { id: request.fiscalYearId },
+      select: { id: true, code: true, startDate: true, endDate: true },
+    })
+    if (!fiscalYear) {
+      throw new BudgetReportError("FISCAL_YEAR_NOT_FOUND", "el ejercicio no existe en esta organización")
+    }
+
+    // La versión: la pedida, o la EFECTIVA COMPUESTA a fin de periodo (O-E10-9).
+    const explicit = request.budgetId ? await getBudgetVersion(tx, request.budgetId) : null
+    if (request.budgetId && !explicit) {
+      throw new BudgetReportError("BUDGET_NOT_FOUND", "la versión de presupuesto no existe en esta organización")
+    }
+    if (explicit && explicit.status === "BORRADOR" && !preview) {
+      throw new BudgetReportError(
+        "BUDGET_NOT_SEALED",
+        `${explicit.code} está en borrador: puedes verla en previsualización, pero un informe firmado necesita ` +
+          "una versión sellada"
+      )
+    }
+
+    const composed = explicit
+      ? { effective: explicit, provenanceByMonth: {} as Record<string, { budgetId: string; label: string }> }
+      : await activeBudgetAt(tx, { fiscalYearId: fiscalYear.id, at: request.periodEnd })
+    if (!composed) {
+      // Sin NINGUNA versión sellada no hay hash que escribir y el CHECK
+      // `report_runs_budget_hash_required` lo impediría: se rechaza por el lado
+      // correcto en vez de inventarse un centinela.
+      throw new BudgetReportError(
+        "BUDGET_NOT_SEALED",
+        `el ejercicio ${fiscalYear.code} no tiene ninguna versión de presupuesto sellada vigente en ` +
+          `${request.periodEnd}: sella una versión antes de pedir el informe`
+      )
+    }
+
+    const config = await getAnalyticsConfig(tx, { periodEnd: request.periodEnd })
+    const marginHash = marginConfigHash(config)
+    const ledgerHash = await computeLedgerHash(tx, {
+      fiscalYearId: fiscalYear.id,
+      from: request.periodStart,
+      to: request.periodEnd,
+    })
+    const analyticLines = await getAnalyticLines(tx, {
+      from: fromUtcDate(fiscalYear.startDate),
+      to: fromUtcDate(fiscalYear.endDate),
+      fiscalYearId: fiscalYear.id,
+    })
+    const applied = withAllocations
+      ? await getAppliedAllocations(tx, { from: request.periodStart, to: request.periodEnd })
+      : null
+    const runSetHash = applied ? applied.runSetHash : EMPTY_RUN_SET_HASH
+
+    const periodLines = analyticLines.filter(
+      (l) => l.entryDate >= request.periodStart && l.entryDate <= request.periodEnd
+    )
+    const analyticsHash = computeAnalyticsHash(
+      periodLines.map((l) => ({
+        entryId: l.entryId,
+        lineNo: l.lineNo,
+        projectId: l.projectId,
+        costCenterId: l.costCenterId,
+        businessLineId: l.businessLineId,
+        analyticType: l.analyticType,
+      })),
+      marginHash,
+      runSetHash
+    )
+    const analyticsKey = analyticsKeyOf({
+      analyticsHash,
+      marginConfigHash: marginHash,
+      allocationRunSetHash: withAllocations ? runSetHash : null,
+    })
+
+    // El sello del presupuesto se toma sobre la versión EFECTIVA ya compuesta:
+    // dos años compuestos de versiones distintas son dos presupuestos distintos
+    // aunque cada pieza esté sellada por separado (O-E10-9 + M5).
+    const budgetHash = computeBudgetHash(composed.effective, marginHash)
+    const cutoffMonth = await forecastCutoffOf(tx, fiscalYear.id)
+    const rules = await getAllocationRuleSpecs(tx, { periodEnd: request.periodEnd })
+    const headcount = (await listHeadcount(tx, { from: request.periodStart, to: request.periodEnd })).map((h) => ({
+      costCenterId: h.costCenterId,
+      costCenterCode: h.costCenterCode,
+      periodEnd: h.periodEnd,
+      fteMilli: h.fteMilli,
+    }))
+    const timeRows = await getTimeRowsForWindow(tx, { from: request.periodStart, to: request.periodEnd })
+    const rates = await getEmployeeRateRows(tx, { from: request.periodStart, to: request.periodEnd })
+
+    const composition: Record<string, string> = {}
+    for (const [month, prov] of Object.entries(composed.provenanceByMonth)) composition[month] = prov.label
+
+    // `forecastCutoff` ENTRA en `paramsHash` (§3.4): sin él, dos informes con
+    // cortes distintos compartirían caché y uno serviría las cifras del otro.
+    const hashed = {
+      budgetId: composed.effective.id,
+      scenario: composed.effective.scenario,
+      granularity,
+      withAllocations,
+      forecastCutoff: cutoffMonth,
+      budgetComposition: composition,
+      currency: request.currency ?? organization.baseCurrency,
+      comparative: request.comparative ?? false,
+    }
+    const paramsHash = paramsHashOf(hashed)
+
+    const cached =
+      preview || request.noCache === true
+        ? null
+        : await tx.reportRun.findFirst({
+            where: {
+              type: ReportType.PRESUPUESTO_REAL,
+              periodStart: toUtcDate(request.periodStart),
+              periodEnd: toUtcDate(request.periodEnd),
+              paramsHash,
+              ledgerHash,
+              analyticsKey,
+              gitSha,
+              budgetHash,
+            },
+            orderBy: { createdAt: "desc" },
+          })
+
+    const lastRun = await tx.reportRun.findFirst({
+      where: {
+        type: ReportType.PRESUPUESTO_REAL,
+        periodStart: toUtcDate(request.periodStart),
+        periodEnd: toUtcDate(request.periodEnd),
+      },
+      orderBy: { createdAt: "desc" },
+      select: { budgetHash: true, gitSha: true, analyticsHash: true, result: true },
+    })
+
+    return {
+      organization,
+      fiscalYear,
+      config,
+      marginHash,
+      ledgerHash,
+      analyticsHash,
+      analyticsKey,
+      analyticLines,
+      periodLines,
+      applied,
+      composed,
+      composition,
+      budgetHash,
+      cutoffMonth,
+      rules,
+      headcount,
+      timeRows,
+      rates,
+      hashed,
+      paramsHash,
+      cached,
+      lastRun,
+    }
+  })
+
+  if (key.cached) {
+    return {
+      runId: key.cached.id,
+      sealed: true,
+      budgetHash: key.budgetHash,
+      budgetRulesHash: (key.cached.params as Record<string, unknown>).budgetRulesHash as string | null,
+      forecastCutoff: key.cutoffMonth,
+      result: key.cached.result as unknown as BudgetVsActualResult,
+      sealReasons: key.cached.sealReasons as unknown as ReportSealReason[],
+      seal: key.cached.seal,
+      origen: "cache",
+    }
+  }
+
+  // ── FASE 2 — cálculo PURO, sin conexión ───────────────────────────────────
+  const runId = randomUUID()
+  const built = buildBudgetVsActual({
+    runId,
+    gitSha,
+    granularity,
+    withAllocations,
+    baseCurrency: key.organization.baseCurrency,
+    periodStart: request.periodStart,
+    periodEnd: request.periodEnd,
+    fiscalYearId: key.fiscalYear.id,
+    fiscalYearStart: fromUtcDate(key.fiscalYear.startDate),
+    fiscalYearEnd: fromUtcDate(key.fiscalYear.endDate),
+    config: key.config,
+    marginHash: key.marginHash,
+    analyticsHash: key.analyticsHash,
+    analyticLines: key.analyticLines,
+    applied: key.applied,
+    composed: key.composed,
+    composition: key.composition,
+    cutoffMonth: key.cutoffMonth,
+    rules: key.rules,
+    headcount: key.headcount,
+    timeRows: key.timeRows,
+    rates: key.rates,
+  })
+
+  const thresholds = parseReviewThresholds(key.organization.reviewThresholds)
+  const reasons: ReportSealReason[] = [
+    ...checkThresholds(built.kpis, built.budgetKpis, thresholds, { comparativeBasis: "NONE" as ComparativeBasis }),
+    ...budgetReviewReasons({
+      budgetHash: key.budgetHash,
+      lastBudgetHash: key.lastRun?.budgetHash ?? null,
+      monthsWithoutBudget: built.result.monthsWithoutBudget,
+      openMonths: built.result.openMonths,
+      unapprovedMinutes: built.unapproved,
+      costCentersWithoutHeadcount: built.costCentersWithoutHeadcount,
+      unpricedTime: built.unpriced,
+      publishesHourlyCost: built.result.profitability.length > 0,
+    }),
+  ]
+  // El cuarto KPI (O-E10-18): dos desviaciones por dimensión de signo contrario
+  // se anulan en el total y el informe se firmaría en verde con dos proyectos
+  // fuera de control. Se compara contra su propio umbral, no contra un periodo.
+  for (const breach of built.dimensionBreaches(thresholds)) reasons.push(breach)
+
+  const seal = sealOf(reasons) === "VALIDADO_AUTOMATICAMENTE" ? Seal.VALIDADO_AUTOMATICAMENTE : Seal.REQUIERE_REVISION
+
+  if (preview) {
+    // **Previsualización NO sellada**: ni una fila en `report_runs`. Es lo que
+    // permite mirar un borrador sin que el borrador firme nada (O-E10-5).
+    return {
+      runId: null,
+      sealed: false,
+      budgetHash: key.budgetHash,
+      budgetRulesHash: built.result.budgetAllocationState === "SETTLED" ? built.budgetRulesHash : null,
+      forecastCutoff: key.cutoffMonth,
+      result: built.result,
+      sealReasons: reasons,
+      seal,
+      origen: "preview",
+    }
+  }
+
+  // ── FASE 3 — persistencia, en una transacción corta ───────────────────────
+  const durationMs = Math.max(0, Date.now() - startedAt)
+  const storedParams = { ...key.hashed, budgetRulesHash: built.budgetRulesHash }
+  const provenance = {
+    runId,
+    ledgerHash: `sha256:${key.ledgerHash}`,
+    budgetHash: `sha256:${key.budgetHash}`,
+    analyticsKey: key.analyticsKey,
+    gitSha,
+    module: "lib/budget/variance.ts",
+    // P6 — una celda de desviación NO se reproduce con una sola consulta (§5.1).
+    generatedFrom: ["journal_lines", "allocation_lines", "budget_lines"],
+  }
+
+  return await tenantTransaction(organizationId, userId, async (tx) => {
+    await tx.$executeRaw`
+      INSERT INTO report_runs (
+        id, organization_id, type, period_start, period_end, fiscal_year_id,
+        params, params_hash, ledger_hash, analytics_hash, margin_config_hash, allocation_run_set_hash,
+        budget_hash, git_sha, result, result_kind, provenance, validation, seal, seal_reasons, duration_ms,
+        created_by_id
+      ) VALUES (
+        ${runId}::uuid, ${organizationId}::uuid, 'PRESUPUESTO_REAL'::report_type,
+        ${toUtcDate(request.periodStart)}::date, ${toUtcDate(request.periodEnd)}::date,
+        ${key.fiscalYear.id}::uuid,
+        ${JSON.stringify(storedParams)}::jsonb, ${key.paramsHash}, ${key.ledgerHash},
+        ${key.analyticsHash}, ${key.marginHash},
+        ${key.applied ? key.applied.runSetHash : null}, ${key.budgetHash}, ${gitSha},
+        ${canonicalResultJson(built.result)}::jsonb, 'FULL'::result_kind,
+        ${JSON.stringify(provenance)}::jsonb,
+        ${JSON.stringify({ checks: built.checks })}::jsonb,
+        ${seal}::seal, ${JSON.stringify(reasons)}::jsonb, ${durationMs},
+        ${request.actor?.userId ?? null}::uuid
+      )
+      ON CONFLICT (organization_id, type, period_start, period_end, params_hash, ledger_hash, analytics_key, git_sha, budget_hash)
+      DO NOTHING`
+
+    const stored = await tx.reportRun.findFirstOrThrow({
+      where: {
+        type: ReportType.PRESUPUESTO_REAL,
+        periodStart: toUtcDate(request.periodStart),
+        periodEnd: toUtcDate(request.periodEnd),
+        paramsHash: key.paramsHash,
+        ledgerHash: key.ledgerHash,
+        analyticsKey: key.analyticsKey,
+        gitSha,
+        budgetHash: key.budgetHash,
+      },
+      orderBy: { createdAt: "desc" },
+    })
+    return {
+      runId: stored.id,
+      sealed: true,
+      budgetHash: key.budgetHash,
+      budgetRulesHash: built.budgetRulesHash,
+      forecastCutoff: key.cutoffMonth,
+      result: stored.result as unknown as BudgetVsActualResult,
+      sealReasons: stored.sealReasons as unknown as ReportSealReason[],
+      seal: stored.seal,
+      origen: stored.id === runId ? "fresh" : "cache",
+    }
+  })
+}
+
+type BuildBudgetInput = {
+  runId: string
+  gitSha: string
+  granularity: BudgetGranularity
+  withAllocations: boolean
+  baseCurrency: string
+  periodStart: LocalDate
+  periodEnd: LocalDate
+  fiscalYearId: string
+  fiscalYearStart: LocalDate
+  fiscalYearEnd: LocalDate
+  config: AnalyticsConfig
+  marginHash: string
+  analyticsHash: string
+  analyticLines: readonly AnalyticLine[]
+  applied: AppliedAllocations | null
+  composed: ComposedBudget
+  composition: Record<string, string>
+  cutoffMonth: string | null
+  rules: readonly AllocationRuleSpec[]
+  headcount: readonly HeadcountRow[]
+  timeRows: readonly TimeEntryRow[]
+  rates: readonly EmployeeRateRow[]
+}
+
+/**
+ * Composición PURA del informe. Fuera de la transacción a propósito: el motor no
+ * necesita conexión y mantener el pool ocupado mientras se construye una matriz
+ * de ocho niveles es exactamente lo que agotaba el pool en E6.
+ */
+function buildBudgetVsActual(input: BuildBudgetInput) {
+  const provCtx: ProvenanceContext = {
+    runId: input.runId,
+    ledgerHash: "",
+    gitSha: input.gitSha,
+    baseCurrency: input.baseCurrency,
+    module: "lib/analytics/margins.ts",
+  }
+  const periodLines = input.analyticLines.filter(
+    (l) => l.entryDate >= input.periodStart && l.entryDate <= input.periodEnd
+  )
+
+  // ── El REAL, con o sin imputaciones según el toggle ───────────────────────
+  const actual = buildAnalyticPnl(
+    periodLines,
+    input.config,
+    { from: input.periodStart, to: input.periodEnd, fiscalYearId: input.fiscalYearId },
+    provCtx,
+    {
+      analyticsHash: input.analyticsHash,
+      marginConfigHash: input.marginHash,
+      ...(input.applied ? { allocations: input.applied.lines } : {}),
+    }
+  )
+
+  // ── El PRESUPUESTO, con las MISMAS funciones de `lib/analytics/margins.ts` ─
+  // Reimplementarlas aquí sería garantizar que las dos matrices divergen el día
+  // que alguien toque una regla de destino.
+  const window = { from: input.periodStart, to: input.periodEnd }
+  let budget = buildBudgetMatrix(input.composed.effective, input.config, window)
+
+  // ── O-E10-4 — la liquidación PRESUPUESTARIA, en dry-run puro ──────────────
+  // Sin ella, con `CC-OPS` presupuestado y ejecutado en 900 000 c exactos y las
+  // horas exactamente previstas, la desviación de MC3 de P-01 salía −400 000 c
+  // con ejecución perfecta, y el total compañía cuadraba.
+  let notSettleableReason: string | null = null
+  let budgetRulesHash: string | null = null
+  if (input.withAllocations) {
+    const settled = settleBudgetMatrix(budget, {
+      rules: input.rules,
+      budgetHours: input.composed.effective.hours,
+      headcount: input.headcount,
+      config: input.config,
+      period: {
+        kind: "YEAR",
+        label: input.periodStart.slice(0, 4),
+        start: input.periodStart,
+        end: input.periodEnd,
+        fiscalYearId: input.fiscalYearId,
+        fiscalYearStart: input.fiscalYearStart,
+        fiscalYearEnd: input.fiscalYearEnd,
+      },
+    })
+    if (settled.ok) {
+      budget = settled.value.matrix
+      budgetRulesHash = budget.budgetRulesHash
+    } else {
+      // NUNCA una matriz mixta: el presupuesto se queda en bruto, las celdas por
+      // dimensión de nivel ≥ MC3 salen `notComparable` y el toggle se bloquea
+      // con el motivo (I-E10-18).
+      notSettleableReason = settled.error.reason
+    }
+  }
+
+  const variance = buildVariance({
+    actual: { matrixCents: actual.matrixCents, columns: actual.columns },
+    budget,
+    actualAllocationState: input.withAllocations ? "SETTLED" : "NONE",
+    month: null,
+  })
+
+  // ── El FORECAST, mes a mes y con su procedencia (I-E10-7) ─────────────────
+  const months = fiscalYearMonths(input.fiscalYearStart, input.fiscalYearEnd)
+  const actualByMonth: Record<string, Record<string, Record<string, Cents>>> = {}
+  for (const month of months) {
+    const from = `${month}-01`
+    const to = lastDayOfMonth(month)
+    const monthLines = input.analyticLines.filter((l) => l.entryDate >= from && l.entryDate <= to)
+    const monthly = buildAnalyticPnl(
+      monthLines,
+      input.config,
+      { from, to, fiscalYearId: input.fiscalYearId },
+      provCtx,
+      { ...(input.applied ? { allocations: input.applied.lines } : {}) }
+    )
+    actualByMonth[month] = monthly.matrixCents
+  }
+  const forecast = buildForecast({
+    actualByMonth,
+    budget,
+    fiscalYearMonths: months,
+    cutoffMonth: input.cutoffMonth,
+    budgetProvenanceByMonth: input.composition,
+  })
+
+  // ── §5.2 — rentabilidad por proyecto CON HORAS y absorción ────────────────
+  const approved = input.timeRows.filter((r) => r.approved)
+  const minutes = minutesByTarget(approved, window, { productiveOnly: true, approvedOnly: true })
+  const costs = costOfTime(input.timeRows, input.rates, window)
+  const budgetMinutesByCode = new Map<string, number>()
+  for (const cell of input.composed.effective.hours) {
+    budgetMinutesByCode.set(
+      cell.dimension.code,
+      (budgetMinutesByCode.get(cell.dimension.code) ?? 0) + cell.minutes
+    )
+  }
+
+  const profitability: BudgetProfitabilityRow[] = minutes
+    .filter((m) => m.kind === "PROJECT")
+    .map((m) => {
+      const column = `PROJ:${m.code}`
+      const cost = costs.byTarget.find((t) => t.code === m.code && t.kind === "PROJECT") ?? null
+      const budgetMinutes = budgetMinutesByCode.get(m.code) ?? null
+      const mc2 = actual.matrixCents.MC2?.[column] ?? 0
+      const mc3 = actual.matrixCents.MC3?.[column] ?? 0
+      const ingresos = actual.matrixCents.INGRESOS?.[column] ?? 0
+      // `null` con 0 minutos: **no evaluable**, nunca 0 (R-R-1). Un ratio con
+      // denominador cero no es «cero», es una cifra que no existe.
+      const perHour = (cents: Cents): Cents | null =>
+        m.minutes === 0 ? null : Math.floor((cents * 60) / m.minutes)
+      return {
+        projectCode: m.code,
+        actualMinutes: m.minutes,
+        budgetMinutes,
+        minutesVariance: budgetMinutes === null ? null : m.minutes - budgetMinutes,
+        hourlyCostCents:
+          cost === null || cost.costCents === null || m.minutes === 0
+            ? null
+            : Math.floor((cost.costCents * 60) / m.minutes),
+        basis: cost?.basis ?? null,
+        notEvaluableReason: cost?.notEvaluableReason ?? (m.minutes === 0 ? "SIN_MINUTOS" : null),
+        marginPerHourMc2Cents: perHour(mc2),
+        marginPerHourMc3Cents: perHour(mc3),
+        billedRatePerHourCents: perHour(ingresos),
+      }
+    })
+
+  // **O-E10-20** — la desviación de absorción. I-E10-12 sólo comprueba que no se
+  // pase (`≤`), así que una INFRAABSORCIÓN del 20 % pasaba el invariante en
+  // silencio. Es información de gestión, no un FAIL.
+  const payrollCents = periodLines
+    .filter((l) => DEFAULT_PAYROLL_ACCOUNT_PREFIXES.some((p) => l.accountCode.startsWith(p)))
+    .reduce((acc, l) => acc + (l.debitCents - l.creditCents), 0)
+  const absorption = absorptionVariance({
+    valuedCents: costs.totals.valuedCents,
+    payrollCents,
+    byCostCenter: costs.byTarget
+      .filter((t) => t.kind === "COST_CENTER")
+      .map((t) => ({ code: t.code, valuedCents: t.costCents ?? 0, payrollCents: 0 })),
+  })
+
+  // ── EV-15 / EV-16 / EV-17 — lo que mueve el sello ─────────────────────────
+  const unapprovedRows = unapprovedMinutesByTarget(input.timeRows, window, { productiveOnly: true })
+  const unapprovedTotal = unapprovedRows.reduce((acc, r) => acc + r.unapprovedMinutes, 0)
+  const baseTotal = minutes.reduce((acc, m) => acc + m.minutes, 0)
+  const unapproved =
+    unapprovedTotal > 0
+      ? { minutes: unapprovedTotal, baseMinutes: baseTotal, targets: unapprovedRows.map((r) => r.code) }
+      : null
+
+  const headcountTargets = new Set(input.headcount.map((h) => h.costCenterId))
+  const costCentersWithoutHeadcount = input.rules
+    .filter((r) => r.driver === "HEADCOUNT")
+    .flatMap((r) => r.targets.map((t) => t.costCenterId))
+    .filter((id): id is string => id !== null && id !== undefined && !headcountTargets.has(id))
+    .map((id) => input.config.costCenters.find((c) => c.id === id)?.code ?? id)
+
+  const unpriced =
+    costs.unpriced.length > 0
+      ? { entries: costs.unpriced.length, employees: [...new Set(costs.unpriced.map((u) => u.employeeCode))].sort() }
+      : null
+
+  const monthsInPeriod = months.filter((m) => `${m}-01` >= input.periodStart.slice(0, 8).concat("01") && `${m}-01` <= input.periodEnd)
+  const monthsWithoutBudget = monthsInPeriod.filter((m) => input.composition[m] === undefined)
+
+  const result: BudgetVsActualResult = {
+    granularity: input.granularity,
+    withAllocations: input.withAllocations,
+    budgetComposition: input.composition,
+    budgetAllocationState: budget.allocationState,
+    notSettleableReason,
+    variance,
+    forecast: { byMonth: forecast.byMonth, provenanceByMonth: forecast.provenanceByMonth, levelTotalsCents: forecast.levelTotalsCents },
+    profitability,
+    absorption,
+    monthsWithoutBudget,
+    openMonths: openMonthsOf(monthsInPeriod, input.cutoffMonth),
+    unresolvedBudgetCells: budget.unresolved.length,
+  }
+
+  // KPI de desviación a total compañía. La «base» de la comparación NO es un
+  // periodo anterior: es el presupuesto, y por eso `previous` es el presupuesto.
+  const totalOf = (level: string, matrix: Record<string, Record<string, Cents>>): Cents =>
+    Object.values(matrix[level] ?? {}).reduce((a, b) => a + b, 0)
+  const kpis: KpiSnapshot = {
+    desviacionIngresos: totalOf("INGRESOS", actual.matrixCents),
+    desviacionEbitda: totalOf("EBITDA", actual.matrixCents),
+    desviacionMc3: totalOf("MC3", actual.matrixCents),
+  }
+  const budgetKpis: KpiSnapshot = {
+    desviacionIngresos: budget.cumulativeCents.INGRESOS ? totalOf("INGRESOS", budget.cumulativeCents) : 0,
+    desviacionEbitda: totalOf("EBITDA", budget.cumulativeCents),
+    desviacionMc3: totalOf("MC3", budget.cumulativeCents),
+  }
+
+  const checks: CheckResult[] = [
+    ...actual.checks.map((c) => ({ id: c.id, status: c.status, evidencia: c.evidencia }) as CheckResult),
+  ]
+  if (budget.unresolved.length > 0) {
+    checks.push({
+      id: "I-E10-1",
+      status: "WARN",
+      evidencia:
+        `${budget.unresolved.length} celda(s) de presupuesto sin situar en la matriz: ` +
+        budget.unresolved.map((u) => `${u.month} ${u.dimensionCode} (${u.code})`).join(", "),
+    })
+  }
+
+  /**
+   * **O-E10-18 / criterio 18-bis** — el cuarto KPI. Mira el máximo |desviación|
+   * POR DIMENSIÓN en INGRESOS, MC2 y MC3: dos desviaciones grandes de signo
+   * contrario se anulan en el total compañía y el informe se firmaba en verde
+   * con dos proyectos fuera de control.
+   */
+  const dimensionBreaches = (thresholds: ReviewThresholds): ReportSealReason[] => {
+    const limit = thresholds.kpis.desviacionMaxDimension
+    if (!limit) return []
+    const out: ReportSealReason[] = []
+    for (const level of ["INGRESOS", "MC2", "MC3"] as const) {
+      const worst = maxDimensionVariance(variance, level)
+      if (worst === null) continue
+      const overAbs = limit.minAbsCents === null || Math.abs(worst.varianceCents) > limit.minAbsCents
+      const overPct = limit.pctBps === null || worst.varianceBps === null || Math.abs(worst.varianceBps) > limit.pctBps
+      if (!overAbs || !overPct) continue
+      out.push({
+        code: "DESVIACION_PRESUPUESTO",
+        kind: "VARIACION",
+        kpi: `desviacionMaxDimension:${level}`,
+        message:
+          `La dimensión ${worst.column} desvía ${worst.varianceCents} céntimos en ${level} ` +
+          `${worst.varianceBps === null ? "" : `(${worst.varianceBps} puntos básicos) `}` +
+          "por encima del umbral por dimensión: el total compañía puede estar a cero y aun así haber " +
+          "dimensiones fuera de control",
+        deltaBps: worst.varianceBps,
+        limitBps: limit.pctBps,
+      })
+    }
+    return out
+  }
+
+  return {
+    result,
+    checks,
+    kpis,
+    budgetKpis,
+    budgetRulesHash,
+    unapproved,
+    costCentersWithoutHeadcount,
+    unpriced,
+    dimensionBreaches,
+  }
+}
+
+/** Último día del mes `YYYY-MM`, sin `Date`: es calendario, no reloj. */
+function lastDayOfMonth(month: string): LocalDate {
+  const year = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  const days =
+    m === 2 ? ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28) : [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+  return `${month}-${String(days).padStart(2, "0")}`
 }

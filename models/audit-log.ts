@@ -71,6 +71,13 @@ export type AuditEntity =
   /// E9 · R-2: los 22 pares de reclasificación sembrados al alta (O-7).
   | "ReclassificationPair"
   | "ProfitDistribution"
+  // E10 · T12 — presupuesto y horas (docs/design/E10-presupuesto-horas.md §4.1).
+  | "Budget"
+  | "BudgetLine"
+  | "TimeEntry"
+  | "Employee"
+  | "EmployeeRate"
+  | "HeadcountSnapshot"
 
 export type AuditAction =
   | "create"
@@ -115,6 +122,16 @@ export type AuditAction =
   | "MARK_SIMPLIFIED_QUALIFIED"
   | "REVOID_AND_REDO"
   | "SET_PROMPT_VERSION"
+  // E10 · T12 — los actos que mueven una cifra de presupuesto o de horas (§4.1).
+  // Sellar un presupuesto fija el patrón de medida de la compañía y aprobar un
+  // parte fija la base de un reparto: los dos son decisiones, no operaciones.
+  | "SEAL_BUDGET"
+  | "SUPERSEDE_BUDGET"
+  | "IMPORT_BUDGET"
+  | "APPROVE_TIME"
+  | "CORRECT_TIME"
+  | "IMPORT_TIME"
+  | "SET_RATE"
   | "SET_REGIME"
   | "EMIT_INVOICE"
   // E7 · T9/T10/T11 — actos de la pestaña Auditoría y de la conciliación.

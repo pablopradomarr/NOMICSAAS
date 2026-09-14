@@ -29,10 +29,21 @@ import {
   type TargetFilter,
 } from "@/lib/analytics/allocate"
 import type { AnalyticLine, Cents, CostCenterMarginLevel, LocalDate } from "@/lib/analytics/types"
+import {
+  fteMonthsByCostCenter,
+  timeHash as computeTimeHash,
+  timeWindowOf,
+  type DateWindow,
+  type HeadcountRow,
+  type HeadcountWeight,
+  type TimeEntryRow,
+} from "@/lib/time/aggregate"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { formatBps } from "@/lib/money"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import { getAnalyticLines, getAnalyticsConfig, type Actor } from "@/models/analytics"
+import { listHeadcount } from "@/models/employees"
+import { getTimeRowsForWindow } from "@/models/time"
 import { writeAuditLog } from "@/models/audit-log"
 import { LedgerAbort, computeLedgerHash, modelErr, type LedgerModelError } from "@/models/ledger"
 import type { AllocationRunStatus, AllocPeriod, Driver, Prisma, TargetKind, ZeroBaseFallback } from "@/prisma/client"
@@ -537,6 +548,29 @@ type RunContext = {
   rules: AllocationRuleSpec[]
   priorAllocations: PriorAllocation[]
   seals: AllocationSeals
+  /** E10 · D1 — la base de los drivers de actividad y su CUARTO sello. */
+  activity: ActivityBase
+}
+
+/**
+ * **E10 · D1 + O-E10-1 — la base de `HOURS` / `HEADCOUNT`, con su ventana.**
+ *
+ * La base de un driver de actividad **no está en el diario**: no entra ni en
+ * `ledgerHash`, ni en `analyticsHash`, ni en `rulesHash`. Por eso el run sella
+ * un cuarto hash **y la ventana sobre la que lo tomó**: con
+ * `zeroBaseFallback = YTD` el reparto de marzo consume partes de enero, y sin la
+ * ventana persistida aprobar en mayo un parte de enero no movía el sello de
+ * marzo — el run lucía vigente con un reparto irreproducible.
+ *
+ * `window === null` ⇔ ninguna regla del run usa un driver de actividad ⇔
+ * `timeHash = "∅"` y las dos columnas de ventana a `NULL`.
+ */
+export type ActivityBase = {
+  window: DateWindow | null
+  timeRows: readonly TimeEntryRow[]
+  headcount: readonly HeadcountRow[]
+  headcountWeights: readonly HeadcountWeight[]
+  timeHash: string
 }
 
 /**
@@ -544,6 +578,56 @@ type RunContext = {
  * adaptador `pg` comparte una sola conexión y en paralelo avisa de «client is
  * already executing a query» (hallazgo #6 de E4).
  */
+/**
+ * Lee la base de actividad del run —partes de horas (**aprobados y sin
+ * aprobar**, O-E10-2) y snapshots de plantilla en FTE·mes (Q-7)— y sella el
+ * `timeHash` sobre la **ventana efectiva** que las reglas del run consumen
+ * (`timeWindowOf`, O-E10-1).
+ *
+ * Lecturas en SERIE: dentro de una transacción hay UNA conexión.
+ */
+export async function loadActivityBase(
+  tx: TenantTransactionClient,
+  rules: readonly AllocationRuleSpec[],
+  period: AllocationPeriodRef
+): Promise<ActivityBase> {
+  const window = timeWindowOf(
+    rules.map((r) => ({ driver: r.driver, zeroBaseFallback: r.zeroBaseFallback })),
+    {
+      kind: period.kind,
+      label: period.label,
+      start: period.start,
+      end: period.end,
+      fiscalYearStart: period.fiscalYearStart,
+    }
+  )
+  if (window === null) {
+    // Sin reglas de actividad no hay base que leer ni sello que tomar: `"∅"` y
+    // ventana NULL, que es lo que el CHECK de M4 espera ver.
+    return { window: null, timeRows: [], headcount: [], headcountWeights: [], timeHash: computeTimeHash([], null) }
+  }
+
+  const timeRows = await getTimeRowsForWindow(tx, window)
+  const headcountRows = await listHeadcount(tx, { from: window.from, to: window.to })
+  const headcount: HeadcountRow[] = headcountRows.map((h) => ({
+    costCenterId: h.costCenterId,
+    costCenterCode: h.costCenterCode,
+    periodEnd: h.periodEnd,
+    fteMilli: h.fteMilli,
+  }))
+
+  return {
+    window,
+    timeRows,
+    headcount,
+    // La base del driver es Σ `fteMilli` de los snapshots del periodo — FTE·mes,
+    // no una media (Q-7): un CECO vivo de febrero a noviembre tenía peso 0 en el
+    // run anual y sus diez meses de estructura se trasladaban a los demás.
+    headcountWeights: fteMonthsByCostCenter(headcount, window),
+    timeHash: computeTimeHash(timeRows, window),
+  }
+}
+
 async function loadRunContext(tx: TenantTransactionClient, request: AllocationPeriodRequest): Promise<RunContext> {
   const fiscalYear = await memoized(fiscalYearCache, tx, `${request.periodStart}|${request.periodEnd}`, async () =>
     tx.fiscalYear.findFirst({
@@ -607,8 +691,20 @@ async function loadRunContext(tx: TenantTransactionClient, request: AllocationPe
   const periodLines = lines.filter((l) => l.entryDate >= request.periodStart && l.entryDate <= request.periodEnd)
   const configHash = marginConfigHash(config)
 
+  const periodRef: AllocationPeriodRef = {
+    kind: request.periodKind,
+    label: periodLabel(request.periodKind, request.periodStart),
+    start: request.periodStart,
+    end: request.periodEnd,
+    fiscalYearId: fiscalYear.id,
+    fiscalYearStart,
+    fiscalYearEnd,
+  }
+  const activity = await loadActivityBase(tx, rules, periodRef)
+
   return {
     config,
+    activity,
     period: {
       kind: request.periodKind,
       label: periodLabel(request.periodKind, request.periodStart),
@@ -798,6 +894,13 @@ export async function sealAllocationRunTx(
       ledgerHash: ctx.seals.ledgerHash,
       analyticsHash: ctx.seals.dimensionsHash,
       rulesHash: ctx.seals.rulesHash,
+      // E10 · D1 + O-E10-1 — el CUARTO sello y la ventana que lo produjo. Sin la
+      // ventana, la staleness tendría que releer las reglas vigentes para saber
+      // qué base consumió el run, y entonces dependería de una tercera cosa que
+      // también cambia.
+      timeHash: ctx.activity.timeHash,
+      timeHashWindowStart: ctx.activity.window ? toUtcDate(ctx.activity.window.from) : null,
+      timeHashWindowEnd: ctx.activity.window ? toUtcDate(ctx.activity.window.to) : null,
       gitSha: input.gitSha,
       lineCount: result.lines.length,
       totalAllocatedCents: BigInt(result.totalAllocatedCents),
@@ -930,6 +1033,7 @@ export async function reverseAllocationRunTx(
 
 export type AllocationRunListItem = {
   id: string
+  fiscalYearId: string
   periodKind: AllocPeriod
   periodStart: LocalDate
   periodEnd: LocalDate
@@ -943,14 +1047,25 @@ export type AllocationRunListItem = {
   runAt: string
   supersededById: string | null
   reversedAt: string | null
-  /** **DERIVADO**, nunca almacenado (§3.5): los tres sellos contra los de hoy. */
+  /** E10 · O-E10-1 — el CUARTO sello y la ventana sobre la que se tomó. */
+  timeHash: string
+  timeHashWindowStart: LocalDate | null
+  timeHashWindowEnd: LocalDate | null
+  /** **DERIVADO**, nunca almacenado (§3.5): los CUATRO sellos contra los de hoy. */
   isStale: boolean
   staleReasons: string[]
 }
 
+/**
+ * E10 · T12 — con `deriveStaleness: true` la lista **rellena de verdad** el
+ * `isStale` de los runs sellados, en **tres** consultas para todos ellos
+ * (§3.9). Antes devolvía `false` de relleno y cada llamante lo derivaba run a
+ * run: es la deuda §0-bis #6, y con doce runs mensuales eran ~68 consultas por
+ * render. Exige un cliente transaccional porque el agregado va en SQL.
+ */
 export async function listAllocationRuns(
   db: TenantClient | TenantTransactionClient,
-  filter: { fiscalYearId?: string; periodKind?: AllocPeriod } = {}
+  filter: { fiscalYearId?: string; periodKind?: AllocPeriod; deriveStaleness?: boolean } = {}
 ): Promise<AllocationRunListItem[]> {
   const rows = await db.allocationRun.findMany({
     where: {
@@ -959,8 +1074,9 @@ export async function listAllocationRuns(
     },
     orderBy: [{ periodStart: "asc" }, { periodEnd: "asc" }, { runAt: "asc" }],
   })
-  return rows.map((r) => ({
+  const items: AllocationRunListItem[] = rows.map((r) => ({
     id: r.id,
+    fiscalYearId: r.fiscalYearId,
     periodKind: r.periodKind,
     periodStart: fromUtcDate(r.periodStart),
     periodEnd: fromUtcDate(r.periodEnd),
@@ -974,9 +1090,21 @@ export async function listAllocationRuns(
     runAt: r.runAt.toISOString(),
     supersededById: r.supersededById,
     reversedAt: r.reversedAt ? r.reversedAt.toISOString() : null,
+    timeHash: r.timeHash,
+    timeHashWindowStart: r.timeHashWindowStart ? fromUtcDate(r.timeHashWindowStart) : null,
+    timeHashWindowEnd: r.timeHashWindowEnd ? fromUtcDate(r.timeHashWindowEnd) : null,
     isStale: false,
     staleReasons: [],
   }))
+
+  if (filter.deriveStaleness !== true) return items
+  const sealed = items.filter((r) => r.status === "SEALED")
+  if (sealed.length === 0) return items
+  const staleness = await allocationRunStalenessBatch(db as TenantTransactionClient, sealed)
+  return items.map((r) => {
+    const found = staleness.get(r.id)
+    return found ? { ...r, isStale: found.isStale, staleReasons: found.reasons } : r
+  })
 }
 
 /**
@@ -988,18 +1116,13 @@ export async function listAllocationRuns(
  */
 export async function allocationRunStaleness(
   tx: TenantTransactionClient,
-  run: Pick<AllocationRunListItem, "periodKind" | "periodStart" | "periodEnd" | "ledgerHash" | "analyticsHash" | "rulesHash">
+  run: Omit<StalenessRunRef, "id"> & { id?: string }
 ): Promise<{ isStale: boolean; reasons: string[] }> {
-  const ctx = await loadRunContext(tx, {
-    periodKind: run.periodKind,
-    periodStart: run.periodStart,
-    periodEnd: run.periodEnd,
-  })
-  const reasons: string[] = []
-  if (ctx.seals.ledgerHash !== run.ledgerHash) reasons.push("el diario del periodo ha cambiado")
-  if (ctx.seals.dimensionsHash !== run.analyticsHash) reasons.push("se ha reclasificado alguna línea del periodo")
-  if (ctx.seals.rulesHash !== run.rulesHash) reasons.push("las reglas vigentes han cambiado")
-  return { isStale: reasons.length > 0, reasons }
+  // E10 · §3.9 — envoltorio de UN elemento sobre la versión en lote. Se conserva
+  // para no duplicar reglas: la definición de «caducado» vive en un solo sitio.
+  const id = run.id ?? "single"
+  const batch = await allocationRunStalenessBatch(tx, [{ ...run, id }])
+  return batch.get(id) ?? { isStale: false, reasons: [] }
 }
 
 export async function getAllocationRun(
@@ -1308,4 +1431,320 @@ export async function listAllocationRunsWithLinesHash(
     linesHash: r.linesHash,
     linesHashExpected: computeLinesHash(byRun.get(r.id) ?? []),
   }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E10 · T12 — la staleness en LOTE (§3.9, deuda §0-bis #6)
+//
+// Hoy `allocationRunStaleness` llama a `loadRunContext` **por run**; la
+// memoización por transacción de E5 lo dejó en «una consulta por periodo
+// distinto», que con doce runs mensuales sellados siguen siendo doce. La forma
+// correcta es agregar por periodo en SQL: **tres consultas, sea cual sea N**.
+//
+//   1. `ledgerHash` y `dimensionsHash` por periodo, con la lista de periodos en
+//      un `VALUES` y los dos `digest(string_agg(forma canónica ORDER BY …))`
+//      calculados en la base. Son EXACTAMENTE las formas canónicas de
+//      `lib/ledger/hash.ts` y de `lib/analytics/hash.ts` escritas en SQL, y hay
+//      un test espejo que compara los dos caminos fila a fila (mismo patrón que
+//      el trigger de `report_runs_analytics_key`).
+//   2. Las reglas activas, UNA consulta; `effectiveRules` + `canonicalRulesForm`
+//      componen el `rulesHash` de cada (periodicidad, fin de periodo) en TS, que
+//      es donde vive la definición.
+//   3. El `timeHash` **por ventana**, UNA consulta agregada sobre las entradas
+//      APROBADAS, usando las ventanas `[time_hash_window_start,
+//      time_hash_window_end]` que **los propios runs persisten** (O-E10-1): no
+//      hay que releer las reglas para saber qué ventana consumió cada uno.
+//
+// El orden `COLLATE "C"` no es cosmético: JavaScript ordena por unidad de
+// código y la colación por defecto de la base ignora la puntuación, así que sin
+// él las dos formas canónicas divergirían en cuanto un código llevara un guión.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Los cuatro sellos derivados de un periodo, tal y como están HOY. */
+export type PeriodSeals = {
+  periodStart: LocalDate
+  periodEnd: LocalDate
+  ledgerHash: string
+  dimensionsHash: string
+  marginConfigHash: string
+}
+
+type PeriodRef = { periodStart: LocalDate; periodEnd: LocalDate }
+
+/**
+ * Consulta 1 de las tres: `ledgerHash`, `marginConfigHash` y `dimensionsHash` de
+ * N periodos **en una sola pasada**, sin materializar una línea del diario.
+ *
+ * El periodo se identifica por `[periodStart, periodEnd]` y por nada más: los
+ * tres sellos se derivan de las líneas del diario que caen en esa ventana y de
+ * la configuración de márgenes vigente a su fin, ninguna de las dos cosas mira
+ * el ejercicio. Pasarlo aquí era arrastrar una columna que la consulta no usa
+ * —y, con los llamantes que no lo traen, un `''::uuid` que la rompía (22P02)—.
+ */
+export async function periodSealsBatch(
+  tx: TenantTransactionClient,
+  periods: readonly PeriodRef[]
+): Promise<Map<string, PeriodSeals>> {
+  const out = new Map<string, PeriodSeals>()
+  if (periods.length === 0) return out
+
+  const starts = periods.map((p) => toUtcDate(p.periodStart))
+  const ends = periods.map((p) => toUtcDate(p.periodEnd))
+
+  const rows = await tx.$queryRaw<
+    { period_start: Date; period_end: Date; ledger_hash: string; dimensions_hash: string; margin_config_hash: string }[]
+  >`
+    WITH periodos AS (
+      SELECT * FROM unnest(${starts}::date[], ${ends}::date[]) AS t(period_start, period_end)
+    ),
+    -- La configuración de márgenes vigente AL FIN DE CADA PERIODO. Espejo de
+    -- canonicalMarginConfigForm (lib/analytics/hash.ts): los niveles vigentes
+    -- con su reparto de tipos, el desdoblamiento de NO_ANALITICO y el
+    -- marginLevel de cada CECO — sin los CECOs, mover CC-OPS de MC3 a EBITDA
+    -- no cambiaría ningún hash (R-A7).
+    cfg AS (
+      SELECT p.period_start, p.period_end,
+             encode(sha256(convert_to(
+               concat_ws(E'\n',
+                 'nonAnalyticLevel'  || E'\t' || o.non_analytic_level::text,
+                 'incomeTaxPrefixes' || E'\t' || ${INCOME_TAX_PREFIXES_CSV},
+                 (SELECT string_agg(
+                           concat_ws(E'\t', m.level::text, m.sort_order::text, m.tipos,
+                                     to_char(m.valid_from, 'YYYY-MM-DD'),
+                                     COALESCE(to_char(m.valid_to, 'YYYY-MM-DD'), '∅')),
+                           E'\n' ORDER BY m.sort_order, m.level::text COLLATE "C")
+                    FROM (
+                      SELECT mlc.level, mlc.sort_order, mlc.valid_from, mlc.valid_to,
+                             (SELECT string_agg(x::text, ',' ORDER BY x::text COLLATE "C")
+                                FROM unnest(mlc.analytic_types) x) AS tipos
+                        FROM margin_level_configs mlc
+                       WHERE mlc.organization_id = o.id
+                         AND mlc.valid_from <= p.period_end
+                         AND (mlc.valid_to IS NULL OR mlc.valid_to >= p.period_end)
+                    ) m),
+                 (SELECT string_agg(
+                           concat_ws(E'\t', c.code, c.kind::text, c.margin_level::text,
+                                     CASE WHEN c.allocatable THEN '1' ELSE '0' END),
+                           E'\n' ORDER BY c.code COLLATE "C")
+                    FROM cost_centers c WHERE c.organization_id = o.id)
+               ), 'UTF8')), 'hex') AS margin_config_hash
+        FROM periodos p
+        JOIN organizations o ON o.id = ${tx.$organizationId}::uuid
+    )
+    SELECT cfg.period_start,
+           cfg.period_end,
+           -- ledgerHash: la forma canónica v1 de lib/ledger/hash.ts, la misma
+           -- que computeLedgerHash escribe para UN periodo.
+           COALESCE((
+             SELECT encode(sha256(convert_to(
+                      COALESCE(string_agg(f.fila, E'\n' ORDER BY f.entry_date, f.entry_number, f.line_no), ''),
+                      'UTF8')), 'hex')
+               FROM (
+                 SELECT l.entry_date, e.entry_number, l.line_no,
+                        concat_ws(E'\t',
+                          to_char(l.entry_date, 'YYYY-MM-DD'), e.entry_number::text, l.line_no::text,
+                          l.account_code, l.debit_cents::text, l.credit_cents::text, l.entry_kind::text
+                        ) AS fila
+                   FROM journal_lines l
+                   JOIN journal_entries e ON e.id = l.entry_id AND e.organization_id = l.organization_id
+                  WHERE l.organization_id = ${tx.$organizationId}::uuid
+                    AND l.entry_date BETWEEN cfg.period_start AND cfg.period_end
+               ) f), ${EMPTY_SHA256}) AS ledger_hash,
+           -- dimensionsHash: canonicalAnalyticsForm ‖ marginConfigHash,
+           -- con el allocationRunSetHash a ∅ — un run no se sella con un hash
+           -- que se incluya a sí mismo (§3.5).
+           encode(sha256(convert_to(
+             concat_ws(E'\n',
+               COALESCE((
+                 SELECT string_agg(g.fila, E'\n' ORDER BY g.entry_id COLLATE "C", g.line_no)
+                   FROM (
+                     SELECT l.entry_id::text AS entry_id, l.line_no,
+                            concat_ws(E'\t',
+                              l.entry_id::text, l.line_no::text,
+                              COALESCE(l.project_id::text, '∅'),
+                              COALESCE(l.cost_center_id::text, '∅'),
+                              COALESCE(l.business_line_id::text, '∅'),
+                              COALESCE(l.analytic_type::text, '∅')
+                            ) AS fila
+                       FROM journal_lines l
+                      WHERE l.organization_id = ${tx.$organizationId}::uuid
+                        AND l.entry_date BETWEEN cfg.period_start AND cfg.period_end
+                   ) g), ''),
+               'marginConfigHash' || E'\t' || cfg.margin_config_hash
+             ), 'UTF8')), 'hex') AS dimensions_hash,
+           cfg.margin_config_hash
+      FROM cfg`
+
+  for (const r of rows) {
+    const key = `${fromUtcDate(r.period_start)}|${fromUtcDate(r.period_end)}`
+    out.set(key, {
+      periodStart: fromUtcDate(r.period_start),
+      periodEnd: fromUtcDate(r.period_end),
+      ledgerHash: r.ledger_hash,
+      dimensionsHash: r.dimensions_hash,
+      marginConfigHash: r.margin_config_hash,
+    })
+  }
+  return out
+}
+
+/** `sha256("")`: lo que devuelve `ledgerHash([])` con el periodo vacío. */
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+/** R-A11, la misma constante que `lib/analytics/types.ts` expone al motor. */
+const INCOME_TAX_PREFIXES_CSV = "630,633,638"
+
+/**
+ * Consulta 3 de las tres: el `timeHash` de N ventanas **en una sola pasada**,
+ * con la MISMA forma canónica que `canonicalTimeForm` de `lib/time/aggregate.ts`
+ * (`fecha|códigoEmpleado|códigoReceptor|minutos|productiva`, sólo APROBADAS,
+ * ordenada por esa tupla y desempatada por `id`).
+ */
+export async function timeHashBatch(
+  tx: TenantTransactionClient,
+  windows: readonly { from: LocalDate; to: LocalDate }[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (windows.length === 0) return out
+  const froms = windows.map((w) => toUtcDate(w.from))
+  const tos = windows.map((w) => toUtcDate(w.to))
+
+  const rows = await tx.$queryRaw<{ w_from: Date; w_to: Date; time_hash: string }[]>`
+    WITH ventanas AS (
+      SELECT * FROM unnest(${froms}::date[], ${tos}::date[]) AS t(w_from, w_to)
+    )
+    SELECT v.w_from, v.w_to,
+           COALESCE((
+             SELECT encode(sha256(convert_to(
+                      COALESCE(string_agg(f.fila, E'\n' ORDER BY f.fila COLLATE "C", f.id COLLATE "C"), ''),
+                      'UTF8')), 'hex')
+               FROM (
+                 SELECT t.id::text AS id,
+                        concat_ws('|',
+                          to_char(t.date, 'YYYY-MM-DD'),
+                          e.code,
+                          COALESCE(p.code, c.code),
+                          t.minutes::text,
+                          CASE WHEN t.productive THEN '1' ELSE '0' END
+                        ) AS fila
+                   FROM time_entries t
+                   JOIN employees e ON e.id = t.employee_id AND e.organization_id = t.organization_id
+                   LEFT JOIN projects p     ON p.id = t.project_id     AND p.organization_id = t.organization_id
+                   LEFT JOIN cost_centers c ON c.id = t.cost_center_id AND c.organization_id = t.organization_id
+                  WHERE t.organization_id = ${tx.$organizationId}::uuid
+                    AND t.status = 'APROBADO'
+                    AND t.date BETWEEN v.w_from AND v.w_to
+               ) f), ${EMPTY_SHA256}) AS time_hash
+      FROM ventanas v`
+
+  for (const r of rows) out.set(`${fromUtcDate(r.w_from)}|${fromUtcDate(r.w_to)}`, r.time_hash)
+  return out
+}
+
+/** Lo que `allocationRunStalenessBatch` necesita de cada run. */
+export type StalenessRunRef = Pick<
+  AllocationRunListItem,
+  "id" | "periodKind" | "periodStart" | "periodEnd" | "ledgerHash" | "analyticsHash" | "rulesHash"
+> & {
+  fiscalYearId?: string
+  /** O-E10-1: el CUARTO sello y la ventana que lo produjo. */
+  timeHash?: string
+  timeHashWindowStart?: LocalDate | null
+  timeHashWindowEnd?: LocalDate | null
+}
+
+/**
+ * **Staleness de N runs en TRES consultas**, sea cual sea N (§3.9, criterio 21).
+ *
+ * Un `AllocationRun` está `STALE` —derivado, nunca almacenado— si difiere
+ * (a) el `ledgerHash` del periodo, (b) el `dimensionsHash`, (c) el `rulesHash`, o
+ * (d) el `timeHash` recomputado **sobre la ventana que el propio run persiste**.
+ *
+ * (d) es el cuarto sello de D1 y es indispensable: aprobar un parte de diciembre
+ * en enero cambia la base del reparto de diciembre, y sin él el run seguiría
+ * luciendo vigente con un reparto que ya no se puede reproducir. **Y la ventana
+ * no es cosmética** (O-E10-1): un run de marzo con `zeroBaseFallback = YTD`
+ * reparte con partes de enero, así que su sello se tomó sobre `[01-01, 31-03]` y
+ * es ahí donde hay que recomputarlo.
+ */
+export async function allocationRunStalenessBatch(
+  tx: TenantTransactionClient,
+  runs: readonly StalenessRunRef[]
+): Promise<Map<string, { isStale: boolean; reasons: string[] }>> {
+  const out = new Map<string, { isStale: boolean; reasons: string[] }>()
+  if (runs.length === 0) return out
+
+  // Los periodos DISTINTOS: doce runs mensuales del mismo ejercicio son doce
+  // periodos, pero dos reruns del mismo periodo son uno.
+  const periodByKey = new Map<string, PeriodRef>()
+  for (const run of runs) {
+    const key = `${run.periodStart}|${run.periodEnd}`
+    if (!periodByKey.has(key)) {
+      periodByKey.set(key, { periodStart: run.periodStart, periodEnd: run.periodEnd })
+    }
+  }
+
+  // ── Consulta 1 ────────────────────────────────────────────────────────────
+  const seals = await periodSealsBatch(tx, [...periodByKey.values()])
+
+  // ── Consulta 2 ────────────────────────────────────────────────────────────
+  // TODAS las reglas activas de una vez; `effectiveRules` las acota por
+  // (periodicidad, fin de periodo) en TS, que es donde vive la definición.
+  const allRules = await tx.allocationRule.findMany({
+    where: { isActive: true },
+    include: RULE_INCLUDE,
+    orderBy: [{ priority: "asc" }, { code: "asc" }],
+  })
+  const specs = allRules.map(toSpec)
+
+  // ── Consulta 3 ────────────────────────────────────────────────────────────
+  // Las ventanas que los PROPIOS runs persisten (O-E10-1). Un run sin driver de
+  // actividad selló `timeHash = '∅'` y ventana NULL: no hay nada que recomputar.
+  const windowByKey = new Map<string, { from: LocalDate; to: LocalDate }>()
+  for (const run of runs) {
+    if (!run.timeHashWindowStart || !run.timeHashWindowEnd) continue
+    windowByKey.set(`${run.timeHashWindowStart}|${run.timeHashWindowEnd}`, {
+      from: run.timeHashWindowStart,
+      to: run.timeHashWindowEnd,
+    })
+  }
+  const timeHashes = await timeHashBatch(tx, [...windowByKey.values()])
+
+  for (const run of runs) {
+    const reasons: string[] = []
+    const seal = seals.get(`${run.periodStart}|${run.periodEnd}`)
+    if (!seal) {
+      // Nunca se afirma «vigente» sobre lo que no se ha podido comprobar.
+      out.set(run.id, {
+        isStale: true,
+        reasons: ["no se han podido recomputar los sellos del periodo: el run no se puede acreditar"],
+      })
+      continue
+    }
+    if (seal.ledgerHash !== run.ledgerHash) reasons.push("el diario del periodo ha cambiado")
+    if (seal.dimensionsHash !== run.analyticsHash) reasons.push("se ha reclasificado alguna línea del periodo")
+
+    const effective = effectiveRules(specs, {
+      kind: run.periodKind,
+      label: periodLabel(run.periodKind, run.periodStart),
+      start: run.periodStart,
+      end: run.periodEnd,
+      fiscalYearId: run.fiscalYearId ?? "",
+      fiscalYearStart: run.periodStart,
+      fiscalYearEnd: run.periodEnd,
+    })
+    if (computeRulesHash(effective) !== run.rulesHash) reasons.push("las reglas vigentes han cambiado")
+
+    if (run.timeHashWindowStart && run.timeHashWindowEnd) {
+      const current = timeHashes.get(`${run.timeHashWindowStart}|${run.timeHashWindowEnd}`)
+      if (current !== undefined && current !== run.timeHash) {
+        reasons.push(
+          `los partes de horas del periodo han cambiado (ventana ${run.timeHashWindowStart} … ${run.timeHashWindowEnd})`
+        )
+      }
+    }
+
+    out.set(run.id, { isStale: reasons.length > 0, reasons })
+  }
+  return out
 }
