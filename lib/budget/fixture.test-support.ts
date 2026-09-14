@@ -12,7 +12,9 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
 
+import type { AllocationPeriodRef, AllocationRuleSpec } from "@/lib/analytics/allocate"
 import { defaultMarginLevels } from "@/lib/analytics/seed"
+import type { HeadcountRow } from "@/lib/time/aggregate"
 import type { AnalyticsConfig, AnalyticType, MarginLevel, MarginLevelRow } from "@/lib/analytics/types"
 import { INCOME_TAX_PREFIXES } from "@/lib/analytics/types"
 import type { BudgetCell, BudgetHoursCell, BudgetVersion } from "@/lib/budget/types"
@@ -195,10 +197,99 @@ export function versionsFromFixture(): BudgetVersion[] {
     validTo: header.validTo,
     partialFrom: header.partialFrom,
     cells: expected.budgetLines[header.code].map(cellOf),
-    // Las horas presupuestadas del fixture son las de la versión efectiva; se
-    // cuelgan de la BASE, que es la que cubre el año entero.
-    hours: header.code === "2026-BASE" ? expected.budgetHoursLines.map(hoursCellOf) : [],
+    // El fixture publica UNA lista de horas presupuestadas, la de la versión
+    // efectiva. Cada versión lleva las de los meses que cubre: la BASE, los
+    // doce; la REV1 parcial, los suyos desde `partialFrom`. Así la composición
+    // de O-E10-9 devuelve las 36 líneas, vengan del mes que vengan.
+    hours: expected.budgetHoursLines
+      .filter((h) => header.partialFrom === null || h.month >= header.partialFrom)
+      .map(hoursCellOf),
   }))
 }
 
 export const FY_MONTHS: string[] = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, "0")}`)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T8 — reglas de E10, plantilla y matrices del REAL, desde el mismo JSON sellado
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ExpectedRule = {
+  code: string
+  name: string
+  sourceCostCenterCode: string
+  period: "MONTH" | "QUARTER" | "YEAR"
+  priority: number
+  sourceShareBps: number
+  targetKind: "PROJECTS" | "BUSINESS_LINES" | "COST_CENTERS"
+  driver: string
+  targetFilter: Record<string, unknown> | null
+  zeroBaseFallback: string
+  targets: { projectCode?: string; businessLineCode?: string; costCenterCode?: string; percentBps?: number }[]
+}
+
+const blByCode = new Map(config.businessLines.map((b) => [b.code, b]))
+
+/** Las siete reglas de E10 del fixture, con los ids reales de las dimensiones. */
+export function rulesFromFixture(): AllocationRuleSpec[] {
+  const rules = (expected.allocation as { rules: ExpectedRule[] }).rules
+  return rules.map((r) => ({
+    id: `rule-${r.code}`,
+    code: r.code,
+    name: r.name,
+    sourceCostCenterId: cecoIdOf(r.sourceCostCenterCode),
+    targetKind: r.targetKind,
+    driver: r.driver as AllocationRuleSpec["driver"],
+    period: r.period,
+    priority: r.priority,
+    sourceShareBps: r.sourceShareBps,
+    zeroBaseFallback: r.zeroBaseFallback as AllocationRuleSpec["zeroBaseFallback"],
+    targetFilter: (r.targetFilter as AllocationRuleSpec["targetFilter"]) ?? null,
+    validFrom: FY_START,
+    validTo: null,
+    isActive: true,
+    targets: r.targets.map((t, i) => ({
+      projectId: t.projectCode ? projectIdOf(t.projectCode) : null,
+      businessLineId: t.businessLineCode ? (blByCode.get(t.businessLineCode)?.id ?? null) : null,
+      costCenterId: t.costCenterCode ? cecoIdOf(t.costCenterCode) : null,
+      percentBps: t.percentBps ?? null,
+      amountCents: null,
+      sortOrder: i + 1,
+    })),
+  }))
+}
+
+export function cecoIdOf(code: string): string {
+  const ceco = config.costCenters.find((c) => c.code === code)
+  if (!ceco) throw new Error(`El fixture usa el CECO ${code}, que no existe en las dimensiones`)
+  return ceco.id
+}
+
+export function projectIdOf(code: string): string {
+  const project = config.projects.find((p) => p.code === code)
+  if (!project) throw new Error(`El fixture usa el proyecto ${code}, que no existe en las dimensiones`)
+  return project.id
+}
+
+/** Snapshots de plantilla del fixture, en FTE·mes por CECO y fin de mes. */
+export function headcountFromFixture(): HeadcountRow[] {
+  const rows = (expected as unknown as {
+    headcountSnapshots: { costCenterCode: string; asOf: string; fteMilli: number }[]
+  }).headcountSnapshots
+  return rows.map((r) => ({
+    costCenterId: cecoIdOf(r.costCenterCode),
+    costCenterCode: r.costCenterCode,
+    periodEnd: r.asOf,
+    fteMilli: r.fteMilli,
+  }))
+}
+
+/** El periodo anual del informe, sobre el que corre la escalera de liquidación. */
+export const YEAR_PERIOD: AllocationPeriodRef = {
+  kind: "YEAR",
+  label: "2026",
+  start: FY_START,
+  end: FY_END,
+  fiscalYearId: FISCAL_YEAR_ID,
+  fiscalYearStart: FY_START,
+  fiscalYearEnd: FY_END,
+}

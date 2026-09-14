@@ -11,8 +11,23 @@
  * nada hubiera cambiado.
  */
 
+import {
+  allocate,
+  daysInMonth,
+  effectiveRules,
+  periodBounds,
+  periodLabel,
+  rulesHash,
+  type AllocationPeriodRef,
+  type AllocationRuleSpec,
+  type AllocPeriod,
+  type AppliedAllocation,
+  type PriorAllocation,
+  type Result,
+} from "@/lib/analytics/allocate"
 import { resolveDestination } from "@/lib/analytics/margins"
 import type { AnalyticLine, AnalyticsConfig, ColumnKey, MarginLevel } from "@/lib/analytics/types"
+import { DAILY_MINUTES_CEILING, type HeadcountRow, type TimeEntryRow } from "@/lib/time/aggregate"
 import {
   businessLineColumn,
   cecoColumn,
@@ -23,9 +38,11 @@ import {
 } from "@/lib/analytics/types"
 import type {
   BudgetCell,
+  BudgetHoursCell,
   BudgetVersion,
   Cents,
   DateWindow,
+  LocalDate,
   UnresolvedBudgetCell,
 } from "@/lib/budget/types"
 import { monthKey } from "@/lib/budget/types"
@@ -50,6 +67,8 @@ export type BudgetMatrix = {
   businessLineMatrixCents: Record<string, Record<string, Cents>>
   /** Celdas que no se pudieron situar. Alimentan I-E10-1 y salen en pantalla. */
   unresolved: readonly UnresolvedBudgetCell[]
+  /** Las celdas de la ventana. La liquidación presupuestaria las vuelve a leer. */
+  cells: readonly BudgetCell[]
   /** Número de celdas de importe que entraron en la matriz. */
   cellCount: number
   months: readonly string[]
@@ -183,6 +202,7 @@ export function buildBudgetMatrix(
   }
 
   const unresolved: UnresolvedBudgetCell[] = []
+  const cells: BudgetCell[] = []
   let cellCount = 0
   let index = 0
 
@@ -190,6 +210,7 @@ export function buildBudgetMatrix(
     index += 1
     const month = monthKey(cell.month)
     if (!inWindow(month, window)) continue
+    cells.push(cell)
     const dest = resolveDestination(budgetCellAsLine(cell, index, version.fiscalYearId), config)
     const level = cell.marginLevel
     if (dest.fallback) {
@@ -232,6 +253,7 @@ export function buildBudgetMatrix(
     ...totalsOf(cumulativeCents, columns, config),
     byMonth,
     unresolved,
+    cells,
     cellCount,
     months,
     allocationState: "NONE",
@@ -286,4 +308,270 @@ function totalsOf(
     businessLineMatrixCents[level] = row
   }
   return { levelTotalsCents, levelTotalsBig, businessLineMatrixCents }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// O-E10-4 — liquidación presupuestaria, en dry-run PURO
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Escalera de liquidación de un ejercicio: los doce meses, los cuatro
+ * trimestres y el año, en ese orden. Es la misma de E5 (`run_all` del fixture) y
+ * el orden importa: una regla anual reparte lo que las mensuales no repartieron.
+ */
+export function settlementLadder(period: AllocationPeriodRef): AllocationPeriodRef[] {
+  const monthStarts: LocalDate[] = []
+  let cursor = period.fiscalYearStart
+  for (let guard = 0; guard < 24 && cursor <= period.fiscalYearEnd; guard++) {
+    monthStarts.push(cursor)
+    const year = Number(cursor.slice(0, 4))
+    const month = Number(cursor.slice(5, 7))
+    cursor = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, "0")}-01`
+  }
+
+  const labels: { kind: AllocPeriod; label: string }[] = []
+  const push = (kind: AllocPeriod, label: string): void => {
+    if (!labels.some((l) => l.kind === kind && l.label === label)) labels.push({ kind, label })
+  }
+  for (const start of monthStarts) push("MONTH", periodLabel("MONTH", start))
+  for (const start of monthStarts) push("QUARTER", periodLabel("QUARTER", start))
+  for (const start of monthStarts) push("YEAR", periodLabel("YEAR", start))
+
+  const out: AllocationPeriodRef[] = []
+  for (const { kind, label } of labels) {
+    const bounds = periodBounds(label)
+    // Sólo los periodos que caben ENTEROS en el del informe y en el ejercicio:
+    // un run a medias inventaría un devengo que la regla no declara (E5 §3.3).
+    if (bounds.from < period.start || bounds.to > period.end) continue
+    if (bounds.from < period.fiscalYearStart || bounds.to > period.fiscalYearEnd) continue
+    out.push({
+      kind,
+      label,
+      start: bounds.from,
+      end: bounds.to,
+      fiscalYearId: period.fiscalYearId,
+      fiscalYearStart: period.fiscalYearStart,
+      fiscalYearEnd: period.fiscalYearEnd,
+    })
+  }
+  return out
+}
+
+/**
+ * Horas presupuestadas → partes sintéticos que el driver `HOURS` sabe leer.
+ *
+ * Se parten en trozos de como mucho `DAILY_MINUTES_CEILING` minutos repartidos
+ * en días distintos del mes, porque `assertTimeEntryRow` **rechaza** —con razón—
+ * un parte de más de 1 440 minutos: un mes presupuestado de 1 751 minutos no es
+ * un día imposible, es un mes, y así se escribe. Ningún trozo sale del mes, de
+ * modo que cualquier ventana MONTH/QUARTER/YEAR ve exactamente el mismo total.
+ */
+export function budgetHoursAsTimeEntries(hours: readonly BudgetHoursCell[]): TimeEntryRow[] {
+  const out: TimeEntryRow[] = []
+  let seq = 0
+  for (const cell of hours) {
+    if (cell.minutes <= 0) continue
+    const year = Number(cell.month.slice(0, 4))
+    const month = Number(cell.month.slice(5, 7))
+    const days = daysInMonth(year, month)
+    let pending = cell.minutes
+    for (let day = 1; day <= days && pending > 0; day++) {
+      const minutes = Math.min(pending, DAILY_MINUTES_CEILING)
+      pending -= minutes
+      seq += 1
+      out.push({
+        id: `budget-hours#${seq}`,
+        employeeId: cell.employeeCode ?? "budget-employee",
+        employeeCode: cell.employeeCode ?? "PRESUPUESTO",
+        date: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+        target:
+          cell.dimension.kind === "PROJECT"
+            ? { kind: "PROJECT", id: cell.dimension.id, code: cell.dimension.code }
+            : { kind: "COST_CENTER", id: cell.dimension.id, code: cell.dimension.code },
+        businessLineCode: cell.dimension.kind === "PROJECT" ? cell.dimension.businessLineCode : null,
+        minutes,
+        productive: true,
+        // Un presupuesto de horas no se «aprueba»: es el plan. Entra como base
+        // del driver, y por eso nunca emite `W-E10-UNAPPROVED-HOURS`.
+        approved: true,
+      })
+    }
+  }
+  return out
+}
+
+export type BudgetSettlementError = { code: "BUDGET_NOT_SETTLEABLE"; reason: string }
+
+/** Un «run» del dry-run presupuestario. No se persiste: sólo se informa. */
+export type BudgetDryRunRef = {
+  runId: string
+  period: string
+  periodKind: AllocPeriod
+  rulesApplied: readonly string[]
+  lineCount: number
+  totalAllocatedCents: Cents
+}
+
+export type SettleBudgetInput = {
+  rules: readonly AllocationRuleSpec[]
+  budgetHours: readonly BudgetHoursCell[]
+  headcount: readonly HeadcountRow[]
+  config: AnalyticsConfig
+  period: AllocationPeriodRef
+}
+
+export type SettledBudget = {
+  matrix: BudgetMatrix
+  /** Las líneas de reparto del dry-run, en el orden de la escalera. */
+  lines: readonly AppliedAllocation[]
+  /** Δ por nivel y columna: `Σ_c Δ[ℓ][c] = 0` en todo nivel (I-E5-6). */
+  allocationDeltaCents: Record<string, Record<string, Cents>>
+  runs: readonly BudgetDryRunRef[]
+}
+
+/**
+ * **O-E10-4 — liquidación presupuestaria, en dry-run PURO.**
+ *
+ * El bloqueante de fondo de la ronda 0: el presupuesto se teclea sobre proyectos
+ * y CECOs, y el real con `withAllocations = true` ya ha trasladado el saldo de
+ * los CECOs a las columnas de proyecto. **Por debajo de MC2 las dos matrices no
+ * miden lo mismo.** Con `CC-OPS` presupuestado y ejecutado en 900 000 c exactos
+ * y las horas exactamente previstas, P-01 recibe 400 000 c en el real y 0 en el
+ * presupuesto: desviación de MC3 de P-01 de −400 000 c con ejecución perfecta, y
+ * el total compañía cuadra, que es lo que hace que nadie lo detecte.
+ *
+ * La corrección es pasar el presupuesto por **el mismo `allocate()`**, con las
+ * **mismas reglas vigentes** y con los drivers de actividad alimentados por las
+ * **horas presupuestadas**. No se persiste nada: no es un `AllocationRun`, no
+ * ocupa el índice único de periodo y no caduca informes; el `rulesHash` usado
+ * viaja en `params` del `ReportRun`.
+ *
+ * Si el presupuesto **no puede seguir** al real —no hay horas presupuestadas
+ * para una regla `HOURS`, o falta el snapshot de una `HEADCOUNT`— devuelve
+ * `BUDGET_NOT_SETTLEABLE` con el motivo, y el informe aplica la salida mínima de
+ * I-E10-18. **Nunca produce una matriz mixta.**
+ */
+export function settleBudgetMatrix(
+  matrix: BudgetMatrix,
+  input: SettleBudgetInput
+): Result<SettledBudget, BudgetSettlementError> {
+  const ladder = settlementLadder(input.period)
+  const applicable = ladder.flatMap((p) => effectiveRules(input.rules, p))
+
+  const budgetMinutes = input.budgetHours.reduce((acc, c) => acc + Math.max(0, c.minutes), 0)
+  const hoursRules = applicable.filter((r) => r.driver === "HOURS")
+  if (hoursRules.length > 0 && budgetMinutes === 0) {
+    return {
+      ok: false,
+      error: {
+        code: "BUDGET_NOT_SETTLEABLE",
+        reason:
+          `las reglas ${[...new Set(hoursRules.map((r) => r.code))].sort().join(", ")} reparten por HORAS y el ` +
+          "presupuesto no declara ni un minuto: el presupuesto no puede seguir al real y las celdas por " +
+          "dimensión de nivel ≥ MC3 NO se publican (I-E10-18)",
+      },
+    }
+  }
+  const headcountRules = applicable.filter((r) => r.driver === "HEADCOUNT")
+  if (headcountRules.length > 0 && input.headcount.length === 0) {
+    return {
+      ok: false,
+      error: {
+        code: "BUDGET_NOT_SETTLEABLE",
+        reason:
+          `las reglas ${[...new Set(headcountRules.map((r) => r.code))].sort().join(", ")} reparten por PLANTILLA ` +
+          "y no hay ningún snapshot en el periodo: el presupuesto no puede seguir al real y las celdas por " +
+          "dimensión de nivel ≥ MC3 NO se publican (I-E10-18)",
+      },
+    }
+  }
+
+  const lines = matrix.cells.map((cell, i) => budgetCellAsLine(cell, i + 1, input.period.fiscalYearId))
+  const timeEntries = budgetHoursAsTimeEntries(input.budgetHours)
+
+  const applied: AppliedAllocation[] = []
+  const priorAllocations: PriorAllocation[] = []
+  const warnings: BudgetSettlementWarning[] = []
+  const runs: BudgetDryRunRef[] = []
+
+  for (const period of ladder) {
+    const result = allocate({
+      lines,
+      config: input.config,
+      rules: input.rules,
+      period,
+      priorAllocations,
+      timeEntries,
+      headcount: input.headcount,
+    })
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: {
+          code: "BUDGET_NOT_SETTLEABLE",
+          reason: `la liquidación presupuestaria de ${period.label} falla con ${result.error.code}: ${result.error.message}`,
+        },
+      }
+    }
+    applied.push(...result.value.lines)
+    for (const line of result.value.lines) {
+      priorAllocations.push({
+        runPeriodStart: period.start,
+        runPeriodEnd: period.end,
+        sourceCostCenterId: line.sourceCostCenterId,
+        marginLevel: line.marginLevel,
+        amountCents: line.amountCents,
+      })
+    }
+    for (const warning of result.value.warnings) {
+      warnings.push({
+        scope: "PRESUPUESTO",
+        code: warning.code,
+        ruleCode: warning.ruleCode,
+        period: warning.period,
+        detail: warning.detail,
+      })
+    }
+    runs.push({
+      runId: result.value.runId,
+      period: period.label,
+      periodKind: period.kind,
+      rulesApplied: result.value.rulesApplied,
+      lineCount: result.value.lines.length,
+      totalAllocatedCents: result.value.totalAllocatedCents,
+    })
+  }
+
+  // Δ de imputación sobre el APORTE, con el nivel del CECO donde nació el gasto
+  // (E5-D1): la fuente se alivia y el receptor se carga en el MISMO nivel.
+  const cecoKindById = new Map(input.config.costCenters.map((c) => [c.id, c.kind]))
+  const allocationDeltaCents: Record<string, Record<string, Cents>> = {}
+  for (const level of MARGIN_LEVELS) allocationDeltaCents[level] = {}
+  for (const line of applied) {
+    const sourceKind = cecoKindById.get(line.sourceCostCenterId)
+    if (!sourceKind) continue
+    const sourceColumn = cecoColumn(sourceKind)
+    const targetColumn: ColumnKey | null =
+      line.target.kind === "PROJECT"
+        ? projectColumn(line.target.code)
+        : line.target.kind === "BUSINESS_LINE"
+          ? businessLineColumn(line.target.code)
+          : (() => {
+              const kind = cecoKindById.get(line.target.id)
+              return kind ? cecoColumn(kind) : null
+            })()
+    if (!targetColumn) continue
+    const delta = allocationDeltaCents[line.marginLevel]
+    delta[sourceColumn] = (delta[sourceColumn] ?? 0) + line.amountCents
+    delta[targetColumn] = (delta[targetColumn] ?? 0) - line.amountCents
+  }
+
+  const settled: BudgetMatrix = {
+    ...matrix,
+    ...applyAllocationDelta(matrix, allocationDeltaCents, input.config),
+    allocationState: "SETTLED",
+    budgetRulesHash: rulesHash(input.rules),
+    settlementWarnings: warnings,
+  }
+  return { ok: true, value: { matrix: settled, lines: applied, allocationDeltaCents, runs } }
 }
