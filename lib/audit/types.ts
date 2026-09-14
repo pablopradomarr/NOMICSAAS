@@ -18,7 +18,11 @@ export type { CheckResult, CheckStatus, Cents, LocalDate, Provenance }
  * Las familias del semáforo (§3.1). Enum, no texto libre (O-21). Eran siete en
  * E7; **E9 añade `CIERRE`** (§6.3 de `docs/design/E9-cierre-recurrentes.md`):
  * los I-E9-* no son ni conciliación ni camino documental, y enterrarlos en
- * `INTEGRIDAD` habría dejado el cierre sin tarjeta propia en `/audit`.
+ * `INTEGRIDAD` habría dejado el cierre sin tarjeta propia en `/audit`. **E10
+ * añade `PRESUPUESTO`** (§6 de `docs/design/E10-presupuesto-horas.md`): los
+ * I-E10-* hablan del presupuesto y de las horas, y repartirlos entre `ESTADOS`
+ * y `LIQUIDACION` habría hecho imposible ver de un vistazo si el presupuesto
+ * del periodo está cuadrado.
  */
 export type CheckFamily =
   | "PARTIDA_DOBLE"
@@ -28,6 +32,7 @@ export type CheckFamily =
   | "DOCUMENTAL"
   | "CONCILIACION"
   | "CIERRE"
+  | "PRESUPUESTO"
   | "INTEGRIDAD"
 
 /**

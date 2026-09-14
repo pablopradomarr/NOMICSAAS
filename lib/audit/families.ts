@@ -20,12 +20,18 @@
 
 import type { AuditCounts, CheckFamily, CheckResult, FamilyStatus, FamilySummary } from "@/lib/audit/types"
 
-/** Orden de presentación de las tarjetas (§6). E9 añade `CIERRE` (§6.3). */
+/**
+ * Orden de presentación de las tarjetas (§6). E9 añade `CIERRE` (§6.3) y **E10
+ * `PRESUPUESTO`** (§6 de `docs/design/E10-presupuesto-horas.md`), con la misma
+ * regla que las demás: **una familia sin evaluar sale `SIN_EVALUAR`, jamás en
+ * verde**.
+ */
 export const CHECK_FAMILIES: readonly CheckFamily[] = [
   "PARTIDA_DOBLE",
   "ESTADOS",
   "ANALITICA",
   "LIQUIDACION",
+  "PRESUPUESTO",
   "DOCUMENTAL",
   "CONCILIACION",
   "CIERRE",
@@ -40,6 +46,7 @@ export const FAMILY_LABEL: Readonly<Record<CheckFamily, string>> = {
   DOCUMENTAL: "Camino documental",
   CONCILIACION: "Conciliación bancaria",
   CIERRE: "Cierre y recurrentes",
+  PRESUPUESTO: "Presupuesto y horas",
   INTEGRIDAD: "Integridad y trazabilidad",
 }
 
@@ -88,6 +95,10 @@ const PREFIX: readonly [string, CheckFamily][] = [
   ["I-E8-", "DOCUMENTAL"],
   // E9 · §6.3: los I-E9-* (incluidos 1a/1b, 8a′ y 10b) van a la familia CIERRE.
   ["I-E9-", "CIERRE"],
+  // E10 · §6: los I-E10-1…18 —presupuesto, horas, drivers de actividad y el
+  // cuarto sello— van a la familia PRESUPUESTO. `I-E10-` ANTES que `I-E1`
+  // no hace falta: los prefijos se comparan enteros y ninguno es prefijo de otro.
+  ["I-E10-", "PRESUPUESTO"],
 ]
 
 /**

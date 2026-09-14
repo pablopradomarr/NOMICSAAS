@@ -22,6 +22,12 @@ import {
   type ClosingInvariantInput,
   type E9SealReason,
 } from "@/lib/closing/invariants-e9"
+import {
+  E10_SEAL_REASON_TEXT,
+  runBudgetInvariants,
+  type BudgetInvariantInput,
+  type E10SealReason,
+} from "@/lib/budget/invariants-e10"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HASH_VERSION, HashableLine, isHashVersion } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
@@ -95,6 +101,15 @@ export type InvariantInput = {
    * resultados**: lo no evaluable, en `INFO` diciendo qué falta.
    */
   closing?: ClosingInvariantInput
+  /**
+   * E10: bloques de **presupuesto** y de **horas** (I-E10-1…18, familia
+   * `PRESUPUESTO`). Opcionales **por separado** y por el mismo motivo que los
+   * anteriores: una organización que no presupuesta —o que no ficha— no tiene
+   * por qué ver un FAIL por no hacerlo. Con cualquiera de los dos salen los
+   * **dieciocho** resultados; lo que falte, en `INFO` diciendo qué falta.
+   */
+  budget?: BudgetInvariantInput["budget"]
+  time?: BudgetInvariantInput["time"]
   /** Moneda base, que I-E8-19 necesita para saber qué es «divisa». */
   baseCurrency?: string
 }
@@ -556,6 +571,10 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
       ...(input.documents ? runDocumentInvariants(input.documents, input.entries, input.baseCurrency ?? "EUR") : []),
       // E9: I-E9-1…26 (familia `CIERRE`), sólo si el llamante aporta el bloque.
       ...(input.closing ? runClosingInvariants(input.closing) : []),
+      // E10: I-E10-1…18 (familia `PRESUPUESTO`), con el bloque de presupuesto,
+      // el de horas o los dos. Sin ninguno de los dos no se evalúan: una
+      // organización sin presupuesto ni partes no ve dieciocho INFO inútiles.
+      ...(input.budget || input.time ? runBudgetInvariants({ budget: input.budget, time: input.time }) : []),
     ],
   }
 }
@@ -573,6 +592,12 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
  * cerrar**: mezclarlos con `DOCUMENTO` habría hecho imposible contar cuántos
  * cierres se firman con la conciliación abierta.
  */
+/**
+ * E10 (ADR-0018 D5): se añade **`PRESUPUESTO`**. Los cinco motivos de E10 —la
+ * desviación fuera de umbral, el presupuesto ausente, las horas sin aprobar, la
+ * plantilla sin declarar y la tarifa ausente— no son ni documentales ni de
+ * cierre: hablan de la MEDIDA con la que se compara el periodo.
+ */
 export type SealReasonKind =
   | "ENTORNO"
   | "INVARIANTE"
@@ -581,6 +606,7 @@ export type SealReasonKind =
   | "VARIACION"
   | "DOCUMENTO"
   | "CIERRE"
+  | "PRESUPUESTO"
 
 /**
  * E8 · ADR-0014 D7 — los **seis motivos de sello** que aporta el camino
@@ -661,6 +687,15 @@ export type SealOptions = {
    * `seal` y `sealReasons` dicen lo mismo.
    */
   closingReasons?: readonly E9SealReason[]
+  /**
+   * E10 (ADR-0018 D5): los **cinco motivos** del presupuesto y las horas
+   * —`DESVIACION_PRESUPUESTO`, `PRESUPUESTO_AUSENTE`, `HORAS_SIN_APROBAR`,
+   * `PLANTILLA_AUSENTE` y `TARIFA_AUSENTE`—. Los compone `budgetSealReasons()`
+   * **a partir de los datos**, no de los checks, y se agregan aquí: mismo patrón
+   * que los seis de E8 y los diez de E9. `PRESUPUESTO_NO_SELLADO` **no está**:
+   * EV-14 se retiró (O-E10-5) y un borrador no produce un `ReportRun`.
+   */
+  budgetReasons?: readonly E10SealReason[]
 }
 
 /**
@@ -714,6 +749,9 @@ export function seal(validacion: Validacion, opts: SealOptions): Seal {
   }
   for (const code of [...new Set(opts.closingReasons ?? [])].sort()) {
     razones.push({ kind: "CIERRE", code, message: `${code} · ${E9_SEAL_REASON_TEXT[code]}` })
+  }
+  for (const code of [...new Set(opts.budgetReasons ?? [])].sort()) {
+    razones.push({ kind: "PRESUPUESTO", code, message: `${code} · ${E10_SEAL_REASON_TEXT[code]}` })
   }
 
   const motivos = razones.map((r) => r.message)
@@ -831,6 +869,26 @@ export {
   E9_SEAL_REASON_TEXT,
 } from "@/lib/closing/invariants-e9"
 export type { ClosingInvariantInput, E9SealReason } from "@/lib/closing/invariants-e9"
+
+/** E10 — re-exportados para que la Auditoría los consuma desde un solo módulo. */
+export {
+  budgetSealReasons,
+  isE10SealReason,
+  runBudgetInvariants,
+  E10_SEAL_REASONS,
+  E10_SEAL_REASON_BY_RULE,
+  E10_SEAL_REASON_TEXT,
+} from "@/lib/budget/invariants-e10"
+export type {
+  AllocationRunAudit,
+  BudgetBlock,
+  BudgetInvariantInput,
+  BudgetLineRef,
+  BudgetVersionRef,
+  E10SealReason,
+  TimeBlock,
+  TimeEntryAudit,
+} from "@/lib/budget/invariants-e10"
 
 /** E6 — invariantes de los estados financieros, desde el mismo módulo. */
 export { checkI2, checkI3, checkIE613, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"

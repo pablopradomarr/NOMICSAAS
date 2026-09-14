@@ -6,8 +6,9 @@
  *  - **I1, I7–I9, I-E3-1…7, I4/I-E4-*, I5/I-E5-*, I2/I3/I6/I-E6-*, I-E8-1…20**
  *    con los tres puentes al 303 (15a/b/c, reformulados a **15a′/15c′** por E9
  *    cuando hay RECC), el puente al 111/115 (I-E8-17), la métrica de calidad
- *    I-E8-7b y —desde E9— los **I-E9-1…26** de cierre y recurrentes (familia
- *    `CIERRE`, con 1a/1b, 8a′ y 10b):
+ *    I-E8-7b, los **I-E9-1…26** de cierre y recurrentes (familia `CIERRE`, con
+ *    1a/1b, 8a′ y 10b) y —desde E10— los **I-E10-1…18** de presupuesto y horas
+ *    (familia `PRESUPUESTO`, con los drivers de actividad y el cuarto sello):
  *    `models/ledger.runLedgerInvariants(--org)`, que corre acotado al tenant
  *    (`app_runtime` vía `DATABASE_URL`) y usa el motor puro de
  *    `lib/ledger/invariants.ts`. Ya no hay «PENDING»: si un invariante no se
@@ -49,12 +50,19 @@
  * `PERIODIFICACION_SIN_AGOTAR`, `VENCIMIENTOS_SIN_FECHA`, `CIERRE_REABIERTO`,
  * `REGULARIZACION_BIENES_INVERSION_PENDIENTE`, `IMPUESTO_DIFERIDO_NO_RECONOCIDO`,
  * `DEUDA_SIN_DESGLOSE`, `RESULTADO_SIN_DISTRIBUIR` y `MODELO_200_PRESENTADO`),
- * que llegan de los pasos del checklist por `closingSealReasons()`.
+ * que llegan de los pasos del checklist por `closingSealReasons()`; y desde E10
+ * los **cinco del presupuesto y las horas** (`DESVIACION_PRESUPUESTO`,
+ * `PRESUPUESTO_AUSENTE`, `HORAS_SIN_APROBAR`, `PLANTILLA_AUSENTE` y
+ * `TARIFA_AUSENTE`), que compone `budgetSealReasons()` a partir de los datos.
+ * `PRESUPUESTO_NO_SELLADO` **no existe**: EV-14 se retiró (O-E10-5) y un
+ * borrador no produce un `ReportRun`, así que es un rechazo, no un motivo.
  *
  * La salida agrupa cada check por su **familia** (`lib/audit/families.ts`), de
- * modo que los I-E9-* se leen juntos bajo `CIERRE` en vez de mezclados con el
- * resto: un cierre con un invariante en FAIL no puede pasar desapercibido entre
- * cuarenta líneas.
+ * modo que los I-E9-* se leen juntos bajo `CIERRE` y los I-E10-* bajo
+ * `PRESUPUESTO`, en vez de mezclados con el resto: un cierre —o un presupuesto—
+ * con un invariante en FAIL no puede pasar desapercibido entre cuarenta líneas.
+ * Y una familia **sin evaluar** sale `SIN_EVALUAR`, jamás en verde: por eso las
+ * nueve se imprimen siempre, aunque no tengan ni un check.
  */
 import { withMaintenanceClient } from "@/lib/db-maintenance"
 import { randomUUID } from "node:crypto"
@@ -263,10 +271,15 @@ async function main() {
   // Agrupado por familia (E7 · §3.1, ampliada por E9 con `CIERRE`): el orden de
   // lectura es el de la pestaña Auditoría, no el de ejecución.
   const { CHECK_FAMILIES, FAMILY_LABEL, familyOf } = await import("@/lib/audit/families")
+  const { familyStatus } = await import("@/lib/audit/families")
   for (const family of CHECK_FAMILIES) {
     const ofFamily = checks.filter((check) => familyOf(check.id) === family)
-    if (ofFamily.length === 0) continue
-    console.log(`\n── ${FAMILY_LABEL[family]}`)
+    // E7 · R3 y E10 · §6: una familia sin evaluar se IMPRIME, con su
+    // `SIN_EVALUAR`. Callarla es el semáforo en verde con la mitad sin mirar.
+    const estado = familyStatus(
+      ofFamily.map((check) => ({ id: check.id, status: check.status, evidencia: check.evidencia }))
+    )
+    console.log(`\n── ${FAMILY_LABEL[family]} · ${estado}`)
     for (const check of ofFamily) {
       console.log(`${check.status.padEnd(7)} ${check.id.padEnd(10)} ${check.evidencia}`)
     }
