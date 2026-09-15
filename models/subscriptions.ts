@@ -476,6 +476,12 @@ export async function changeOrganizationPlan(
     return { planCode: plan.code, planId: plan.id, previousPlanCode: antes.planCode }
   })
 
+  // **R2-4.** El techo blando memorizado por `noteSoftEntryQuota` es
+  // configuración del plan, y acaba de cambiar: se olvida aquí, que es el único
+  // camino de E11 capaz de moverla (D9).
+  const { forgetSoftEntryLimit } = await import("@/models/platform-limits")
+  forgetSoftEntryLimit(organizationId)
+
   const { PLATFORM_ACTIONS, recordPlatformAudit } = await import("@/models/platform")
   await recordPlatformAudit({
     actor,

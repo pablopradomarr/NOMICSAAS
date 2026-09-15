@@ -259,3 +259,53 @@ añadir `currencies` a TENANT_MODELS y al inventario, con test de pérdida (H-2)
 `is_demo` en el INSERT (H-3); filtrar por `organization_id` en SELECT_SUBSCRIPTION y
 exigir 1 fila afectada antes de registrar el cambio (H-4). H-5 a H-9, en la misma ronda.
 ```
+
+---
+
+# Re-auditoría (ronda 1) — diff `18b3326…1ef4692`
+
+Base aislada clonada de `erp_test`, ejercida por las server actions y con los **dos roles**
+(`app_runtime` y propietario `BYPASSRLS`); reconstrucción por SQL propio (ADR-0011) y Python sobre el ZIP.
+
+| # | Comprobación | Resultado |
+|---|---|---|
+| 1 | Los **13** `I-E11-1…13` en el barrido, familia `PLATAFORMA` (56 checks, antes 43) | **CERRADO**. Inyecciones: caché falseada → `I-E11-1:FAIL`; sin `Subscription` → `I-E11-5:FAIL`; sin serie `RECTIFICATIVA` → `I-E11-10:FAIL`, y `PASS` al reponerla (el invariante mira `kind`, no sólo `code`) |
+| 2 | `currencies` **177 → 177**, seis comprobaciones `PASS`, `DONE`/`verified` | **CERRADO**. ZIP = 65 tablas = `BACKUP_TENANT_MODELS`; de las 69 con `organization_id` en la base, las 4 ausentes son las 4 exclusiones declaradas |
+| 3 | Demo con `isDemo` en el `INSERT`, fixture v1, `UPDATE t → f` | **CERRADO**. `ledgerHash` de la demo `cb9c8744…`, el conocido; el `UPDATE` se rechaza |
+| 4 | `changeOrganizationPlan` cruzado | **CERRADO**. Como propietario, `getSubscription` ya devuelve **su** organización (antes la de otra); el `UPDATE` exige `afectadas === 1`; la organización ajena cambia, la propia no se toca, un solo registro |
+| 5 | Cuota blanda | **CERRADO**. `noteSoftEntryQuota` (llamada desde `postEntry`, `models/ledger.ts:1197`) da `warn {current 6, soft 5, CUOTA_DE_ASIENTOS_SUPERADA}`, escribe `LIMITE_EXCEPCION_AUTOMATICA`, **no lanza**, y el guardián duro no admite la clave blanda |
+| 6 | Comprobación 6 **relativa** | **CERRADO**. Origen y destino con los mismos tres FAIL (`I8`, `I-E7-14`, `I-E11-10`) ⇒ `DONE` / `verified: true` |
+| 7 | Caché de uso falseada | **CERRADO**. Limpia → `I-E11-1:PASS`; falseada (77/4242) → `I-E11-1:FAIL` |
+| 8 | Cifras de la ronda 0 | `ledgerHash` `cb9c8744…`, `analyticsKey` `05ba4b9a…`, idénticos en origen y destino y a la ronda 0; 84 asientos, 0 descuadrados. **Δ = 0** |
+
+**H-8 cerrado** además: la política de lectura de `platform_audit_logs` pasa de `USING(true)` a
+`organization_id IS NULL OR = app.current_org()`, y el comentario falso de `lib/db.ts` está corregido.
+
+**Observaciones (no bloquean).** (a) **I-E11-7 mira el esquema de Prisma, no el catálogo**: una tabla
+con `organization_id` creada por SQL directo (`auditoria_fantasma`) **no** se detecta —sigue en `PASS`—.
+Cubre el fallo real (un modelo Prisma fuera del inventario), pero enfrentarlo también a
+`information_schema` cuesta una consulta y cierra el hueco entero. (b) `GIT_SHA` sigue en
+`"desconocido"` por defecto (H-9): es variable de despliegue, no código.
+
+```
+VEREDICTO: CONFORME
+
+Cifras reconstruidas: | Métrica | Motor | Reconstrucción | Δ | Método |
+| ledgerHash origen y destino | cb9c8744… | cb9c8744… | 0 | SQL propio, tupla ADR-0011 v2 |
+| analyticsKey origen y destino | 05ba4b9a… | 05ba4b9a… | 0 | SQL propio sobre códigos naturales |
+| currencies tras restaurar | 177 | 177 | 0 | SQL, origen vs destino |
+| Inventario del ZIP | 65 tablas | 69 con organization_id − 4 exclusiones declaradas | 0 | Python + information_schema |
+| Partida doble en el destino | 84 asientos | 0 descuadrados | 0 | SQL Σdebe − Σhaber |
+| ledgerHash de la demo | cb9c8744… | cb9c8744… | 0 | SQL propio sobre la organización de demo |
+
+Hallazgos: los nueve de la ronda 0 se dan por cerrados, ocho comprobados de forma
+adversarial (inyección que debe fallar + estado correcto que debe pasar) y el noveno
+(H-9, gitSha) es variable de despliegue. Queda una observación nueva, no bloqueante:
+I-E11-7 se verifica contra el esquema de Prisma y no contra el catálogo de la base.
+
+Trazabilidad: OK — elegido el ledgerHash cb9c8744…, reconstruido en < 2 minutos desde
+journal_lines ⋈ journal_entries, y el inventario del ZIP enfrentado a information_schema.
+
+Recomendación: E11 puede cerrarse. Añadir a I-E11-7 el contraste con information_schema
+y fijar GIT_SHA en el despliegue; ambas cosas caben en la épica siguiente.
+```

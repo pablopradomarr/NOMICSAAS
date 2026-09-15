@@ -463,6 +463,54 @@ describe("I-E11-7 · cobertura del backup, FUERTE (auditor H-2)", () => {
     expect(checkIE117(input).evidencia).toContain("tabla_fantasma")
   })
 
+  it("**R2-7** · FAIL con una exclusión declarada SIN motivo escrito: `tabla ()` no es una justificación", () => {
+    const input = fixture()
+    input.coverage!.declaredExclusions = [{ table: "platform_audit_logs", reason: "   " }]
+    const check = checkIE117(input)
+    expect(check.status).toBe("FAIL")
+    expect(check.evidencia).toContain("SIN motivo escrito")
+  })
+
+  it("**auditor ronda 2** · FAIL si `information_schema` ve una tabla con organization_id que el inventario no", () => {
+    const input = fixture()
+    input.coverage!.tablesWithOrganizationIdInDatabase = [
+      ...input.coverage!.tablesWithOrganizationId,
+      "payment_runs",
+    ]
+    const check = checkIE117(input)
+    expect(check.status).toBe("FAIL")
+    expect(check.evidencia).toContain("payment_runs")
+    expect(check.evidencia).toContain("information_schema")
+  })
+
+  it("**auditor ronda 2** · FAIL si las dos fuentes del esquema divergen en cualquier dirección", () => {
+    const input = fixture()
+    // La base tiene una tabla que el cliente generado no conoce.
+    input.coverage!.tablesWithOrganizationIdInDatabase = [
+      ...input.coverage!.tablesWithOrganizationId,
+      "currencies_v2",
+    ]
+    expect(checkIE117(input).evidencia).toContain("el cliente generado no la conoce")
+    // Y al revés: el cliente cree que existe y la base no la tiene.
+    const otro = fixture()
+    otro.coverage!.tablesWithOrganizationIdInDatabase = otro.coverage!.tablesWithOrganizationId.filter(
+      (table) => table !== "currencies"
+    )
+    expect(checkIE117(otro).evidencia).toContain("information_schema no la tiene")
+  })
+
+  it("con las DOS fuentes coincidiendo, el PASS lo declara", () => {
+    const input = fixture()
+    input.coverage!.tablesWithOrganizationIdInDatabase = [...input.coverage!.tablesWithOrganizationId]
+    const check = checkIE117(input)
+    expect(check.status).toBe("PASS")
+    expect(check.evidencia).toContain("las DOS fuentes coinciden")
+  })
+
+  it("sin `information_schema`, el PASS DICE que sólo se contrastó contra el cliente generado", () => {
+    expect(checkIE117(fixture()).evidencia).toContain("information_schema no se ha aportado")
+  })
+
   it("FAIL con una columna-sello del esquema fuera de derivedSealColumns()", () => {
     const input = fixture()
     input.coverage!.sealColumnsInSchema = ["journal_entries.entry_hash", "budgets.budget_hash"]

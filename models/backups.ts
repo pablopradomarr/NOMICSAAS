@@ -873,9 +873,29 @@ function applyRemap(
 }
 
 /** Inserta una fila cruda con sus columnas tal cual venían. */
+/**
+ * ¿Es un valor JSON (objeto o **array**) que hay que enviar como `jsonb`?
+ *
+ * **E11 · ronda 2 — el fallo que destapó el volumen real.** `pg` serializa un
+ * array de JavaScript como literal de array de Postgres (`{}`), no como JSON
+ * (`[]`): restaurar una columna `jsonb` que contuviera un array —`attempts` y
+ * `recc_payments` de `extraction_runs`, `items` y `files` de `transactions`—
+ * escribía un objeto vacío, y el CHECK `…_recc_payments_array` (que exige
+ * `jsonb_typeof = 'array'`) abortaba la restauración entera. Sin volumen no se
+ * veía: el fixture no traía ninguna extracción.
+ *
+ * La fila se envía como TEXTO JSON con un `::jsonb` explícito, que es la única
+ * forma de que `[]` siga siendo `[]`. `Buffer` y `Date` se excluyen a mano: son
+ * objetos y NO son JSON.
+ */
+const esJson = (value: unknown): boolean =>
+  typeof value === "object" && value !== null && !Buffer.isBuffer(value) && !(value instanceof Date)
+
 async function insertRow(tx: TenantTransactionClient, table: string, row: Record<string, unknown>): Promise<void> {
   const columns = Object.keys(row)
-  const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ")
+  const placeholders = columns
+    .map((column, index) => (esJson(row[column]) ? `$${index + 1}::jsonb` : `$${index + 1}`))
+    .join(", ")
   const quoted = columns.map((column) => `"${column}"`).join(", ")
   // `$executeRawUnsafe` no está en `TenantTransactionClient` a propósito (es la
   // puerta trasera que ESLint prohíbe en `models/`); aquí la restauración sí lo
@@ -884,7 +904,7 @@ async function insertRow(tx: TenantTransactionClient, table: string, row: Record
   const raw = tx as unknown as { $queryRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown> }
   await raw.$queryRawUnsafe(
     `INSERT INTO "${table}" (${quoted}) VALUES (${placeholders})`,
-    ...columns.map((column) => row[column])
+    ...columns.map((column) => (esJson(row[column]) ? JSON.stringify(row[column]) : row[column]))
   )
 }
 

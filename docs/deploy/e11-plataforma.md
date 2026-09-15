@@ -61,7 +61,24 @@ STORAGE_SECRET_ACCESS_KEY=""
 
 # ── Reloj de plataforma (§7.2). Vacío = la ruta está CERRADA ────────────────
 CRON_SECRET="<cadena larga y aleatoria>"
+
+# ── Procedencia del cálculo (P6). En Vercel se inyecta SOLA ─────────────────
+GIT_SHA="$VERCEL_GIT_COMMIT_SHA"    # ya declarado en `vercel.json`
 ```
+
+> **Defaults seguros, y son deliberados.** Una instalación que se olvide de
+> configurar algo **no hace la cosa peligrosa**: `BILLING_PROVIDER="none"` no
+> cobra en vez de cobrar mal; `STORAGE_BACKEND="local"` escribe donde se ve en
+> vez de fingir un S3; `CRON_SECRET=""` deja la ruta del reloj devolviendo 401
+> siempre; y `PLATFORM_SIGNING_KEY=""` **no emite ninguna copia** antes que
+> emitir una sin firma, que es una copia que nadie puede verificar.
+
+> **`GIT_SHA`.** Lo inyecta Vercel desde `VERCEL_GIT_COMMIT_SHA` (mapeado en
+> `vercel.json`), y no es cosmética: sin él, `sealPure` añade el motivo de
+> entorno «git-sha del motor desconocido» y el periodo sale **REQUIERE
+> REVISIÓN** — correctamente, porque no se puede acreditar con qué versión del
+> motor se calculó la cifra (P6/P7). En Docker autoalojado, páselo en el
+> `build-arg` o en el `environment` del compose.
 
 > **Nombres.** La ola B se escribió contra `STORAGE_DRIVER` y `STORAGE_S3_*`. Los
 > canónicos son los de arriba; los antiguos se siguen leyendo como **alias** para
@@ -173,6 +190,39 @@ En la aplicación:
 
 ---
 
+## 5-bis. El reloj en GitHub Actions
+
+`.github/workflows/cron.yml` golpea `POST /api/cron/[job]` con
+`Authorization: Bearer ${{ secrets.CRON_SECRET }}`. Cuatro cosas que no son
+opcionales:
+
+- el secreto se compara en **tiempo constante** y con el buffer igualado en
+  longitud; sin cabecera o con un token equivocado, **401 con el mismo cuerpo**,
+  sin pista, y consumiendo cubo de rate limit también en el rechazo;
+- cada llamada pasa **`refDate` explícito** (O-13): la `periodKey` se deriva de
+  él y no del instante de ejecución, de modo que un retraso del runner es
+  inocuo y **ninguna ocurrencia se fecha por cuándo corrió el reloj**;
+- la idempotencia es una **inserción** en `cron_runs (job, period_key)`: si
+  choca, `200 {skipped:true}` y no se ejecuta nada. Dos disparos del mismo
+  periodo hacen un trabajo, no dos;
+- un job que no cabe en el presupuesto cierra **`PARTIAL` con cursor y 202**,
+  nunca `DONE`. `I-E11-12` avisa si alguno lleva más de dos cadencias sin
+  ejecutarse y nada lo explica.
+
+## 5-ter. Supabase Storage (opcional, pero recomendado en cloud)
+
+`STORAGE_BACKEND=s3` contra el endpoint S3 de Supabase Storage
+(`https://<proyecto>.supabase.co/storage/v1/s3`), **un bucket por entorno** y
+prefijo por organización. Por qué importa: en una función serverless el disco es
+efímero y `/tmp` pierde el justificante entre dos peticiones —era la deuda D-11—.
+Con `local` el producto funciona igual y escribe en `STORAGE_LOCAL_ROOT`, que es
+lo correcto en autoalojado con volumen persistente.
+
+El driver S3 firma SigV4 a mano, con **endpoint fijo por configuración** (no hay
+SSRF posible: la URL no viene de un dato) y comprobando el `sha256` **antes** de
+enviar. La clave de cada objeto se deriva del `sha256` bajo el prefijo de su
+organización, y `assertKeyBelongsTo` lo verifica en las tres puertas del driver.
+
 ## 6. El 349 mientras no hay pantalla (**O-17**, E14)
 
 Sólo aplica en modo `stripe`: en modo interno no se emite ninguna factura de
@@ -210,3 +260,42 @@ SELECT date_trunc('quarter', i.operation_date)::date AS trimestre,
 
 La **pantalla** está fechada en **E14** (`docs/ESTADO.md`). El SQL es una salida,
 no un cierre.
+
+## 7. Cierre de E11 (2026-09-15) — las ONCE migraciones, y `GIT_SHA`
+
+**Las migraciones de E11 son ONCE**, no siete. El runbook del preview hablaba de siete porque se
+escribió en la ronda de integración; las dos últimas son de las rondas de
+corrección y ninguna mueve una sola fila:
+
+| Migración | Qué hace |
+|---|---|
+| `…091000_e11_platform_audit_logs_por_tenant` | `platform_audit_logs` deja de ser legible por **cualquier** tenant: su política pasa a `organization_id IS NULL OR = app.current_org()`. Las filas sin organización (`ORPHAN_WEBHOOK`, arranques del reloj) siguen siendo legibles: no son de nadie. Append-only intacto |
+| `…092000_e11_check_family_plataforma` | `ALTER TYPE check_family ADD VALUE 'PLATAFORMA'`, **sola** en su migración (`ADD VALUE` no permite usar el valor en la misma transacción). Sin ella, acotar una revisión manual a la familia nueva fallaría con `22P02` |
+
+> La segunda se **renombró** de `…090000_…` a `…092000_…` antes de empujarse:
+> compartía sello temporal con `…090000_e11_m6_plan_ilimitado_bigint` y el orden
+> quedaba fijado por el alfabeto en vez de por el sello. Si su base ya la tiene
+> aplicada con el nombre viejo, acompañe el renombrado de
+> `UPDATE _prisma_migrations SET migration_name='20260928092000_e11_check_family_plataforma' WHERE migration_name='20260928090000_e11_check_family_plataforma';`
+
+**`GIT_SHA`: Vercel ya lo inyecta, y no es cosmético.** El `buildCommand` del
+proyecto lo pasa como `GIT_SHA="$VERCEL_GIT_COMMIT_SHA"`, y desde el cierre está
+además declarado en `vercel.json` (`env` y `build.env`). Sin él, `sealPure` añade
+el motivo de entorno «git-sha del motor desconocido» y **todo periodo sale
+REQUIERE REVISIÓN**: no se puede acreditar con qué versión del motor se calculó
+la cifra (P6/P7). Es el comportamiento correcto, pero conviene no provocarlo.
+
+**Añada a la lista de verificación de la §5:**
+
+- [ ] `/audit` enseña la tarjeta **«Plataforma y copias»** con los trece
+      `I-E11-*`. Una familia sin evaluar sale `SIN_EVALUAR`, **jamás en verde**.
+- [ ] El ZIP de una copia lleva `currencies` con sus filas (177 por organización
+      recién sembrada) y **no** lleva `platform_invoices`, `subscriptions` ni
+      `subscription_events`: son nuestra facturación, no los libros del cliente, y
+      restaurarlas duplicaría una serie correlativa global.
+- [ ] Cerrar un ejercicio **no** se bloquea por un fallo de plataforma: la familia
+      `PLATAFORMA` está fuera de la puerta `INVARIANTES_PASS` (ADR-0019 **D7**).
+
+> **Espejo en el runbook del preview.** `DESPLIEGUE-PREVIEW.md` (documento de
+> proyecto) lleva esto mismo en su §10. Si los dos divergen, manda **este**
+> fichero: está en el repositorio y se revisa con el código.

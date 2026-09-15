@@ -1,6 +1,49 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-15 (**✅ E10 CERRADA** · **E11 EN EJECUCIÓN**: olas A, B y C aterrizadas e **INTEGRADAS**, ADR-0019 **D9** aprobado · **SIGUIENTE: cierre de E11**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-15 (**✅ E11 CERRADA** — auditor **CONFORME** en la ronda 2, revisor sin ningún BLOQUEA, QA con BUG-E11-1 y BUG-E11-2 cerrados · **SIGUIENTE: `/epica E12`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## ✅ E11 CERRADA (2026-09-15) — siguiente: `/epica E12`
+
+Tres rondas: integración de las tres olas (`18b3326`), **ronda 1 de corrección**
+(`1ef4692`) y **ronda 2** (este commit).
+
+| Entrada | Ronda 0/1 | Ronda 2 |
+|---|---|---|
+| `auditor-fiabilidad` | **DISCREPANCIA**: 3 BLOQUEANTES (los trece `I-E11-*` no existían —43 checks y ninguno—; `currencies`, 177 filas por organización, se perdía al restaurar **con las seis comprobaciones en PASS**; la demo **no se podía crear**, el `UPDATE is_demo` chocaba con el CHECK también en `f → t`) + H-4…H-9 | **CONFORME** |
+| `revisor-codigo` | **CAMBIOS REQUERIDOS**: 4 BLOQUEA (T20 ausente, dos de las siete cuotas duras sin guardián, `test:integration` en rojo, el alta podía crear una organización sin suscripción en silencio), 4 DEBE, 7 PUEDE | **CAMBIOS REQUERIDOS sin ningún BLOQUEA**: 3 DEBE (techo 3 de §12 incumplido y **superlineal**, el fichero de T20 **binario para git**, ese techo degradándose en silencio) + 4 PUEDE — **los siete cerrados** |
+| `qa-tester` | BUG-E11-1 (`assertWithinLimit` sin camino caliente) y BUG-E11-2 (`--reset-org` sin las tablas de E11) | cerrados con test propio; el segundo **deriva** la lista de `TENANT_MODELS` |
+
+**Lo que costó el techo 3.** El recálculo del uso crecía de forma superlineal
+(592 ms a 5 000 asientos, 4 032 ms a 10 000) porque el `ledgerHash` **del mes**
+recorría `journal_entries` **entera**: el filtro de fechas sólo estaba en las
+líneas, y el plan resolvía el lado de los asientos con un *seq scan*. Los mismos
+predicados sobre `e.entry_date` —**provablemente equivalentes**: la FK
+`journal_lines_entry_denorm_fkey` obliga a que `l.entry_date = e.entry_date`—
+dejan las dos ramas entrando por `(organization_id, entry_date)`, y el coste pasa
+a ser el del mes y no el del diario.
+
+**Tres hallazgos propios de la corrección**, ninguno visible sin volumen real:
+
+1. La **facturación de plataforma** no puede viajar en la copia del cliente.
+   `platform_invoices` tiene serie correlativa **global** (duplicar
+   `(serie, número)` al restaurar falsifica nuestra numeración, art. 28.2 CCom),
+   `subscriptions` tiene `organization_id` UNIQUE y el destino nace con la suya, y
+   `subscription_events` tiene `stripe_event_id` UNIQUE global. Las tres salen del
+   inventario como **exclusiones declaradas con motivo**, y I-E11-7 las vigila.
+2. La familia `PLATAFORMA` **no entra en la puerta `INVARIANTES_PASS`** del cierre.
+   Cerrar el ejercicio es el hecho contable por excelencia y ningún asunto de
+   plataforma puede impedirlo (ADR-0019 **D7**). Conserva su tarjeta en `/audit` y
+   su motivo de sello, que es donde debe pesar.
+3. La restauración escribía `{}` donde el origen tenía `[]`: `pg` serializa un
+   array de JavaScript como literal de array de Postgres, no como JSON, así que
+   **toda columna `jsonb` con un array** (`attempts`, `recc_payments`, `items`,
+   `files`) se restauraba corrupta y el CHECK `…_recc_payments_array` abortaba el
+   trabajo entero. Ahora va como texto JSON con `::jsonb` explícito.
+
+Tests del cierre: unit **2 531** ✓ · integración **3 372** ✓ · RLS **211** ✓ ·
+e2e `onboarding-plataforma` 14/14, `libro-diario` 3/3 y `auditoria` 7/7 ✓ ·
+lint 0 errores · `tsc` limpio · **los diez techos de §12 medidos, sin un solo
+`skip`**.
 
 ## 🔗 E11 · RONDA DE INTEGRACIÓN DE LAS TRES OLAS (2026-09-15)
 
@@ -75,6 +118,10 @@ caducaría el ZIP en el instante de crearlo.
 | **El camino de lectura al disco heredado** (`lib/documents.ts`) | **E12** | Lo subido antes de E11 sólo está en disco. Se retira cuando `scripts/migrate-uploads-to-storage.ts --apply` haya corrido en todos los entornos (runbook `docs/deploy/e11-plataforma.md`) |
 | **`organizations.storage_used` / `storage_limit`** siguen vivas y deprecadas | **E12** | La cifra buena es la derivada de `models/usage.ts`, que excluye por `kind` lo que no es cuota del cliente (O-12c). `syncOrganizationStorage` ya las alimenta **desde el almacén**, no desde el disco |
 | **Ficheros `static/` (logo, avatar)** siguen en disco | **E12** | Se nombran por su nombre, no por su `sha256`, así que migrarlos al almacén exige un índice que no existe. No son justificantes: son la marca de la organización |
+| **`/admin` de plataforma: las escrituras** | **E12** | En E11 queda `/api/health` y el cambio de plan por acción de administración (D9), que es como se **prueban** los límites. El panel completo lo puede sustituir SQL durante una épica |
+| **Los techos 3, 5, 6 y 8 de §12, con volumen REAL** | **E12** | Se miden con volumen sembrado en el propio test (10 000 asientos, 20 000 objetos, 5 000 documentos) y se **extrapolan separando coste fijo de marginal**; el 5 mide además el ZIP y el pico. La medición a 50 000 asientos / 1,5 GB de ficheros necesita un fixture de gran volumen dedicado |
+| **`stored_objects` se restaura con la clave del prefijo del ORIGEN** | **E12** | No rompe nada hoy —I-E11-6 lo enseña igual en origen y destino, y la comprobación 6 **relativa** lo tolera por fiel—, pero las claves deberían rederivarse en el destino junto con los bytes |
+| **G-20** — restaurar un ZIP ajeno **desde la interfaz** | **E12** | En E11 se restaura desde una copia que vive en la plataforma, que es el caso real; un ZIP ajeno entra por script de operador. Es el resto de `G-15`, cuyo grueso E11 cierra |
 
 ## ✅ E11 DISEÑADA (2026-09-15) — el diseño y su validación
 

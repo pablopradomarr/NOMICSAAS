@@ -1,4 +1,12 @@
 -- E11 · T20 — M7: la familia PLATAFORMA en el enum `check_family`
+--
+-- **Ronda 2 · R2-7 del revisor** — renombrada de `20260928090000_…` a
+-- `…092000_…`: compartía sello temporal con `20260928090000_e11_m6_plan_ilimitado_bigint`
+-- y el orden quedaba fijado por el alfabeto («c» < «m») y no por el sello, que es
+-- para lo que existe la convención `NNNN_<que_hace>`. Se renombra AHORA porque
+-- todavía no está aplicada en el preview (la ronda 1 no se ha empujado): en las
+-- bases locales el operador acompaña el renombrado con el `UPDATE` de la fila de
+-- `_prisma_migrations`, que es lo que se hizo aquí.
 -- (docs/design/E11-plataforma-saas.md §11, ADR-0019 D1–D9).
 --
 -- H-1 del auditor de E11. `lib/audit/types.ts` no declaraba la familia y

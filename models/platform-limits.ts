@@ -446,13 +446,36 @@ async function recordAutomaticException(
  *    `postEntry`: el tipo de `checkSoftEntries` lo sostiene y aquí se respeta.
  *    Un fallo al anotar el aviso **no puede tumbar el asiento**, así que se
  *    captura y se sigue: el hecho contable ya ha ocurrido (D7).
- * 2. **No cuesta nada en el caso normal.** Con `softMaxEntriesMonth = -1`
- *    —modo INTERNO, plan ILIMITADO— sale antes de contar una sola fila.
+ * 2. **Cuesta UNA consulta la primera vez y ninguna después** (revisor R2-4).
+ *    El comentario de la ronda 1 decía «sale sin tocar la base» y no era exacto:
+ *    leía el techo del plan en CADA `postEntry`. Ahora el techo se memoriza por
+ *    organización y mes en `TECHO_BLANDO`, de modo que un lote de mil asientos
+ *    paga una consulta, no mil. Con `softMaxEntriesMonth = -1` —modo INTERNO,
+ *    plan ILIMITADO— la respuesta memorizada hace que no se toque la base ni una
+ *    vez más.
  * 3. **Un aviso por mes, no uno por asiento.** La excepción automática se
  *    registra con `ON CONFLICT DO NOTHING` sobre `(organización, mes, código)`:
  *    lo que I-E11-4(b) exige es que la superación TENGA su registro, no que haya
  *    mil.
  */
+/**
+ * Techo blando por `(organización, mes)`, memorizado en el proceso.
+ *
+ * **R2-4.** Es una caché de CONFIGURACIÓN —el número que el plan declara—, no de
+ * uso: el recuento de asientos se hace siempre contra la base. Un cambio de plan
+ * la invalida explícitamente (`forgetSoftEntryLimit`), que es el único camino que
+ * puede moverla en E11 (`changeOrganizationPlan`, D9).
+ */
+const TECHO_BLANDO = new Map<string, number>()
+
+/** Olvida el techo memorizado de una organización. La llama el cambio de plan. */
+export function forgetSoftEntryLimit(organizationId?: string): void {
+  if (!organizationId) return TECHO_BLANDO.clear()
+  for (const clave of [...TECHO_BLANDO.keys()]) {
+    if (clave.startsWith(`${organizationId}|`)) TECHO_BLANDO.delete(clave)
+  }
+}
+
 export async function noteSoftEntryQuota(
   tx: TenantTransactionClient,
   options: { refDate: Date; periodMonth?: string; delta?: bigint }
@@ -467,23 +490,38 @@ export async function noteSoftEntryQuota(
      * transacción y tumbaría el asiento. Un aviso no puede costar un hecho
      * contable (D7). Sin suscripción o sin techo blando, no hay nada que contar.
      */
-    const planRows = await tx.$queryRaw<{ soft: number | null }[]>`
-      SELECT p.soft_max_entries_month AS soft
-        FROM subscriptions s JOIN plans p ON p.id = s.plan_id
-       WHERE s.organization_id = ${organizationId}::uuid
-       LIMIT 1`
-    const soft = planRows[0]?.soft ?? -1
+    const claveTecho = `${organizationId}|${periodMonth}`
+    let soft = TECHO_BLANDO.get(claveTecho)
+    if (soft === undefined) {
+      const planRows = await tx.$queryRaw<{ soft: number | null }[]>`
+        SELECT p.soft_max_entries_month AS soft
+          FROM subscriptions s JOIN plans p ON p.id = s.plan_id
+         WHERE s.organization_id = ${organizationId}::uuid
+         LIMIT 1`
+      soft = planRows[0]?.soft ?? -1
+      TECHO_BLANDO.set(claveTecho, soft)
+    }
     if (soft < 0) return { warn: null, blocksAccessory: false }
     const limits: PlanLimits = { ...UNLIMITED_PLAN, softMaxEntriesMonth: soft }
 
     const start = new Date(`${periodMonth}T00:00:00.000Z`)
     const endExclusive = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1))
+    /**
+     * **R2-5 — las TRES exclusiones de §3.4, no dos.** El recuento excluía
+     * contra-asientos y asientos de sistema pero no los de una organización
+     * `isDemo`, que D1.6 y O-6 sí sacan del uso. Hoy es inocuo —en modo INTERNO
+     * todos los techos son `-1`— pero divergir del criterio único de
+     * `lib/platform/usage.ts` es como nacen las dos cifras que no cuadran.
+     */
     const rows = await tx.$queryRaw<{ n: bigint }[]>`
       SELECT count(*)::bigint AS n FROM journal_entries e
        WHERE e.organization_id = ${organizationId}::uuid
          AND e.entry_date >= ${start}::date AND e.entry_date < ${endExclusive}::date
          AND e.reverses_entry_id IS NULL
-         AND e.kind::text <> ALL (${[...SYSTEM_ENTRY_KINDS]}::text[])`
+         AND e.kind::text <> ALL (${[...SYSTEM_ENTRY_KINDS]}::text[])
+         AND NOT EXISTS (
+           SELECT 1 FROM organizations o WHERE o.id = e.organization_id AND o.is_demo
+         )`
     const verdict = checkSoftEntries(BigInt(rows[0]?.n ?? BigInt(0)), limits, options.delta ?? BigInt(0))
     if (verdict.warn) await recordAutomaticException(tx, organizationId, verdict.warn, periodMonth)
     return verdict

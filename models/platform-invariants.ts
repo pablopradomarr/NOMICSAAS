@@ -290,6 +290,17 @@ export async function readPlatformInvariantInput(
     .filter((model) => model.columns.some((column) => column.column === "organization_id"))
     .map((model) => model.table)
     .sort()
+  /**
+   * **Auditor, ronda 2 — la SEGUNDA fuente.** `information_schema` dice lo que
+   * la base tiene; `prismaSchemaMeta()`, lo que el código cree que hay. I-E11-7
+   * las enfrenta: una tabla creada por una migración y nunca añadida al esquema
+   * no la ve el cliente generado, y el inventario se deriva del cliente.
+   */
+  const tablasEnBase = await tx.$queryRaw<{ table_name: string }[]>`
+    SELECT c.table_name::text AS table_name
+      FROM information_schema.columns c
+     WHERE c.table_schema = 'public' AND c.column_name = 'organization_id'
+     ORDER BY 1`
   const lastDone = backupRows.find((row) => String(row.status) === "DONE")
   const manifestTables = lastDone ? await manifestTablesOf(tx, lastDone.id) : undefined
   platform.coverage = {
@@ -298,6 +309,7 @@ export async function readPlatformInvariantInput(
       .sort(),
     inventory,
     tablesWithOrganizationId,
+    tablesWithOrganizationIdInDatabase: tablasEnBase.map((row) => row.table_name),
     declaredExclusions: [...PLATFORM_ONLY_TABLES],
     sealColumnsInSchema: derivedSealColumns(meta).map((column) => `${column.table}.${column.column}`),
     derivedSealColumns: derivedSealColumns(meta)

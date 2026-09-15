@@ -418,6 +418,93 @@ sistema **hereda su `kind`**, de modo que el par netea en todos los filtros por
 `kind`. La base lo admite sólo con el GUC `app.reopening_run_id` respaldado por un
 `ClosingRun` real del tenant.
 
+## Plataforma SaaS (E11)
+
+> Nueve tablas nuevas (migraciones `20260926200000_e11_enums`,
+> `…210000_e11_m1_planes_suscripciones`, `…220000_e11_m3_plataforma`,
+> `…230000_e11_m4_backfill_suscripciones`, `…240000_e11_m5_facturacion_plataforma`,
+> `…250000_e11_m5_semi_append_only_facturas`,
+> `20260927090000_e11_m2_uso_backups_almacen`,
+> `20260926090000_e11_onboarding_demo_preferencias`,
+> `20260928090000_e11_m6_plan_ilimitado_bigint`,
+> `…091000_e11_platform_audit_logs_por_tenant` y
+> `…092000_e11_check_family_plataforma`). Diseño en
+> `docs/design/E11-plataforma-saas.md`; decisiones en `docs/adr/0019-*.md` (D1–D9).
+
+```
+// ── A · Facturación por organización (D1, D8) ───────────────────────────────
+Plan                  catálogo GLOBAL VERSIONADO por vigencia. Los siete límites son
+                      COLUMNAS con su CHECK, no un JSON: `maxMembers`,
+                      `maxOcrDocsMonth`, `maxStorageBytes` (bigint),
+                      `maxExportsMonth`, `maxBackupsMonth`, `maxOrganizations`,
+                      `softMaxEntriesMonth`; `-1` = ilimitado. `EXCLUDE USING gist`
+                      impide dos versiones vigentes el mismo día. Escritura CERRADA
+                      a `app_runtime` (`RESTRICTIVE … USING(false)`): el catálogo lo
+                      cambia una migración.
+Subscription          UNA por organización (`organizationId @unique`) con FK a la
+                      VERSIÓN contratada (`ON DELETE RESTRICT`: retirar del catálogo
+                      lo que alguien contrató borraría la prueba de lo prometido).
+SubscriptionEvent     append-only. `stripeEventId` UNIQUE **global** = la idempotencia
+                      del webhook (I-E11-9).
+PlatformInvoiceSeries catálogo GLOBAL (`PLT-`), `lastNumber` reservado por
+                      `app.next_platform_invoice_number()` (SECURITY DEFINER, FOR UPDATE).
+PlatformInvoice       NUESTRA factura emitida: serie + número correlativo,
+                      `operationDate`/`issuedAt`/`ivaPeriod`, `taxTreatment`, NIF-IVA
+                      con su validación del DEVENGO, cuota **siempre además en euros**
+                      y copia del PDF (`storedObjectId`). Semi-append-only por GRANT de
+                      columna. Espejo de I-E8-20 en **I-E11-13**.
+
+// ── B · Uso derivado, copias y almacén (D1, D2, D3) ─────────────────────────
+UsageRun              las SEIS cifras del mes, **derivadas y cacheadas por
+                      `sourceHash`** (recuentos + `max(updated_at)` por tabla, el
+                      `ledgerHash` DEL MES y `Σ size_bytes` por `kind`). Ninguna cifra
+                      derivada entra en el hash: se validaría a sí misma. Append-only
+                      por privilegio. **I-E11-1** la enfrenta a la Σ real.
+BackupJob             formato 2.0 firmado: `manifestSha256` + `signature` con su
+                      `signingKeyId` rotable, los tres sellos, `rowCounts` y `expiresAt`.
+RestoreJob            SIEMPRE a organización nueva. `verification` guarda las SEIS
+                      comprobaciones de §5.4; `DONE` exige `verified` y si no,
+                      `DONE_UNVERIFIED` (O-2), que **I-E11-2 lee como FAIL**.
+StoredObject          localización e integridad de los bytes: `objectKey` con prefijo
+                      por organización, `sha256`, `sizeBytes` (bigint), `kind`.
+                      `files.sha256` sigue siendo la verdad (I-E8-2); esto dice de
+                      dónde se leen. **I-E11-6** lo enfrenta al almacén.
+
+// ── C · Plataforma y reloj (D4) — SIN `organization_id` salvo el log ─────────
+CronRun               `(job, periodKey)` UNIQUE = la idempotencia del reloj; `refDate`
+                      persistido tal cual se pidió (O-13). **I-E11-12**.
+RateLimitBucket       cubo persistente; la clave SIEMPRE `sha256` (CHECK en base).
+PlatformAuditLog      append-only (RESTRICTIVE + REVOKE). **Sí lleva `organizationId`**,
+                      anulable, y desde `…091000` su política de lectura es
+                      `organization_id IS NULL OR = app.current_org()`.
+
+// ── D · Onboarding (D9, O-6) ────────────────────────────────────────────────
+OnboardingRun         una por organización; `demoOrganizationId` ata la demo a su alta.
+Organization          gana `isDemo` **INMUTABLE en las dos direcciones** (trigger), la
+                      retención de copias y el mes de arranque de la amortización (D-3).
+```
+
+### Qué viaja en la copia del cliente, y qué no
+
+El inventario del ZIP **se deriva del esquema**, nunca de una lista a mano:
+`BACKUP_TENANT_MODELS` = `TENANT_MODELS` ∪ `TENANT_MODELS_WITH_GLOBAL` −
+`PLATFORM_ONLY_TABLES`. `currencies` entra por la unión —lleva `organization_id`,
+tiene RLS propia y la siembra le escribe 177 filas por organización, y por no
+estar se perdía en cada restauración **con las seis comprobaciones en PASS**—, y
+salen, **con motivo escrito**, las cuatro que no son datos del cliente:
+
+| Excluida | Por qué |
+|---|---|
+| `platform_audit_logs` | registro de NUESTRA plataforma; sus filas sin organización se perderían al filtrar |
+| `platform_invoices` | facturas emitidas por nosotros con serie correlativa **global**: duplicar `(serie, número)` al restaurar falsifica la numeración (art. 28.2 CCom, I-E11-13) |
+| `subscriptions` | la relación de facturación, no los libros: el destino nace con la suya (D9) y `organization_id` es UNIQUE |
+| `subscription_events` | `stripe_event_id` es UNIQUE **global**: copiarlo rompe la idempotencia que I-E11-9 sostiene |
+
+**I-E11-7** exige las dos direcciones y contra **las dos fuentes** —el cliente
+Prisma generado y `information_schema`—: falla si aparece cualquier tabla con
+`organization_id` fuera del inventario y de esa lista, si una exclusión declarada
+ya no existe, si su motivo está vacío o si las dos fuentes divergen.
+
 ## Integridad (resumen)
 | Regla | Dónde |
 |---|---|
@@ -478,3 +565,21 @@ sistema **hereda su `kind`**, de modo que el par netea en todos los filtros por
 | Una sola tarifa vigente por (empleado, fecha); sin tarifa el coste es NO EVALUABLE | `EXCLUDE USING gist` en `employee_rates` + I-E10-5 (jamás 0 ni la tarifa anterior) |
 | La base de un reparto por actividad es reproducible aunque no esté en el diario | `AllocationRun.timeHash` **+ la ventana que consumió**, con CHECK que exige que contenga el periodo; cuarta causa de `STALE` e I-E10-17 |
 | Tenant | `tenantDb` + RLS |
+
+### E11 · plataforma
+
+| Regla | Dónde |
+|---|---|
+| Una organización, **una** suscripción vigente, y ninguna sin ella | `subscriptions.organization_id` UNIQUE + `ensureSubscriptionForOrganization` **dentro de la transacción del alta, que aborta si no puede** + I-E11-5 |
+| El uso **no se almacena**: se deriva y se cachea por `sourceHash` | `models/usage.ts` (dos agregados SQL) + `usage_runs` append-only por privilegio + I-E11-1, que enfrenta la caché servida a la Σ real |
+| **Ningún límite de plan impide registrar un hecho contable ya ocurrido** (ADR-0019 D7) | el tipo: `assertWithinLimit` sólo acepta `HardLimitKey`, y `softMaxEntriesMonth` no es una; `postEntry` sólo **avisa** (`noteSoftEntryQuota`, que no lanza) + I-E11-4 |
+| Toda superación de la cuota blanda deja su excepción **automática** registrada | `platform_audit_logs` (`LIMITE_EXCEPCION_AUTOMATICA`, actor `motor`, una por mes) + I-E11-4(b) |
+| Las siete acciones de cuota dura son **exactamente** siete, y ninguna de posteo | test estático sobre el AST + I-E11-4(c) |
+| La copia cubre **todas** las tablas de tenant; las exclusiones se declaran con motivo | inventario derivado de `BACKUP_TENANT_MODELS` + `PLATFORM_ONLY_TABLES` + I-E11-7 contra Prisma **y** `information_schema` |
+| Restaurar es **siempre** a organización nueva, y una sola fila rechazada aborta el trabajo entero | `restoreBackupIntoOrganization` (`RestoreAbort` con tabla, línea y motivo) |
+| `DONE` ⇔ las **seis** comprobaciones de §5.4 en verde; si no, `DONE_UNVERIFIED` | `isVerified`/`restoreStatusOf` + I-E11-2. La comprobación 6 es **relativa**: enfrenta el barrido del destino al del origen (`manifest.sourceSweep`) |
+| Los bytes del almacén son los que la fila promete | `verifyObject` + `assertKeyBelongsTo` en las tres puertas del driver + I-E11-6 |
+| El reloj es idempotente y nada se fecha por el instante de ejecución | `cron_runs (job, period_key)` UNIQUE + `refDate` explícito + I-E11-12 |
+| `isDemo` es **inmutable en las dos direcciones** y se fija en el `INSERT` | trigger `organizations_is_demo_immutable` + `CreateOrganizationInput.isDemo` |
+| La plataforma no toca el diario del cliente, ni por el camino indirecto | I-E11-8 |
+| Nuestra serie de facturación se audita con el mismo rigor que la del cliente | I-E11-13, espejo exacto de I-E8-20 |

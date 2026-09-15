@@ -18,6 +18,14 @@
       "schedule": "0 2 * * 0"
     }
   ],
+  "env": {
+    "GIT_SHA": "$VERCEL_GIT_COMMIT_SHA"
+  },
+  "build": {
+    "env": {
+      "GIT_SHA": "$VERCEL_GIT_COMMIT_SHA"
+    }
+  },
   "functions": {
     "app/api/cron/[job]/route.ts": {
       "maxDuration": 300

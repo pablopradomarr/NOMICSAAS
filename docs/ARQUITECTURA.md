@@ -48,6 +48,10 @@ Capas: **UI** (no calcula) → **Acción** (valida, autoriza, orquesta) → **Do
 | `lib/analytics/margins.ts` | PyG analítica por nivel/proyecto/LN/CECO | Puro |
 | `lib/analytics/allocate.ts` | Liquidación de CECOs (drivers, cascada, Hamilton) | Puro |
 | `lib/ledger/hash.ts` | `ledgerHash(lines)` sha256 canónico | Puro |
+| `lib/platform/{types,plan,subscription,limits,usage,billing,invoice,cron,backup}.ts` | **Plataforma (E11), motor PURO**: catálogo de planes versionado y `resolvePlanAt` (lanza con dos vigencias, nunca toma la primera); `accessLevelOf` —la regla estado ⇔ acceso, escrita **una sola vez**, con la gracia contada desde el FIN DEL PERIODO PAGADO y **nunca `BLOCKED` por impago**—; las **dos clases de cuota** (`checkLimit` sólo acepta `HardLimitKey`; `checkSoftEntries` no puede rechazar, lo impide el tipo); el uso derivado y su `usageSourceHash`; el modo **INTERNO** (D9) por parámetro; el devengo y el tratamiento fiscal de nuestra factura; el reloj (`periodKeyOf`, `isDue`) con `refDate` explícito; y el formato 2.0 del backup (inventario, columnas-sello, JSONL tipado, manifest canónico, firma y las seis comprobaciones) | Puro |
+| `lib/ledger/invariants-e11.ts` | **I-E11-1…13** (familia `PLATAFORMA`): uso derivado = Σ real, restauración reproducible, manifest firmado, cuotas, estado ⇔ acceso, `sha256` = almacén, cobertura del backup, aislamiento de la plataforma, webhook idempotente, las nueve piezas de la siembra, retención, reloj y nuestra serie | Puro |
+| `lib/storage/{index,driver,local,s3,keys}.ts` | Almacén de ficheros: driver S3 único (endpoint **fijo por configuración**, sin SSRF; SigV4 firmado a mano con el sha comprobado ANTES de enviar) o local; clave por `sha256` con prefijo por organización y `assertKeyBelongsTo` como **segunda barrera** de aislamiento | IO |
+| `lib/documents.ts` | **Un solo lector** de los bytes de un justificante (almacén → disco heredado) para las seis rutas que los leen. Si ese orden cambiara en un sitio y no en otro, el ZIP llevaría unos bytes y la descarga otros | IO |
 | `lib/audit/invariants-e7.ts` | **I-E7-1…17**: la identidad del cuadre bancario `E − B = Ue − Ub` (una sola derivación, `reconciliationSummary`, que consumen el invariante, el panel y el badge), los cuadres de cierre y la divisa (NRV 11ª.2.2) | Puro |
 | `lib/audit/run.ts` | La foto del barrido y su sello: `checksHash` (I-E7-7), `configHash` (O-20) y los **cuatro motivos de sello** de E7, que entran en `seal()` como los seis de E8 | Puro |
 | `lib/audit/confidence.ts` | El badge **`✓ validado contra fuente`** por COMPOSICIÓN y el criterio verificable de «pendiente explicado» (§3.6) | Puro |
@@ -143,6 +147,8 @@ sellos del run recomputados) y **I-E8-15a/b/c** (los tres puentes al 303). Un FA
 | C4b conciliación | El cuadre `E − B = Ue − Ub` con **una sola derivación** para el invariante, el panel y el badge. Las cuatro cifras, en la moneda de la cuenta. Un grupo sólo cancela si TODOS sus miembros caen dentro del corte |
 | C5 confianza | `ConfidenceBadge` en toda cifra no derivada del diario; en el camino documental, **cuatro niveles por CAMPO** (`calculado`/`verificado`/`interpretacion_ia`/`no_verificado`) sellados en `fieldOrigins`, y motivo obligatorio **en servidor** para confirmar con algún `no_verificado` |
 | C6 memoria | Ninguna cifra en memoria de agentes ni `cachedParseResult`; `AuditLog` y `runs/registro.jsonl` estructurados |
+| C1′ reproducibilidad (P7) | **El backup es el criterio**: formato 2.0 firmado con el inventario derivado del esquema, restauración **siempre a organización nueva** y `DONE` sólo con las **seis comprobaciones** de §5.4 —recuentos `=`, numeración sin huecos ni duplicados, TODOS los sellos derivados recomputados, sha del `AuditLog`, los tres sellos + estado del cierre, y el barrido de las nueve familias **enfrentado al del origen**—. Lo vigila **I-E11-2**, y `DONE_UNVERIFIED` es FAIL, no «casi bien» |
+| C4′ plataforma | `lib/ledger/invariants-e11.ts` (**I-E11-1…13**, familia `PLATAFORMA`), con su bloque compuesto por `models/platform-invariants.ts` **acotado a la organización barrida**. Misma lección que E9 y E10, pagada por tercera vez: un invariante cuyo bloque nadie rellena es prosa. La familia **no** entra en la puerta `INVARIANTES_PASS` del cierre: cerrar el ejercicio es un hecho contable y ningún asunto de plataforma puede impedirlo (ADR-0019 D7) |
 | C7 versionado | prompts en git + `PromptVersion` append-only por organización, `ReportRun.gitSha`, `ExtractionRun.{model, promptSha, schemaSha, proposalSha, gitSha}`, `runs/registro.jsonl` |
 
 ## 7. Seguridad
@@ -155,3 +161,16 @@ better-auth (sesión con `activeOrganizationId`), `requireOrg(minRole)` en toda 
 
 ## 9. Despliegue
 Local: `docker compose` (app + Postgres 17). Cloud: Vercel/Docker + Supabase (pooler para runtime, `DIRECT_URL` para migraciones); branch de Supabase por PR. CI: lint + test + invariantes sobre fixtures + `get_advisors(security)`.
+
+**Plataforma (E11).** Los ficheros viven en **Supabase Storage por su endpoint S3**
+(`STORAGE_BACKEND=s3`), no en el disco de la función: un `/tmp` efímero perdía el
+justificante entre dos peticiones. El reloj es **GitHub Actions** golpeando
+`POST /api/cron/[job]` con `Authorization: Bearer $CRON_SECRET` comparado en tiempo
+constante; los cuatro jobs (`recurring-due`, `invariant-sweep`, `backup-worker`,
+`retention`) son idempotentes por `(job, periodKey)` y reciben **`refDate` explícito**.
+`GIT_SHA` lo inyecta Vercel desde `VERCEL_GIT_COMMIT_SHA` (`vercel.json`): sin él, el
+sello dice «git-sha del motor desconocido» y el periodo sale `REQUIERE REVISIÓN`, que
+es el comportamiento correcto. **Defaults seguros**: `BILLING_PROVIDER="none"` (modo
+INTERNO, D9: no se cobra), `STORAGE_BACKEND="local"`, `CRON_SECRET=""` ⇒ la ruta del
+reloj responde 401 siempre, y `PLATFORM_SIGNING_KEY=""` ⇒ **no se emite ningún backup**
+antes que emitir uno sin firma. Runbook completo: `docs/deploy/e11-plataforma.md`.

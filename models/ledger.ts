@@ -809,6 +809,26 @@ export async function computeLedgerHash(
                 OR l.entry_date >= ${filter.from ? toUtcDate(filter.from) : null}::date)
            AND (${filter.to ? toUtcDate(filter.to) : null}::date IS NULL
                 OR l.entry_date <= ${filter.to ? toUtcDate(filter.to) : null}::date)
+           -- E11 · ronda 2 · R2-1. Los MISMOS predicados sobre el lado de los
+           -- asientos. No es redundancia decorativa: sin ellos el plan recorre
+           -- journal_entries ENTERA para construir el hash de UN mes (seq scan
+           -- de las 20 000 filas de la organizacion para 2 756 lineas del
+           -- periodo), y el coste del hash mensual crece con el tamano del
+           -- diario en vez de con el del mes -- que es lo que hacia superlineal
+           -- el recalculo del uso. Con ellos, las dos ramas entran por
+           -- (organization_id, entry_date) y el coste es el del mes.
+           --
+           -- Es PROVABLEMENTE equivalente, no una aproximacion: la FK
+           -- journal_lines_entry_denorm_fkey obliga a que
+           -- (organization_id, entry_id, entry_date, fiscal_year_id, entry_kind)
+           -- de la linea coincida con (organization_id, id, entry_date,
+           -- fiscal_year_id, kind) de su asiento, de modo que
+           -- l.entry_date = e.entry_date lo garantiza la BASE, no un comentario.
+           AND (${filter.fiscalYearId ?? null}::uuid IS NULL OR e.fiscal_year_id = ${filter.fiscalYearId ?? null}::uuid)
+           AND (${filter.from ? toUtcDate(filter.from) : null}::date IS NULL
+                OR e.entry_date >= ${filter.from ? toUtcDate(filter.from) : null}::date)
+           AND (${filter.to ? toUtcDate(filter.to) : null}::date IS NULL
+                OR e.entry_date <= ${filter.to ? toUtcDate(filter.to) : null}::date)
       ) AS canonico`
 
   return rows[0]?.hash ?? ledgerHash([])
@@ -1226,6 +1246,21 @@ export async function postEntries(
           if (!checked.ok) abortWith(checked.errors)
         }
         out.push(await postEntryTx(tx, draft, actor))
+      }
+      /**
+       * **R2-4 · el LOTE también avisa, y avisa UNA vez.**
+       *
+       * `postEntries` no invocaba la cuota blanda, así que un cierre o una
+       * importación masiva —justo lo que hace saltar el 80 %— no producían el
+       * aviso. Se invoca **después del lote entero** y no por asiento: lo que
+       * §3.5 pide es que el aviso exista, no que se repita mil veces, y el
+       * registro de la excepción automática ya es idempotente por mes.
+       *
+       * Sigue sin poder bloquear nada: `noteSoftEntryQuota` no lanza.
+       */
+      if (!opts.skipCheck && out.length > 0) {
+        const { noteSoftEntryQuota } = await import("@/models/platform-limits")
+        await noteSoftEntryQuota(tx, { refDate: toUtcDate(opts.refDate) })
       }
       return out
     },

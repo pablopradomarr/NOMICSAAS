@@ -222,19 +222,71 @@ async function sembrarObjetos(n: number, desde: number): Promise<void> {
   )
 }
 
-async function sembrarExtracciones(n: number, _desde: number): Promise<void> {
+/**
+ * Documentos y sus extracciones. **Revisor R2-3**: la ronda anterior capturaba
+ * el fallo del `INSERT` con un `console.warn` y seguía, de modo que una de las
+ * tres dimensiones del techo 3 (5 000 documentos) no se medía y el aviso moría
+ * en `stderr`. Ahora **no se captura nada**: si la siembra no puede hacerse, el
+ * test falla. Un techo medido sobre dos tercios del volumen no es el techo.
+ */
+async function sembrarExtracciones(n: number, desde: number): Promise<void> {
+  await q(
+    `INSERT INTO files
+       (id, organization_id, uploaded_by_id, filename, path, mimetype, sha256, size_bytes, created_at)
+     SELECT gen_random_uuid(), $1::uuid, $2::uuid, 'perf-' || ($3 + g) || '.pdf',
+            'perf/' || ($3 + g) || '.pdf', 'application/pdf',
+            lpad((($3 + g))::text, 64, 'a'), 2048, now()
+       FROM generate_series(0, $4 - 1) AS g`,
+    [ORG, USER, desde, n]
+  )
   await q(
     `INSERT INTO extraction_runs
-       (id, organization_id, status, model, prompt_sha, schema_sha, proposal_sha, created_at)
-     SELECT gen_random_uuid(), $1::uuid, 'DONE', 'perf', repeat('1', 64), repeat('2', 64), repeat('3', 64), now()
-       FROM generate_series(0, $2 - 1) AS g`,
-    [ORG, n]
-  ).catch(async () => {
-    // El esquema de `extraction_runs` ha cambiado entre épicas; si el INSERT
-    // mínimo no vale, se dice y el techo se mide sin esa dimensión en vez de
-    // fingir un volumen que no está.
-    console.warn("[perf-platform] no se han podido sembrar extraction_runs: el techo 3 se mide sin esa dimensión")
-  })
+       (id, organization_id, file_id, file_sha256, kind, provider, model, prompt_code, prompt_source,
+        prompt_sha, schema_version, schema_sha, pages_sent, pages_total, raw_output, duration_ms, git_sha, created_at)
+     SELECT gen_random_uuid(), f.organization_id, f.id, f.sha256, 'LLM', 'perf', 'perf-model',
+            'FACTURA_RECIBIDA', 'GIT', repeat('1', 64), '1', repeat('2', 64), 1, 1, '{}'::jsonb, 1, repeat('0', 40), now()
+       FROM files f
+      WHERE f.organization_id = $1::uuid
+        AND f.filename LIKE 'perf-%'
+        AND NOT EXISTS (SELECT 1 FROM extraction_runs r WHERE r.file_id = f.id)`,
+    [ORG]
+  )
+}
+
+/**
+ * **R2-3.** Las tres dimensiones del techo 3, contadas contra la base. Si una no
+ * está, el test falla con su nombre: el techo se mide entero o no se mide.
+ */
+async function comprobarVolumen(esperado: { asientos: number; objetos: number; extracciones: number }): Promise<void> {
+  const [fila] = await q<{ asientos: string; objetos: string; extracciones: string }>(
+    `SELECT (SELECT count(*) FROM journal_entries WHERE organization_id = $1::uuid)::text AS asientos,
+            (SELECT count(*) FROM stored_objects  WHERE organization_id = $1::uuid)::text AS objetos,
+            (SELECT count(*) FROM extraction_runs WHERE organization_id = $1::uuid)::text AS extracciones`,
+    [ORG]
+  )
+  expect(Number(fila.asientos), "asientos sembrados").toBe(esperado.asientos)
+  expect(Number(fila.objetos), "objetos de almacén sembrados").toBe(esperado.objetos)
+  expect(Number(fila.extracciones), "documentos analizados sembrados").toBe(esperado.extracciones)
+}
+
+/**
+ * **Higiene de medida (R2-1).** Se mide el TECHO, no la inserción: tras sembrar
+ * decenas de miles de filas, la primera lectura paga los *hint bits*, las
+ * páginas sucias y un plan calculado sobre estadísticas viejas — eso es el coste
+ * de escribir, no el de consultar. Se hace `ANALYZE` de las tablas que el uso
+ * recorre y una lectura de calentamiento, y **después** se cronometra. Es lo
+ * mismo que hace `perf-budget.test.ts` con su warm-up, escrito aquí porque el
+ * volumen lo hace imprescindible.
+ */
+async function medirUso(log?: string[]): Promise<number> {
+  await q(`ANALYZE journal_entries, journal_lines, stored_objects, extraction_runs, files, audit_logs, memberships`)
+  await tenantTransaction(ORG, USER, async (tx) => readUsageInTransaction(tx, ORG, REF))
+  const { ms } = await watcher.measure(() =>
+    tenantTransaction(ORG, USER, async (tx) =>
+      readUsageInTransaction(log ? contado(tx, log) : tx, ORG, REF)
+    )
+  )
+  return ms
 }
 
 /** Cliente que APUNTA cada consulta: el techo 3 cuenta consultas, no sólo ms. */
@@ -385,8 +437,8 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
   }, 30_000)
 
   it(
-    "3/10 · `computeUsage` recalculando: ≤ 8 consultas (exacto) y, extrapolado a 50 000 asientos / " +
-      "5 000 documentos / 20 000 objetos desde dos puntos reales, < 1 200 ms",
+    "3/10 · `computeUsage` recalculando con las TRES dimensiones (asientos, documentos y objetos): " +
+      "≤ 8 consultas (exacto) y, extrapolado a 50 000 / 5 000 / 20 000 desde dos puntos reales, < 1 200 ms",
     async () => {
       // Dos puntos: N y 2N. Con uno solo no se puede separar el coste de
       // arranque del coste por fila, que es justo lo que decide el techo.
@@ -394,15 +446,17 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
       await sembrarAsientos(N, 1)
       await sembrarObjetos(10_000, 0)
       await sembrarExtracciones(2_500, 0)
-      const punto1 = await watcher.measure(() => getUsage(ORG, REF, { recompute: true }))
+      // **Las tres dimensiones, comprobadas.** R2-3: si la siembra no ha
+      // entrado, el techo no se mide «a medias», falla.
+      await comprobarVolumen({ asientos: N, objetos: 10_000, extracciones: 2_500 })
+      const punto1 = await medirUso()
 
       await sembrarAsientos(N, N + 1)
       await sembrarObjetos(10_000, 10_000)
       await sembrarExtracciones(2_500, 2_500)
+      await comprobarVolumen({ asientos: 2 * N, objetos: 20_000, extracciones: 5_000 })
       const log: string[] = []
-      const punto2 = await watcher.measure(() =>
-        tenantTransaction(ORG, USER, async (tx) => readUsageInTransaction(contado(tx, log), ORG, REF))
-      )
+      const punto2 = await medirUso(log)
 
       // **Consultas: exacto, no estimado.** `readUsageInput` hace la
       // organización, las cifras, las fuentes, el desglose por kind y el
@@ -410,17 +464,17 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
       expect(log.length, `consultas: ${log.length}\n${log.join("\n")}`).toBeLessThanOrEqual(8)
 
       // Coste marginal por asiento entre los dos puntos, y extrapolación.
-      const marginalPorAsiento = Math.max(0, punto2.ms - punto1.ms) / N
-      const fijo = Math.max(0, punto1.ms - marginalPorAsiento * N)
+      const marginalPorAsiento = Math.max(0, punto2 - punto1) / N
+      const fijo = Math.max(0, punto1 - marginalPorAsiento * N)
       const extrapolado = fijo + marginalPorAsiento * 50_000
       expect(
         extrapolado,
-        `medido ${Math.round(punto1.ms)} ms @ ${N} y ${Math.round(punto2.ms)} ms @ ${2 * N} · ` +
+        `medido ${Math.round(punto1)} ms @ ${N} y ${Math.round(punto2)} ms @ ${2 * N} · ` +
           `fijo ${Math.round(fijo)} ms + ${marginalPorAsiento.toFixed(4)} ms/asiento · ` +
           `extrapolado a 50 000 = ${Math.round(extrapolado)} ms`
       ).toBeLessThan(1_200)
     },
-    600_000
+    900_000
   )
 
   // **BUG-E11-1 (encontrado escribiendo este test).** El techo dice

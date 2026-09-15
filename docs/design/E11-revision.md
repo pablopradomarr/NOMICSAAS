@@ -57,3 +57,66 @@ el fallo que E9 y E10 ya pagaron dos veces), **dos de las siete cuotas duras no 
 servidor**, **`npm run test:integration` está rojo en HEAD** con dos fallos propios de E11, y
 **el alta puede crear una organización sin suscripción en silencio**. Los puntos 5 a 8 deben
 caer en la misma ronda; 9 a 15, antes de cerrar la épica.
+
+---
+
+# Ronda 2 — `git diff 18b3326...1ef4692`
+
+**Commit:** 1ef4692 · 41 ficheros, +4 040 / −161 · **Fecha:** 2026-09-15
+
+## Suites
+
+| Comando | Resultado |
+|---|---|
+| `npm run lint` | **VERDE** — 0 errores, 12 avisos preexistentes |
+| `npm run test` | **VERDE** — 118 ficheros, 2 526 pasan (+63), 11 `skip`, todos `skipIf` de base |
+| `npm run test:integration` | **1 fallo / 3 372** (172 ficheros) — sólo `perf-platform` 3/10, ver R2-1. Los cinco fallos de la ronda 1 **han desaparecido**, incluido el flake de `perf-budget` 2/9 |
+| `npm run test:integration:rls` | **VERDE** — 211 pasan |
+| `npm run build` | **VERDE** |
+
+## Cierre de los hallazgos de la ronda 1
+
+| # (R1) | Estado | Evidencia |
+|---|---|---|
+| 1 · T20 ausente | **CERRADO** | `lib/ledger/invariants-e11.ts` (51 KB, `E11_INVARIANT_IDS` con los trece), `models/platform-invariants.ts` (lector), bloque `platform` en `models/ledger.ts:2246-2312` con sus `platformReasons` en el sello, `runPlatformInvariants` invocado en `lib/ledger/invariants.ts:596`, familia `PLATAFORMA` en `lib/audit/families.ts:39` + prefijo `["I-E11-", "PLATAFORMA"]`, migración del enum `check_family`, 16 menciones en `SKILL.md`, `lib/ledger/invariants-e11.test.ts` (674 líneas) |
+| 2 · 3 de 7 cuotas sin guardián | **CERRADO** | Las **siete** cableadas: `settings/members/actions.ts:76`, `invite/[token]/actions.ts:221`, `unsorted/actions.ts:201`, `files/actions.ts:35`, `reports/actions.ts:233`, `models/backups.ts:1248`, `organizations/actions.ts:90` |
+| 3 · I-E11-5 global rompía la suite | **CERRADO** | Acotado en `e11-integracion-d9.test.ts` y `e11a-esquema.test.ts`; la suite completa ya no lo falla |
+| 4 · `ensureSubscription` tragaba el error | **CERRADO** | `models/subscriptions.ts:395-405` — `getPlanAt` sin `try/catch`: el alta aborta entera |
+| 5 · `readChecks` no pintaba las seis | **CERRADO** | `settings/backups/page.tsx:133-160` lee `{id,status,title,evidence,note}` y trae la evidencia enfrentada; `INFO` no cuenta como ✓ |
+| 6 · `assertKeyBelongsTo` sin llamantes | **CERRADO** | `models/storage.ts:55, 93, 155` (put, get, delete) |
+| 7 · techos de §12 sin medir | **PARCIAL** | `tests/integration/perf-platform.test.ts` existe con los diez, pero el 3 **falla** (R2-1) y se mide sin `extraction_runs` (R2-3) |
+| 8 · `NUMERACION` comparaba recuentos | **CERRADO** | `models/backups.ts` — compara los arrays completos y exige cero huecos si el origen no los tenía |
+| 9 · `isEnoughStorageToUploadFile` muerta | **RETIRADO — era mío** | Sí tiene llamante: `lib/uploads.ts:157`, y sólo en `uploadStaticImage` (logo/avatar), así que **no** choca con la cuota blanda de O-16 |
+| 10 · `to_regclass` / actor | **CERRADO** | `models/platform-limits.ts:396` retira la rama y corrige el actor |
+| 11 · `head()` confía en el metadato | **CERRADO** | Límite declarado en el enunciado de I-E11-6 |
+| 12 · puerta de escape de O-14 | **CERRADO** | Documentada en el runbook |
+| 13 · `platform_audit_logs` legible por todos | **CERRADO** | Migración `…091000_e11_platform_audit_logs_por_tenant`: `organization_id IS NULL OR = app.current_org()`, con verificación de `FORCE` y de las cuatro políticas |
+| 14 · falta el test de D2.9 | **CERRADO** | `tests/integration/e11-ronda1.test.ts:328` |
+| 15 · fallos de E10 dependientes de orden | **CERRADO** | Ya no se reproducen en la suite completa |
+
+Cerrados también los del auditor y QA que se me pidió verificar: **H-2** (`BACKUP_TENANT_MODELS` en `lib/db.ts:280` incluye `TENANT_MODELS_WITH_GLOBAL`, así que `currencies` y sus 177 filas viajan en el ZIP), **H-3** (`isDemo` en el `INSERT`), **H-4** (`getSubscription` filtra por `WHERE organization_id = $1`, no sólo por RLS), **H-5** (`checkSoftEntries` cableado en `models/ledger.ts:1197` **después** de postear y sin lanzar nunca), **H-6** (comprobación 6 relativa por `manifest.sourceSweep`, opcional y con el criterio absoluto declarado en la evidencia cuando falta) y **BUG-E11-2** (`E11_RESET_TABLES` + `RESET_ORG_PRESERVED` con motivo escrito y derivables del esquema).
+
+## Lupa de esta ronda
+
+- **Exclusiones del inventario: justificadas, documentadas y exigidas.** `PLATFORM_ONLY_TABLES` (`lib/db.ts:311-345`) declara `platform_audit_logs`, `platform_invoices`, `subscriptions` y `subscription_events` **con motivo escrito**, y los motivos son correctos: serie correlativa global nuestra (art. 28.2 CCom), `organization_id` UNIQUE, `stripe_event_id` UNIQUE global y filas sin organización. **I-E11-7 es fuerte de verdad**: falla si aparece cualquier tabla con `organization_id` fuera del inventario y de la lista, falla si una exclusión declarada ya no existe, enfrenta inventario y manifest en las dos direcciones y publica los motivos en el mensaje de PASS. Es la forma correcta de no repetir BUG-E7-1/E9-5/E10-1 por quinta vez.
+- **`PLATAFORMA` fuera de la puerta del cierre: coherente con D7.** `models/closing.ts:1466-1500` filtra `I-E11-` de `INVARIANTES_PASS` **y** del recuento de runs en `REQUIERE_REVISION`, con el razonamiento correcto: cerrar el ejercicio es el hecho contable por excelencia y ningún asunto de plataforma puede impedirlo. La familia conserva su tarjeta y su semáforo en `/audit` y sigue sellando el periodo con su motivo, que es donde debe pesar.
+- **Migraciones nuevas: sin SUPERUSER.** `ALTER TYPE check_family ADD VALUE IF NOT EXISTS 'PLATAFORMA'` va **sola** en su migración (precedente de `…e10_check_family_presupuesto`) y `DROP/CREATE POLICY` lo puede el propietario. Ninguna mueve filas, ninguna deja nada en `NO FORCE`, ninguna migración aplicada editada.
+- **Tests no debilitados.** +63 unitarios, +3 ficheros de integración (`e11-ronda1`, `e11-qa`, `perf-platform`), ningún `skip`/`todo`/`fixme` nuevo y ninguna aserción relajada, salvo las dos que R2-1 y R2-3 señalan.
+
+## Hallazgos nuevos
+
+| # | Fichero:línea | Severidad | Problema | Sugerencia |
+|---|---|---|---|---|
+| R2-1 | `tests/integration/perf-platform.test.ts:421` | **DEBE** | **El techo 3 de §12 se incumple y el test lo dice**: `medido 592 ms @ 5 000 y 4 032 ms @ 10 000 · extrapolado a 50 000 = 34 405 ms` contra un techo de **1 200 ms**. Peor que el número: duplicar los asientos multiplica el tiempo por **6,8**, así que `computeUsage` recalculando **no escala linealmente** y la propia extrapolación lineal es optimista. No es un flake: es el agregado del uso creciendo de forma superlineal | Perfilar los seis agregados (probable falta de índice por `(organization_id, entry_date)` en el recuento de `entries`, o un plan que pasa a *seq scan*). **No subir el techo** |
+| R2-2 | `lib/ledger/invariants-e11.ts` (≈ byte 3 736) | **DEBE** | El fichero contiene **dos bytes NUL literales** (el separador de `sortedSet(a).join(…)` escrito con el carácter crudo en vez de su secuencia de escape), así que **git lo trata como binario**: `git diff --numstat` devuelve `-` / `-` y el diff dice `Bin 0 -> 51375 bytes`. **El fichero central de T20 —los trece invariantes— no se puede revisar en un diff**; he tenido que leerlo con Python | Escribir el separador con una secuencia de escape (o usar el separador de unidad `U+001F`). Es un cambio de un carácter que devuelve 1 000 líneas a la revisión |
+| R2-3 | `tests/integration/perf-platform.test.ts` (techo 3) | **DEBE** | El techo 3 **se degrada en silencio**: `[perf-platform] no se han podido sembrar extraction_runs: el techo 3 se mide sin esa dimensión`, y el test sigue adelante. Una de las tres dimensiones de §12 (5 000 documentos) no se mide, y el aviso va a `stderr`, donde nadie lo lee | Que la siembra fallida **falle el test**, o que el techo declare por escrito que mide dos dimensiones de tres |
+| R2-4 | `models/platform-limits.ts:456-495` · `models/ledger.ts:1196` | PUEDE | El comentario promete que con `softMaxEntriesMonth = -1` «sale sin tocar la base, así que el camino caliente no paga nada», pero **siempre hace un `SELECT subscriptions JOIN plans` por cada `postEntry`**, dentro de su transacción. Es barato, pero el comentario no es exacto y el techo 4 de §12 lo paga. Además `postEntries` (lote) **no** lo invoca: un cierre o una importación masiva no producen el aviso del 80 % | Cachear el `soft` por organización en el contexto del ledger, corregir el comentario y decidir por escrito si el lote avisa |
+| R2-5 | `models/platform-limits.ts:487` | PUEDE | El recuento de la cuota blanda excluye contra-asientos y asientos de sistema, pero **no `isDemo`**, que D1.6 y O-6 sí excluyen del uso. Hoy es inocuo (en INTERNO todos los techos son `-1`), pero diverge del criterio único de `lib/platform/usage.ts` | Reutilizar la exclusión de `usage.ts` en vez de reescribir el `WHERE` |
+| R2-6 | `prisma/migrations/` | PUEDE | `20260928090000_e11_check_family_plataforma` y `20260928090000_e11_m6_plan_ilimitado_bigint` comparten **el mismo sello temporal**. Hoy el orden es determinista y correcto (`c` < `m` lexicográficamente), pero la convención `NNNN_<que_hace>` existe para que el orden lo fije el sello, no el alfabeto | Renombrar la nueva a `20260928092000_…` mientras ninguna esté aplicada en producción |
+| R2-7 | `lib/db.ts:311` | PUEDE | `PLATFORM_ONLY_TABLES` exige el campo `reason` por tipo, pero nada impide que sea la cadena vacía: I-E11-7 imprimiría `tabla ()` y pasaría | Un `reason.trim().length > 0` en `checkIE117`, que es donde ya se lee la lista |
+
+## Veredicto Ronda 2
+
+**CAMBIOS REQUERIDOS**, pero de otra clase. **Los cuatro BLOQUEA de la ronda 1 están cerrados con evidencia**, y los ocho DEBE/PUEDE también (el 9 era un error mío y lo retiro). T20 no es un cumplimiento formal: los trece invariantes están implementados, leídos de la base por `models/platform-invariants.ts`, ejecutados en `runLedgerInvariants`, sellando el periodo, con familia propia en `/audit` y en `SKILL.md`; I-E11-7 quedó **más fuerte** de lo que pedía el enunciado, y excluir `PLATAFORMA` de la puerta del cierre es la lectura correcta de D7. **No queda ningún BLOQUEA.**
+
+Lo que impide aprobar son tres cosas acotadas, y ninguna es de diseño: **el techo 3 de §12 se incumple por un factor de 29, con crecimiento superlineal del uso** (R2-1), **el fichero central de T20 es binario para git y por tanto no revisable en diff** (R2-2), y **ese mismo techo se degrada en silencio saltándose una de sus tres dimensiones** (R2-3). R2-4 a R2-7, antes de cerrar la épica.

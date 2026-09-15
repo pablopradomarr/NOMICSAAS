@@ -55,11 +55,42 @@ diciendo qué falta — jamás en verde.
 | **IVA periódico** | `I-E9-8a′`…`I-E9-11`, `I-E9-22`, `I-E9-26`, `I-E8-15a′/15c′` | La liquidación se reproduce línea a línea desde el libro registro; el libro, el diario y la liquidación sellada cuadran **también bajo RECC** (con 4728/4778); la prorrata definitiva se deriva del libro y nunca se inventa un porcentaje; ningún asiento con IVA entra en un periodo ya liquidado |
 | **Ajustes de cierre** | `I-E9-16`…`I-E9-19`, `I-E9-24` | La reclasificación largo↔corto no mueve el total y **ninguna deuda que venza dentro del año queda a largo**; las diferencias de cambio se reconocen sólo sobre partidas **monetarias** y a la tasa sellada; el valor actual devenga exactamente su descuento hasta el nominal |
 | **Presupuesto y horas** | `I-E10-1`…`I-E10-18` | La matriz del presupuesto suma sus líneas nivel a nivel y mes a mes; la desviación es `real − presupuesto` al céntimo y el % **no mueve el importe**; una versión sellada no cambia —el `budgetHash` recomputado lo delata, con sus líneas de horas dentro—; un parte APROBADO es inmutable y se corrige por contra-apunte; la base de los drivers `HOURS`/`HEADCOUNT` es reproducible y el `timeHash` de **todo** run de actividad se recomputa sobre la ventana que el run persiste; y presupuesto y real sólo se comparan **en el mismo estado de imputación** |
+| **Plataforma y copias** | `I-E11-1`…`I-E11-13` | El uso que se factura es el **recontado ahora**, no una cifra guardada: una caché alterada sin tocar su `sourceHash` es FAIL, no «caducada»; **ningún límite de plan puede impedir registrar un hecho contable ya ocurrido** —la cuota de asientos sólo avisa, y el tipo lo sostiene—; la copia de seguridad cubre **todas** las tablas del cliente, con el inventario derivado del esquema y las exclusiones declaradas con motivo; la restauración reproduce el original y **se demuestra**; los bytes del almacén son los que la fila promete; el reloj no fecha nada por el instante en que se ejecutó; y nuestra propia serie de facturación se audita con el mismo rigor que la del cliente |
 | **Integridad del propio control** | `I-E7-7`, `I-E7-8`, `I7`–`I10` | El barrido no se puede editar sin que se note (`checksHash` recomputado); todo fichero del almacén tiene veredicto; no hay duplicados, ni fechas fuera de ejercicio abierto, ni una sola fila que cruce de organización |
 
 La lista completa, con su tolerancia y su redacción exacta, está en
 `.claude/skills/fiabilidad/SKILL.md`. **Se define ahí una sola vez**: el código
 la implementa, no la reinventa.
+
+### La copia de seguridad es el criterio de reproducibilidad (P7)
+
+Que las cifras cuadren hoy no prueba que el sistema sea reproducible. Lo que lo
+prueba es **poder reconstruirlo y demostrar que el resultado es el mismo**, y eso
+es lo que hace la copia de seguridad desde E11:
+
+1. El ZIP lleva **todas** las tablas del cliente —el inventario se deriva del
+   esquema, no de una lista que alguien mantenga—, con los tipos **explícitos**
+   (nada de adivinar que la cuenta `0400` es el número 400), las tasas de cambio
+   referenciadas y los ficheros por su `sha256`.
+2. El manifest se sella en forma canónica y se **firma** (HMAC con un `keyId`
+   rotable). Se verifica **antes de descomprimir un byte**: firma inválida o
+   formato distinto, rechazo con motivo y la organización de destino queda vacía.
+3. Restaurar es **siempre a una organización nueva**. La de origen no se toca,
+   nunca. Una sola fila rechazada aborta el trabajo entero, con tabla, número de
+   línea y motivo.
+4. Y entonces se **comprueban seis cosas**, no tres: los recuentos tabla a tabla
+   con igualdad exacta; la numeración por ejercicio **sin huecos ni duplicados**
+   y las series de facturación; **todos** los sellos derivados recomputados sobre
+   una lista que sale del código; el recuento y la huella del registro de
+   auditoría; los tres sellos de contenido y el estado del cierre; y el barrido
+   completo de las nueve familias de invariantes **enfrentado al del origen**.
+
+Esa última palabra importa: fidelidad es **destino ≡ origen**, no «destino
+perfecto». Una copia fiel de una organización que ya tenía un invariante en rojo
+se verifica; lo que no se verifica es una copia que cambia algo. Sólo con las
+seis en verde el trabajo queda en `DONE`; si falta una, `DONE_UNVERIFIED`, la
+organización se **conserva** como evidencia y `I-E11-2` lo lee como el fallo que
+es. Nadie que filtre por «lista» puede leer como buena una copia sin verificar.
 
 ---
 

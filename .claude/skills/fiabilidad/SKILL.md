@@ -372,6 +372,27 @@ Código cerrado. Los compone `platformSealReasons()` **a partir de los datos**.
 | `RESTAURACION_SIN_VERIFICAR` | O-2 | Hay una restauración en `DONE_UNVERIFIED`: la organización se conserva como evidencia y **no acredita** reproducibilidad |
 | `COPIA_SIN_VERIFICAR` | §5.4.2 | Una copia emitida cuyo manifest no valida contra su firma |
 
+### Lo que NO viaja en la copia del cliente
+
+El inventario se deriva de `BACKUP_TENANT_MODELS` = `TENANT_MODELS` ∪
+`TENANT_MODELS_WITH_GLOBAL` − `PLATFORM_ONLY_TABLES`, y las cuatro exclusiones
+están **declaradas con motivo** porque no son datos del cliente:
+`platform_audit_logs`, `platform_invoices` (serie correlativa **global**:
+duplicar `(serie, número)` al restaurar falsificaría nuestra numeración,
+art. 28.2 CCom), `subscriptions` (`organization_id` UNIQUE; el destino nace con
+la suya) y `subscription_events` (`stripe_event_id` UNIQUE global). I-E11-7 falla
+si alguna exclusión pierde su motivo, si deja de existir, o si las **dos fuentes
+del esquema** —el cliente Prisma generado e `information_schema`— no dicen lo
+mismo.
+
+### La familia `PLATAFORMA` no cierra la puerta del ejercicio
+
+`INVARIANTES_PASS` del checklist de cierre **filtra los `I-E11-*`**. Cerrar el
+ejercicio es el hecho contable por excelencia y ningún asunto de plataforma —una
+suscripción que falta, una siembra incompleta, una copia sin verificar— puede
+impedirlo: es la misma regla que ADR-0019 **D7** aplica a las cuotas. La familia
+conserva su tarjeta en `/audit` y su motivo de sello, que es donde debe pesar.
+
 ### La comprobación 6 es RELATIVA, no absoluta
 
 Fidelidad es **destino ≡ origen**, no «destino perfecto». El manifest lleva la
