@@ -5,6 +5,7 @@ import { isPasswordTooObvious, setInvitedPasswordFormSchema } from "@/forms/auth
 import { ActionState } from "@/lib/actions"
 import { getSession } from "@/lib/auth"
 import { hasPassword, setUserPassword } from "@/lib/auth-password"
+import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
 import { setActiveOrg } from "@/lib/authz"
 import {
   INVITE_ATTEMPT_LIMIT,
@@ -12,7 +13,7 @@ import {
   consumeRateLimit,
   pruneRateLimitBuckets,
 } from "@/lib/rate-limit"
-import { tenantDb } from "@/lib/db"
+import { tenantDb, tenantTransaction } from "@/lib/db"
 import { recordAuditLog } from "@/models/audit-log"
 import {
   acceptInvitation,
@@ -203,6 +204,25 @@ export async function acceptInvitationAction(token: string): Promise<ActionState
       success: false,
       error: "Esta invitación es para otra dirección de correo. Entra con la dirección a la que se envió.",
     }
+  }
+
+  /**
+   * **Revisor BLOQUEA 2 — `maxMembers` se REVALIDA al aceptar.**
+   *
+   * §3.5 lo dice con todas las letras: «la invitación pudo emitirse hace un
+   * mes». Entre la invitación y la aceptación el plan puede haber cambiado, o
+   * pueden haber entrado otras personas; comprobarlo sólo al invitar deja el
+   * techo abierto. Si rechaza, el mensaje es el del plan, en español y con la
+   * cifra concreta: la invitación sigue viva y basta con liberar una plaza o
+   * cambiar de plan.
+   */
+  try {
+    await tenantTransaction(invitation.organizationId, async (tx) => {
+      await assertWithinLimit(tx, "maxMembers", BigInt(1), { refDate: now })
+    })
+  } catch (error) {
+    if (error instanceof LimitExceededError) return { success: false, error: error.message }
+    throw error
   }
 
   await acceptInvitation(invitation, session.user.id, now)

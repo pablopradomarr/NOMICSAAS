@@ -555,21 +555,29 @@ export async function createDemoOrganization(
 ): Promise<DemoResult> {
   const name = `Demo — ${sourceOrganizationName}`.slice(0, 120)
 
+  /**
+   * **Auditor H-3 (BLOQUEANTE) — `isDemo` va en el INSERT.**
+   *
+   * La ronda anterior creaba la organización y **después** hacía
+   * `UPDATE organizations SET is_demo = true`, que choca con el CHECK de
+   * inmutabilidad **también en la dirección `f → t`**: `23514`, «La marca de
+   * demo de una organización es inmutable (O-6)». Resultado: la demo no se podía
+   * crear jamás y el asistente devolvía siempre «No se han podido cargar los
+   * datos de demostración». El comentario del propio código describía la
+   * solución correcta —«la demo se marca ANTES de tener una sola fila»— y el
+   * código hacía lo contrario.
+   */
   const organization = await createOrganizationWithOwner(
-    { name, pgcVariant: PgcVariant.PYMES, baseCurrency: "EUR" },
+    { name, pgcVariant: PgcVariant.PYMES, baseCurrency: "EUR", isDemo: true },
     ownerUserId,
     now,
-    {
-      seed: async (organizationId) => {
-        // La demo se marca ANTES de tener una sola fila: `isDemo` es inmutable, así
-        // que no hay una segunda oportunidad de ponerlo.
-        await withTenantGucs(organizationId, ownerUserId, async (tx) => {
-          await tx.$executeRaw`UPDATE organizations SET is_demo = true WHERE id = ${organizationId}::uuid`
-        })
-      },
-      transaction: SEED_TRANSACTION_OPTIONS,
-    }
+    { transaction: SEED_TRANSACTION_OPTIONS }
   )
+  if (!organization.isDemo) {
+    throw new OnboardingError(
+      "La organización de demostración no ha nacido marcada como demo: se aborta antes de cargar nada en ella."
+    )
+  }
 
   // El cargador vive en `scripts/` y arrastra los fixtures: import dinámico para
   // no meterlo en el bundle de la aplicación. Si no está disponible (despliegue

@@ -8,7 +8,11 @@
  *    cuando hay RECC), el puente al 111/115 (I-E8-17), la métrica de calidad
  *    I-E8-7b, los **I-E9-1…26** de cierre y recurrentes (familia `CIERRE`, con
  *    1a/1b, 8a′ y 10b) y —desde E10— los **I-E10-1…18** de presupuesto y horas
- *    (familia `PRESUPUESTO`, con los drivers de actividad y el cuarto sello):
+ *    (familia `PRESUPUESTO`, con los drivers de actividad y el cuarto sello) y
+ *    —desde E11— los **I-E11-1…13** de plataforma (familia `PLATAFORMA`: uso
+ *    derivado contra la Σ real, cuotas, integridad y firma de las copias,
+ *    fidelidad de la restauración, bytes del almacén, cobertura del backup,
+ *    aislamiento, webhook, siembra, retención, reloj y nuestra serie):
  *    `models/ledger.runLedgerInvariants(--org)`, que corre acotado al tenant
  *    (`app_runtime` vía `DATABASE_URL`) y usa el motor puro de
  *    `lib/ledger/invariants.ts`. Ya no hay «PENDING»: si un invariante no se
@@ -55,14 +59,19 @@
  * `PRESUPUESTO_AUSENTE`, `HORAS_SIN_APROBAR`, `PLANTILLA_AUSENTE` y
  * `TARIFA_AUSENTE`), que compone `budgetSealReasons()` a partir de los datos.
  * `PRESUPUESTO_NO_SELLADO` **no existe**: EV-14 se retiró (O-E10-5) y un
- * borrador no produce un `ReportRun`, así que es un rechazo, no un motivo.
+ * borrador no produce un `ReportRun`, así que es un rechazo, no un motivo. Y
+ * desde E11 los **cuatro de plataforma** (`CUOTA_DE_ASIENTOS_SUPERADA`,
+ * `CUOTA_DE_ALMACEN_SUPERADA_EN_MORA`, `RESTAURACION_SIN_VERIFICAR` y
+ * `COPIA_SIN_VERIFICAR`), que compone `platformSealReasons()` a partir de los
+ * datos: la cuota blanda **no rechaza un asiento** (D7), pero tampoco deja
+ * firmar «VALIDADO AUTOMÁTICAMENTE» un periodo con la plataforma en aviso.
  *
  * La salida agrupa cada check por su **familia** (`lib/audit/families.ts`), de
- * modo que los I-E9-* se leen juntos bajo `CIERRE` y los I-E10-* bajo
- * `PRESUPUESTO`, en vez de mezclados con el resto: un cierre —o un presupuesto—
+ * modo que los I-E9-* se leen juntos bajo `CIERRE`, los I-E10-* bajo
+ * `PRESUPUESTO` y los I-E11-* bajo `PLATAFORMA`, en vez de mezclados con el resto: un cierre —o un presupuesto—
  * con un invariante en FAIL no puede pasar desapercibido entre cuarenta líneas.
  * Y una familia **sin evaluar** sale `SIN_EVALUAR`, jamás en verde: por eso las
- * nueve se imprimen siempre, aunque no tengan ni un check.
+ * diez se imprimen siempre, aunque no tengan ni un check.
  */
 import { withMaintenanceClient } from "@/lib/db-maintenance"
 import { randomUUID } from "node:crypto"

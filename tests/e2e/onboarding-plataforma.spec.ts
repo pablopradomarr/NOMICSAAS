@@ -466,10 +466,20 @@ test("restaurar esa copia crea una organización NUEVA y la verificación pasa",
   await expect(resultado).toBeVisible({ timeout: 240_000 })
   await expect(resultado.locator("[data-status]")).toHaveAttribute("data-status", "DONE")
 
+  // **Revisor DEBE 5.** Las seis se pintan AHORA de verdad: la ronda anterior
+  // leía `{ key, label, ok, detail }` y `verifyRestore` produce
+  // `{ id, status, title, evidence }`, de modo que `readChecks` las descartaba
+  // todas y esta lista salía vacía —el `if (count > 0)` dejaba pasar el test
+  // sin comprobar nada—. Ya no: se exige que estén las SEIS, en PASS y con su
+  // evidencia enfrentada origen↔destino a la vista.
   for (const check of ["RECUENTOS", "NUMERACION", "SELLOS_DERIVADOS", "AUDIT_LOG", "SELLOS_Y_CIERRE", "BARRIDO_INVARIANTES"]) {
     const fila = page.getByTestId(`restore-check-${check}`)
-    if ((await fila.count()) > 0) await expect(fila).toHaveAttribute("data-ok", "true")
+    await expect(fila, `la comprobación ${check} no se pinta`).toHaveCount(1)
+    await expect(fila).toHaveAttribute("data-ok", "true")
+    await expect(fila).toHaveAttribute("data-check-status", "PASS")
   }
+  // Y la evidencia enfrentada, no sólo el ✓: al menos una línea «origen … destino».
+  await expect(page.getByTestId("restore-check-RECUENTOS")).toContainText("origen")
 
   // La organización de origen **no se ha tocado** y la nueva existe.
   const nuevas = await withDb(async (client) =>

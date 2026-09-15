@@ -365,6 +365,55 @@ export async function loadFixtureIntoOrg(opts: LoadFixtureOptions): Promise<Load
  * es exactamente el caso para el que ese rol existe —un script de operador—, y
  * la aplicación web sigue sin poder borrar un asiento por ningún camino.
  */
+/**
+ * **QA BUG-E11-2** — las tablas de E11 que `--reset-org` vacía, en orden de FK.
+ *
+ * Exportadas para que un test pueda DERIVAR la lista de `TENANT_MODELS` y
+ * comprobar que no falta ninguna: la causa de que este bug se repita cada épica
+ * es que la lista se escribe a mano y nadie la enfrenta al esquema.
+ */
+export const E11_RESET_TABLES: readonly string[] = [
+  "restore_jobs",
+  "backup_jobs",
+  "stored_objects",
+  "usage_runs",
+  "onboarding_runs",
+]
+
+/**
+ * Tablas de tenant que `--reset-org` **conserva a propósito**, con su motivo.
+ *
+ * Un reset vacía los LIBROS de la organización, no su configuración ni su
+ * relación con la plataforma. El test que deriva la lista del esquema resta
+ * estas dos cosas —lo preservado y lo que se borra— y exige que no sobre nada:
+ * una tabla de tenant nueva o se vacía o se declara aquí.
+ */
+export const RESET_ORG_PRESERVED: readonly { table: string; reason: string }[] = [
+  { table: "settings", reason: "configuración de la organización, no datos de la prueba" },
+  { table: "categories", reason: "semilla heredada, idempotente" },
+  { table: "fields", reason: "semilla heredada, idempotente" },
+  { table: "currencies", reason: "semilla heredada (177 filas), idempotente y cara de rehacer" },
+  { table: "app_data", reason: "preferencias de aplicación por usuario" },
+  { table: "progress", reason: "barras de progreso efímeras" },
+  { table: "memberships", reason: "quién pertenece a la organización: vaciarlo la dejaría sin dueño" },
+  { table: "invitations", reason: "invitaciones vivas: no son datos contables" },
+  { table: "accounts", reason: "plan de cuentas (LedgerAccount): `importNpgc` ya es idempotente y rehacerlo cuesta 906 filas" },
+  { table: "organization_account_maps", reason: "mapa de cuentas de sistema, semilla idempotente" },
+  { table: "tax_rates", reason: "tipos impositivos, semilla idempotente" },
+  { table: "audit_logs", reason: "append-only por RLS: la traza de lo que se hizo no se borra (P6)" },
+  { table: "invoice_series", reason: "contadores de numeración sembrados a 0 (D-2)" },
+  { table: "counterparties", reason: "terceros: semilla del fixture, idempotente por NIF" },
+  { table: "prompt_versions", reason: "versiones de prompt: catálogo de la organización" },
+  { table: "report_runs", reason: "se vacía con `invariant_runs` sólo si el fixture lo pide; no ata al diario" },
+  { table: "manual_review_flags", reason: "marcas de revisión: no atan al diario" },
+  { table: "subscriptions", reason: "toda organización tiene que conservar la suya (I-E11-5)" },
+  { table: "subscription_events", reason: "append-only: es la historia de la suscripción (I-E11-9)" },
+  {
+    table: "platform_invoices",
+    reason: "son NUESTRAS facturas emitidas, sujetas a conservación (O-11, art. 165.Uno LIVA)",
+  },
+]
+
 export async function resetOrganizationLedger(organizationId: string, _userId?: string): Promise<void> {
   const url = process.env.DATABASE_URL_MAINTENANCE
   if (!url) {
@@ -538,6 +587,28 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
       "headcount_snapshots",
       "employees",
     ]) {
+      await client.query(`DELETE FROM ${table} WHERE organization_id = $1::uuid`, [organizationId])
+    }
+    // **QA BUG-E11-2** — las tablas de E11, que `--reset-org` no conocía. Es el
+    // mismo fallo de BUG-E7-1 / BUG-E9-5 / BUG-E10-1 por cuarta vez: la épica
+    // añade tablas de tenant y el vaciado no se entera, de modo que las copias,
+    // los objetos de almacén y el uso de una prueba sobreviven a la siguiente.
+    //
+    // Orden de FK, estricto:
+    //  · `restore_jobs.backup_job_id → backup_jobs` (SetNull, pero se borra
+    //    antes igualmente: un trabajo de restauración huérfano no dice nada);
+    //  · `stored_objects` DESPUÉS de `files` —que ya se ha vaciado arriba—,
+    //    porque la correspondencia `File ↔ objeto` la mira I-E11-6 y dejar el
+    //    objeto sin su fichero es justo el estado que el invariante denuncia;
+    //  · `onboarding_runs.demo_organization_id` no ata a nada de esta
+    //    organización.
+    //
+    // Lo que **NO** se vacía, y está declarado en `RESET_ORG_PRESERVED` con su
+    // motivo: `subscriptions` (toda organización tiene que conservar la suya,
+    // I-E11-5), `subscription_events` (append-only, es su historia) y
+    // `platform_invoices` (son NUESTRAS facturas emitidas, sujetas a
+    // conservación —O-11, art. 165.Uno LIVA—, no datos de la prueba).
+    for (const table of E11_RESET_TABLES) {
       await client.query(`DELETE FROM ${table} WHERE organization_id = $1::uuid`, [organizationId])
     }
     await client.query(`DELETE FROM period_locks WHERE organization_id = $1::uuid`, [organizationId])

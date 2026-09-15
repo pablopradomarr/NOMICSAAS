@@ -28,6 +28,12 @@ import {
   type BudgetInvariantInput,
   type E10SealReason,
 } from "@/lib/budget/invariants-e10"
+import {
+  E11_SEAL_REASON_TEXT,
+  runPlatformInvariants,
+  type E11SealReason,
+  type PlatformInvariantInput,
+} from "@/lib/ledger/invariants-e11"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HASH_VERSION, HashableLine, isHashVersion } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
@@ -110,6 +116,15 @@ export type InvariantInput = {
    */
   budget?: BudgetInvariantInput["budget"]
   time?: BudgetInvariantInput["time"]
+  /**
+   * E11 · T20: bloque de **plataforma** (I-E11-1…13, familia `PLATAFORMA`).
+   * Opcional como los anteriores, pero con una diferencia de contrato: cuando
+   * llega **salen los trece**, y lo que no se pueda evaluar sale `INFO`
+   * diciendo qué falta. Es la corrección del H-1 del auditor de E11 —los trece
+   * eran prosa y ningún id `I-E11-*` aparecía en el barrido— y la tercera vez
+   * que la misma lección se paga (H-1 de E9, H-1 de E10).
+   */
+  platform?: PlatformInvariantInput
   /** Moneda base, que I-E8-19 necesita para saber qué es «divisa». */
   baseCurrency?: string
 }
@@ -575,6 +590,10 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
       // el de horas o los dos. Sin ninguno de los dos no se evalúan: una
       // organización sin presupuesto ni partes no ve dieciocho INFO inútiles.
       ...(input.budget || input.time ? runBudgetInvariants({ budget: input.budget, time: input.time }) : []),
+      // E11 · §11: I-E11-1…13 (familia `PLATAFORMA`). Con el bloque salen los
+      // TRECE; sin él no se evalúa ninguno, porque una cabecera de informe no
+      // paga por leer suscripciones, copias y objetos de almacén.
+      ...(input.platform ? runPlatformInvariants(input.platform) : []),
     ],
   }
 }
@@ -607,6 +626,7 @@ export type SealReasonKind =
   | "DOCUMENTO"
   | "CIERRE"
   | "PRESUPUESTO"
+  | "PLATAFORMA"
 
 /**
  * E8 · ADR-0014 D7 — los **seis motivos de sello** que aporta el camino
@@ -696,6 +716,16 @@ export type SealOptions = {
    * EV-14 se retiró (O-E10-5) y un borrador no produce un `ReportRun`.
    */
   budgetReasons?: readonly E10SealReason[]
+  /**
+   * E11 (§3.5, §5.4): los **cuatro motivos** de la plataforma
+   * —`CUOTA_DE_ASIENTOS_SUPERADA`, `CUOTA_DE_ALMACEN_SUPERADA_EN_MORA`,
+   * `RESTAURACION_SIN_VERIFICAR` y `COPIA_SIN_VERIFICAR`—. Los compone
+   * `platformSealReasons()` **a partir de los datos**, mismo patrón que los seis
+   * de E8, los diez de E9 y los cinco de E10. Que la cuota blanda selle el
+   * periodo con motivo es justo lo que O-3 exige: **nunca un asiento rechazado,
+   * pero tampoco un silencio**.
+   */
+  platformReasons?: readonly E11SealReason[]
 }
 
 /**
@@ -752,6 +782,9 @@ export function seal(validacion: Validacion, opts: SealOptions): Seal {
   }
   for (const code of [...new Set(opts.budgetReasons ?? [])].sort()) {
     razones.push({ kind: "PRESUPUESTO", code, message: `${code} · ${E10_SEAL_REASON_TEXT[code]}` })
+  }
+  for (const code of [...new Set(opts.platformReasons ?? [])].sort()) {
+    razones.push({ kind: "PLATAFORMA", code, message: `${code} · ${E11_SEAL_REASON_TEXT[code]}` })
   }
 
   const motivos = razones.map((r) => r.message)
@@ -893,3 +926,17 @@ export type {
 /** E6 — invariantes de los estados financieros, desde el mismo módulo. */
 export { checkI2, checkI3, checkIE613, runReportInvariants } from "@/lib/ledger/reports/invariants-e6"
 export type { ReportsInvariantInput } from "@/lib/ledger/reports/invariants-e6"
+
+/**
+ * E11 · T20 — re-exportados para que el borde no tenga que importar dos módulos
+ * (mismo patrón que E9 y E10).
+ */
+export {
+  E11_INVARIANT_IDS,
+  E11_SEAL_REASONS,
+  E11_SEAL_REASON_TEXT,
+  isE11SealReason,
+  platformSealReasons,
+  runPlatformInvariants,
+} from "@/lib/ledger/invariants-e11"
+export type { E11SealReason, PlatformInvariantInput } from "@/lib/ledger/invariants-e11"

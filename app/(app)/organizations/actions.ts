@@ -4,7 +4,10 @@ import { createOrganizationFormSchema, switchOrganizationSchema } from "@/forms/
 import { ActionState } from "@/lib/actions"
 import { getCurrentUser } from "@/lib/auth"
 import { setActiveOrg } from "@/lib/authz"
+import { tenantTransaction } from "@/lib/db"
 import { createOrganizationWithSeed } from "@/models/onboarding"
+import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
+import { getUserMemberships } from "@/models/memberships"
 import { Organization } from "@/prisma/client"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
@@ -62,6 +65,39 @@ export async function createOrganizationAction(
   // más tarde o no nacían: el ejercicio provisional, las dos series de
   // facturación con el contador a cero y el `OnboardingRun`. Quien abandonaba el
   // alta a medias dejaba el invariante fallando con datos limpios (O-7a/b).
+  /**
+   * **Revisor BLOQUEA 2 — `maxOrganizations` no se aplicaba en ningún sitio.**
+   *
+   * La cuota se cuenta **contra el USUARIO** (§3.5) y una organización `isDemo`
+   * **no cuenta** (O-6). Dos consecuencias de diseño que se escriben aquí:
+   *
+   *  · el plan que manda es el de la organización **más antigua** del usuario,
+   *    que es la que sostiene su relación con la plataforma; sin ninguna, no hay
+   *    plan que consultar y **no puede haber techo**: nadie puede quedarse sin
+   *    poder crear su primera organización por una fila de facturación;
+   *  · el guardián corre **antes** de la transacción de alta, en la suya: si
+   *    rechaza, no queda ni una fila a medias.
+   */
+  try {
+    // Las que cuentan: las suyas, **sin las de demostración** (O-6). El orden
+    // por antigüedad decide de qué organización sale el plan.
+    const existentes = (await getUserMemberships(user.id))
+      .map((membership) => membership.organization)
+      .filter((organization) => !organization.isDemo)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    if (existentes.length > 0) {
+      await tenantTransaction(existentes[0].id, async (tx) => {
+        await assertWithinLimit(tx, "maxOrganizations", BigInt(1), {
+          refDate: now,
+          organizationsOfUser: BigInt(existentes.length),
+        })
+      })
+    }
+  } catch (error) {
+    if (error instanceof LimitExceededError) return { success: false, error: error.message }
+    throw error
+  }
+
   let organization: Organization
   try {
     ;({ organization } = await createOrganizationWithSeed(

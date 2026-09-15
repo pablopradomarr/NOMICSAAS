@@ -116,9 +116,16 @@ export default tenantPage(
 )
 
 /**
- * `restoreVerification.json` lo escribe la ola B (T9). Se lee **a la defensiva**:
- * lo que no venga no se pinta en verde, se omite. Nunca un ✓ que no se haya
- * comprobado.
+ * `restoreVerification.json` lo escribe `verifyRestore`, y su forma es
+ * `CheckResult = { id, status, title, evidence, note }` (`lib/platform/backup.ts`).
+ *
+ * **Revisor DEBE 5.** Esta función leía `{ key, label, ok, detail }` y
+ * descartaba todo lo que no lo tuviera: **las seis comprobaciones no se pintaban
+ * jamás**. Ahora lee la forma real y trae la evidencia enfrentada
+ * origen↔destino, que es lo que D2.7 pide que esté a la vista.
+ *
+ * Se sigue leyendo **a la defensiva** y con la misma regla: lo que no venga no
+ * se pinta en verde. Un `INFO` no es un ✓.
  */
 function readChecks(verification: unknown): RestoreCheckView[] {
   if (!verification || typeof verification !== "object") return []
@@ -126,14 +133,32 @@ function readChecks(verification: unknown): RestoreCheckView[] {
   if (!Array.isArray(checks)) return []
   return checks.flatMap((raw): RestoreCheckView[] => {
     if (!raw || typeof raw !== "object") return []
-    const entry = raw as { key?: unknown; label?: unknown; ok?: unknown; detail?: unknown }
-    if (typeof entry.key !== "string") return []
+    const entry = raw as { id?: unknown; status?: unknown; title?: unknown; evidence?: unknown; note?: unknown }
+    if (typeof entry.id !== "string") return []
+    const status = entry.status === "PASS" || entry.status === "FAIL" || entry.status === "INFO" ? entry.status : "INFO"
+    const evidence = Array.isArray(entry.evidence)
+      ? entry.evidence.flatMap((row): RestoreCheckView["evidence"] => {
+          if (!row || typeof row !== "object") return []
+          const line = row as { label?: unknown; expected?: unknown; actual?: unknown; ok?: unknown }
+          if (typeof line.label !== "string") return []
+          return [
+            {
+              label: line.label,
+              expected: typeof line.expected === "string" ? line.expected : "—",
+              actual: typeof line.actual === "string" ? line.actual : "—",
+              ok: line.ok === true,
+            },
+          ]
+        })
+      : []
     return [
       {
-        key: entry.key,
-        label: typeof entry.label === "string" ? entry.label : entry.key,
-        ok: entry.ok === true,
-        detail: typeof entry.detail === "string" ? entry.detail : null,
+        key: entry.id,
+        label: typeof entry.title === "string" ? entry.title : entry.id,
+        status,
+        ok: status === "PASS",
+        detail: typeof entry.note === "string" ? entry.note : null,
+        evidence,
       },
     ]
   })

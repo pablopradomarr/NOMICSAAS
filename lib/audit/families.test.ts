@@ -45,18 +45,20 @@ describe("familyOf", () => {
   })
 
   it("un check nuevo sin clasificar cae en INTEGRIDAD **y se declara**", () => {
-    // El ejemplo era `I-E9-1` y luego `I-E10-1`; desde E10 esa familia existe
-    // (`PRESUPUESTO`), así que el «check nuevo» pasa a ser el de la épica
-    // siguiente. Lo que se comprueba —que un id sin tabla no desaparece del
-    // semáforo— no cambia.
-    expect(familyOf("I-E11-1")).toBe("INTEGRIDAD")
-    expect(isKnownCheckId("I-E11-1")).toBe(false)
-    expect(unknownCheckIds([check("I-E11-1", "PASS"), check("I1", "PASS")])).toEqual(["I-E11-1"])
-    // Y los I-E9-* y los I-E10-* ya tienen la suya.
+    // El ejemplo era `I-E9-1`, luego `I-E10-1` y luego `I-E11-1`; desde E11 esa
+    // familia existe también (`PLATAFORMA`, T20), así que el «check nuevo» pasa
+    // a ser el de la épica siguiente. Lo que se comprueba —que un id sin tabla
+    // no desaparece del semáforo— no cambia.
+    expect(familyOf("I-E12-1")).toBe("INTEGRIDAD")
+    expect(isKnownCheckId("I-E12-1")).toBe(false)
+    expect(unknownCheckIds([check("I-E12-1", "PASS"), check("I1", "PASS")])).toEqual(["I-E12-1"])
+    // Y los I-E9-*, los I-E10-* y los I-E11-* ya tienen la suya.
     expect(familyOf("I-E9-1a")).toBe("CIERRE")
     expect(isKnownCheckId("I-E9-16")).toBe(true)
     expect(familyOf("I-E10-17")).toBe("PRESUPUESTO")
     expect(isKnownCheckId("I-E10-1")).toBe(true)
+    expect(familyOf("I-E11-13")).toBe("PLATAFORMA")
+    expect(isKnownCheckId("I-E11-1")).toBe(true)
   })
 })
 

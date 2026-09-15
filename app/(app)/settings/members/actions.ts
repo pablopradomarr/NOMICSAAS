@@ -11,6 +11,8 @@ import { auth } from "@/lib/auth"
 import { logAuthEvent } from "@/lib/auth-log"
 import { checkAuthAttempt } from "@/lib/auth-rate-limit"
 import { clearActiveOrg, withOrg } from "@/lib/authz"
+import { tenantTransaction } from "@/lib/db"
+import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
 import config from "@/lib/config"
 import { sendOrganizationInviteEmail } from "@/lib/email"
 import { ROLE_LABELS } from "@/lib/organization-options"
@@ -56,6 +58,27 @@ export async function inviteMemberAction(
   }
 
   const email = normalizeInvitationEmail(validated.data.email)
+
+  /**
+   * **Revisor BLOQUEA 2 — `maxMembers` no se aplicaba en ningún sitio.**
+   *
+   * §3.5 declara las siete acciones de cuota dura «lista exhaustiva» y sólo
+   * cuatro estaban cableadas: `maxMembers` y `maxOrganizations` no se
+   * comprobaban en el servidor, de modo que el plan podía decir «2 miembros» y
+   * el producto admitir veinte. I-E11-4(c) —el test estático sobre el AST— falla
+   * en cuanto se escribe, que es exactamente para lo que existe.
+   *
+   * El `delta` es 1 y la invitación **cuenta al invitar** aunque `members` sólo
+   * mida las aceptadas (§3.4): no se promete una plaza que no existe.
+   */
+  try {
+    await tenantTransaction(org.id, async (tx) => {
+      await assertWithinLimit(tx, "maxMembers", BigInt(1), { refDate: new Date() })
+    })
+  } catch (error) {
+    if (error instanceof LimitExceededError) return { success: false, error: error.message }
+    throw error
+  }
 
   // ¿Ya es miembro? No se invita dos veces a la misma persona.
   const invitedUser = await getUserByEmail(email)

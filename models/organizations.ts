@@ -17,6 +17,13 @@ export type CreateOrganizationInput = {
   timezone?: string
   pgcVariant?: PgcVariant
   isPersonal?: boolean
+  /**
+   * **O-6 / auditor H-3.** `is_demo` es INMUTABLE por trigger, **también en
+   * `f → t`**: marcarla después del INSERT choca con el CHECK (`23514 — «La
+   * marca de demo de una organización es inmutable (O-6): f → t»`) y la demo no
+   * se podía crear nunca. La única oportunidad de ponerla es el propio INSERT.
+   */
+  isDemo?: boolean
 }
 
 /**
@@ -124,6 +131,9 @@ export async function createOrganizationWithOwner(
         timezone: input.timezone ?? "Europe/Madrid",
         pgcVariant: input.pgcVariant ?? PgcVariant.PYMES,
         isPersonal: input.isPersonal ?? false,
+        // La marca de demo va EN EL INSERT: es inmutable y no hay segunda
+        // oportunidad de ponerla (auditor H-3).
+        isDemo: input.isDemo ?? false,
       },
     })
 

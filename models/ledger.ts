@@ -48,6 +48,7 @@ import {
   E8_SEAL_REASONS,
   type E8SealReason,
   type E10SealReason,
+  type E11SealReason,
 } from "@/lib/ledger/invariants"
 import {
   contrastOf,
@@ -1170,10 +1171,33 @@ export async function postEntry(
       const checked = checkDraft(draft, ctx, opts.check ?? {})
       if (!checked.ok) abortWith(checked.errors)
     }
-    return await postEntryTx(tx, draft, actor, {
+    const posted = await postEntryTx(tx, draft, actor, {
       idempotencyKey: opts.idempotencyKey ?? null,
       ...(opts.check?.closedProjectOverride ? { closedProjectOverride: opts.check.closedProjectOverride } : {}),
     })
+    /**
+     * **E11 · §3.5 · auditor H-5 — la cuota BLANDA, después de postear.**
+     *
+     * `checkSoftEntries` era código muerto: nada de §3.5 ocurría. Se cablea
+     * aquí, y **sólo aquí**, con tres propiedades que son el contrato de O-3 y
+     * de ADR-0019 D7:
+     *
+     *  · va **después** del asiento, no antes: el hecho contable ya ha ocurrido
+     *    y ningún límite de plan puede impedir registrarlo;
+     *  · **no lanza nunca** (`noteSoftEntryQuota` captura y sigue), de modo que
+     *    ni un fallo del guardián puede tumbar un posteo;
+     *  · con `softMaxEntriesMonth = -1` —el plan `ILIMITADO` del modo INTERNO—
+     *    sale sin tocar la base, así que el camino caliente no paga nada.
+     *
+     * Lo que sí produce: el `PlatformAuditLog` de excepción **automática** que
+     * I-E11-4(b) exige, el WARN de la familia `PLATAFORMA` en `/audit` y el
+     * motivo `CUOTA_DE_ASIENTOS_SUPERADA` en el sello del periodo.
+     */
+    if (!opts.skipCheck) {
+      const { noteSoftEntryQuota } = await import("@/models/platform-limits")
+      await noteSoftEntryQuota(tx, { refDate: toUtcDate(opts.refDate) })
+    }
+    return posted
   })
 }
 
@@ -2043,6 +2067,8 @@ export async function runLedgerInvariants(
     let analyticsKeyForRun = analyticsKeyOf({})
     /** E10 · ADR-0018 D5: los cinco motivos de sello de la familia PRESUPUESTO. */
     let budgetSealReasonCodes: readonly E10SealReason[] = []
+    /** E11 · §3.5/§5.4: los cuatro motivos de sello de la familia PLATAFORMA. */
+    let platformSealReasonCodes: readonly E11SealReason[] = []
 
     if (total > MAX_MATERIALIZED_ENTRIES) {
       origen = "sql"
@@ -2217,6 +2243,29 @@ export async function runLedgerInvariants(
         })
       }
 
+      // ── E11 · T20 · auditor H-1 · el bloque `platform` ───────────────────
+      //
+      // Tercera vez que la misma lección se paga: los trece `I-E11-*` estaban
+      // escritos en §11 y **nadie los ejecutaba** —el barrido completo con
+      // `audit: true` devolvía 43 checks y ninguno `I-E11-*`—, exactamente como
+      // el bloque `closing` de E9 (H-2) y los bloques `budget`/`time` de E10
+      // (H-1). Sin esto, el uso derivado, las cuotas, la cobertura del backup,
+      // la retención, la serie de plataforma y la idempotencia del reloj **no
+      // los vigila nadie**.
+      //
+      // Se lee **sólo en el barrido de auditoría**, pero SIN exigir ejercicio en
+      // el alcance, a diferencia de los de E9 y E10: los invariantes de
+      // plataforma son de la ORGANIZACIÓN —su suscripción, sus copias, su
+      // almacén—, no de un ejercicio, y condicionarlos a uno los habría dejado
+      // sin evaluar en el barrido más habitual.
+      let platformBlock: Awaited<
+        ReturnType<typeof import("@/models/platform-invariants").readPlatformInvariantInput>
+      > | null = null
+      if (withAudit) {
+        const { readPlatformInvariantInput } = await import("@/models/platform-invariants")
+        platformBlock = await readPlatformInvariantInput(tx, { refDate: toUtcDate(opts.refDate) })
+      }
+
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),
         gitSha,
@@ -2255,8 +2304,12 @@ export async function runLedgerInvariants(
         // falta (contrato de `runBudgetInvariants`).
         ...(budgetBlock.budget ? { budget: budgetBlock.budget } : {}),
         ...(budgetBlock.time ? { time: budgetBlock.time } : {}),
+        // E11 · §11: la familia `PLATAFORMA`. Con el bloque salen los TRECE; lo
+        // que no se pueda evaluar sale INFO diciendo qué falta.
+        ...(platformBlock ? { platform: platformBlock.platform } : {}),
       }
       budgetSealReasonCodes = budgetBlock.sealReasons
+      platformSealReasonCodes = platformBlock?.sealReasons ?? []
       validacion = runInvariantsPure(input, opts.refDate)
 
       // I1 e I7 los manda el agregado SQL: ve las MISMAS filas que la BD, no una
@@ -2316,6 +2369,11 @@ export async function runLedgerInvariants(
       // ejercicio sin versión vigente o con horas sin aprobar se firmaba
       // «VALIDADO AUTOMÁTICAMENTE».
       ...(budgetSealReasonCodes.length > 0 ? { budgetReasons: budgetSealReasonCodes } : {}),
+      // E11 · T20: la cuota blanda superada, la restauración sin verificar y la
+      // copia sin firma válida sellan el periodo con motivo. **Nunca rechazan un
+      // asiento** (D7): lo que hacen es impedir que se firme «VALIDADO
+      // AUTOMÁTICAMENTE» un periodo con la plataforma en aviso.
+      ...(platformSealReasonCodes.length > 0 ? { platformReasons: platformSealReasonCodes } : {}),
     })
 
     let persistedRunId: string | undefined

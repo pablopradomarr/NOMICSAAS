@@ -188,10 +188,18 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   // no las acota y una consulta fuera de `tenantDb` devuelve VACÍO en silencio.
   //
   // Lo que NO está, y es deliberado (§9.5): `plans` y `platform_invoice_series`
-  // son catálogo GLOBAL, y `cron_runs`, `rate_limit_buckets` y
-  // `platform_audit_logs` no llevan `organization_id` — si estuvieran, `tenantDb`
-  // les inyectaría un filtro por una columna inexistente y toda lectura fallaría
-  // (el aviso que ADR-0014 D7 dejó escrito).
+  // son catálogo GLOBAL, y `cron_runs` y `rate_limit_buckets` no llevan
+  // `organization_id` — si estuvieran, `tenantDb` les inyectaría un filtro por
+  // una columna inexistente y toda lectura fallaría (el aviso que ADR-0014 D7
+  // dejó escrito).
+  //
+  // **Corrección del H-8 del auditor de E11**: la ronda anterior afirmaba aquí
+  // que `platform_audit_logs` «no lleva organization_id». **Sí lo lleva** (es
+  // anulable, y hay índice `(organization_id, at DESC)`). No está en
+  // `TENANT_MODELS` por otra razón, la correcta: es el registro de **nuestra**
+  // plataforma, no datos del cliente, y sus filas con `organization_id = NULL`
+  // —las que no son de ninguna organización— desaparecerían tras el filtro. Va
+  // declarada en `PLATFORM_ONLY_TABLES`, que es donde I-E11-7 la lee.
   "Subscription",
   "SubscriptionEvent",
   "PlatformInvoice",
@@ -253,6 +261,80 @@ export function prismaSchemaMeta(): readonly SchemaModelMeta[] {
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */
 export const TENANT_MODELS_WITH_GLOBAL: ReadonlySet<string> = new Set(["Currency"])
+
+/**
+ * Modelos que llevan `organization_id` pero **no entran en la copia del
+ * cliente**, derivado de `PLATFORM_ONLY_TABLES`. Se escribe por NOMBRE DE MODELO
+ * porque el inventario se compone de modelos, no de tablas.
+ */
+const BACKUP_EXCLUDED_MODELS: ReadonlySet<string> = new Set([
+  "PlatformAuditLog",
+  "PlatformInvoice",
+  "Subscription",
+  "SubscriptionEvent",
+])
+
+/**
+ * **E11 · ronda 1 · auditor H-2 (BLOQUEANTE)** — el conjunto del que se deriva
+ * el **inventario del backup**.
+ *
+ * No es `TENANT_MODELS`, y ésa era exactamente la grieta. `currencies` lleva
+ * `organization_id`, tiene `FORCE ROW LEVEL SECURITY` con política propia y la
+ * siembra le escribe **177 filas por organización**, pero vive en
+ * `TENANT_MODELS_WITH_GLOBAL` porque su lectura es híbrida (las del cliente ∪ el
+ * catálogo con `organization_id IS NULL`). Como el inventario se derivaba sólo
+ * de `TENANT_MODELS`, **no estaba en el ZIP**: 177 → 0 tras restaurar, con las
+ * seis comprobaciones en PASS y `verified = true`. Era BUG-E7-1 / BUG-E9-5 /
+ * BUG-E10-1 por cuarta vez.
+ *
+ * El volcado filtra por `organization_id = <la organización>`, así que el
+ * catálogo global **no** viaja en el ZIP —no es del cliente— y la restauración
+ * no lo duplica. Y `backupInventory` se alimenta de aquí, no de `TENANT_MODELS`.
+ */
+export const BACKUP_TENANT_MODELS: ReadonlySet<string> = new Set(
+  [...TENANT_MODELS, ...TENANT_MODELS_WITH_GLOBAL].filter(
+    (model) => !BACKUP_EXCLUDED_MODELS.has(model)
+  )
+)
+
+/**
+ * **Exclusiones DECLARADAS de I-E11-7.** Tablas con `organization_id` que no son
+ * datos del tenant y por tanto no entran en su copia.
+ *
+ * La lista es corta y tiene que seguir siéndolo: I-E11-7 falla si aparece en el
+ * esquema **cualquier** tabla con `organization_id` que no esté ni en el
+ * inventario ni aquí, y falla también si una exclusión declarada ya no existe.
+ * Añadir una entrada es una decisión que se escribe y se lee en `/audit`; no
+ * añadirla es lo que costó `currencies`.
+ */
+export const PLATFORM_ONLY_TABLES: readonly { table: string; reason: string }[] = [
+  {
+    table: "platform_audit_logs",
+    reason:
+      "registro de NUESTRA plataforma (append-only), no del cliente: sus filas sin organización se perderían " +
+      "al filtrar y su contenido no es portable con los libros de un tenant",
+  },
+  {
+    table: "platform_invoices",
+    reason:
+      "son NUESTRAS facturas emitidas, con una serie correlativa GLOBAL: restaurarlas en una organización " +
+      "nueva duplicaría (serie, número) y falsificaría nuestra numeración — I-E11-13 lo declararía duplicado " +
+      "y el art. 28.2 CCom lo prohíbe. El cliente conserva su copia en PDF (StoredObject PLATFORM_INVOICE)",
+  },
+  {
+    table: "subscriptions",
+    reason:
+      "la relación de facturación con la plataforma, no los libros del cliente: la organización de destino " +
+      "nace con la SUYA (D9) y `organization_id` es UNIQUE, así que copiarla sería imposible además de falso",
+  },
+  {
+    table: "subscription_events",
+    reason:
+      "historia de eventos de Stripe con `stripe_event_id` UNIQUE GLOBAL: copiarla a otra organización " +
+      "duplicaría el identificador del evento y rompería la idempotencia que I-E11-9 sostiene",
+  },
+]
+
 
 /**
  * **E8 — tablas de REFERENCIA global** (ADR-0014 D7). No tienen

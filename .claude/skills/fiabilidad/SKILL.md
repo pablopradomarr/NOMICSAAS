@@ -322,6 +322,65 @@ y `seal` y `sealReasons` dicen lo mismo).
 `PRESUPUESTO_NO_SELLADO` **no existe**: EV-14 se retiró (O-E10-5) y un borrador
 no produce un `ReportRun` —para eso está la previsualización—.
 
+## E11 · Plataforma — `I-E11-1…13` (familia `PLATAFORMA`)
+
+Los trece viven en `lib/ledger/invariants-e11.ts` (puros) y el bloque que los
+alimenta lo compone `models/platform-invariants.readPlatformInvariantInput`, en
+la misma transacción del barrido y **sólo con `audit: true`** — pero, a
+diferencia de los de E9 y E10, **sin exigir ejercicio en el alcance**: hablan de
+la ORGANIZACIÓN (su suscripción, sus copias, su almacén), no de un ejercicio.
+
+Es la **tercera** vez que se paga la misma lección. La ronda 1 de E11 los dejó
+escritos en el diseño y sin una línea de código: el barrido completo devolvía
+43 checks y **ninguno** `I-E11-*`, y la familia `PLATAFORMA` no existía ni en
+`CheckFamily` ni en el enum de base. Se define aquí, **una sola vez**, como los
+de E7–E10.
+
+| Id | Qué exige | Tolerancia |
+|---|---|---|
+| **I-E11-1** | **Uso derivado = Σ real.** Las seis cifras del `UsageRun` que el producto SERVIRÍA = el recuento hecho ahora sobre las fuentes, con las exclusiones de §3.4 (contra-asientos, asientos de sistema, `isDemo`), y su `sourceHash` = el vigente. Una caché falseada sin tocar `source_hash` es **FAIL**, no una caché caducada | 0 |
+| **I-E11-2** | **Restauración reproducible (P7).** Todo `RestoreJob` terminado, con las **seis** comprobaciones de §5.4 presentes y en PASS. `DONE_UNVERIFIED` es FAIL; `DONE` sin `verified`, también | 0 |
+| **I-E11-3** | **Manifest íntegro y firmado.** sha256 del manifest recomputado = `manifestSha256`, firma HMAC válida con su `keyId`, y sha256 de cada entrada = el del manifest. Completo en el barrido nocturno (con el ZIP a mano), **muestra** en el de petición, y lo no comprobado sale `INFO` diciéndolo | 0 |
+| **I-E11-4** | **Cuotas.** (a) ninguna cuota de recurso superada; (b) toda superación de la cuota **blanda** con su `PlatformAuditLog` de excepción **automática** (actor `motor`, nunca un operador: en E11 `/admin` es de sólo lectura); (c) **test estático sobre el AST**: las acciones que invocan `assertWithinLimit` son exactamente las **siete** de §3.5 y **ninguna acción de posteo** lo hace | 0 |
+| **I-E11-5** | **Estado ⇔ acceso.** El nivel efectivo = `accessLevelOf(...)`; ninguna organización **del alcance** sin `Subscription`, ninguna con dos. Acotado a las organizaciones barridas, **nunca a toda la base** | — |
+| **I-E11-6** | **Ficheros: `sha256` = almacén.** Para todo `StoredObject`, el almacén devuelve el mismo sha256 y tamaño; todo `File` tiene su objeto. Filtra por `kind`, no por prefijo (O-12c). La evidencia **declara** cuándo el sha256 viene del metadato que publica el propio almacén (`x-amz-meta-sha256`) y no de recomputarlo: una alteración que reescriba el metadato pasaría la comprobación superficial, y el barrido profundo descarga una muestra | 0 |
+| **I-E11-7** | **Cobertura del backup, FUERTE en las dos direcciones.** `TENANT_MODELS ∪ TENANT_MODELS_WITH_GLOBAL ⊆ inventario` **y** toda tabla del esquema con `organization_id` está en el inventario o en `PLATFORM_ONLY_TABLES` con su motivo escrito; `derivedSealColumns()` cubre toda columna-sello; toda tabla del inventario aparece en el manifest con su recuento. *La dirección débil sola era una tautología —el inventario se deriva del conjunto— y por eso `currencies` (177 filas por organización) se perdía en cada restauración con `verified = true`: BUG-E7-1/E9-5/E10-1 por cuarta vez* | — |
+| **I-E11-8** | **La plataforma no toca el diario del cliente.** Ningún `JournalEntry` referencia `PlatformInvoice`/`Subscription`/`BackupJob`; ningún `Transaction`, `ExtractionRun` ni `File` tiene por origen una `PlatformInvoice`; ninguna plantilla las nombra; y **CFOnomic no lleva su contabilidad en una «organización plataforma» con privilegios** (O-8) | 0 |
+| **I-E11-9** | **Webhook idempotente.** `stripeEventId` único y la cadena `statusBefore → statusAfter` sin hueco. En modo INTERNO (D9) sale `INFO`: no hay webhook | — |
+| **I-E11-10** | **Siembra completa — NUEVE piezas** (O-7c): plan postable · mapa con las claves obligatorias · **exactamente un** `FiscalYear` sin solape · series `ORDINARIA` y `RECTIFICATIVA` · 22 pares de reclasificación · `MarginLevelConfig` · `OnboardingRun` · `TaxRate` vigente de **IVA e IRPF** · **`Currency` de su `baseCurrency`** (y, si no es EUR, al menos una `ExchangeRate`: con RC-14 no podría convertir nada) | — |
+| **I-E11-11** | **Retención honrada.** Ningún `BackupJob` `DONE` con objeto vivo pasado su `expiresAt`; ninguno borrado antes de tiempo ni con un `RestoreJob` vivo; ningún objeto `PLATFORM_INVOICE` caducado (O-11: son nuestras facturas emitidas, art. 165.Uno LIVA) | — |
+| **I-E11-12** | **Cron idempotente y al día.** `(job, periodKey)` único; ningún job con la última ejecución más vieja que **dos cadencias** sin un `PARTIAL`/`FAILED` que lo explique; y **ninguna ocurrencia fechada por el instante de ejecución** en vez de por su periodo de devengo, ni en el futuro (O-13) | — |
+| **I-E11-13** | **Serie de plataforma (O-10).** Por serie: numeración correlativa **sin huecos ni duplicados**, `lastNumber` = la última emitida, `operationDate` **no decreciente** respecto del número, y toda factura con `rectifiesInvoiceId` en una serie `RECTIFICATIVA` sobre una existente. **Espejo exacto de I-E8-20**: es indefendible exigirle al cliente un rigor que no nos aplicamos | 0 |
+
+### Familia `PLATAFORMA` de la pestaña Auditoría
+
+Los trece entran en la familia **`PLATAFORMA`** de `lib/audit/families.ts` (y en
+el enum `check_family` de base, migración
+`20260928090000_e11_check_family_plataforma`), con la misma regla que las otras
+nueve: **una familia sin evaluar sale `SIN_EVALUAR`, jamás en verde**. Cuando el
+bloque llega **salen los trece**; lo que no se pueda evaluar sale `INFO`
+diciendo qué falta, nunca un PASS por vacuidad.
+
+### Motivos de sello que aporta la plataforma (E11, §3.5 y §5.4)
+
+Código cerrado. Los compone `platformSealReasons()` **a partir de los datos**.
+
+| Motivo | Origen | Qué dice |
+|---|---|---|
+| `CUOTA_DE_ASIENTOS_SUPERADA` | cuota blanda de §3.5 | Los asientos del mes superan `softMaxEntriesMonth`. **Nunca rechaza un asiento** (ADR-0019 D7): bloquea lo accesorio, avisa al 80 % y al 100 %, y sella el periodo con motivo |
+| `CUOTA_DE_ALMACEN_SUPERADA_EN_MORA` | O-16 | Se ha subido un justificante por encima de `maxStorageBytes` estando fuera de `FULL`: excepción **automática** registrada, porque subir el papel de un hecho ya ocurrido es parte del registro |
+| `RESTAURACION_SIN_VERIFICAR` | O-2 | Hay una restauración en `DONE_UNVERIFIED`: la organización se conserva como evidencia y **no acredita** reproducibilidad |
+| `COPIA_SIN_VERIFICAR` | §5.4.2 | Una copia emitida cuyo manifest no valida contra su firma |
+
+### La comprobación 6 es RELATIVA, no absoluta
+
+Fidelidad es **destino ≡ origen**, no «destino perfecto». El manifest lleva la
+foto del barrido en el origen (`sourceSweep`) y la comprobación 6 enfrenta los
+dos conjuntos de FAIL: una copia fiel de una organización que ya tenía `I8` en
+rojo **se verifica**. Exigir cero FAIL en términos absolutos condenaba a
+`DONE_UNVERIFIED` a toda organización con un invariante abierto, y mandaba una
+restauración buena a la etiqueta que I-E11-2 declara FAIL.
+
 ## Provenance por cifra
 ```json
 {"valor": 1245032, "moneda": "EUR", "metrica": "mc3.proyecto.P-2026-004", "run_id": "…", "ledgerHash": "…",

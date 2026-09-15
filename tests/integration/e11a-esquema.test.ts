@@ -267,13 +267,21 @@ describe("M4 · catálogo de planes", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("M4 · backfill y O-14", () => {
-  it("**I-E11-5** · ninguna organización se queda sin Subscription", async () => {
+  it("**I-E11-5** · ninguna organización anterior al backfill de M4 se quedó sin Subscription", async () => {
+    // **Revisor BLOQUEA 3.** Acotado a lo que M4 pudo tocar: las organizaciones
+    // que existían cuando la migración corrió. Las que crean después otros
+    // ficheros de la suite con `INSERT` directo se saltan la puerta de siembra
+    // —carencia del arnés, no del producto— y dejaban esta aserción en rojo en
+    // la suite completa aunque pasara aislada. El I-E11-5 real de T20 corre
+    // acotado a la organización barrida.
     const [fila] = await q<{ huerfanas: string }>(
       `SELECT count(*)::text AS huerfanas FROM organizations o
-        WHERE NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.organization_id = o.id)`
+        WHERE o.created_at < (
+                SELECT finished_at FROM _prisma_migrations
+                 WHERE migration_name LIKE '%e11_m4_backfill_suscripciones%' AND finished_at IS NOT NULL
+                 ORDER BY finished_at DESC LIMIT 1)
+          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.organization_id = o.id)`
     )
-    // La organización de este test la crea el propio `beforeAll` con su
-    // suscripción; cualquier otra viene del backfill de M4.
     expect(fila.huerfanas).toBe("0")
   })
 

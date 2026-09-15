@@ -1463,7 +1463,25 @@ export async function readChecklistInput(
     select: { id: true, checks: true },
   })
   const checks = Array.isArray(lastRun?.checks) ? (lastRun.checks as { id: string; status: string }[]) : []
-  const invariants = checks.map((c) => ({ id: c.id, status: c.status as InvariantSnapshot["status"] }))
+  /**
+   * **E11 · T20 — la familia `PLATAFORMA` no entra en la puerta del cierre.**
+   *
+   * `INVARIANTES_PASS` es bloqueante y mira los invariantes del EJERCICIO. Desde
+   * que el barrido ejecuta los trece `I-E11-*`, un fallo de plataforma —una
+   * organización sin `Subscription` (I-E11-5), una siembra incompleta
+   * (I-E11-10), una copia sin verificar— bloqueaba el cierre contable de un
+   * ejercicio cuyo diario está impecable. Eso es exactamente lo que **ADR-0019
+   * D7** prohíbe: *«ningún límite de plan puede impedir el registro de un hecho
+   * contable ya ocurrido»*, y cerrar el ejercicio es el hecho contable por
+   * excelencia.
+   *
+   * No se pierden de vista: siguen saliendo en `/audit` con su tarjeta y su
+   * semáforo, y sellan el periodo con su motivo. Lo que no hacen es cerrar la
+   * puerta de un acto que no les corresponde.
+   */
+  const invariants = checks
+    .filter((c) => !c.id.startsWith("I-E11-"))
+    .map((c) => ({ id: c.id, status: c.status as InvariantSnapshot["status"] }))
 
   const failedRuns = await tx.invariantRun.findMany({
     where: { fiscalYearId: opts.fiscalYearId, seal: "REQUIERE_REVISION" as Seal },
@@ -1472,7 +1490,13 @@ export async function readChecklistInput(
     select: { id: true, checks: true },
   })
   const failedRunIds = failedRuns
-    .filter((r) => (Array.isArray(r.checks) ? (r.checks as { status: string }[]) : []).some((c) => c.status === "FAIL"))
+    .filter((r) =>
+      (Array.isArray(r.checks) ? (r.checks as { id: string; status: string }[]) : [])
+        // Mismo criterio que arriba: un run marcado REQUIERE_REVISIÓN **sólo**
+        // por la plataforma no es una validación contable en FAIL.
+        .filter((c) => !c.id.startsWith("I-E11-"))
+        .some((c) => c.status === "FAIL")
+    )
     .map((r) => r.id)
 
   const proposedDocuments = await tx.transaction.count({

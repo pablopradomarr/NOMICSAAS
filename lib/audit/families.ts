@@ -21,8 +21,9 @@
 import type { AuditCounts, CheckFamily, CheckResult, FamilyStatus, FamilySummary } from "@/lib/audit/types"
 
 /**
- * Orden de presentación de las tarjetas (§6). E9 añade `CIERRE` (§6.3) y **E10
- * `PRESUPUESTO`** (§6 de `docs/design/E10-presupuesto-horas.md`), con la misma
+ * Orden de presentación de las tarjetas (§6). E9 añade `CIERRE` (§6.3), **E10
+ * `PRESUPUESTO`** (§6 de `docs/design/E10-presupuesto-horas.md`) y **E11
+ * `PLATAFORMA`** (§11 de `docs/design/E11-plataforma-saas.md`), con la misma
  * regla que las demás: **una familia sin evaluar sale `SIN_EVALUAR`, jamás en
  * verde**.
  */
@@ -35,6 +36,7 @@ export const CHECK_FAMILIES: readonly CheckFamily[] = [
   "DOCUMENTAL",
   "CONCILIACION",
   "CIERRE",
+  "PLATAFORMA",
   "INTEGRIDAD",
 ]
 
@@ -47,6 +49,7 @@ export const FAMILY_LABEL: Readonly<Record<CheckFamily, string>> = {
   CONCILIACION: "Conciliación bancaria",
   CIERRE: "Cierre y recurrentes",
   PRESUPUESTO: "Presupuesto y horas",
+  PLATAFORMA: "Plataforma y copias",
   INTEGRIDAD: "Integridad y trazabilidad",
 }
 
@@ -99,6 +102,13 @@ const PREFIX: readonly [string, CheckFamily][] = [
   // cuarto sello— van a la familia PRESUPUESTO. `I-E10-` ANTES que `I-E1`
   // no hace falta: los prefijos se comparan enteros y ninguno es prefijo de otro.
   ["I-E10-", "PRESUPUESTO"],
+  // E11 · §11: los I-E11-1…13 —uso derivado, cuotas, cobertura del backup,
+  // restauración, almacén, reloj y nuestra serie de facturación— van a la
+  // familia PLATAFORMA. **`I-E11-` ANTES que `I-E1`**: aquí sí importa, porque
+  // los prefijos se comparan con `startsWith` y `I-E1-` sería prefijo de
+  // `I-E11-` si existiera; hoy `I-E1-` no está en la tabla, pero el orden se
+  // deja escrito para que añadirlo mañana no se lleve por delante a E11.
+  ["I-E11-", "PLATAFORMA"],
 ]
 
 /**

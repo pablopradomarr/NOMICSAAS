@@ -22,7 +22,12 @@ export type { CheckResult, CheckStatus, Cents, LocalDate, Provenance }
  * añade `PRESUPUESTO`** (§6 de `docs/design/E10-presupuesto-horas.md`): los
  * I-E10-* hablan del presupuesto y de las horas, y repartirlos entre `ESTADOS`
  * y `LIQUIDACION` habría hecho imposible ver de un vistazo si el presupuesto
- * del periodo está cuadrado.
+ * del periodo está cuadrado. **E11 añade `PLATAFORMA`** (§11 de
+ * `docs/design/E11-plataforma-saas.md`): los I-E11-1…13 hablan del uso derivado,
+ * las cuotas, la cobertura del backup, la restauración, el almacén, el reloj y
+ * nuestra serie de facturación. Sin familia propia, un id `I-E11-*` caía en
+ * `INTEGRIDAD` —era el H-1 del auditor de E11— y el operador no podía ver de un
+ * vistazo si la plataforma está sana.
  */
 export type CheckFamily =
   | "PARTIDA_DOBLE"
@@ -33,6 +38,7 @@ export type CheckFamily =
   | "CONCILIACION"
   | "CIERRE"
   | "PRESUPUESTO"
+  | "PLATAFORMA"
   | "INTEGRIDAD"
 
 /**

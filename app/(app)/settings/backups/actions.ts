@@ -127,7 +127,15 @@ export async function requestBackupAction(kind: "MANUAL" | "EXIT" = "MANUAL"): P
   return { success: true, data: { backupJobId: job.id, trigger, status, error } }
 }
 
-export type RestoreCheckResult = { key: string; label: string; ok: boolean; detail: string | null }
+/** La misma forma que pinta la lista (revisor DEBE 5): estado propio y evidencia enfrentada. */
+export type RestoreCheckResult = {
+  key: string
+  label: string
+  status: "PASS" | "FAIL" | "INFO"
+  ok: boolean
+  detail: string | null
+  evidence: { label: string; expected: string; actual: string; ok: boolean }[]
+}
 
 export type StartRestoreResult = {
   restoreJobId: string
@@ -214,7 +222,14 @@ export async function startRestoreAction(formData: FormData): Promise<ActionStat
   const checks: RestoreCheckResult[] = (outcome.verification?.checks ?? []).map((check) => ({
     key: check.id,
     label: check.title,
+    status: check.status,
     ok: check.status === "PASS",
+    evidence: check.evidence.map((row) => ({
+      label: row.label,
+      expected: row.expected,
+      actual: row.actual,
+      ok: row.ok,
+    })),
     detail:
       check.note ??
       (check.evidence

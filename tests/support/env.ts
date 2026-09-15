@@ -62,3 +62,15 @@ export function appAuthDatabaseUrl(base: string = ownerDatabaseUrl()): string {
   url.password = appAuthPassword()
   return url.toString()
 }
+
+/**
+ * Misma base que `ownerDatabaseUrl()` pero con el rol `app_maintenance`
+ * (`BYPASSRLS`). Sólo lo usan los scripts de operador que los tests ejercen
+ * —`--reset-org`, el check de I10—, nunca la aplicación (ADR-0009 §6).
+ */
+export function maintenanceDatabaseUrl(base: string = ownerDatabaseUrl()): string {
+  const url = new URL(base)
+  url.username = "app_maintenance"
+  url.password = process.env.APP_MAINTENANCE_PASSWORD || "app_maintenance"
+  return url.toString()
+}

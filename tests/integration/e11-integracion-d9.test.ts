@@ -89,18 +89,40 @@ describe("M6 · el plan ILIMITADO del modo interno (D9)", () => {
 })
 
 describe("M6 · backfill de suscripciones", () => {
-  it("I-E11-5: ninguna organización se queda sin Subscription", async () => {
+  /**
+   * **Revisor BLOQUEA 3 — acotado a lo que este test puede afirmar.**
+   *
+   * La aserción contaba huérfanas en TODA la base y la suite completa la dejaba
+   * en rojo: una docena de ficheros de E1…E10 crean organizaciones con `INSERT`
+   * directo, saltándose la puerta de siembra, y eso es una carencia del arnés de
+   * pruebas, no un fallo del producto. Lo que ESTE test audita es **el backfill
+   * de M4/M6**: las organizaciones que existían cuando la migración corrió. Las
+   * posteriores las cubre el camino de producto —`createOrganizationWithOwner`
+   * crea la suscripción en la misma transacción y **aborta** si no puede
+   * (BLOQUEA 4)— y el I-E11-5 real de T20, que corre acotado a la organización
+   * barrida.
+   */
+  const ANTES_DE_M6 = `o."created_at" < (
+      SELECT "finished_at" FROM "_prisma_migrations"
+       WHERE "migration_name" LIKE '%e11_m6_plan_ilimitado%' AND "finished_at" IS NOT NULL
+       ORDER BY "finished_at" DESC LIMIT 1
+    )`
+
+  it("I-E11-5: ninguna organización anterior al backfill se quedó sin Subscription", async () => {
     const [{ n }] = await q<{ n: string }>(
       `SELECT count(*)::text AS n FROM "organizations" o
-        WHERE NOT EXISTS (SELECT 1 FROM "subscriptions" s WHERE s."organization_id" = o."id")`
+        WHERE ${ANTES_DE_M6}
+          AND NOT EXISTS (SELECT 1 FROM "subscriptions" s WHERE s."organization_id" = o."id")`
     )
     expect(n).toBe("0")
   })
 
-  it("no queda ningún FREE sin contratar: el backfill los pasó a ILIMITADO", async () => {
+  it("no queda ningún FREE sin contratar de antes del backfill: M6 los pasó a ILIMITADO", async () => {
     const [{ n }] = await q<{ n: string }>(
-      `SELECT count(*)::text AS n FROM "subscriptions"
-        WHERE "plan_code" = 'FREE' AND "stripe_subscription_id" IS NULL`
+      `SELECT count(*)::text AS n FROM "subscriptions" s
+         JOIN "organizations" o ON o."id" = s."organization_id"
+        WHERE ${ANTES_DE_M6}
+          AND s."plan_code" = 'FREE' AND s."stripe_subscription_id" IS NULL`
     )
     expect(n).toBe("0")
   })

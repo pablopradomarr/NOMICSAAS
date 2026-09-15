@@ -8,8 +8,10 @@
  *  · **Backup → restauración del fixture completo v1**, a una organización
  *    NUEVA, y los tres sellos idénticos con las **seis** comprobaciones de §5.4
  *    en PASS. Es el criterio P7 del ADR y el enunciado ampliado de I-E11-2.
- *  · **I-E11-7**: el inventario del ZIP **cubre `TENANT_MODELS`**, porque se
- *    deriva de él. Es lo que impide repetir BUG-E7-1, BUG-E9-5 y BUG-E10-1.
+ *  · **I-E11-7**: el inventario del ZIP **cubre `BACKUP_TENANT_MODELS`**
+ *    —`TENANT_MODELS` ∪ `TENANT_MODELS_WITH_GLOBAL`—, porque se deriva de él. Es
+ *    lo que impide repetir BUG-E7-1, BUG-E9-5, BUG-E10-1 y el H-2 del auditor de
+ *    E11 (`currencies`, 177 filas por organización, fuera del ZIP).
  *  · **ZIP manipulado ⇒ firma inválida**, antes de descomprimir un byte.
  *  · **Fila corrupta ⇒ ABORTO** con tabla, línea y motivo. Se acabó el `catch`
  *    que sumaba igual a `insertedCount` (G-15).
@@ -60,7 +62,7 @@ process.env.STORAGE_PREFIX = "erp-test"
 process.env.PLATFORM_SIGNING_KEY = SIGNING_KEY.toString("utf8")
 process.env.PLATFORM_SIGNING_KEY_ID = KEY_ID
 
-const { prisma, TENANT_MODELS, prismaSchemaMeta, tenantTransaction } = await import("@/lib/db")
+const { prisma, BACKUP_TENANT_MODELS, prismaSchemaMeta, tenantTransaction } = await import("@/lib/db")
 const { loadFixtureIntoOrg } = await import("@/scripts/load-fixture")
 const { backupInventory, derivedSealColumns, manifestSha256, signManifest, verifyManifest } = await import(
   "@/lib/platform/backup"
@@ -122,15 +124,15 @@ describe.skipIf(!TEST_DATABASE_URL)("E11 · ola B — almacén, uso, cuotas y ba
   // I-E11-7 · el inventario se DERIVA y cubre TENANT_MODELS
   // ───────────────────────────────────────────────────────────────────────────
 
-  it("I-E11-7 · el ZIP lleva TODAS las tablas de TENANT_MODELS, porque el inventario se deriva de él", async () => {
+  it("I-E11-7 · el ZIP lleva TODAS las tablas de tenant (TENANT_MODELS ∪ las híbridas), porque el inventario se deriva de ellas", async () => {
     const zip = await JSZip.loadAsync(archive)
     const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"))
     const inManifest = new Set<string>(manifest.tables.map((table: { name: string }) => table.name))
-    for (const table of backupInventory(TENANT_MODELS, prismaSchemaMeta())) {
+    for (const table of backupInventory(BACKUP_TENANT_MODELS, prismaSchemaMeta())) {
       expect(inManifest.has(table), `falta ${table} en el manifest`).toBe(true)
     }
     expect(manifest.formatVersion).toBe("2.0")
-    expect(manifest.totals.tables).toBe(TENANT_MODELS.size)
+    expect(manifest.totals.tables).toBe(BACKUP_TENANT_MODELS.size)
   })
 
   it("I-E11-7 · `derivedSealColumns()` cubre las columnas-sello del esquema real, sin lista escrita a mano", () => {
@@ -160,7 +162,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E11 · ola B — almacén, uso, cuotas y ba
 
   it("el orden de restauración se deriva de las FK reales: `fiscal_years` antes que `journal_entries`", async () => {
     const order = await tenantTransaction(DEST, async (tx) =>
-      restoreOrder(tx, backupInventory(TENANT_MODELS, prismaSchemaMeta()))
+      restoreOrder(tx, backupInventory(BACKUP_TENANT_MODELS, prismaSchemaMeta()))
     )
     expect(order.indexOf("fiscal_years")).toBeLessThan(order.indexOf("journal_entries"))
     expect(order.indexOf("journal_entries")).toBeLessThan(order.indexOf("journal_lines"))

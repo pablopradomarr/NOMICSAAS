@@ -1,0 +1,21 @@
+-- E11 · T20 — M7: la familia PLATAFORMA en el enum `check_family`
+-- (docs/design/E11-plataforma-saas.md §11, ADR-0019 D1–D9).
+--
+-- H-1 del auditor de E11. `lib/audit/types.ts` no declaraba la familia y
+-- `lib/audit/families.ts` no tenía su prefijo, de modo que un id `I-E11-*` caía
+-- en `INTEGRIDAD` y los trece invariantes de plataforma no tenían tarjeta propia
+-- en /audit. Ahora la tienen, y el enum de base la admite: sin este valor,
+-- persistir un `ManualReviewFlag` acotado a la familia PLATAFORMA fallaría con
+-- `22P02` — exactamente la divergencia entre TypeScript y base que el enum
+-- existe para impedir (O-21 de E7).
+--
+-- Va **SOLA**, igual que `20260920090000_e9_enums` con 'CIERRE' y
+-- `20260924150000_e10_check_family_presupuesto` con 'PRESUPUESTO', y por la
+-- misma razón: `ALTER TYPE … ADD VALUE` no permite USAR el valor nuevo en la
+-- misma transacción que lo añade.
+--
+-- Es ADITIVA y reversible por omisión: no toca una sola fila, no reescribe el
+-- tipo y no invalida ningún índice ni ninguna vista. Ejecutable por un rol NO
+-- superusuario: `ALTER TYPE` lo puede el propietario del esquema.
+
+ALTER TYPE "check_family" ADD VALUE IF NOT EXISTS 'PLATAFORMA';

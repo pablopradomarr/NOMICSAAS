@@ -14,6 +14,7 @@
 import type { Readable } from "node:stream"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { StorageError, objectKey, storage } from "@/lib/storage"
+import { assertKeyBelongsTo } from "@/lib/storage/keys"
 import type { Prisma, StoredObject, StoredObjectKind } from "@/prisma/client"
 
 type AnyTenantClient = TenantClient | TenantTransactionClient
@@ -42,6 +43,16 @@ export type PutObjectInput = {
 export async function putObject(db: AnyTenantClient, input: PutObjectInput): Promise<StoredObject> {
   const { driver, prefix } = storage()
   const key = objectKey({ prefix, organizationId: input.organizationId, kind: input.kind, sha256: input.sha256 })
+
+  /**
+   * **Revisor DEBE 6 — la segunda barrera del almacén, invocada de verdad.**
+   *
+   * `assertKeyBelongsTo` documentaba que «toda lectura y toda escritura del
+   * driver pasa por aquí» y **no tenía un solo llamante de producción**: el
+   * aislamiento lo daba únicamente la RLS sobre `stored_objects`, y CLAUDE.md
+   * declara la RLS *segunda* barrera, no la única. Aquí se cumple la promesa.
+   */
+  assertKeyBelongsTo(key, input.organizationId, prefix)
 
   const existing = await db.storedObject.findFirst({ where: { objectKey: key } })
   if (existing) {
@@ -77,6 +88,9 @@ export async function putObject(db: AnyTenantClient, input: PutObjectInput): Pro
 export async function getObjectBuffer(db: AnyTenantClient, objectKeyValue: string): Promise<Buffer> {
   const row = await db.storedObject.findFirst({ where: { objectKey: objectKeyValue } })
   if (!row) throw new StorageError(`objeto no registrado en esta organización: ${objectKeyValue}`)
+  // Segunda barrera (DEBE 6): la fila la ha filtrado la RLS, pero la CLAVE que
+  // se le pasa al driver tiene que colgar del prefijo de esta organización.
+  assertKeyBelongsTo(row.objectKey, row.organizationId, storage().prefix)
   return await storage().driver.getBuffer(row.objectKey)
 }
 
@@ -136,6 +150,9 @@ export async function verifyObject(
 export async function deleteObject(db: AnyTenantClient, id: string): Promise<void> {
   const row = await db.storedObject.findFirst({ where: { id } })
   if (!row) return
+  // Segunda barrera (DEBE 6): un borrado es la peor operación para fiarlo todo
+  // a una sola comprobación.
+  assertKeyBelongsTo(row.objectKey, row.organizationId, storage().prefix)
   await storage().driver.delete(row.objectKey)
   await db.storedObject.delete({ where: { id } })
 }

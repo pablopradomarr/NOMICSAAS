@@ -2220,6 +2220,10 @@ enum CheckFamily {
   INTEGRIDAD
   /// E9 (T11): familia de los invariantes de cierre I-E9-1…26.
   CIERRE
+  /// E10 (M7): familia de los invariantes de presupuesto y horas I-E10-1…18.
+  PRESUPUESTO
+  /// E11 (M7): familia de los invariantes de plataforma I-E11-1…13.
+  PLATAFORMA
 
   @@map("check_family")
 }

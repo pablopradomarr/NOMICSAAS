@@ -42,7 +42,26 @@ export type BackupJobView = {
 }
 
 /** Las SEIS comprobaciones de §5.4, tal y como el `RestoreJob` las escribe. */
-export type RestoreCheckView = { key: string; label: string; ok: boolean; detail: string | null }
+/**
+ * **Revisor DEBE 5.** La ronda anterior esperaba `{ key, label, ok, detail }` y
+ * `verifyRestore` produce `CheckResult = { id, status, title, evidence, note }`:
+ * el `if (typeof entry.key !== "string") return []` descartaba **todas** las
+ * comprobaciones y las seis no se pintaban nunca, ni en `DONE` ni en
+ * `DONE_UNVERIFIED` — justo lo contrario de lo que D2.7 promete («con las seis
+ * comprobaciones enfrentadas a la vista»).
+ *
+ * `status` es propio y no un booleano: un `INFO` **no** es un ✓. Y `evidence`
+ * lleva lo enfrentado origen↔destino, que es lo que mira quien tiene que decidir
+ * si se queda con la copia.
+ */
+export type RestoreCheckView = {
+  key: string
+  label: string
+  status: "PASS" | "FAIL" | "INFO"
+  ok: boolean
+  detail: string | null
+  evidence: { label: string; expected: string; actual: string; ok: boolean }[]
+}
 
 export type RestoreJobView = {
   id: string
@@ -404,11 +423,33 @@ function RestoreVerification({ restore }: { restore: RestoreJobView }) {
       ) : (
         <ul className="space-y-1 text-sm">
           {restore.checks.map((check) => (
-            <li key={check.key} className="flex gap-2" data-testid={`restore-check-${check.key}`} data-ok={check.ok}>
-              <span aria-hidden>{check.ok ? "✓" : "⚠"}</span>
-              <span>
+            <li
+              key={check.key}
+              className="flex gap-2"
+              data-testid={`restore-check-${check.key}`}
+              data-ok={check.ok}
+              data-check-status={check.status}
+            >
+              <span aria-hidden>{check.status === "PASS" ? "✓" : check.status === "INFO" ? "·" : "⚠"}</span>
+              <span className="min-w-0">
                 {RESTORE_CHECK_LABELS[check.key] ?? check.label}
+                {check.status === "INFO" && (
+                  <span className="ml-1 text-xs text-muted-foreground">(sin evaluar: no acredita nada)</span>
+                )}
                 {check.detail && <span className="block text-xs text-muted-foreground">{check.detail}</span>}
+                {check.evidence.length > 0 && (
+                  <span className="mt-1 block space-y-0.5 text-xs text-muted-foreground">
+                    {check.evidence.slice(0, 12).map((row) => (
+                      <span key={row.label} className="block" data-ok={row.ok}>
+                        {row.ok ? "·" : "≠"} {row.label}: origen <code>{row.expected}</code> · destino{" "}
+                        <code>{row.actual}</code>
+                      </span>
+                    ))}
+                    {check.evidence.length > 12 && (
+                      <span className="block">(+{check.evidence.length - 12} línea(s) más)</span>
+                    )}
+                  </span>
+                )}
               </span>
             </li>
           ))}

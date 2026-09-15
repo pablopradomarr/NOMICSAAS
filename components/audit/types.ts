@@ -137,6 +137,9 @@ export const FAMILY_HELP: Readonly<Record<CheckFamily, string>> = {
   CONCILIACION: "El extracto del banco contra el diario, cuenta a cuenta.",
   CIERRE: "Recurrentes, amortización, IVA, valoración al cierre y el propio acto de cerrar.",
   PRESUPUESTO: "Presupuesto sellado, partes de horas, coste-hora y la desviación contra el real.",
+  PLATAFORMA:
+    "Uso derivado y cuotas, cobertura y firma de las copias, fidelidad de la restauración, bytes del almacén, " +
+    "el reloj y nuestra propia serie de facturación.",
   INTEGRIDAD: "Trazabilidad, aislamiento entre organizaciones y reproducibilidad.",
 }
 

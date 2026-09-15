@@ -100,8 +100,23 @@ const SELECT_SUBSCRIPTION = `
 // Lectura
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * **Auditor H-4 (ALTA) — el filtro de tenant va en el `WHERE`, no en la RLS.**
+ *
+ * La ronda anterior lanzaba `SELECT … FROM subscriptions LIMIT 1` **sin
+ * `WHERE`**, apoyándose sólo en la política de fila. CLAUDE.md declara la RLS
+ * *segunda* barrera, y bajo cualquier rol `BYPASSRLS` —el propietario de
+ * `DIRECT_URL`, `app_maintenance`, o un despliegue donde el rol de la aplicación
+ * sea el dueño— esto devolvía **la suscripción de otra organización**: el
+ * auditor lo reprodujo con `app.current_org` fijado en A y la fila devuelta
+ * perteneciendo a B. Y de ahí salía el `UPDATE … WHERE id = <el de otra
+ * organización>` que afectaba a 0 filas y aun así registraba un cambio de plan.
+ */
 export async function getSubscription(db: AnyTenantClient): Promise<Subscription | null> {
-  const rows = await db.$queryRawUnsafe<SubscriptionDbRow[]>(`${SELECT_SUBSCRIPTION} LIMIT 1`)
+  const rows = await db.$queryRawUnsafe<SubscriptionDbRow[]>(
+    `${SELECT_SUBSCRIPTION} WHERE "organization_id" = $1::uuid LIMIT 1`,
+    db.$organizationId
+  )
   return rows[0] ? toSubscription(rows[0]) : null
 }
 
@@ -362,10 +377,9 @@ export async function listSubscriptionEvents(db: AnyTenantClient, limit = 50) {
  * backfill de M4 ya hacía. Idempotente: si la fila está, no la toca (el
  * `@@unique(organizationId)` la protege igualmente).
  *
- * Nunca lanza por catálogo incompleto: una instalación a la que le falte la
- * versión del plan vigente no puede quedarse sin poder crear organizaciones.
- * Se avisa por consola y la organización nace sin fila, que es exactamente el
- * caso que I-E11-5 sabe describir.
+ * **Lanza** si no hay versión vigente del plan por defecto: el alta aborta
+ * entera. Una organización sin suscripción es el estado que I-E11-5 prohíbe, y
+ * nacer coja en silencio es peor que no nacer (revisor BLOQUEA 4).
  */
 export async function ensureSubscriptionForOrganization(
   tx: SeedClient,
@@ -378,13 +392,18 @@ export async function ensureSubscriptionForOrganization(
   if ((existentes[0]?.n ?? BigInt(0)) > BigInt(0)) return
 
   const code = defaultPlanCodeFor(provider)
-  let plan: { id: string } | null = null
-  try {
-    plan = await getPlanAt(tx as unknown as TenantTransactionClient, code, refDate)
-  } catch (error) {
-    console.warn(`[subscriptions] no hay versión vigente del plan ${code}: la organización nace sin fila`, error)
-    return
-  }
+  /**
+   * **Revisor BLOQUEA 4 — el error NO se traga.**
+   *
+   * La ronda anterior capturaba el fallo de `getPlanAt` con un `console.warn` y
+   * volvía sin crear la fila: producía en silencio, y en el camino de alta,
+   * exactamente el estado que I-E11-5 prohíbe y que D9 promete imposible («toda
+   * organización nace con el plan ILIMITADO»). Una instalación con el catálogo
+   * de planes incompleto es una instalación rota; lo correcto es **abortar la
+   * transacción entera del alta**, no dar de alta una organización coja que
+   * alguien descubrirá cuando falle otra cosa.
+   */
+  const plan: { id: string } = await getPlanAt(tx as unknown as TenantTransactionClient, code, refDate)
 
   await tx.$executeRaw`
     INSERT INTO "subscriptions" ("organization_id", "plan_code", "plan_id", "status", "created_at", "updated_at")
@@ -423,10 +442,25 @@ export async function changeOrganizationPlan(
       return { planCode: plan.code, planId: plan.id, previousPlanCode: null }
     }
 
-    await tx.$executeRaw`
+    /**
+     * **Auditor H-4 · la traza no puede mentir (P6).** El `UPDATE` devuelve el
+     * número de filas afectadas y aquí se **exige que sea exactamente una**
+     * antes de escribir el `AuditLog` y el `PlatformAuditLog`. La ronda anterior
+     * no lo miraba: con la suscripción de otra organización en la mano, el
+     * `UPDATE` tocaba 0 filas, la función devolvía `success: true` y quedaban
+     * dos registros diciendo que el plan había cambiado a FREE mientras la
+     * suscripción seguía en ILIMITADO con su `updated_at` original.
+     */
+    const afectadas = await tx.$executeRaw`
       UPDATE "subscriptions"
          SET "plan_code" = ${plan.code}, "plan_id" = ${plan.id}::uuid, "updated_at" = ${refDate}
        WHERE "id" = ${antes.id}::uuid AND "organization_id" = ${organizationId}::uuid`
+    if (afectadas !== 1) {
+      throw new Error(
+        `el cambio de plan de la organización ${organizationId} ha afectado a ${afectadas} filas y no a una: ` +
+          "no se registra un cambio que no ha ocurrido"
+      )
+    }
 
     await tx.auditLog.create({
       data: {

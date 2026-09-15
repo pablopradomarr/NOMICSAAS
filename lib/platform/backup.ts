@@ -214,6 +214,22 @@ export type BackupManifest = {
   files: Array<{ path: string; sha256: string; sizeBytes: number }>
   /** Estado del cierre: la comprobación 5 no se sostiene sin él. */
   closing: { fiscalYears: Array<{ code: string; status: string; closedAt: string | null }>; closingRuns: number }
+  /**
+   * **Auditor H-6** — la foto del barrido de invariantes **en el ORIGEN**, en el
+   * momento del volcado.
+   *
+   * La comprobación 6 era absoluta (`swept.failed.length === 0`), de modo que
+   * una organización que ya tuviera un invariante en FAIL —asientos posteriores
+   * a la `refDate`, por ejemplo— **no podía obtener jamás una copia verificada**:
+   * la restauración era fiel al detalle (los tres sellos, los 67 recuentos, la
+   * numeración y los 53 sellos derivados coincidían) y O-2 la mandaba a
+   * `DONE_UNVERIFIED`. Fidelidad es **destino ≡ origen**, no «destino
+   * perfecto»: con esto la comprobación 6 enfrenta los dos conjuntos de FAIL.
+   *
+   * Opcional para no invalidar una copia emitida antes de esta ronda: sin él la
+   * comprobación vuelve al criterio absoluto y lo **dice** en la evidencia.
+   */
+  sourceSweep?: { families: number; failed: string[]; checksHash: string }
   totals: { tables: number; rows: number; files: number; bytes: number }
 }
 

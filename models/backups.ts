@@ -13,7 +13,7 @@
  *
  * Las cuatro decisiones del sustituto:
  *
- *   1. **El inventario se DERIVA de `TENANT_MODELS`** (`backupInventory`), nunca
+ *   1. **El inventario se DERIVA de `BACKUP_TENANT_MODELS`** (`backupInventory`), nunca
  *      se escribe a mano. Es lo que impide repetir BUG-E7-1, BUG-E9-5 y
  *      BUG-E10-1 por cuarta vez, y lo que comprueba I-E11-7.
  *   2. **Una sola fila rechazada ABORTA el trabajo entero**, con tabla, número de
@@ -33,7 +33,7 @@
 
 import JSZip from "jszip"
 import { createHash, randomUUID } from "node:crypto"
-import { TENANT_MODELS, prismaSchemaMeta, tenantTransaction, type TenantTransactionClient } from "@/lib/db"
+import { BACKUP_TENANT_MODELS, prismaSchemaMeta, tenantTransaction, type TenantTransactionClient } from "@/lib/db"
 import {
   BACKUP_FORMAT_VERSION,
   auditLogCanonicalSha256,
@@ -151,7 +151,7 @@ async function dumpTable(tx: TenantTransactionClient, table: string): Promise<Ta
 }
 
 /**
- * **O-1.5** — `exchange_rates` es tabla GLOBAL: no está en `TENANT_MODELS` y por
+ * **O-1.5** — `exchange_rates` es tabla GLOBAL: no está en el inventario y por
  * tanto **no saldría en el backup**. Sin ella el destino no reproduce
  * `convertedTotal` (I-E8-5). Se vuelcan **sólo las referenciadas** por lo que se
  * ha volcado, y las referencias se descubren del propio esquema: cualquier
@@ -160,7 +160,7 @@ async function dumpTable(tx: TenantTransactionClient, table: string): Promise<Ta
 async function dumpReferencedExchangeRates(tx: TenantTransactionClient): Promise<{ rows: number; sha256: string; body: string }> {
   const meta = prismaSchemaMeta()
   const referencing = meta
-    .filter((model) => TENANT_MODELS.has(model.model))
+    .filter((model) => BACKUP_TENANT_MODELS.has(model.model))
     .flatMap((model) => model.columns.filter((c) => c.column === "exchange_rate_id").map(() => model.table))
 
   const ids = new Set<string>()
@@ -250,6 +250,13 @@ export type BuildBackupOptions = {
   signingKeyId: string
   /** Bytes de cada `File`. Se inyecta para poder probar sin almacén de red. */
   readFileBytes?: (file: { id: string; sha256: string; path: string }) => Promise<Buffer | null>
+  /**
+   * **Auditor H-6** — el barrido en el ORIGEN, que viaja en el manifest para que
+   * la comprobación 6 pueda ser *relativa*. Se inyecta igual que el de
+   * `verifyRestore`; por defecto es el mismo `runLedgerInvariants` con
+   * `audit: true`.
+   */
+  sweep?: (tx: TenantTransactionClient, refDate: Date) => Promise<{ families: number; failed: string[]; checksHash: string }>
 }
 
 /**
@@ -265,7 +272,14 @@ export async function buildBackupArchive(organizationId: string, options: BuildB
     organizationId,
     async (tx) => {
       const meta = prismaSchemaMeta()
-      const inventory = backupInventory(TENANT_MODELS, meta)
+      /**
+       * **Auditor H-2.** El inventario se deriva de `BACKUP_TENANT_MODELS`
+       * —`TENANT_MODELS` ∪ `TENANT_MODELS_WITH_GLOBAL`—, no de `TENANT_MODELS` a
+       * secas. Con lo segundo `currencies` (177 filas por organización, con
+       * `organization_id` y RLS propia) no viajaba en el ZIP y se perdía en cada
+       * restauración **con las seis comprobaciones en PASS**.
+       */
+      const inventory = backupInventory(BACKUP_TENANT_MODELS, meta)
       const sealsBefore = await computeContentSeals(tx)
 
       const organization = await tx.organization.findFirst({ where: { id: organizationId } })
@@ -312,6 +326,13 @@ export async function buildBackupArchive(organizationId: string, options: BuildB
         throw new Error("LEDGER_MOVED_DURING_BACKUP")
       }
 
+      /**
+       * El barrido del ORIGEN, con la MISMA `refDate` que usará la
+       * verificación. Sin esta foto, una restauración fiel de una organización
+       * que ya tenía un FAIL se marcaba `DONE_UNVERIFIED` (H-6).
+       */
+      const sourceSweep = await (options.sweep ?? defaultInvariantSweep)(tx, options.refDate)
+
       const manifest: BackupManifest = {
         formatVersion: BACKUP_FORMAT_VERSION,
         schemaVersion: await schemaVersionOf(tx),
@@ -333,6 +354,7 @@ export async function buildBackupArchive(organizationId: string, options: BuildB
         globalRefs: { exchangeRates: { rows: exchangeRates.rows, sha256: exchangeRates.sha256 } },
         files: fileEntries,
         closing,
+        sourceSweep,
         totals: {
           tables: dumps.length,
           rows: dumps.reduce((sum, dump) => sum + dump.rows, 0),
@@ -950,11 +972,23 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
           actual: `${actual.max}/${actual.count}`,
           ok: actual.max === expected.maxEntryNumber && actual.count === expected.count,
         })
+        /**
+         * **Revisor DEBE 8.** La ronda anterior comparaba `gaps.length` contra
+         * `gaps.length`: un origen con dos huecos y un destino con **otros dos**
+         * daba PASS. Ahora se comparan los ARRAYS enteros —qué huecos y qué
+         * duplicados—, y además se exige **ausencia absoluta** cuando el origen
+         * no los tenía, que es lo que D2.6.2 pide («sin huecos ni duplicados»).
+         */
+        const sameGaps = JSON.stringify(actual.gaps) === JSON.stringify(expected.gaps)
+        const sameDuplicates = JSON.stringify(actual.duplicates) === JSON.stringify(expected.duplicates)
+        const cleanWhenExpected =
+          (expected.gaps.length > 0 || actual.gaps.length === 0) &&
+          (expected.duplicates.length > 0 || actual.duplicates.length === 0)
         evidence.push({
-          label: `ejercicio ${expected.fiscalYearCode} · huecos y duplicados`,
-          expected: `${expected.gaps.length}/${expected.duplicates.length}`,
-          actual: `${actual.gaps.length}/${actual.duplicates.length}`,
-          ok: actual.gaps.length === expected.gaps.length && actual.duplicates.length === expected.duplicates.length,
+          label: `ejercicio ${expected.fiscalYearCode} · huecos y duplicados (los números, no su recuento)`,
+          expected: `huecos [${expected.gaps.join(", ")}] · duplicados [${expected.duplicates.join(", ")}]`,
+          actual: `huecos [${actual.gaps.join(", ")}] · duplicados [${actual.duplicates.join(", ")}]`,
+          ok: sameGaps && sameDuplicates && cleanWhenExpected,
         })
       }
       const series = await tx.invoiceSeries.findMany({ orderBy: { code: "asc" } })
@@ -1073,17 +1107,48 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
       const fileRows = await tx.file.findMany({ select: { sha256: true } })
       const restored = new Set(input.filesRestored)
       const orphans = fileRows.filter((row) => !restored.has(row.sha256))
+
+      /**
+       * **Auditor H-6 — la comprobación 6 es RELATIVA, no absoluta.**
+       *
+       * Lo que una restauración tiene que acreditar es **fidelidad**: que el
+       * destino dice exactamente lo mismo que el origen. Exigir cero FAIL en
+       * términos absolutos condenaba a `DONE_UNVERIFIED` a toda organización que
+       * ya tuviera un invariante en rojo —el auditor reprodujo `I8` e `I-E7-14`
+       * en FAIL **en los dos lados**, con los tres sellos, los recuentos, la
+       * numeración y los sellos derivados coincidiendo—, y mandaba una copia
+       * buena a la etiqueta que I-E11-2 declara FAIL.
+       *
+       * Con la foto del origen en el manifest (`sourceSweep`) el criterio es
+       * `destino ≡ origen`. Sin ella —copias emitidas antes de esta ronda— se
+       * mantiene el criterio absoluto, y la evidencia lo dice en vez de callarlo.
+       */
+      const baseline = manifest.sourceSweep ?? null
+      const destinoFailed = [...swept.failed].sort()
+      const origenFailed = baseline ? [...baseline.failed].sort() : []
+      const nuevos = destinoFailed.filter((id) => !origenFailed.includes(id))
+      const desaparecidos = origenFailed.filter((id) => !destinoFailed.includes(id))
+      const sweepOk = baseline
+        ? nuevos.length === 0 && desaparecidos.length === 0
+        : swept.failed.length === 0
       out.push({
         id: "BARRIDO_INVARIANTES",
-        status: swept.failed.length === 0 && orphans.length === 0 && input.filesMissing.length === 0 ? "PASS" : "FAIL",
-        title: "Barrido completo de las nueve familias de invariantes y correspondencia fichero ↔ objeto",
+        status: sweepOk && orphans.length === 0 && input.filesMissing.length === 0 ? "PASS" : "FAIL",
+        title: baseline
+          ? "Barrido completo de las nueve familias, ENFRENTADO al del origen, y correspondencia fichero ↔ objeto"
+          : "Barrido completo de las nueve familias de invariantes y correspondencia fichero ↔ objeto",
         evidence: [
           // El número de familias que produce el barrido depende de qué módulos
           // tienen datos en la organización: se ENSEÑA, no se exige un número
-          // mágico. Lo que sí se exige es que no haya ni un FAIL.
-          { label: "familias barridas", expected: "≥ 1", actual: String(swept.families), ok: swept.families >= 1 },
-          { label: "invariantes en FAIL", expected: "0", actual: swept.failed.join(", ") || "0", ok: swept.failed.length === 0 },
-          { label: "checksHash del barrido", expected: "—", actual: swept.checksHash, ok: true },
+          // mágico.
+          { label: "familias barridas", expected: baseline ? String(baseline.families) : "≥ 1", actual: String(swept.families), ok: swept.families >= 1 },
+          {
+            label: baseline ? "invariantes en FAIL (origen ↔ destino)" : "invariantes en FAIL",
+            expected: baseline ? origenFailed.join(", ") || "0" : "0",
+            actual: destinoFailed.join(", ") || "0",
+            ok: sweepOk,
+          },
+          { label: "checksHash del barrido", expected: baseline?.checksHash ?? "—", actual: swept.checksHash, ok: true },
           {
             label: "ficheros sin bytes",
             expected: "0",
@@ -1091,6 +1156,11 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
             ok: orphans.length === 0 && input.filesMissing.length === 0,
           },
         ],
+        note: baseline
+          ? nuevos.length > 0 || desaparecidos.length > 0
+            ? `la copia NO es fiel: aparecen [${nuevos.join(", ") || "—"}] y desaparecen [${desaparecidos.join(", ") || "—"}]`
+            : "fidelidad: el destino reproduce exactamente los mismos veredictos que el origen, FAIL incluidos"
+          : "copia sin foto del barrido en origen (formato anterior a la corrección de H-6): criterio absoluto",
       })
 
       return out
