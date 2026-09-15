@@ -1,6 +1,46 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-15 (**✅ E10 CERRADA** tras tres rondas de corrección · **SIGUIENTE: `/epica E11`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-15 (**✅ E10 CERRADA** · **✅ E11 DISEÑADA**, ADR-0019 APROBADO · **SIGUIENTE: `/sprint E11`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## ✅ E11 DISEÑADA (2026-09-15) — siguiente: `/sprint E11`
+
+Diseño: `docs/design/E11-plataforma-saas.md` (**726 h / 28 tareas**, tres olas).
+ADR: `docs/adr/0019-plataforma-saas.md` — **APROBADO por Pablo el 2026-09-15**
+(permiso delegado de 2026-09-04), **D1–D8**. Validación contable
+`docs/design/E11-validacion-plataforma.md`: **CONFORME CON OBSERVACIONES** — cinco
+bloqueantes (**O-1** los tres hashes no bastan como criterio P7 · **O-3** un límite
+de plan impedía registrar un hecho contable ya ocurrido · **O-4** el FREE en mora no
+podía ejercer la portabilidad que D6 promete · **O-7** la siembra dejaba
+organizaciones que incumplían I-E11-10 por construcción · **O-9/O-10**
+`PlatformInvoice` no sostenía una obligación de facturación y nuestra serie no la
+vigilaba nadie) y diez no bloqueantes: **las quince incorporadas**, más **O-16**
+(subir el justificante se permite en mora; analizarlo con IA no) y **O-17** (el 349
+por SQL de runbook mientras no hay pantalla), y **C-1…C-7 respondidas y llevadas al
+esquema**. El ADR pasó de seis decisiones a **ocho** (**D7** de O-3, **D8** de
+O-9/O-10) y la **D5-CAPEX de la ronda 1 salió** con el alcance, así que este ADR
+**ya no enmienda ADR-0018**.
+
+### Deuda que E11 re-fecha, con motivo (recorte 836 → 726 h)
+
+| Deuda | Épica de cierre | Motivo |
+|---|---|---|
+| **CAPEX en presupuesto** (`BudgetCapexLine`, Q-4 de E10), y con él la **enmienda a ADR-0018 D2** y el reversionado del fixture a `presupuesto-horas-esperado.v1.4.json` | **E12** | Es control de gestión, no plataforma: no comparte una tabla con E11 y no tiene por qué ir empaquetado con Stripe |
+| **Granularidad `MONTH` de varios meses**, **desglose mes a mes en el informe** y **descomposición volumen/precio** (Q-6 / ADR-0018 **D6**, convención ya congelada) | **E12** | Mismo motivo; no bloquea nada de plataforma |
+| **Contrato del bloque de rentabilidad por proyecto** (C3 de E10) | **E12** | Depende de la celda mensual, que va a E12 con ella |
+| **`/admin` de plataforma** (lectura y escritura) | **E12** | Sin escrituras (P-6) su valor es un panel que el operador puede sustituir por SQL durante una épica. En E11 queda `/api/health` |
+| **Pantalla de export 303 / 349** | **E14** | **O-17.** Los campos que la alimentan entran en E11 (D8); lo que se aplaza es la pantalla. Mientras tanto, las **dos consultas SQL** del runbook `docs/deploy/e11-plataforma.md`, con test de integración que las ejecuta |
+| **Backups programados**, **CSV dentro del ZIP**, **restaurar un ZIP ajeno desde la UI**, **`email-sync` como job de cron** | **E12** | El backup manual y el de salida cubren lo que el ROADMAP pide y lo que O-4 exige; el JSONL es el formato que manda |
+| **Lector de `formatVersion 1.0`** | **RETIRADO** | No existe ni un backup 1.0: el preview tiene una organización y nunca se descargó uno |
+| **G-20** — sin tests de `models/stats.ts`, `lib/stats.ts`, `ai/*` (BAJA) | **E12** | Detectado al preparar E11: `stats` se reescribió en E6 y `ai/*` en E8, pero **G-20 no aparecía en ninguna lista de cierre de ninguna épica** |
+| **«G-15 · facturación emitida completa (PDF, envío, cobro)»** | **E14 Ciclo comercial** (épica nueva) | **Errata de doble numeración.** El `G-15` canónico de `AUDITORIA-FIABILIDAD.md` es **backups**, que E11 cierra. El ciclo comercial no tiene gap `G-` asignado: es alcance funcional nuevo con su propia validación contable. **P-7 aprobado** |
+
+Lo que **sí** cierra E11: G-15 (backups), serie `ORDINARIA` sembrada, mes de alta de
+la amortización, calendario de `/time` agregado en SQL, mimetype del import
+(PUEDE 14), rate limit en memoria (E13 R4), uploads efímeros en `/tmp` y la falta de
+cron en el despliegue.
+
+Registro: `2026-09-15_e11_diseno`.
+
 
 ## ✅ E10 CERRADA (2026-09-15) — siguiente: `/epica E11`
 
