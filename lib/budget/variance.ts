@@ -214,23 +214,54 @@ export type BudgetCellProvenance = {
 }
 
 /**
- * Los tipos analíticos que recoge un nivel de margen, como lista SQL. El nivel
- * de una línea del diario **no está en la fila**: se deriva del tipo analítico
- * efectivo y de la configuración de márgenes (`marginConfigHash`, que viaja en
- * `analyticsKey`), así que la consulta filtra por tipo y nombra el nivel en un
- * comentario, en vez de fingir una columna que no existe.
+ * Los tipos analíticos que recogen **todos los niveles hasta `level`**, como
+ * lista SQL.
+ *
+ * **Re-auditoría de la ronda 1, punto 3.** La primera versión filtraba por los
+ * tipos **del nivel**, y la matriz es **ACUMULATIVA**: MC3 de `PROJ:P-01` no es
+ * lo que aporta MC3, es INGRESOS + MC1 + MC2 + MC3. Con el filtro por nivel, la
+ * consulta de una celda de MC3 devolvía **0 filas** —MC3 no recoge ningún tipo
+ * por sí mismo— y sólo cuadraba el nivel base. Una provenance que devuelve cero
+ * filas sobre una celda de −4 484 000 c es peor que ninguna: dice que no hay
+ * origen.
+ *
+ * El nivel de una línea del diario **no está en la fila**: se deriva del tipo
+ * analítico efectivo y de la configuración de márgenes (`marginConfigHash`, que
+ * viaja en `analyticsKey`), así que la consulta filtra por tipo y nombra los
+ * niveles en un comentario, en vez de fingir una columna que no existe.
  */
-const analyticTypesOf = (level: MarginLevel, ctx: BudgetProvenanceContext): string => {
-  const types = ctx.levelTypes[level] ?? []
-  // MC3 y EBITDA no recogen ningún tipo por sí mismos: les llega
-  // `INDIRECTO_CECO` encaminado por el `marginLevel` del CECO de la línea
-  // (E5-D1). La consulta lo dice en vez de devolver una lista vacía.
-  return types.length === 0
-    ? `'INDIRECTO_CECO' /* encaminado por el marginLevel del CECO */`
-    : types.map((t) => `'${t}'`).join(", ")
+const levelsUpTo = (level: MarginLevel): MarginLevel[] =>
+  MARGIN_LEVELS.slice(0, MARGIN_LEVELS.indexOf(level) + 1) as MarginLevel[]
+
+const cumulativeTypesOf = (level: MarginLevel, ctx: BudgetProvenanceContext): string => {
+  const levels = levelsUpTo(level)
+  const types = new Set<string>()
+  for (const l of levels) {
+    const own = ctx.levelTypes[l] ?? []
+    // MC3 y EBITDA no recogen ningún tipo por sí mismos: les llega
+    // `INDIRECTO_CECO` encaminado por el `marginLevel` del CECO de la línea
+    // (E5-D1). La consulta lo incluye en vez de quedarse sin filtro.
+    if (own.length === 0) types.add("INDIRECTO_CECO")
+    for (const t of own) types.add(t)
+  }
+  return [...types].sort().map((t) => `'${t}'`).join(", ")
 }
 
-/** Ventana `[desde, hasta]` de la celda: su mes, o el periodo del informe. */
+/** Los niveles acumulados, como lista SQL, para `margin_level IN (…)`. */
+const cumulativeLevelsOf = (level: MarginLevel): string =>
+  levelsUpTo(level)
+    .map((l) => `'${l}'`)
+    .join(", ")
+
+/**
+ * Ventana `[desde, hasta]` de la celda: su mes, o **el periodo entero** del
+ * informe cuando la celda es del acumulado (`month === null`).
+ *
+ * **Re-auditoría, punto 3.** El error hermano del anterior: la consulta de
+ * presupuesto fijaba `bl.month = '<mes>-01'` incluso en una celda ANUAL, así que
+ * apuntaba sólo a enero. El rango se abre a todos los meses del periodo, y los
+ * `budget_id` que lo gobiernan salen de la composición (O-E10-9), no de uno.
+ */
 const cellWindow = (cell: VarianceCell, ctx: BudgetProvenanceContext): { from: string; to: string } => {
   if (cell.month === null) return { from: ctx.periodStart, to: ctx.periodEnd }
   const [y, m] = cell.month.split("-").map(Number)
@@ -246,18 +277,52 @@ const dimensionFilter = (column: ColumnKey, table: string): string => {
   return "true /* columna de compañía: sin filtro de dimensión */"
 }
 
+/**
+ * Los meses de la ventana agrupados por la versión que los GOBIERNA (O-E10-9).
+ *
+ * No vale `budget_id IN (…) AND month BETWEEN …`: la BASE cubre los doce meses y
+ * la `REVISADO` parcial sólo julio-diciembre, así que el producto cartesiano
+ * cuenta julio-diciembre **dos veces**. La composición es mes a mes, y la
+ * consulta tiene que decirlo igual que la dice el informe.
+ */
+const monthsByBudget = (ctx: BudgetProvenanceContext, from: string, to: string): [string, string[]][] => {
+  const desde = from.slice(0, 7)
+  const hasta = to.slice(0, 7)
+  const out = new Map<string, string[]>()
+  for (const [month, id] of Object.entries(ctx.budgetIdsByMonth)) {
+    if (month < desde || month > hasta) continue
+    out.set(id, [...(out.get(id) ?? []), month].sort())
+  }
+  return [...out.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
+/** `((t.budget_id = 'X' AND t.month IN (…)) OR …)`, la composición en SQL. */
+const composicionFilter = (grupos: [string, string[]][], table: string): string =>
+  "(" +
+  grupos
+    .map(
+      ([id, months]) =>
+        `(${table}.budget_id = '${id}' AND ${table}.month IN (${months.map((m) => `'${m}-01'`).join(", ")}))`
+    )
+    .join(" OR ") +
+  ")"
+
 export function budgetCellProvenance(cell: VarianceCell, ctx: BudgetProvenanceContext): BudgetCellProvenance {
   const { from, to } = cellWindow(cell, ctx)
-  const month = cell.month ?? ctx.periodStart.slice(0, 7)
-  const budgetId = ctx.budgetIdsByMonth[month] ?? null
+  const grupos = monthsByBudget(ctx, from, to)
+  const niveles = cumulativeLevelsOf(cell.level)
+  const dim = (table: string): string => dimensionFilter(cell.column, table)
 
   const registros: Record<string, string> = {
-    // (1) El REAL: las líneas del diario que la celda agrega, por su nivel.
+    // (1) El REAL: las líneas del diario que la celda ACUMULA, de todos los
+    //     niveles hasta el suyo y de todos los meses de la ventana. Se excluyen
+    //     regularización, cierre y apertura, que no son PyG (I3).
     real:
       `SELECT jl.id FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id ` +
       `AND je.organization_id = jl.organization_id WHERE jl.organization_id = '${ctx.organizationId}' ` +
-      `AND je.entry_date BETWEEN '${from}' AND '${to}' AND ${dimensionFilter(cell.column, "jl")} ` +
-      `AND jl.analytic_type IN (${analyticTypesOf(cell.level, ctx)}) /* nivel ${cell.level} */`,
+      `AND je.entry_date BETWEEN '${from}' AND '${to}' AND ${dim("jl")} ` +
+      `AND jl.entry_kind NOT IN ('REGULARIZATION', 'CLOSING', 'OPENING') ` +
+      `AND jl.analytic_type IN (${cumulativeTypesOf(cell.level, ctx)}) /* niveles ${niveles} */`,
     // (2) El IMPUTADO: sólo con el toggle de imputaciones; sin él la celda no
     //     lleva estructura repartida y una consulta vacía engañaría.
     ...(ctx.withAllocations
@@ -266,28 +331,27 @@ export function budgetCellProvenance(cell: VarianceCell, ctx: BudgetProvenanceCo
             `SELECT al.id FROM allocation_lines al JOIN allocation_runs ar ON ar.id = al.run_id ` +
             `AND ar.organization_id = al.organization_id WHERE al.organization_id = '${ctx.organizationId}' ` +
             `AND ar.status = 'SEALED' AND ar.period_start >= '${from}' AND ar.period_end <= '${to}' ` +
-            `AND ${dimensionFilter(cell.column, "al").replace(/\b(project_id|cost_center_id|business_line_id)\b/, "target_$1")} ` +
-            `AND al.margin_level = '${cell.level}'`,
+            `AND ${dim("al").replace(/\b(project_id|cost_center_id|business_line_id)\b/, "target_$1")} ` +
+            `AND al.margin_level IN (${niveles})`,
         }
       : {}),
-    // (3) El PRESUPUESTO: las líneas de la versión que gobierna ESE mes
-    //     (O-E10-9), no de una versión suelta.
+    // (3) El PRESUPUESTO: las líneas de las versiones que gobiernan los meses de
+    //     la ventana (O-E10-9), acumuladas hasta el nivel de la celda.
     presupuesto:
-      budgetId === null
-        ? `-- ${month} no tiene versión de presupuesto que lo cubra: la celda sale VACÍA con leyenda, nunca a cero`
+      grupos.length === 0
+        ? `-- ${from}…${to} no tiene ninguna versión de presupuesto que lo cubra: la celda sale VACÍA con leyenda, nunca a cero`
         : `SELECT bl.id FROM budget_lines bl WHERE bl.organization_id = '${ctx.organizationId}' ` +
-          `AND bl.budget_id = '${budgetId}' AND bl.month = '${month}-01' ` +
-          `AND ${dimensionFilter(cell.column, "bl")} AND bl.margin_level = '${cell.level}'`,
+          `AND ${composicionFilter(grupos, "bl")} ` +
+          `AND ${dim("bl")} AND bl.margin_level IN (${niveles})`,
     // (4) Las HORAS presupuestadas: la base con la que el dry-run de O-E10-4
     //     repartió la estructura hasta esta celda. Desde la ronda 1 entran
     //     además en el `budgetHash` (ADR-0018 D2), así que la consulta y el
     //     sello hablan de lo mismo.
-    ...(ctx.withAllocations && budgetId !== null
+    ...(ctx.withAllocations && grupos.length > 0
       ? {
           horas:
             `SELECT bhl.id FROM budget_hours_lines bhl WHERE bhl.organization_id = '${ctx.organizationId}' ` +
-            `AND bhl.budget_id = '${budgetId}' AND bhl.month = '${month}-01' ` +
-            `AND ${dimensionFilter(cell.column, "bhl")}`,
+            `AND ${composicionFilter(grupos, "bhl")} AND ${dim("bhl")}`,
         }
       : {}),
   }

@@ -36,15 +36,22 @@ LOS MISMOS, que es lo que hace que la desviacion signifique algo. El
 presupuesto se **deriva** del real con factores enteros declarados, de modo que
 cada celda de desviacion es reproducible a mano.
 
-Escribe `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`. Con `--check`
+Escribe `docs/design/fixtures/presupuesto-horas-esperado.v1.2.json`. Con `--check`
 no escribe: reconstruye, compara byte a byte y falla si difiere.
 
-Un fixture sellado no se reescribe: se versiona. `presupuesto-horas-esperado.json`
-(schema 1.0) queda CONGELADO como evidencia de lo que se firmo en la ronda 0. La
-ronda 1 corrige la forma canonica del `budgetHash` (auditor H-2/H-3, revisor
-BLOQUEA 3): fuera `validTo` —mutable por diseno al sellar la version siguiente— y
-dentro las lineas de horas presupuestadas. Los dos `budgetHash` cambian, asi que
-este generador escribe y comprueba `presupuesto-horas-esperado.v1.1.json`.
+Un fixture sellado no se reescribe: se versiona, y los anteriores quedan como
+evidencia de lo que se firmo.
+
+  · **v1.0** (`presupuesto-horas-esperado.json`) — la ronda 0.
+  · **v1.1** — ronda 1, auditor H-2/H-3 y revisor BLOQUEA 3: fuera `validTo` de
+    la forma canonica del `budgetHash` (es mutable por diseno al sellar la
+    version siguiente) y dentro las lineas de horas presupuestadas. Los dos
+    `budgetHash` cambian.
+  · **v1.2** — ronda 1, punto 2 de la RE-AUDITORIA: el bloque
+    `absorption.byCostCenter` se alinea con el producto. Los dos `budgetHash`
+    NO cambian (c32cdecf… y dc11871c… siguen siendo los mismos): lo que cambia
+    es un bloque de INFORME que el contrato congelado de D6 y el motor decian
+    distinto, que es exactamente lo que un fixture sellado esta para impedir.
 
 NO TOCA `tests/fixtures/*`.
 
@@ -83,7 +90,7 @@ e4 = importlib.import_module("build_pyg_analitica_esperada")
 e5 = importlib.import_module("build_liquidacion_esperada")
 
 ROOT = e4.ROOT
-OUT = HERE / "presupuesto-horas-esperado.v1.1.json"
+OUT = HERE / "presupuesto-horas-esperado.v1.2.json"
 
 FISCAL_YEAR = "2026"
 MONTHS = [f"2026-{m:02d}" for m in range(1, 13)]
@@ -990,16 +997,58 @@ def build_kpis() -> dict[str, Any]:
     return out
 
 
+SIN_CECO = "SIN_CECO"
+CECO_OF_EMPLOYEE = {e["code"]: e["costCenterCode"] for e in EMPLOYEES}
+
+
 def build_absorption() -> dict[str, Any]:
-    """O-E10-20. `absorcion = Σ (minutos × tarifa / 60) − Σ (−aporte) de 64x`."""
+    """O-E10-20. `absorcion = Σ (minutos × tarifa / 60) − Σ (−aporte) de 64x`.
+
+    Desglose por CECO, corregido en la ronda 1 (auditor H-5 y punto 2 de la
+    re-auditoria). La ronda 0 comparaba dos cosas que no se pueden comparar:
+
+      · `valuedCents` se tomaba de `COST["byTarget"][ceco]`, es decir del coste
+        de los partes **cuyo RECEPTOR era el CECO**. Casi todas las horas van a
+        proyectos, asi que las tres filas de CECO salian a **0** y el desglose
+        declaraba infraabsorcion del 100 % en todas las unidades con el total
+        correcto: justo el dato que O-E10-20 existe para dar al comite.
+      · `payrollCents` metia las 64x imputadas directamente a un proyecto bajo
+        una clave `PROJ:<codigo>` **en un campo llamado `costCenterCode`**.
+
+    Ahora dice lo mismo que el producto (`models/reports.ts`): el CECO absorbe su
+    nomina con las horas de SU GENTE, sea cual sea el receptor, y lo que no
+    pertenece a ningun CECO va a `SIN_CECO` y no disfrazado de centro de coste.
+    """
     payroll_total = sum(PAYROLL_BY_CECO.values())
     valued_total = sum(COST["byTarget"].values())
+
+    # Valorado por el CECO del EMPLEADO que imputo el parte (espejo de
+    # `Employee.defaultCostCenter`), repartido parte a parte por el Hamilton de
+    # O-E10-13 que ya esta calculado en `COST["perRow"]`.
+    minutes_by_id = {row["id"]: row for row in TIME_ENTRIES}
+    valued_by_ceco: dict[str, int] = defaultdict(int)
+    for entry_id, cents in COST["perRow"].items():
+        employee = minutes_by_id[entry_id]["employeeCode"]
+        valued_by_ceco[CECO_OF_EMPLOYEE.get(employee) or SIN_CECO] += cents
+    assert sum(valued_by_ceco.values()) == valued_total, "el desglose por CECO no cuadra con el valorado total"
+
+    # Nomina por el CECO de la linea 64x; las imputadas a un proyecto no son de
+    # ningun CECO y salen en `SIN_CECO`.
+    payroll_by_ceco: dict[str, int] = defaultdict(int)
+    for key, cents in PAYROLL_BY_CECO.items():
+        payroll_by_ceco[SIN_CECO if key.startswith("PROJ:") or key == "SIN_DIMENSION" else key] += cents
+    assert sum(payroll_by_ceco.values()) == payroll_total, "el desglose de nomina no cuadra con el total"
+
     by_ceco = []
-    for ceco in sorted(set(list(PAYROLL_BY_CECO) + [k for k in COST["byTarget"] if k.startswith("CC-")])):
-        valued = COST["byTarget"].get(ceco, 0)
-        payroll = PAYROLL_BY_CECO.get(ceco, 0)
+    for ceco in sorted(set(list(payroll_by_ceco) + list(valued_by_ceco))):
+        valued = valued_by_ceco.get(ceco, 0)
+        payroll = payroll_by_ceco.get(ceco, 0)
         by_ceco.append({"costCenterCode": ceco, "valuedCents": valued,
-                        "payrollCents": payroll, "absorptionCents": valued - payroll})
+                        "payrollCents": payroll, "absorptionCents": valued - payroll,
+                        "absorptionBps": (None if payroll == 0
+                                          else _trunc_bps(valued - payroll, payroll))})
+    assert sum(r["absorptionCents"] for r in by_ceco) == valued_total - payroll_total, \
+        "Sigma de la absorcion por CECO != absorcion total"
     return {
         "valuedCents": valued_total,
         "payrollCents": payroll_total,
@@ -1534,7 +1583,7 @@ def build() -> dict[str, Any]:
     checks = build_checks(variance_settled)
 
     return {
-        "schemaVersion": "1.1",
+        "schemaVersion": "1.2",
         "generatedBy": "docs/design/fixtures/build_presupuesto_horas_esperado.py",
         "note": (
             "Presupuesto, horas, liquidacion presupuestaria, desviacion, forecast y KPI esperados "
@@ -1701,7 +1750,7 @@ def main() -> int:
         if OUT.read_text(encoding="utf-8") != text:
             print(f"{OUT} difiere de la reconstruccion", file=sys.stderr)
             return 1
-        print("OK: presupuesto-horas-esperado.v1.1.json reproducible byte a byte")
+        print("OK: presupuesto-horas-esperado.v1.2.json reproducible byte a byte")
         return 0
 
     OUT.write_text(text, encoding="utf-8")

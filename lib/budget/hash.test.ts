@@ -4,7 +4,7 @@
  * Casos obligatorios de todo módulo puro (CLAUDE.md): vacío, un registro,
  * importes negativos, fechas límite y redondeo. Y el que sella la tarea: los
  * dos `budgetHash` del fixture, **byte a byte** contra
- * `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`.
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.2.json`.
  */
 
 import { createHash } from "node:crypto"

@@ -459,6 +459,17 @@ async function readPayrollAbsorption(
           ON je.id = jl.entry_id AND je.organization_id = jl.organization_id
        WHERE jl.organization_id = ${tx.$organizationId}::uuid
          AND je.entry_date BETWEEN ${toUtcDate(fy.start)}::date AND ${toUtcDate(fy.end)}::date
+         -- Re-auditoria de la ronda 1, regresion GRAVE. La MISMA convencion
+         -- que la PyG (I3, lib/analytics/margins.ts): los asientos de
+         -- regularizacion, cierre y apertura NO son gasto del periodo. El de
+         -- regularizacion ABONA las 640/642 para llevarlas a la 129, asi que
+         -- sin excluirlo la nomina de diciembre salia NEGATIVA (-2 640 000 c) y
+         -- la guarda leia 0 <= -2 640 000 como un exceso de 2 640 000 c: todo
+         -- ejercicio cerrado dejaba la familia PRESUPUESTO en FAIL y el periodo
+         -- en REQUIERE REVISION de forma permanente. Un invariante que falla
+         -- con datos limpios no distingue una manipulacion: es el mismo vicio
+         -- que H-2 en la ronda 0.
+         AND jl.entry_kind NOT IN ('REGULARIZATION', 'CLOSING', 'OPENING')
          AND (jl.account_code LIKE '640%' OR jl.account_code LIKE '642%'
               OR jl.account_code LIKE '645%' OR jl.account_code LIKE '649%')
        GROUP BY 1

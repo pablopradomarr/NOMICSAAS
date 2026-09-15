@@ -2,7 +2,7 @@
  * E10 · T7/T8 — soporte COMPARTIDO de los tests de `lib/budget/**`.
  *
  * Reconstruye, desde el fixture sellado
- * `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`, las dos versiones de
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.2.json`, las dos versiones de
  * presupuesto y la `AnalyticsConfig` del ejercicio 2026, para que los tests
  * comparen **byte a byte** contra el contrato congelado por D6.
  *
@@ -25,7 +25,7 @@ export const EXPECTED_PATH = path.join(
   "docs",
   "design",
   "fixtures",
-  "presupuesto-horas-esperado.v1.1.json"
+  "presupuesto-horas-esperado.v1.2.json"
 )
 
 export type ExpectedLine = {

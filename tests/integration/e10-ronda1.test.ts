@@ -45,6 +45,12 @@ const ORG = "e1010000-0000-4000-8000-00000000000a"
 const USER = "e1010000-0000-4000-8000-0000000000a1"
 const actor = { userId: USER }
 const REF = "2026-12-31"
+type BudgetCellProvenanceRow = {
+  metrica: string
+  registros_origen: Record<string, string>
+}
+
+const REGULARIZATION_ENTRY = "e1010000-0000-4000-8000-0000000000e1"
 const YEAR = { periodKind: "YEAR" as const, periodStart: "2026-01-01" as const, periodEnd: "2026-12-31" as const }
 
 const E10_IDS = [
@@ -72,6 +78,8 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
   let baseBudgetId = ""
   let rev1BudgetId = ""
   let approvedEntryId = ""
+  let sealedRunId = ""
+  let secondRunId = ""
   let configHash = ""
 
   beforeAll(async () => {
@@ -162,8 +170,43 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
       if (preview.result.lines.length === 0) {
         throw new Error(`el run no reparte nada: ${JSON.stringify(preview.result.warnings)}`)
       }
-      await sealAllocationRunTx(tx, { ...YEAR, gitSha: "ronda1" }, actor)
+      sealedRunId = (await sealAllocationRunTx(tx, { ...YEAR, gitSha: "ronda1" }, actor)).id
     })
+
+    // **Re-auditoría, punto 4.** Un SEGUNDO run sellado con driver de actividad,
+    // con la MISMA ventana y el mismo `timeHash` que el primero. No es adorno:
+    // I-E10-17 recorre `time.runs` entero, y con un solo run el test no podía
+    // distinguir «los comprueba todos» de «comprueba el último». Con dos, un
+    // parte alterado tiene que ponerlos a los DOS en FAIL.
+    const primero = await prisma.allocationRun.findFirstOrThrow({ where: { id: sealedRunId } })
+    // Va en OTRO periodo (el cuarto trimestre): `allocation_runs_one_sealed_per_period`
+    // admite un solo run SEALED por periodo, y con razón. La ventana sellada es
+    // la misma —la de la regla anual, que es de actividad—, así que contiene el
+    // trimestre y el `timeHash` recomputado sobre ella es el mismo.
+    secondRunId = (
+      await prisma.allocationRun.create({
+        data: {
+          organizationId: ORG,
+          fiscalYearId,
+          periodKind: "QUARTER",
+          periodStart: new Date("2026-10-01T00:00:00Z"),
+          periodEnd: new Date("2026-12-31T00:00:00Z"),
+          status: "SEALED",
+          ledgerHash: primero.ledgerHash,
+          analyticsHash: primero.analyticsHash,
+          rulesHash: primero.rulesHash,
+          // Sin sello de SALIDA: el run copiado no tiene líneas, y copiarle el
+          // `linesHash` del primero lo dejaría en FAIL permanente por I-E5-12.
+          // `NULL` es el caso que I-E5-12 declara INFO (runs sellados antes de
+          // que existiera el sello de líneas), que es lo que este run es aquí.
+          linesHash: null,
+          timeHash: primero.timeHash,
+          timeHashWindowStart: primero.timeHashWindowStart,
+          timeHashWindowEnd: primero.timeHashWindowEnd,
+          gitSha: "ronda1",
+        },
+      })
+    ).id
 
     // Dos versiones de presupuesto: la BASE de los doce meses y una REV1 PARCIAL
     // desde julio. Al sellar la REV1, `sealBudgetTx` escribe `validTo` en la
@@ -339,6 +382,9 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
   const checkOf = (run: Awaited<ReturnType<typeof sweep>>, id: string) =>
     run.validacion.checks.find((c) => c.id === id)
 
+  const i17Evidencia = (run: Awaited<ReturnType<typeof sweep>>): string =>
+    checkOf(run, "I-E10-17")?.evidencia ?? ""
+
   // ───────────────────────────────────────────────────────────────────────
   // H-1 — los dieciocho invariantes EXISTEN en el barrido
   // ───────────────────────────────────────────────────────────────────────
@@ -450,6 +496,15 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
     expect(checkOf(await sweep(), "I-E10-3")?.status).toBe("PASS")
   }, 300_000)
 
+  it("punto 4 · I-E10-17 compara el `timeHash` de TODOS los runs con driver de actividad", async () => {
+    const run = await sweep()
+    const i17 = checkOf(run, "I-E10-17")
+    expect(i17?.status, i17?.evidencia).toBe("PASS")
+    // Dos runs con driver de actividad en el alcance, y los DOS comprobados: la
+    // evidencia lo dice con su número, no «el último».
+    expect(i17?.evidencia).toContain("2 run(s)")
+  }, 300_000)
+
   it("inyección (c) · un parte APROBADO retocado por SQL rompe la base del reparto y el `timeHash`", async () => {
     await owner(async (client) => {
       await client.query(`ALTER TABLE time_entries DISABLE TRIGGER USER`)
@@ -464,6 +519,23 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
     expect(checkOf(run, "I-E10-17")?.status).toBe("FAIL")
     expect(run.sello.sello).toBe("REQUIERE REVISIÓN")
 
+    // El mismo parte pone en FAIL a los DOS runs de actividad, no sólo al
+    // último (punto 4 de la re-auditoría): la evidencia nombra los dos.
+    expect(i17Evidencia(run)).toContain(sealedRunId)
+    expect(i17Evidencia(run)).toContain(secondRunId)
+
+    // Y la cuarta causa de STALE lo dice por el camino del producto, no sólo
+    // por el barrido: `allocationRunStaleness` sobre el run sellado.
+    const staleness = await tenantTransaction(ORG, USER, async (tx) => {
+      const { allocationRunStaleness, listAllocationRuns } = await import("@/models/allocations")
+      const runs = await listAllocationRuns(tx, { fiscalYearId })
+      const sealed = runs.find((r) => r.id === sealedRunId)
+      if (!sealed) throw new Error("el run sellado ha desaparecido")
+      return allocationRunStaleness(tx, sealed)
+    })
+    expect(staleness.isStale).toBe(true)
+    expect(staleness.reasons.join(" ")).toMatch(/timeHash|horas/i)
+
     await owner(async (client) => {
       await client.query(`ALTER TABLE time_entries DISABLE TRIGGER USER`)
       await client.query(`UPDATE time_entries SET minutes = minutes - 60 WHERE id = $1::uuid`, [approvedEntryId])
@@ -472,6 +544,207 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
     const clean = await sweep()
     expect(checkOf(clean, "I-E10-3")?.status).toBe("PASS")
     expect(checkOf(clean, "I-E10-17")?.status).toBe("PASS")
+  }, 300_000)
+
+  it("inyección (b) · una `allocation_line` de una regla HORAS alterada rompe I5 e I-E5-12", async () => {
+    // El sello de SALIDA del run (`linesHash`) y la base liquidable del CECO son
+    // dos caminos independientes del que emitió las líneas: mover un céntimo de
+    // reparto los rompe a los dos. Con `driverBase` intacta, I-E10-3 no lo ve
+    // —mide la BASE, no el importe—, y por eso hacen falta los dos invariantes.
+    await owner(async (client) => {
+      await client.query(
+        `UPDATE allocation_lines SET amount_cents = amount_cents + 100
+          WHERE organization_id = $1::uuid AND run_id = $2::uuid
+            AND id = (SELECT id FROM allocation_lines WHERE run_id = $2::uuid ORDER BY id LIMIT 1)`,
+        [ORG, sealedRunId]
+      )
+    })
+    const run = await sweep()
+    const roto = ["I5", "I-E5-12"].filter((id) => checkOf(run, id)?.status === "FAIL")
+    expect(roto, JSON.stringify(["I5", "I-E5-12"].map((id) => [id, checkOf(run, id)?.status]))).not.toEqual([])
+    expect(run.sello.sello).toBe("REQUIERE REVISIÓN")
+
+    await owner(async (client) => {
+      await client.query(
+        `UPDATE allocation_lines SET amount_cents = amount_cents - 100
+          WHERE organization_id = $1::uuid AND run_id = $2::uuid
+            AND id = (SELECT id FROM allocation_lines WHERE run_id = $2::uuid ORDER BY id LIMIT 1)`,
+        [ORG, sealedRunId]
+      )
+    })
+    const clean = await sweep()
+    for (const id of ["I5", "I-E5-12"]) expect(checkOf(clean, id)?.status, id).not.toBe("FAIL")
+  }, 300_000)
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Re-auditoría · regresión GRAVE — I-E10-12 sobre un ejercicio regularizado
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("regresión · el asiento de REGULARIZACIÓN no convierte I-E10-12 en un FAIL permanente", async () => {
+    // El asiento de regularización ABONA las 640/642 para llevarlas a la 129.
+    // Sin excluir su `entry_kind`, la nómina de diciembre salía NEGATIVA y la
+    // guarda leía `0 ≤ −300 000` como un exceso: **todo ejercicio cerrado**
+    // quedaba con la familia PRESUPUESTO en FAIL y el periodo en REQUIERE
+    // REVISIÓN, con los datos intactos.
+    const antes = checkOf(await sweep(), "I-E10-12")
+    expect(antes?.status, antes?.evidencia).toBe("PASS")
+
+    await owner(async (client) => {
+      await client.query(`ALTER TABLE journal_lines DISABLE TRIGGER USER`)
+      await client.query(`ALTER TABLE journal_entries DISABLE TRIGGER USER`)
+      await client.query(
+        `INSERT INTO journal_entries (id, organization_id, fiscal_year_id, entry_number, entry_date,
+                                      description, kind, source_type, entry_hash, posted_by_id, posted_at)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 99001, '2026-12-31'::date,
+                 'Regularización de cuentas de gestión (T-24)', 'REGULARIZATION', 'MANUAL',
+                 repeat('0', 64), $4::uuid, now())`,
+        [REGULARIZATION_ENTRY, ORG, fiscalYearId, USER]
+      )
+      // Debe 129 / Haber 640: el mismo asiento que cierra el ejercicio.
+      await client.query(
+        `INSERT INTO journal_lines (id, organization_id, entry_id, line_no, account_code, debit_cents,
+                                    credit_cents, entry_date, fiscal_year_id, entry_kind, cost_center_id)
+         VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 1, '129', 300000, 0,
+                 '2026-12-31'::date, $3::uuid, 'REGULARIZATION', NULL),
+                (gen_random_uuid(), $1::uuid, $2::uuid, 2, '640', 0, 300000,
+                 '2026-12-31'::date, $3::uuid, 'REGULARIZATION', $4::uuid)`,
+        [ORG, REGULARIZATION_ENTRY, fiscalYearId, ceco["CC-GA"]]
+      )
+      await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER USER`)
+      await client.query(`ALTER TABLE journal_entries ENABLE TRIGGER USER`)
+    })
+
+    const conRegularizacion = checkOf(await sweep(), "I-E10-12")
+    expect(conRegularizacion?.status, conRegularizacion?.evidencia).toBe("PASS")
+
+    // Y la guarda SIGUE viva: una 640 alterada por SQL para que la nómina
+    // contabilizada quede por debajo de lo imputado la caza igual.
+    await owner(async (client) => {
+      await client.query(`ALTER TABLE journal_lines DISABLE TRIGGER USER`)
+      await client.query(
+        `UPDATE journal_lines SET debit_cents = 0, credit_cents = 400000
+          WHERE organization_id = $1::uuid AND account_code = '640' AND entry_kind = 'NORMAL'`,
+        [ORG]
+      )
+      await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER USER`)
+    })
+    const alterada = checkOf(await sweep(), "I-E10-12")
+    expect(alterada?.status, alterada?.evidencia).toBe("FAIL")
+
+    await owner(async (client) => {
+      await client.query(`ALTER TABLE journal_lines DISABLE TRIGGER USER`)
+      await client.query(
+        `UPDATE journal_lines SET debit_cents = 300000, credit_cents = 0
+          WHERE organization_id = $1::uuid AND account_code = '640' AND entry_kind = 'NORMAL'`,
+        [ORG]
+      )
+      await client.query(`DELETE FROM journal_lines WHERE entry_id = $1::uuid`, [REGULARIZATION_ENTRY])
+      await client.query(`DELETE FROM journal_entries WHERE id = $1::uuid`, [REGULARIZATION_ENTRY])
+      await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER USER`)
+    })
+    expect(checkOf(await sweep(), "I-E10-12")?.status).toBe("PASS")
+  }, 300_000)
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Re-auditoría · punto 3 — la provenance por celda REPRODUCE la celda
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("punto 3 · las consultas de una celda de MC3 devuelven filas cuya Σ es la celda", async () => {
+    // La ronda 1 dejó la provenance por celda con dos errores hermanos: filtraba
+    // por los tipos DEL NIVEL —y la matriz es ACUMULATIVA, así que MC3 devolvía
+    // 0 filas— y fijaba una celda anual a `month = '<año>-01-01'`. Una
+    // provenance que devuelve cero filas sobre una celda con importe es peor que
+    // ninguna: dice que no hay origen.
+    const { budgetVsActual } = await import("@/models/reports")
+    const view = await budgetVsActual(ORG, {
+      fiscalYearId,
+      periodStart: "2026-01-01",
+      periodEnd: REF,
+      granularity: "YTD",
+      withAllocations: false,
+      actor,
+      noCache: true,
+    })
+    const stored = await prisma.reportRun.findFirstOrThrow({
+      where: { id: view.runId },
+      select: { provenance: true },
+    })
+    const byCell = (stored.provenance as { byCell: BudgetCellProvenanceRow[] }).byCell
+    expect(byCell.length).toBeGreaterThan(0)
+
+    const celda = byCell.find((c) => c.metrica === "desviacion.mc3.PROJ:P-01.periodo")
+    expect(celda, `celdas: ${byCell.map((c) => c.metrica).slice(0, 12).join(", ")}`).toBeTruthy()
+    if (!celda) return
+    const cell = view.result.variance.find((v) => v.level === "MC3" && v.column === "PROJ:P-01")
+    expect(cell).toBeTruthy()
+    if (!cell) return
+
+    // Las consultas se EJECUTAN, no se leen: la Σ del aporte de las líneas que
+    // devuelven tiene que ser la celda, al céntimo.
+    const sumaReal = await owner(async (client) => {
+      const { rows } = await client.query<{ total: string }>(
+        `SELECT COALESCE(SUM(credit_cents - debit_cents), 0)::text AS total
+           FROM journal_lines WHERE id IN (${celda.registros_origen.real})`
+      )
+      return Number(rows[0].total)
+    })
+    expect(sumaReal).toBe(cell.actualCents)
+
+    const sumaPresupuesto = await owner(async (client) => {
+      const { rows } = await client.query<{ total: string }>(
+        `SELECT COALESCE(SUM(amount_cents), 0)::text AS total
+           FROM budget_lines WHERE id IN (${celda.registros_origen.presupuesto})`
+      )
+      return Number(rows[0].total)
+    })
+    expect(sumaPresupuesto).toBe(cell.budgetCents)
+
+    // Y el nivel base sigue cuadrando: la corrección no rompe lo que ya iba.
+    const ingresos = byCell.find((c) => c.metrica === "desviacion.ingresos.PROJ:P-01.periodo")
+    expect(ingresos).toBeTruthy()
+    if (!ingresos) return
+    const celdaIngresos = view.result.variance.find((v) => v.level === "INGRESOS" && v.column === "PROJ:P-01")
+    const sumaIngresos = await owner(async (client) => {
+      const { rows } = await client.query<{ total: string }>(
+        `SELECT COALESCE(SUM(credit_cents - debit_cents), 0)::text AS total
+           FROM journal_lines WHERE id IN (${ingresos.registros_origen.real})`
+      )
+      return Number(rows[0].total)
+    })
+    expect(sumaIngresos).toBe(celdaIngresos?.actualCents)
+  }, 300_000)
+
+  it("punto 3-bis · con imputaciones, la consulta `horas` devuelve los minutos presupuestados de la celda", async () => {
+    const { budgetVsActual } = await import("@/models/reports")
+    const view = await budgetVsActual(ORG, {
+      fiscalYearId,
+      periodStart: "2026-01-01",
+      periodEnd: REF,
+      granularity: "YTD",
+      withAllocations: true,
+      actor,
+      noCache: true,
+    })
+    const stored = await prisma.reportRun.findFirstOrThrow({
+      where: { id: view.runId },
+      select: { provenance: true },
+    })
+    const byCell = (stored.provenance as { byCell: BudgetCellProvenanceRow[] }).byCell
+    const celda = byCell.find((c) => c.metrica === "desviacion.mc3.PROJ:P-01.periodo")
+    expect(celda).toBeTruthy()
+    if (!celda) return
+    expect(Object.keys(celda.registros_origen).sort()).toEqual(["horas", "imputado", "presupuesto", "real"])
+
+    // Los minutos que el dry-run de O-E10-4 usó como base para llegar a esta
+    // celda: 6 000/mes en enero-junio (BASE) y 6 600 en julio-diciembre (REV1).
+    const minutos = await owner(async (client) => {
+      const { rows } = await client.query<{ total: string }>(
+        `SELECT COALESCE(SUM(minutes), 0)::text AS total
+           FROM budget_hours_lines WHERE id IN (${celda.registros_origen.horas})`
+      )
+      return Number(rows[0].total)
+    })
+    expect(minutos).toBe(6_000 * 6 + 6_600 * 6)
   }, 300_000)
 
   // ───────────────────────────────────────────────────────────────────────

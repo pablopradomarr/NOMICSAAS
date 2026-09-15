@@ -3,7 +3,7 @@
  * `settleBudgetMatrix` (O-E10-4).
  *
  * Criterios 3, 27 y 27-bis de §12, byte a byte contra
- * `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`.
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.2.json`.
  */
 
 import { describe, expect, it } from "vitest"
@@ -351,6 +351,38 @@ describe("O-E10-20 · la absorción que acompaña a la desviación", () => {
       sealed.byCostCenter.map((r) => [r.costCenterCode, r.absorptionCents])
     )
   })
+
+  /**
+   * **Punto 2 de la re-auditoría de la ronda 1.** H-5 se cerró en el producto
+   * pero **no en el fixture**: `build_absorption()` del generador seguía
+   * repartiendo lo valorado por el RECEPTOR del parte, así que las tres filas de
+   * CECO salían a 0 y dos filas llevaban `PROJ:P-01`/`PROJ:P-02` en un campo
+   * llamado `costCenterCode`. El contrato congelado de D6 y el motor decían
+   * cosas distintas, que es justo lo que un fixture sellado está para impedir.
+   * El fixture se reversiona a **v1.2** (los dos `budgetHash` NO cambian: lo que
+   * cambia es un bloque de informe).
+   */
+  it("v1.2 · el desglose por CECO dice lo MISMO que el producto y su Σ es la absorción total", () => {
+    const sealed = expected.absorption as {
+      valuedCents: number
+      payrollCents: number
+      absorptionCents: number
+      byCostCenter: { costCenterCode: string; valuedCents: number; payrollCents: number }[]
+    }
+    // Ni una fila con un `PROJ:` disfrazado de centro de coste: lo que no
+    // pertenece a ningún CECO va a `SIN_CECO`, con ese nombre.
+    for (const row of sealed.byCostCenter) {
+      expect(row.costCenterCode, row.costCenterCode).not.toContain("PROJ:")
+      expect(row.costCenterCode === "SIN_CECO" || row.costCenterCode.startsWith("CC-")).toBe(true)
+    }
+    // Y el desglose INFORMA: el valorado por CECO ya no es cero en bloque.
+    expect(sealed.byCostCenter.filter((r) => r.valuedCents !== 0).length).toBeGreaterThan(0)
+    // Las dos Σ cuadran con los totales, que son los que el auditor reconstruyó.
+    expect(sealed.byCostCenter.reduce((a, r) => a + r.valuedCents, 0)).toBe(sealed.valuedCents)
+    expect(sealed.byCostCenter.reduce((a, r) => a + r.payrollCents, 0)).toBe(sealed.payrollCents)
+    expect(sealed.byCostCenter.reduce((a, r) => a + (r.valuedCents - r.payrollCents), 0)).toBe(-22_787)
+    expect(sealed.absorptionCents).toBe(-22_787)
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,8 +428,15 @@ describe("H-7 · provenance por celda del PRESUPUESTO_REAL (§5.1)", () => {
     expect(p.registros_origen.real).toContain("projects WHERE code = 'P-01'")
     expect(p.registros_origen.imputado).toContain("FROM allocation_lines")
     expect(p.registros_origen.imputado).toContain("target_project_id")
-    // El presupuesto sale de la versión que gobierna ESE mes (O-E10-9).
-    expect(p.registros_origen.presupuesto).toContain("budget_id = 'budget-base'")
+    // El presupuesto sale de la(s) versión(es) que gobiernan los meses de la
+    // ventana (O-E10-9), y acumula los niveles hasta el de la celda: MC3 no es
+    // lo que aporta MC3, es INGRESOS + MC1 + MC2 + MC3 (re-auditoría, punto 3).
+    expect(p.registros_origen.presupuesto).toContain("bl.budget_id = 'budget-base' AND bl.month IN ('2026-03-01')")
+    expect(p.registros_origen.presupuesto).toContain("margin_level IN ('INGRESOS', 'MC1', 'MC2', 'MC3')")
+    expect(p.registros_origen.real).toContain("'INGRESO_DIRECTO'")
+    expect(p.registros_origen.real).toContain("'INDIRECTO_CECO'")
+    // Y no cuela una regularización de cierre como gasto del periodo (I3).
+    expect(p.registros_origen.real).toContain("entry_kind NOT IN ('REGULARIZATION', 'CLOSING', 'OPENING')")
     expect(p.registros_origen.horas).toContain("FROM budget_hours_lines")
     expect(p.metrica).toBe("desviacion.mc3.PROJ:P-01.2026-03")
     expect(p.valor).toBe(129_580)
@@ -410,9 +449,22 @@ describe("H-7 · provenance por celda del PRESUPUESTO_REAL (§5.1)", () => {
     expect(Object.keys(p.registros_origen).sort()).toEqual(["presupuesto", "real"])
   })
 
+  it("una celda ANUAL abre el rango a los doce meses y a todas sus versiones", () => {
+    // El error hermano: la celda del acumulado fijaba `month = '2026-01-01'` y
+    // apuntaba sólo a enero. Ahora el rango es el del periodo y las versiones,
+    // las que lo gobiernan.
+    const anual = budgetCellProvenance({ ...cell, month: null }, ctx)
+    // La composición, mes a mes: `budget_id IN (…) AND month BETWEEN …` contaría
+    // julio-diciembre DOS veces, porque la BASE también los cubre (O-E10-9).
+    expect(anual.registros_origen.presupuesto).toContain("bl.budget_id = 'budget-base' AND bl.month IN ('2026-03-01')")
+    expect(anual.registros_origen.presupuesto).toContain("bl.budget_id = 'budget-rev1' AND bl.month IN ('2026-07-01')")
+    expect(anual.registros_origen.real).toContain("BETWEEN '2026-01-01' AND '2026-12-31'")
+    expect(anual.metrica).toBe("desviacion.mc3.PROJ:P-01.periodo")
+  })
+
   it("un mes sin versión que lo cubra lo DICE, en vez de apuntar a ninguna parte", () => {
     const p = budgetCellProvenance({ ...cell, month: "2026-09" }, ctx)
-    expect(p.registros_origen.presupuesto).toContain("no tiene versión de presupuesto")
+    expect(p.registros_origen.presupuesto).toContain("no tiene ninguna versión de presupuesto")
   })
 
   it("una celda no comparable viaja con `confianza: no_comparable` (I-E10-18)", () => {

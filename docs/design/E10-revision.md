@@ -87,3 +87,51 @@ Los tres son de cierre barato. Con ellos resueltos y el hallazgo 4 corregido
 revisión—, la épica es **APROBABLE**: lint, las tres suites y el build están en
 verde (5 357 pruebas), las siete migraciones son ejemplares, el motor queda puro
 y el núcleo de E5 intacto.
+
+---
+
+# Ronda 2 (2026-09-15) — verificación del cierre · commit `aa7a7d0`
+
+**Diff:** `git diff 5d2d2ba...aa7a7d0` (43 ficheros, +22 761 / −305).
+
+| Suite | Ronda 1 | Ronda 2 |
+|---|---|---|
+| `lint` | 0 errores | **0 errores** (12 avisos heredados de `components/` y `hooks/`) |
+| `test` | 2 240 · 11 skip | **2 248 · 11 skip** (los mismos once) |
+| `test:integration` | 150 f · 2 932 | **153 f · 2 960** (+`perf-budget`, +`e10-presupuesto`, +`e10-ronda1`) |
+| `test:integration:rls` | 11 f · 185 | **12 f · 211** (+`e10-tenant`) |
+| `build` | OK | **OK** (77 s) |
+
+## Cierre por hallazgo, con evidencia
+
+| Hallazgo | Estado | Evidencia verificada |
+|---|---|---|
+| **BLOQUEA 1** · nueve techos de §9 sin medir | **CERRADO** | `tests/integration/perf-budget.test.ts:420-622`, nueve casos numerados `1/9…9/9` con los umbrales exactos de §9 (900/300/20 000/1 500/350/400/600/500/250 ms) y sobre el volumen exacto (`SCALE`: 28 800 celdas, 500 por lote, 30 000 líneas, 40 × 22, 120 000 partes, 17 periodos). Mide además **conexiones** (`MAX_CONNECTIONS = 2`) y **cuenta las consultas** del lote de staleness (`≤ 3`). Verde en la suite |
+| **BLOQUEA 2** · deuda sin fecha | **CERRADO** | `docs/ESTADO.md` §«E10 — ronda 1»: tabla de dieciséis hallazgos y tabla «Deuda de E10 que sigue abierta, **con épica de cierre**» — C1-drill-down y C2-paginación **CERRADAS**, C1-calendario, C3-rentabilidad, PUEDE 14 y granularidad `MONTH` **fechadas en E11**. Ya no queda ninguna «sin fecha propia» |
+| **BLOQUEA 3** · `budgetHash` sin las horas | **CERRADO, y mejor de lo pedido** | `lib/budget/hash.ts:46-93`: las horas entran con separador `∅HORAS`, y el auditor destapó de paso **H-2**, que yo no vi: `validTo` **sale** de la cabecera porque es mutable por diseño (`sealBudgetTx` cierra la anterior, O-E10-8) y hacía irreproducible el hash de toda versión relevada — I-E10-6 daba FAIL sobre datos íntegros. Fixture reversionado a `presupuesto-horas-esperado.v1.1.json`; **v1.0 intacto en el árbol** (`git diff` no lo toca) |
+| **DEBE 4** · `HORAS_SIN_APROBAR` con base 0 | **CERRADO** | `lib/analytics/allocate.ts:908-925`: el aviso se calcula **antes** de la rama del fallback, con `shareOfBaseBps: baseTotal === 0 ? null : …` — la rama del tipo deja de ser inalcanzable. Alineado el generador Python (`criterio-13-bis`) |
+| **DEBE 5** · O-A6 y `MODELO-DATOS` | **CERRADO** | `ESTADO.md:246` y `MODELO-DATOS.md:105,151` la declaran **CERRADA (2026-09-15, E10)** citando la migración; `MODELO-DATOS.md` incorpora las siete tablas |
+| **DEBE 6** · `proposePayrollReclass` sin consumidor | **CERRADO** | `models/time.ts:735` → `app/(app)/analytics/actions.ts:456` (`proposePayrollReclassAction`) → `components/analytics/payroll-reclass-dialog.tsx`, que **delega en `reclassifyLines`** (ADR-0010) tras confirmación. No se ha abierto ninguna vía nueva de escritura del diario |
+| **DEBE 7** · varias transacciones por petición | **CERRADO** | `/analytics/budget` y `/time` leen dentro del `db` de `tenantPage`; el techo 1/9 lo **mide** (1 transacción, ≤ 2 conexiones) |
+| **DEBE 8** · `budgetHoursHash` muerta | **CERRADO** | Retirada |
+| **PUEDE 9–13, 15** | **CERRADOS** | §9 dice «**Nueve** techos» (2080, 2096), T3 dice «**ocho** enums» (2408); `budget_lines_sign_by_type` sin la rama `IS NULL`; `REVOKE DELETE ON employees`; `aggregate.ts:239` `if (!isActivityDriver(rule.driver)) continue`; `applyHourlyCostAction` devuelve `{ success: false }`; `upsertBudgetHoursAction` en la matriz de §4.2 (1785) |
+| **PUEDE 14** | Abierta, **fechada en E11** | Correcto: no es un defecto de seguridad, el tamaño sí se valida |
+| **H-1 / H-1-bis / H-4 / H-5 / H-6 / H-7** (auditor) | **CERRADOS** | `models/budget-invariants.ts` compone los bloques `budget` y `time` y `models/ledger.ts` los pasa a `runInvariantsPure` con `budgetSealReasons()` → los dieciocho dejan de ser código muerto; `checkIE109` agrupa por **ejercicio**; el CHECK de signo exige familia (`app.budget_sign_exception_allowed`); absorción por CECO con dos magnitudes comparables; §3.6 corregido; `budgetProvenanceByCell` por celda |
+
+## Lupa de la ronda 2
+
+- **Forma canónica nueva — nada ya sellado se invalida.** `lib/ledger/hash.ts`, `lib/analytics/hash.ts` y `liquidacion-esperada.json` **no se tocan**: `ledgerHash`, `analyticsHash`, `marginConfigHash` y `allocationRunSetHash` son bit a bit los de antes, y el test byte a byte de E5 sigue verde. El cambio sólo alcanza a `budgetHash`, cuya tabla **nace en esta épica**: no hay una sola fila sellada en otra época que pueda quedar huérfana, y los `ReportRun` anteriores conservan su `'∅'`. `presupuesto-horas-esperado.json` (v1.0) queda en el árbol sin una sola línea modificada y toda referencia viva apunta a v1.1.
+- **Migraciones `20260925090000` / `20260925100000`.** Aditivas, ninguna aplicada editada, y **sin SUPERUSER**: `CREATE OR REPLACE FUNCTION` en el esquema `app` propio, `REVOKE`/`GRANT` sobre funciones propias, `ALTER TABLE … DROP/ADD CONSTRAINT`, `REVOKE DELETE` y un `CREATE INDEX IF NOT EXISTS` parcial. Ni `ALTER ROLE`, ni `OWNER TO`, ni extensión nueva. La primera lleva su propio `DO $$` de verificación del GUC.
+- **D7 — el GUC no es usable por `app_runtime`.** Comprobado contra la base: `app_runtime` no es miembro de `app_maintenance` (`pg_auth_members` vacío para esa pareja) y `pg_has_role('app_runtime','app_maintenance','USAGE')` = **`f`**, así que `app.is_maintenance_operator()` es falso en toda sesión de la aplicación y el `SET LOCAL` por sí solo **no abre nada**. Las dos condiciones son conjuntivas y la del tenant compara contra `OLD.organization_id`. La nota de D7 está **fechada y aprobada** y no enmienda D1–D6.
+- **Ningún test debilitado.** Las tres únicas líneas `it(` retiradas son renombrados o correcciones con contrapartida: `criterio 29 ·` antepuesto en `aggregate.test.ts`; `criterio 16 y 16-bis` fusionado y **ampliado** a 16-ter y 16-quater en `allocate.test.ts`; y en `hash.test.ts` la aserción de `validTo` se **invierte a propósito** por H-2, con dos aserciones nuevas en los dos sentidos más `H-3 · las líneas de HORAS entran en el sello`. Saldo de casos: **+8 unitarios, +28 de integración, +26 RLS**, y los once `skip` son los once de siempre.
+
+## Veredicto de la ronda 2
+
+## **APROBADO**
+
+Los tres BLOQUEA, los cinco DEBE y seis de los siete PUEDE están cerrados con
+código, test y documento; el séptimo queda abierto **con épica**. Las cinco
+suites están en verde sobre Postgres real, los nueve techos de §9 se miden por
+fin, y el sello del presupuesto es ahora reproducible —que es más de lo que la
+ronda 1 pedía, porque H-2 arregla un FAIL que mi revisión no vio—. Nada de lo
+sellado en épicas anteriores se invalida. **E10 puede entrar.**

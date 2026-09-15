@@ -3535,6 +3535,12 @@ model TimeEntry {
   @@index([organizationId, employeeId, date])
   @@index([organizationId, projectId, date])
   @@index([organizationId, costCenterId, date])
+  /// Índice de COBERTURA del agregado del ejercicio (§9, techo 7): con los
+  /// predicados condicionales de `minutesByTargetMonthSql` los índices parciales
+  /// no sirven, y con el `INCLUDE` el escaneo es *index-only*. En la base lleva
+  /// `INCLUDE (project_id, cost_center_id, minutes, status, productive)`, que
+  /// Prisma no sabe expresar: migración `20260925110000_e10_indice_agregado_horas`.
+  @@index([organizationId, date], map: "time_entries_org_date_cover")
   /// La FK a la propia tabla necesita índice: sin él, «¿qué contra-apuntes
   /// corrigen este parte?» es un recorrido secuencial y el `ON DELETE` de la FK
   /// se verifica con un SEQ SCAN por fila. En la base es PARCIAL

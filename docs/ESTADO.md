@@ -513,6 +513,18 @@ y fecha**, como exige el §Estándar de calidad de `CLAUDE.md`.
 | **QA BUG-E10-1** | `--reset-org` no vaciaba presupuesto ni horas: `budgets.fiscal_year_id` es `RESTRICT` y las suites e2e se contaminaban entre ficheros | Integrado el arreglo de QA en `scripts/load-fixture.ts` y el nuevo `tests/integration-rls/e10-tenant.test.ts` (criterio 24, las siete tablas) |
 | **QA BUG-E10-2** | Un parte APROBADO no se podía borrar **ni desde `app_maintenance`**: `--reset-org` moría en `time_entries` | Nivel 2, nota fechada en ADR-0018 (**D7**, aprobada por permiso delegado 2026-09-15): GUC de transacción `app.maintenance_reset_org`, **verificado** contra la organización de la fila y contra el rol de operador (patrón `app.reopening_run_id` de E9). La aplicación no conecta nunca con ese rol |
 
+### Re-auditoría de la ronda 1 (2026-09-15): los cuatro puntos
+
+El auditor volvió sobre `5d2d2ba…aa7a7d0` y cerró H-1, H-2, H-3, H-4, H-6 y D7.
+Quedaban cuatro cosas, todas cerradas aquí:
+
+| # | Punto | Corrección |
+|---|---|---|
+| **1** GRAVE (regresión) | `readPayrollAbsorption` no excluía `REGULARIZATION`/`CLOSING`/`OPENING`: el asiento de regularización **abona** las 640/642 y dejaba la nómina del mes en negativo, así que la guarda leía `0 ≤ −2 640 000` como un exceso. **Todo ejercicio cerrado** quedaba con la familia PRESUPUESTO en FAIL y el periodo en REQUIERE REVISIÓN con los datos intactos | Se aplica la MISMA convención que la PyG (I3). Test: con el asiento de regularización puesto, I-E10-12 **PASS**; con una 640 alterada por SQL, **FAIL** |
+| **2** | H-5 cerrado en el producto pero **no en el fixture**: `build_absorption()` repartía lo valorado por el RECEPTOR, así que las tres filas de CECO salían a 0 y dos llevaban `PROJ:…` en un campo llamado `costCenterCode`. El contrato congelado de D6 y el motor decían cosas distintas | El generador reparte lo valorado por el CECO del **empleado** y manda a `SIN_CECO` lo que no es de ningún CECO. Fixture **v1.2** (los dos `budgetHash` NO cambian; v1.1 queda congelado). Test byte a byte: Σ por CECO = −22 787 c |
+| **3** | La provenance por celda filtraba por los tipos **del nivel** y la matriz es **acumulativa**, así que una celda de MC3 devolvía **0 filas**; y fijaba una celda anual a `month = '<año>-01-01'` | Las consultas acumulan los niveles ≤ N, abren el rango a los meses del periodo y respetan la **composición** mes a mes (O-E10-9): `budget_id IN (…) AND month BETWEEN …` contaba julio-diciembre dos veces. Test de integración que **ejecuta** las consultas: Σ real = `actualCents`, Σ presupuesto = `budgetCents`, Σ minutos = los presupuestados |
+| **4** | La inyección (b) sólo la detecta un tenant **con** un run sellado de driver de actividad, y el arnés del auditor no tenía ninguno | El arnés sella un run con driver `HOURS` **y un segundo** con la misma ventana: alterar un parte APROBADO pone a los **dos** en FAIL por I-E10-17 y el run sale `STALE` por el camino del producto; alterar una `allocation_line` rompe I5 / I-E5-12. I-E10-17 ya recorría todos los runs con driver de actividad —no sólo el último—, y ahora el test lo demuestra con dos |
+
 **PUEDE atendidos**: 9 (los dos recuentos del diseño: nueve techos y ocho
 enums), 10 (rama muerta del CHECK de signo), 11 (`REVOKE DELETE ON employees`),
 12 (`timeWindowOf` sólo se ensancha por drivers de actividad), 13

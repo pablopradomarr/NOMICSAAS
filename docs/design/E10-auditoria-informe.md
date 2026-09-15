@@ -166,3 +166,74 @@ consultas.
    (H-2); añadir las líneas de horas al sello o corregir §3.8/D2 (H-3).
 3. Cerrar H-4 (CHECK) y H-5 (desglose de absorción) antes de publicar la
    pantalla; H-6 y H-7 son deuda documentada.
+
+---
+
+# Re-auditoría (ronda 1, `5d2d2ba…aa7a7d0`)
+
+Mismo método: Python propio para la forma canónica nueva y SQL directo sobre una
+base aislada clonada de `erp_test` (eliminada al terminar). Producto y fixtures
+no modificados.
+
+| Hallazgo ronda 0 | Estado | Evidencia |
+|---|---|---|
+| **H-1** invariantes muertos | **CERRADO** | `models/ledger.ts:2209-2259` rellena `budget`/`time` vía `models/budget-invariants.readBudgetInvariantInput`. Barrido real: 90 checks (antes 26) con los **18 `I-E10-*`**; un FAIL mueve el sello a `REQUIERE REVISIÓN` |
+| **H-2** `valid_to` en el sello | **CERRADO** | `canonicalBudgetForm` ya no lleva `valid_to`. Sellada BASE y después REV1, `I-E10-6` **PASS** |
+| **H-3** horas fuera del sello | **CERRADO** | Bloque `∅HORAS` + filas de horas. Python reproduce `c32cdecf…` (BASE, 36 filas) y `dc11871c…` (REV1, 18) del fixture **v1.1**; `--check` byte a byte OK; sensible a **1 c** y a **1 min** |
+| **H-4** CHECK de signo | **CERRADO** | `budget_lines_sign_by_type` llama a `app.budget_sign_exception_allowed()`: `640` +123 456 c con `sign_exception` **rechazado**; `706` +5 000 c admitido |
+| **H-5** desglose de absorción | **ABIERTO en el fixture** | `models/reports.ts:2524-2541` ya reparte lo valorado por el CECO del empleado, pero `presupuesto-horas-esperado.v1.1.json` sigue con `valuedCents: 0` en las tres filas y `PROJ:P-01`/`PROJ:P-02` como `costCenterCode`: **Σ valorado por CECO = 0** y Σ absorción por CECO = **−2 640 000 c ≠ −22 787 c**. `build_absorption()` del generador no se tocó: el contrato congelado (D6) y el producto dicen cosas distintas |
+| **H-6** texto de §3.6 | corregido en el diseño | — |
+| **H-7** provenance por celda | **PARCIAL** | `report_runs.provenance.byCell` se persiste con sus consultas. Pero en la celda citada, **MC3 `PROJ:P-01`** (desviación −4 484 000 c), `real` y `presupuesto` devuelven **0 filas**: `real` filtra `analytic_type` a los tipos **del nivel**, y la matriz es **acumulativa**; y `presupuesto` fija una celda anual a `month = '2026-01-01'`. Sólo cuadra el nivel base (INGRESOS `PROJ:P-01`: 7 líneas, 2 050 000 c = `actualCents`) |
+
+**Regresión nueva · GRAVE — `I-E10-12` da FAIL sobre datos íntegros.**
+`readPayrollAbsorption` (`models/budget-invariants.ts:453-465`) no excluye
+`REGULARIZATION`/`CLOSING`/`OPENING`, así que el asiento de regularización de
+cierre —que **abona** 640/642— deja la nómina de diciembre en **−2 640 000 c** y
+la guarda lee `0 ≤ −2 640 000` como exceso: *«2026-12: 0 c imputados … sobre
+-2640000 c contabilizados en 64x (exceso de 2640000 c)»*. Todo ejercicio cerrado
+queda con la familia `PRESUPUESTO` en FAIL y el periodo en `REQUIERE REVISIÓN` de
+forma permanente — el mismo vicio que H-2 en la ronda 0: un invariante que falla
+con datos limpios no distingue una manipulación.
+
+**Inyecciones.** (a) 1 c en una línea sellada y 1 min en una línea de horas
+sellada ⇒ `I-E10-6` **FAIL** y sello `REQUIERE REVISIÓN` (además el trigger las
+bloquea; hubo que desactivarlo). (b) parte **APROBADO** alterado por SQL ⇒
+**ningún `I-E10-*` lo detecta** en un tenant sin `AllocationRun` sellado con
+driver de actividad: la detección vive en el `timeHash`/`STALE` y en `I-E10-17`,
+que necesitan un run — la afirmación «(b) → FAIL» es **condicional**. (c) no
+re-verificada: el arnés no tiene ningún run con driver `HOURS`.
+
+**D7 · verificado.** `SET LOCAL app.maintenance_reset_org` con el uuid correcto
+de la organización, como `app_runtime`, sigue devolviendo `23514` al borrar un
+parte aprobado (`app.is_maintenance_operator()` exige el rol); un parte
+`BORRADOR` se borra con normalidad.
+
+**Cifras de la ronda 0 sobre v1.1 · Δ = 0** en las ocho: totales de presupuesto
+por nivel, totales reales por nivel reconstruidos por SQL, desviaciones
+**−76 400 / +63 350 / +228 797**, minutos aprobados y productivos, los tres
+`timeHash`, coste-hora y Hamilton por parte, absorción **−22 787 c / −86 bps**,
+FTE·mes, las 17 + 18 líneas de liquidación y el forecast de doce meses.
+
+```
+VEREDICTO: DISCREPANCIA
+Cifras reconstruidas: | budgetHash BASE/REV1 v1.1 | c32cdecf…/dc11871c… | idénticos | 0 | Python, forma canónica nueva |
+                      | Desviaciones INGRESOS/MC3/EBITDA | −76 400/+63 350/+228 797 | idénticas | 0 | SQL + Python |
+                      | Absorción total | −22 787 c / −86 bps | idéntica | 0 | Σ valorado − Σ 64x |
+                      | Absorción por CECO (fixture) | Σ −2 640 000 c | esperado −22 787 c | ≠ | Σ filas byCostCenter |
+                      | Nómina de 2026-12 para I-E10-12 | −2 640 000 c | +0 c (sin REGULARIZATION) | ≠ | SQL por entry_kind |
+                      | Provenance MC3 PROJ:P-01 | −4 484 000 c | 0 filas en sus dos consultas | ≠ | ejecutadas contra la BD |
+Hallazgos: 1. I-E10-12 FAIL con datos íntegros: la nómina de la guarda no excluye
+  REGULARIZATION/CLOSING/OPENING (models/budget-invariants.ts:453-465).
+  2. H-5 cerrado en el producto pero NO en el fixture sellado v1.1 (build_absorption
+  del generador sin tocar): el contrato congelado de D6 contradice al motor.
+  3. H-7 parcial: las consultas por celda reproducen la CONTRIBUCIÓN del nivel, no la
+  celda acumulada, y fijan una celda anual a enero ⇒ 0 filas salvo en el nivel base.
+  4. La inyección (b) no la detecta ningún I-E10-* sin un run con driver de actividad.
+  5. CERRADOS y re-verificados: H-1, H-2, H-3, H-4, H-6 y D7.
+Trazabilidad: FALLO PARCIAL — desviación MC3 de PROJ:P-01 (−4 484 000 c): las dos
+  consultas que el run entrega devuelven 0 filas; sólo se llega al origen escribiendo
+  uno mismo la consulta acumulada. En INGRESOS la provenance sí cuadra al céntimo.
+Recomendación: filtrar entry_kind en readPayrollAbsorption y volver a correr el
+  barrido; regenerar el bloque de absorción del fixture v1.1; acumular niveles y
+  abrir el rango de meses en las consultas de provenance por celda.
+```

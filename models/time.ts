@@ -239,22 +239,38 @@ export async function minutesByTargetMonthSql(
   window: DateWindow,
   opts: { productiveOnly?: boolean; approvedOnly?: boolean } = {}
 ): Promise<TargetMonthMinutes[]> {
+  // **§9, techo 7** — el agregado del ejercicio completo (120 000 partes) en
+  // < 600 ms. Dos cosas importan aquí, y las dos se aprendieron midiendo:
+  //
+  //  1. Se agrupa por **ids y mes como fecha**, no por el CÓDIGO del receptor ni
+  //     por un `to_char`: agrupar por texto obligaba a resolver los dos `LEFT
+  //     JOIN` y a formatear una cadena **en las 120 000 filas**. Los códigos se
+  //     unen DESPUÉS, sobre las ~240 filas ya agregadas.
+  //  2. El `WHERE` es el que permite el escaneo *index-only* sobre
+  //     `time_entries_org_date_cover`.
   const rows = await tx.$queryRaw<
     { target_kind: string; target_id: string; target_code: string; month: string; minutes: bigint }[]
   >`
-    SELECT CASE WHEN t.project_id IS NOT NULL THEN 'PROJECT' ELSE 'COST_CENTER' END AS target_kind,
-           COALESCE(t.project_id, t.cost_center_id)   AS target_id,
-           COALESCE(p.code, c.code)                   AS target_code,
-           to_char(date_trunc('month', t.date), 'YYYY-MM') AS month,
-           SUM(t.minutes)::bigint                     AS minutes
-      FROM time_entries t
-      LEFT JOIN projects p     ON p.id = t.project_id     AND p.organization_id = t.organization_id
-      LEFT JOIN cost_centers c ON c.id = t.cost_center_id AND c.organization_id = t.organization_id
-     WHERE t.organization_id = ${tx.$organizationId}::uuid
-       AND t.date BETWEEN ${toUtcDate(window.from)}::date AND ${toUtcDate(window.to)}::date
-       AND (${opts.approvedOnly !== false} = false OR t.status = 'APROBADO')
-       AND (${opts.productiveOnly === true} = false OR t.productive)
-     GROUP BY 1, 2, 3, 4
+    WITH agregado AS (
+      SELECT t.project_id,
+             t.cost_center_id,
+             date_trunc('month', t.date)::date AS mes,
+             SUM(t.minutes)::bigint            AS minutes
+        FROM time_entries t
+       WHERE t.organization_id = ${tx.$organizationId}::uuid
+         AND t.date BETWEEN ${toUtcDate(window.from)}::date AND ${toUtcDate(window.to)}::date
+         AND (${opts.approvedOnly !== false} = false OR t.status = 'APROBADO')
+         AND (${opts.productiveOnly === true} = false OR t.productive)
+       GROUP BY 1, 2, 3
+    )
+    SELECT CASE WHEN a.project_id IS NOT NULL THEN 'PROJECT' ELSE 'COST_CENTER' END AS target_kind,
+           COALESCE(a.project_id, a.cost_center_id) AS target_id,
+           COALESCE(p.code, c.code)                 AS target_code,
+           to_char(a.mes, 'YYYY-MM')                AS month,
+           a.minutes                                AS minutes
+      FROM agregado a
+      LEFT JOIN projects p     ON p.id = a.project_id     AND p.organization_id = ${tx.$organizationId}::uuid
+      LEFT JOIN cost_centers c ON c.id = a.cost_center_id AND c.organization_id = ${tx.$organizationId}::uuid
      ORDER BY 3, 4`
   return rows.map((r) => ({
     targetKind: r.target_kind === "PROJECT" ? "PROJECT" : "COST_CENTER",
