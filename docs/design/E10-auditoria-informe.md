@@ -270,3 +270,27 @@ Recomendación: acotar `imputado` de I-E10-12 a los repartos cuyo origen son cue
   la del fixture. Sin eso la guarda deja en REQUIERE REVISIÓN a quien use el driver
   HOURS sobre un CECO que no es de personal — el caso del propio diseño.
 ```
+
+---
+
+# Veredicto final (ronda 3, `0e9c5c8…067437b`)
+
+```
+VEREDICTO: DISCREPANCIA (residual; ningún punto bloqueante)
+1. I-E10-12, falso positivo CERRADO y verificado en base aislada con los 578 partes del
+   fixture y AL-OPS-M sellado (628 → proyectos): **PASS**; y **FAIL** al bajar las 64x
+   por debajo del coste valorado («2026: 1 782 713 c … sobre 480 000 c»). Ya no compara
+   lo que repartió un driver ni va mes a mes.
+2. Residual: el numerador es **1 782 713 c, no los 2 617 213 c que el fixture sella**.
+   `costOfTime().totals.valuedCents` (lib/time/cost.ts:372) descarta todo receptor con
+   partes sin tarifa, y P-01 lo es: sus 834 500 c salen de la guarda. La cota queda más
+   floja justo donde falta el dato, y «valorado» significa dos cosas bajo el mismo id.
+3. Residual: el único contra-apunte del fixture (`…-CONTRA`, 2026-09-30 contra un
+   original de 2026-09-27) lo **rechaza** `app.assert_time_entry_correction_mirror`
+   (exige misma fecha): el contrato congelado trae un caso que el esquema no admite.
+4. `SIN_NOMINA_QUE_ABSORBER` añadido y correcto; el fixture no se regeneró para él.
+5. Sin cambios: las 8 cifras Δ=0, H-1…H-7 y D7 cerrados, inyecciones (a)(b)(c) en FAIL.
+Trazabilidad: OK. Recomendación: sumar los receptores no evaluables al numerador de
+   I-E10-12 (o declararla NO EVALUABLE con ellos, nunca 0) y corregir la fecha del
+   contra-apunte del fixture.
+```

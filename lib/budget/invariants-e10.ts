@@ -289,10 +289,17 @@ export type AllocationRunAudit = {
 
 export type PayrollAbsorptionRef = {
   periodLabel: string
-  /** `Σ (minutos × tarifa / 60)` imputado a proyectos por los caminos (a) y (b). */
+  /** `Σ (minutos × tarifa / 60)` de los receptores EVALUABLES del periodo. */
   valuedCents: Cents
   /** `Σ −aporte` de las cuentas 64x del periodo. */
   payrollCents: Cents
+  /**
+   * Receptores que `costOfTime` deja **fuera** del numerador por no ser
+   * evaluables (un parte sin tarifa vigente, dos tarifas solapadas o `basis` en
+   * conflicto). Con uno solo, el numerador está **incompleto** y la guarda no
+   * puede afirmar nada: sale `INFO`, nunca PASS. Ver `checkIE1012`.
+   */
+  notEvaluableTargets?: readonly string[]
 }
 
 export type TimeBlock = {
@@ -804,6 +811,23 @@ export function checkIE1012(time: TimeBlock | undefined): CheckResult {
   // se reparte un saldo, no qué es, y el de un CECO lleva su 628 además de la
   // nómina. Y la cota es del EJERCICIO: la nómina se devenga con su calendario
   // —pagas extra, finiquitos— y las horas con el suyo.
+  // **Residual del auditor (ronda 3).** `costOfTime().totals.valuedCents` suma
+  // sólo los receptores EVALUABLES: un proyecto con un parte sin tarifa vigente
+  // queda fuera entero —en el fixture, `P-01` con sus 834 500 c—. Comparar un
+  // numerador al que le falta un receptor contra la nómina COMPLETA no es una
+  // cota: es una cota floja **justo donde falta el dato**, y decir PASS ahí es
+  // afirmar algo que no se ha comprobado. La regla es la misma que I-E10-5
+  // aplica a la cifra: **no evaluable, jamás 0 ni un parcial disfrazado**.
+  const noEvaluables = [...new Set(time.payroll.flatMap((r) => r.notEvaluableTargets ?? []))].sort()
+  if (noEvaluables.length > 0) {
+    return info(
+      "I-E10-12",
+      `${noEvaluables.length} receptor(es) NO EVALUABLES dejan el personal imputado incompleto ` +
+        `(${cut(noEvaluables)}): la guarda no se pronuncia sobre un numerador parcial. Pon la tarifa que ` +
+        "falta —o resuelve el solape— y vuelve a barrer; la infraabsorción la publica el informe (O-E10-20)"
+    )
+  }
+
   const problems: string[] = []
   for (const row of time.payroll) {
     if (row.valuedCents > row.payrollCents) {

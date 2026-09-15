@@ -104,7 +104,7 @@ Constraints SQL: `CHECK(debit>=0 AND credit>=0 AND (debit=0)<>(credit=0))`; FK c
 >
 > **Bloque de liquidación actualizado por E5** (`docs/design/E5-liquidacion.md`, **ADR-0013 APROBADO**) tras la validación contable (`docs/design/E5-validacion-liquidacion.md`, **CONFORME CON OBSERVACIONES**; cifras selladas en `docs/design/fixtures/liquidacion-esperada.json`, 25 checks). Se incorporan las diez observaciones: O-E5-1 (`AllocationLine.marginLevel` — **el nivel viaja con el importe**, E5-D1), O-E5-2 (`sourceShareBps`, E5-D2), O-E5-3 (**bps, no milésimas**, en las dos tablas), O-E5-4 (`zeroBaseFallback` + `fallbackApplied`), O-E5-5 (`amountCents` para `MANUAL`), O-E5-6 (`fiscalYearId`, `periodKind`, `status`, `lineCount`, `totalAllocatedCents`, run único vigente por periodo), O-E5-7 (**`allocationRunSetHash`** en lugar de `allocationRunId`), O-E5-8 (CHECK, triggers, RLS append-only), O-E5-9 (columnas `BL:<código>` en la matriz, E5-D3) y O-E5-10 (`code` único, `name` NOT NULL, índice de orden). **O-A6 NO quedó cerrada en E5** (corrección fechada 2026-09-06): `Budget` no existía todavía. **CERRADA en E10 el 2026-09-15**, en la migración `20260924100000_e10_presupuesto` que crea `budgets` — CHECK de exclusividad y cuatro índices únicos parciales en `budget_lines`, y otros cuatro en `budget_hours_lines`. Ver el bloque de E10 más abajo y `docs/ESTADO.md` §E5.
 
-> **Fixture sellado**: `docs/design/fixtures/presupuesto-horas-esperado.v1.2.json` (v1.0 y v1.1 congelados como evidencia de lo que se firmó en cada ronda).
+> **Fixture sellado**: `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json` (v1.0, v1.1 y v1.2 congelados como evidencia de lo que se firmó en cada ronda).
 >
 > **Bloque de presupuesto y horas añadido por E10** (`docs/design/E10-presupuesto-horas.md`, **ADR-0018 APROBADO** D1–D7): las siete tablas nuevas (`budgets`, `budget_lines`, `budget_hours_lines`, `time_entries`, `employees`, `employee_rates`, `headcount_snapshots`), los drivers de actividad `HOURS` y `HEADCOUNT`, el cuarto sello `timeHash` con su ventana en `AllocationRun` y `budget_hash` en la clave de caché de `ReportRun`.
 
@@ -199,7 +199,9 @@ model TimeEntry { id; organizationId; employeeId @map("employee_id"); date Date;
   @@unique([organizationId,id]) @@map("time_entries") }
   // + CHECK de exclusividad de receptor, `time_entries_approval_marks`, techo 1 440 por FILA
   //   y **agregado por (empleado, día)** en trigger (O-E10-21);
-  //   APROBADO es INMUTABLE y no se borra: se contra-apunta (I-E10-4).
+  //   APROBADO es INMUTABLE y no se borra: se contra-apunta (I-E10-4), y el
+  //   contra-apunte lleva la FECHA DEL ORIGINAL: el parte dice cuando se
+  //   trabajo, y el techo diario agregado solo netea si comparten dia.
   //   **Única salida (QA BUG-E10-2, ADR-0018 D7)**: el vaciado de operador con el GUC
   //   `app.maintenance_reset_org` verificado contra la organización de la fila Y contra el
   //   rol `app_maintenance`, con el que la aplicación nunca conecta

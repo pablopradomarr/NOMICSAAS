@@ -3,7 +3,7 @@
  * `settleBudgetMatrix` (O-E10-4).
  *
  * Criterios 3, 27 y 27-bis de §12, byte a byte contra
- * `docs/design/fixtures/presupuesto-horas-esperado.v1.2.json`.
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json`.
  */
 
 import { describe, expect, it } from "vitest"
@@ -362,12 +362,12 @@ describe("O-E10-20 · la absorción que acompaña a la desviación", () => {
    * El fixture se reversiona a **v1.2** (los dos `budgetHash` NO cambian: lo que
    * cambia es un bloque de informe).
    */
-  it("v1.2 · el desglose por CECO dice lo MISMO que el producto y su Σ es la absorción total", () => {
+  it("v1.3 · el desglose por CECO dice lo MISMO que el producto y su Σ es la absorción total", () => {
     const sealed = expected.absorption as {
       valuedCents: number
       payrollCents: number
       absorptionCents: number
-      byCostCenter: { costCenterCode: string; valuedCents: number; payrollCents: number }[]
+      byCostCenter: { costCenterCode: string; valuedCents: number; payrollCents: number; direction: string }[]
     }
     // Ni una fila con un `PROJ:` disfrazado de centro de coste: lo que no
     // pertenece a ningún CECO va a `SIN_CECO`, con ese nombre.
@@ -382,6 +382,24 @@ describe("O-E10-20 · la absorción que acompaña a la desviación", () => {
     expect(sealed.byCostCenter.reduce((a, r) => a + r.payrollCents, 0)).toBe(sealed.payrollCents)
     expect(sealed.byCostCenter.reduce((a, r) => a + (r.valuedCents - r.payrollCents), 0)).toBe(-22_787)
     expect(sealed.absorptionCents).toBe(-22_787)
+
+    // Y la asimetría se DECLARA: una unidad cuya gente imputa pero cuya nómina
+    // se contabiliza en otro CECO no está sobreabsorbiendo — no hay nada que
+    // absorber ahí—, así que el fixture y el motor dicen lo mismo, fila a fila.
+    const report = absorptionVariance({
+      valuedCents: sealed.valuedCents,
+      payrollCents: sealed.payrollCents,
+      byCostCenter: sealed.byCostCenter.map((r) => ({
+        code: r.costCenterCode,
+        valuedCents: r.valuedCents,
+        payrollCents: r.payrollCents,
+      })),
+    })
+    expect(report.byCostCenter.map((r) => [r.code, r.direction])).toEqual(
+      sealed.byCostCenter.map((r) => [r.costCenterCode, r.direction])
+    )
+    expect(sealed.byCostCenter.some((r) => r.direction === "SIN_NOMINA_QUE_ABSORBER")).toBe(true)
+    expect(sealed.byCostCenter.some((r) => r.direction === "SOBREABSORCION")).toBe(false)
   })
 })
 

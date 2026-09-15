@@ -34,7 +34,7 @@ const { getLedgerContext, postEntry, runLedgerInvariants } = await import("@/mod
 const { buildEntry } = await import("@/lib/ledger/post")
 const { getAnalyticsConfig, seedAnalyticsDefaults } = await import("@/models/analytics")
 const { createAllocationRuleTx, previewAllocationRun, sealAllocationRunTx } = await import("@/models/allocations")
-const { approveTimeEntriesTx, createTimeEntriesTx } = await import("@/models/time")
+const { approveTimeEntriesTx, correctTimeEntryTx, createTimeEntriesTx } = await import("@/models/time")
 const { createEmployeeTx, createEmployeeRateTx } = await import("@/models/employees")
 const { createBudgetVersionTx, sealBudgetTx, upsertBudgetCellsTx, upsertBudgetHoursTx } = await import(
   "@/models/budget"
@@ -647,6 +647,111 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
       await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER USER`)
     })
     expect(checkOf(await sweep(), "I-E10-12")?.status).toBe("PASS")
+  }, 300_000)
+
+  it("residual · con un receptor SIN TARIFA, I-E10-12 sale NO EVALUABLE y nunca PASS", async () => {
+    // `costOfTime` deja FUERA del numerador al receptor entero cuando uno de sus
+    // partes no tiene tarifa vigente ese día (I-E10-5: jamás 0 ni la anterior).
+    // Comparar un numerador al que le falta un receptor contra la nómina
+    // COMPLETA es una cota floja **justo donde falta el dato**, y decir PASS ahí
+    // es afirmar algo que no se ha comprobado.
+    const created = await tenantTransaction(ORG, USER, async (tx) => {
+      const empleado = await createEmployeeTx(
+        tx,
+        { code: "E-SIN-TARIFA", name: "Sin tarifa", defaultCostCenterId: ceco["CC-GA"] },
+        actor
+      )
+      // Ni una `EmployeeRate`: el receptor al que impute queda NO EVALUABLE.
+      return createTimeEntriesTx(
+        tx,
+        [{ employeeId: empleado.id, date: "2026-11-10", projectId: projectA, minutes: 300 }],
+        actor
+      )
+    })
+    await tenantTransaction(ORG, USER, async (tx) =>
+      approveTimeEntriesTx(tx, { ids: created.ids, approvedAt: new Date("2026-11-11"), actorIsAdmin: true }, actor)
+    )
+
+    const i12 = checkOf(await sweep(), "I-E10-12")
+    expect(i12?.status, i12?.evidencia).toBe("INFO")
+    expect(i12?.evidencia).toContain("NO EVALUABLES")
+    // Y NOMBRA al receptor y el motivo: un INFO mudo no sirve para arreglarlo.
+    expect(i12?.evidencia).toContain("P-01")
+    expect(i12?.evidencia).toContain("TARIFA_AUSENTE")
+
+    // Con el dato puesto, la guarda vuelve a pronunciarse.
+    await tenantTransaction(ORG, USER, async (tx) => {
+      const empleado = await tx.employee.findFirstOrThrow({ where: { code: "E-SIN-TARIFA" } })
+      await createEmployeeRateTx(
+        tx,
+        { employeeId: empleado.id, hourlyCostCents: 2_000, basis: "COSTE_EMPRESA_CON_SS", validFrom: "2026-01-01" },
+        actor
+      )
+    })
+    const conTarifa = checkOf(await sweep(), "I-E10-12")
+    expect(conTarifa?.status, conTarifa?.evidencia).toBe("PASS")
+
+    await owner(async (client) => {
+      await client.query(`ALTER TABLE time_entries DISABLE TRIGGER USER`)
+      await client.query(`DELETE FROM time_entries WHERE id = ANY($1::uuid[])`, [created.ids])
+      await client.query(`ALTER TABLE time_entries ENABLE TRIGGER USER`)
+      await client.query(`DELETE FROM employee_rates WHERE organization_id = $1::uuid AND employee_id IN
+        (SELECT id FROM employees WHERE organization_id = $1::uuid AND code = 'E-SIN-TARIFA')`, [ORG])
+      await client.query(`DELETE FROM employees WHERE organization_id = $1::uuid AND code = 'E-SIN-TARIFA'`, [ORG])
+    })
+    expect(checkOf(await sweep(), "I-E10-12")?.status).toBe("PASS")
+  }, 300_000)
+
+  it("residual · el contra-apunte lleva la FECHA DEL ORIGINAL; con otra, la base lo rechaza", async () => {
+    // §3, tabla de triggers de M3: «contra-apunte que no case con su original:
+    // distinto empleado, DISTINTA FECHA, distinta dimensión». No es formalismo:
+    // el parte dice cuándo se TRABAJÓ, y el techo diario agregado por
+    // (empleado, día) sólo netea si el par comparte día. El fixture sellado
+    // fechaba el suyo tres días después y la base lo habría rechazado: el
+    // contrato y el producto decían cosas distintas (fixture v1.3).
+    const original = await prisma.timeEntry.findFirstOrThrow({
+      where: { id: approvedEntryId },
+      select: { id: true, date: true, employeeId: true, projectId: true },
+    })
+    const dia = original.date.toISOString().slice(0, 10)
+
+    // Por SQL, con OTRA fecha: la base lo rechaza. (Por la acción no se puede
+    // ni intentar: `correctTimeEntryTx` copia la fecha del original, que es la
+    // barrera 1; ésta es la barrera 2.)
+    await owner(async (client) => {
+      await expect(
+        client.query(
+          `INSERT INTO time_entries (id, organization_id, employee_id, date, project_id, business_line_id,
+                                     minutes, productive, status, source, corrects_entry_id, correction_reason)
+           VALUES (gen_random_uuid(), $1::uuid, $2::uuid, '2026-11-30'::date, $3::uuid,
+                   (SELECT business_line_id FROM projects WHERE id = $3::uuid), -60,
+                   true, 'BORRADOR', 'MANUAL', $4::uuid, 'Corrección con fecha distinta')`,
+          [ORG, original.employeeId, original.projectId, original.id]
+        )
+      ).rejects.toThrow(/no casa con el parte/)
+    })
+
+    // Con la fecha del original —la que el modelo copia— entra.
+    const contra = await tenantTransaction(ORG, USER, async (tx) =>
+      correctTimeEntryTx(
+        tx,
+        {
+          entryId: original.id,
+          minutes: -60,
+          reason: "Corrección de imputación del parte",
+          approvedAt: new Date("2026-11-20"),
+        },
+        actor
+      )
+    )
+    const fila = await prisma.timeEntry.findFirstOrThrow({ where: { id: contra.id } })
+    expect(fila.date.toISOString().slice(0, 10)).toBe(dia)
+
+    await owner(async (client) => {
+      await client.query(`ALTER TABLE time_entries DISABLE TRIGGER USER`)
+      await client.query(`DELETE FROM time_entries WHERE id = $1::uuid`, [contra.id])
+      await client.query(`ALTER TABLE time_entries ENABLE TRIGGER USER`)
+    })
   }, 300_000)
 
   it("ronda 3 · un reparto por HORAS de un CECO con 628 NO cuenta como personal imputado", async () => {

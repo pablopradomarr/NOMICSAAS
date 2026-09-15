@@ -84,8 +84,9 @@ un parte de enero caduca (`STALE`) el run de marzo que repartió con él.
 
 - **Minutos ENTEROS**, nunca centésimas de hora: 7 h 20 min son `440` exactos.
   Techo 1 440 **por fila y agregado por (empleado, día)**. Un parte APROBADO es
-  inmutable: se corrige por **contra-apunte** con motivo, nunca se edita ni se
-  borra.
+  inmutable: se corrige por **contra-apunte** con motivo —que lleva la **fecha del
+  original**, porque el parte dice cuándo se trabajó y el techo diario sólo netea
+  si comparten día—, nunca se edita ni se borra.
 - **`EmployeeRate`** con vigencias sin solape y **`basis` explícita**
   (`BRUTO_SIN_SS` vs `COSTE_EMPRESA_CON_SS`, que difieren ~31,9 %): la `basis`
   **viaja con la cifra** en pantalla y en el export. Sin tarifa vigente el coste
@@ -96,7 +97,10 @@ un parte de enero caduca (`STALE`) el run de marzo que repartió con él.
   % y su desglose. Es **información de gestión**, no un invariante. El desglose
   por CECO agrupa lo valorado por el CECO del **empleado** y la nómina por el de
   la **línea 64x**: son dos dimensiones distintas y la asimetría se **declara**
-  (`SIN_NOMINA_QUE_ABSORBER`) en vez de publicarse como sobreabsorción falsa.
+  (`SIN_NOMINA_QUE_ABSORBER`) en vez de publicarse como sobreabsorción falsa. Y
+  si un receptor no es evaluable —un parte sin tarifa—, la **guarda I-E10-12 no
+  se pronuncia**: un numerador parcial contra la nómina entera es una cota floja
+  justo donde falta el dato.
 - **Imputar personal a proyectos** tiene dos caminos, los dos sin asiento nuevo:
   (a) el driver `HOURS` sobre el saldo del CECO —el que vale cuando el coste se
   reparte— y (b) la **reclasificación analítica** de ADR-0010 cuando la línea 64x

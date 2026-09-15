@@ -455,9 +455,18 @@ function payrollAbsorptionOf(
   window: { from: LocalDate; to: LocalDate },
   payrollCents: Cents
 ): PayrollAbsorptionRef[] {
-  const valued = costOfTime(entries, rates, window).totals.valuedCents
-  if (valued === 0 && payrollCents === 0) return []
-  return [{ periodLabel: fyCode, valuedCents: valued, payrollCents }]
+  const costs = costOfTime(entries, rates, window)
+  const valued = costs.totals.valuedCents
+  // Los receptores que `costOfTime` deja fuera del numerador —parte sin tarifa
+  // vigente, tarifas solapadas o `basis` en conflicto—. Con uno solo, la guarda
+  // sale NO EVALUABLE: comparar un numerador incompleto contra la nómina entera
+  // es una cota floja justo donde falta el dato (residual del auditor, ronda 3).
+  const notEvaluableTargets = costs.byTarget
+    .filter((t) => t.costCents === null)
+    .map((t) => `${t.code} (${t.notEvaluableReason ?? "NO_EVALUABLE"})`)
+    .sort()
+  if (valued === 0 && payrollCents === 0 && notEvaluableTargets.length === 0) return []
+  return [{ periodLabel: fyCode, valuedCents: valued, payrollCents, notEvaluableTargets }]
 }
 
 /** Σ (debe − haber) de las 64x del ejercicio, sin regularización ni cierre. */

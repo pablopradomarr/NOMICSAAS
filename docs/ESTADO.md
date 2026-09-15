@@ -33,7 +33,7 @@ Cerrada tras **tres rondas de corrección**:
 **Tests**: unit 2 250 ✓ · integración 2 967 ✓ · RLS 211 ✓ · e2e `presupuesto`
 10/10 y `horas-presupuesto-real` 6/6 ✓ · build OK · lint 0 errores · **los nueve
 techos de §9 activos** (`tests/integration/perf-budget.test.ts`). Fixture sellado
-**v1.2**; v1.0 y v1.1 quedan congelados como evidencia de cada ronda. Registros:
+**v1.3**; v1.0, v1.1 y v1.2 quedan congelados como evidencia de cada ronda. Registros:
 `2026-09-15_e10_ronda1`, `…_reauditoria` y `…_e10_cierre`.
 
 **Deuda**, toda fechada abajo en «E10 — ronda 1 de corrección»: el agregado por
@@ -563,6 +563,13 @@ Quedaban cuatro cosas, todas cerradas aquí:
 | **2** | H-5 cerrado en el producto pero **no en el fixture**: `build_absorption()` repartía lo valorado por el RECEPTOR, así que las tres filas de CECO salían a 0 y dos llevaban `PROJ:…` en un campo llamado `costCenterCode`. El contrato congelado de D6 y el motor decían cosas distintas | El generador reparte lo valorado por el CECO del **empleado** y manda a `SIN_CECO` lo que no es de ningún CECO. Fixture **v1.2** (los dos `budgetHash` NO cambian; v1.1 queda congelado). Test byte a byte: Σ por CECO = −22 787 c |
 | **3** | La provenance por celda filtraba por los tipos **del nivel** y la matriz es **acumulativa**, así que una celda de MC3 devolvía **0 filas**; y fijaba una celda anual a `month = '<año>-01-01'` | Las consultas acumulan los niveles ≤ N, abren el rango a los meses del periodo y respetan la **composición** mes a mes (O-E10-9): `budget_id IN (…) AND month BETWEEN …` contaba julio-diciembre dos veces. Test de integración que **ejecuta** las consultas: Σ real = `actualCents`, Σ presupuesto = `budgetCents`, Σ minutos = los presupuestados |
 | **4** | La inyección (b) sólo la detecta un tenant **con** un run sellado de driver de actividad, y el arnés del auditor no tenía ninguno | El arnés sella un run con driver `HOURS` **y un segundo** con la misma ventana: alterar un parte APROBADO pone a los **dos** en FAIL por I-E10-17 y el run sale `STALE` por el camino del producto; alterar una `allocation_line` rompe I5 / I-E5-12. I-E10-17 ya recorría todos los runs con driver de actividad —no sólo el último—, y ahora el test lo demuestra con dos |
+
+### Residuales del auditor (2026-09-15), cerrados
+
+| # | Punto | Corrección |
+|---|---|---|
+| **1** | `I-E10-12` usaba `costOfTime().totals.valuedCents`, que **descarta el receptor entero** cuando uno de sus partes no tiene tarifa (en el fixture, `P-01` con 834 500 c): comparar un numerador incompleto contra la nómina completa es una cota floja **justo donde falta el dato**, y decir PASS ahí es afirmar lo que no se ha comprobado | Con receptores no evaluables la guarda sale **`INFO`** nombrándolos con su motivo —nunca PASS con numerador parcial—; con todos evaluables usa el numerador completo. Test para los dos casos |
+| **2** | El contra-apunte del fixture se fechaba tres días después del original (2026-09-30 contra 2026-09-27) y `app.assert_time_entry_correction_mirror` **lo habría rechazado**: el contrato sellado y el producto decían cosas distintas | Manda el diseño §3 y el trigger: **el contra-apunte lleva la fecha del original** —el parte dice cuándo se trabajó, y el techo diario agregado por (empleado, día) sólo netea si el par comparte día—. Generador y fixture alineados en **v1.3** (cambian los tres `timeHash`; los dos `budgetHash`, no), con `direction` sellado e incluido `SIN_NOMINA_QUE_ABSORBER`. Test: por SQL con otra fecha, la base rechaza; por la acción, la fecha es la del original |
 
 **PUEDE atendidos**: 9 (los dos recuentos del diseño: nueve techos y ocho
 enums), 10 (rama muerta del CHECK de signo), 11 (`REVOKE DELETE ON employees`),

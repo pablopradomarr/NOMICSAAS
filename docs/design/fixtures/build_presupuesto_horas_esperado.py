@@ -36,7 +36,7 @@ LOS MISMOS, que es lo que hace que la desviacion signifique algo. El
 presupuesto se **deriva** del real con factores enteros declarados, de modo que
 cada celda de desviacion es reproducible a mano.
 
-Escribe `docs/design/fixtures/presupuesto-horas-esperado.v1.2.json`. Con `--check`
+Escribe `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json`. Con `--check`
 no escribe: reconstruye, compara byte a byte y falla si difiere.
 
 Un fixture sellado no se reescribe: se versiona, y los anteriores quedan como
@@ -47,6 +47,10 @@ evidencia de lo que se firmo.
     la forma canonica del `budgetHash` (es mutable por diseno al sellar la
     version siguiente) y dentro las lineas de horas presupuestadas. Los dos
     `budgetHash` cambian.
+  · **v1.3** — residual del auditor: el CONTRA-APUNTE lleva la fecha de su
+    original (2026-09-27, no 2026-09-30), como exige el diseno -3 y el trigger
+    `assert_time_entry_correction_mirror`. Cambian los tres `timeHash` y el
+    reparto Hamilton por parte del dia; los dos `budgetHash`, no.
   · **v1.2** — ronda 1, punto 2 de la RE-AUDITORIA: el bloque
     `absorption.byCostCenter` se alinea con el producto. Los dos `budgetHash`
     NO cambian (c32cdecf… y dc11871c… siguen siendo los mismos): lo que cambia
@@ -90,7 +94,7 @@ e4 = importlib.import_module("build_pyg_analitica_esperada")
 e5 = importlib.import_module("build_liquidacion_esperada")
 
 ROOT = e4.ROOT
-OUT = HERE / "presupuesto-horas-esperado.v1.2.json"
+OUT = HERE / "presupuesto-horas-esperado.v1.3.json"
 
 FISCAL_YEAR = "2026"
 MONTHS = [f"2026-{m:02d}" for m in range(1, 13)]
@@ -209,15 +213,26 @@ def build_time_entries() -> list[dict[str, Any]]:
                         "reason": None,
                     })
     # Contra-apunte con motivo (I-E10-4): una hora de P-01 era de P-02.
+    #
+    # **La fecha es la del ORIGINAL, no la del dia en que se corrige** (2026-09-27,
+    # no 2026-09-30). Lo fija el diseno -3, tabla de triggers de M3: «contra-apunte
+    # que no case con su original: distinto empleado, DISTINTA FECHA, distinta
+    # dimension» es motivo de rechazo- y lo exige
+    # `app.assert_time_entry_correction_mirror`. No es formalismo: el parte dice
+    # cuando se TRABAJO, y el techo diario agregado por (empleado, dia) y el
+    # agregado por (receptor, mes) sólo netean si el par comparte dia. El fixture
+    # lo fechaba el 30 y la base lo habria rechazado: el contrato sellado decia
+    # una cosa y el producto otra (residual del auditor, ronda 3).
     rows.append({
-        "id": "E-01-2026-09-W4-P-01-CONTRA", "employeeCode": "E-01", "date": "2026-09-30",
+        "id": "E-01-2026-09-W4-P-01-CONTRA", "employeeCode": "E-01", "date": "2026-09-27",
         "targetKind": "PROJECT", "targetCode": "P-01", "businessLineCode": "BL-CONS",
         "minutes": -60, "productive": True, "approved": True,
         "reversesId": "E-01-2026-09-W4-P-01",
         "reason": "Correccion de imputacion: una hora de P-01 correspondia a P-02",
     })
     rows.append({
-        "id": "E-01-2026-09-W4-P-02-CORRECCION", "employeeCode": "E-01", "date": "2026-09-30",
+        # La reimputacion viaja con el contra-apunte: es la misma jornada.
+        "id": "E-01-2026-09-W4-P-02-CORRECCION", "employeeCode": "E-01", "date": "2026-09-27",
         "targetKind": "PROJECT", "targetCode": "P-02", "businessLineCode": "BL-CONS",
         "minutes": 60, "productive": True, "approved": True, "reversesId": None,
         "reason": "Correccion de imputacion: una hora que venia de P-01",
@@ -1043,10 +1058,22 @@ def build_absorption() -> dict[str, Any]:
     for ceco in sorted(set(list(payroll_by_ceco) + list(valued_by_ceco))):
         valued = valued_by_ceco.get(ceco, 0)
         payroll = payroll_by_ceco.get(ceco, 0)
+        absorcion = valued - payroll
+        # `SIN_NOMINA_QUE_ABSORBER` (espejo de `directionOf` en lib/time/cost.ts):
+        # el desglose agrupa lo valorado por el CECO del EMPLEADO y la nomina por
+        # el CECO de la LINEA 64x, que son dos dimensiones distintas. Una unidad
+        # cuya gente imputa pero cuya nomina se contabiliza en otro sitio NO esta
+        # sobreabsorbiendo: ahi no hay nada que absorber, y publicarlo como
+        # sobreabsorcion seria falso. La asimetria es del dato -no existe la
+        # nomina por empleado- y se DECLARA.
         by_ceco.append({"costCenterCode": ceco, "valuedCents": valued,
-                        "payrollCents": payroll, "absorptionCents": valued - payroll,
+                        "payrollCents": payroll, "absorptionCents": absorcion,
                         "absorptionBps": (None if payroll == 0
-                                          else _trunc_bps(valued - payroll, payroll))})
+                                          else _trunc_bps(absorcion, payroll)),
+                        "direction": ("SIN_NOMINA_QUE_ABSORBER" if payroll == 0 and absorcion != 0
+                                      else "EXACTA" if absorcion == 0
+                                      else "SOBREABSORCION" if absorcion > 0
+                                      else "INFRAABSORCION")})
     assert sum(r["absorptionCents"] for r in by_ceco) == valued_total - payroll_total, \
         "Sigma de la absorcion por CECO != absorcion total"
     return {
@@ -1583,7 +1610,7 @@ def build() -> dict[str, Any]:
     checks = build_checks(variance_settled)
 
     return {
-        "schemaVersion": "1.2",
+        "schemaVersion": "1.3",
         "generatedBy": "docs/design/fixtures/build_presupuesto_horas_esperado.py",
         "note": (
             "Presupuesto, horas, liquidacion presupuestaria, desviacion, forecast y KPI esperados "
@@ -1750,7 +1777,7 @@ def main() -> int:
         if OUT.read_text(encoding="utf-8") != text:
             print(f"{OUT} difiere de la reconstruccion", file=sys.stderr)
             return 1
-        print("OK: presupuesto-horas-esperado.v1.2.json reproducible byte a byte")
+        print("OK: presupuesto-horas-esperado.v1.3.json reproducible byte a byte")
         return 0
 
     OUT.write_text(text, encoding="utf-8")

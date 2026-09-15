@@ -822,6 +822,11 @@ export async function upsertBudgetCellsTx(
   if (input.cells.length === 0) return { written: 0, warnings: [] }
 
   const warnings: { message: string }[] = []
+  // Índices O(1) de las dimensiones: `config.projects.find(...)` por celda es
+  // O(celdas × dimensiones), y el techo 2 de §9 son 500 celdas por lote.
+  const projectById = new Map(input.config.projects.map((p) => [p.id, p]))
+  const businessLineById = new Map(input.config.businessLines.map((b) => [b.id, b]))
+  const costCenterById = new Map(input.config.costCenters.map((c) => [c.id, c]))
   const prepared = input.cells.map((c) => {
     if ((c.projectId == null) === (c.costCenterId == null)) {
       e10Abort(
@@ -840,8 +845,8 @@ export async function upsertBudgetCellsTx(
     // **R-A9** — `businessLineId` es una columna DENORMALIZADA del proyecto: la
     // escribe el código y la verifica un trigger. Dejarla nula con proyecto es
     // `23514`, y ponerla a mano invita a que diverja de la del proyecto.
-    const project = c.projectId == null ? null : input.config.projects.find((p) => p.id === c.projectId)
-    const businessLine = project ? input.config.businessLines.find((b) => b.id === project.businessLineId) : null
+    const project = c.projectId == null ? null : projectById.get(c.projectId)
+    const businessLine = project ? businessLineById.get(project.businessLineId) : null
     const dimension: BudgetDimension =
       c.projectId != null
         ? {
@@ -853,7 +858,7 @@ export async function upsertBudgetCellsTx(
         : {
             kind: "COST_CENTER",
             id: c.costCenterId ?? "?",
-            code: input.config.costCenters.find((x) => x.id === c.costCenterId)?.code ?? "?",
+            code: (c.costCenterId == null ? undefined : costCenterById.get(c.costCenterId))?.code ?? "?",
           }
     const marginLevel = resolveBudgetMarginLevel(
       { accountCode: c.accountCode ?? null, analyticType: c.analyticType, dimension, month: c.month },
