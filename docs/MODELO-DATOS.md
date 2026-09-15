@@ -467,4 +467,12 @@ sistema **hereda su `kind`**, de modo que el par netea en todos los filtros por
 | Una apertura y un cierre VIVOS por ejercicio, sin contar los contra-asientos | dos índices únicos PARCIALES (`kind` + `voided_at IS NULL` + `reverses_entry_id IS NULL`) |
 | Un ejercicio no se marca `CLOSED` sin sus asientos de cierre, ni se recierra sin recomputar el impuesto | guardias en `closeFiscalYearTx` + I-E9-21 (CERRADO sin T-26/T-27/T-28 ⇒ FAIL) |
 | Un mes bloqueado no admite asientos; el bloqueo es en secuencia y con motivo | trigger `journal_entries_period_open` + `PeriodLock` (B-6/B-7/B-8) |
+| Una sola versión de presupuesto vigente por ejercicio y fecha, **sin solape ni hueco** | `EXCLUDE USING gist` (`budgets_no_overlap`) para el solape + `sealBudgetTx`, que cierra la anterior en la MISMA transacción, e I-E10-15 para el hueco (un `EXCLUDE` no sabe decir «sin hueco») |
+| Una versión sellada no se edita: se **sustituye** | triggers `budgets_immutable_when_sealed` y `budget_lines_no_write_when_sealed` + `budgetHash` recomputable (I-E10-6). No existe `ANULADO` |
+| Celda de presupuesto **única** y con **una sola** dimensión (O-A6) | CHECK `(project_id IS NULL) <> (cost_center_id IS NULL)` + **cuatro** índices únicos parciales por combinación, y otros cuatro en `budget_hours_lines` |
+| El signo del presupuesto lo fuerza el tipo analítico; la excepción sólo en familias declaradas | CHECK `budget_lines_sign_by_type` con `app.budget_sign_exception_allowed()` + `checkBudgetSign` (la MISMA función en la acción y en el importador) |
+| Minutos enteros, techo 1 440 **por fila y agregado por (empleado, día)** | CHECK por fila + trigger `assert_time_entry_daily_ceiling` (O-E10-21) + I-E10-10 |
+| Un parte APROBADO es inmutable y no se borra: se **contra-apunta** | triggers `time_entries_immutable_when_approved` y `time_entries_no_delete_when_approved` + I-E10-4. Única salida: el vaciado de operador con el GUC `app.maintenance_reset_org`, verificado contra la organización de la fila **y** contra el rol `app_maintenance` (ADR-0018 D7) |
+| Una sola tarifa vigente por (empleado, fecha); sin tarifa el coste es NO EVALUABLE | `EXCLUDE USING gist` en `employee_rates` + I-E10-5 (jamás 0 ni la tarifa anterior) |
+| La base de un reparto por actividad es reproducible aunque no esté en el diario | `AllocationRun.timeHash` **+ la ventana que consumió**, con CHECK que exige que contenga el periodo; cuarta causa de `STALE` e I-E10-17 |
 | Tenant | `tenantDb` + RLS |

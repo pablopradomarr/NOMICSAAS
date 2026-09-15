@@ -237,3 +237,36 @@ Recomendación: filtrar entry_kind en readPayrollAbsorption y volver a correr el
   barrido; regenerar el bloque de absorción del fixture v1.1; acumular niveles y
   abrir el rango de meses en las consultas de provenance por celda.
 ```
+
+---
+
+# Verificación final (ronda 2, `aa7a7d0…0e9c5c8`)
+
+```
+VEREDICTO: DISCREPANCIA (residual, no bloqueante salvo el punto 1)
+Cifras reconstruidas: | budgetHash BASE/REV1 v1.2 | idénticos | 0 | Python, forma canónica |
+  | Desviaciones INGRESOS/MC3/EBITDA | −76.400/+63.350/+228.797 | idénticas | 0 | SQL+Python |
+  | Absorción total y Σ byCostCenter v1.2 | −22.787 c / −86 bps | idénticas | 0 | Σ filas = total |
+  | Provenance MC3 PROJ:P-01 | real 316.000 = actualCents · ppto 4.800.000 = budgetCents · horas 72.000 min · imputado 28.755 | idénticas | 0 | 4 consultas del run ejecutadas tal cual |
+  | Las 8 cifras de la ronda 0 sobre v1.2 | idénticas | 0 | scripts propios |
+Hallazgos: 1. I-E10-12 SIGUE dando FAIL con datos íntegros. El `entry_kind` está
+  arreglado (diciembre ya no sale a −2.640.000 c), pero `readPayrollAbsorption`
+  cuenta como «personal imputado por horas» TODA línea de allocation con driver
+  HOURS a proyecto, sea cual sea la cuenta de origen, y compara MES A MES: con la
+  regla del propio diseño (AL-OPS-M reparte CC-OPS, cuenta 628) el barrido da
+  «2026-11: 91890 c imputados sobre 0 c contabilizados en 64x». Y mide otra cosa
+  que el fixture, que compara el AÑO valorado a tarifa (2.617.213 ≤ 2.640.000).
+  2. Menor: el desglose de absorción cuadra en total pero cruza dos claves (lo
+  valorado por CECO del empleado, la nómina por dimensión de la línea), así que
+  2.244.000 c caen en `SIN_CECO` y CC-OPS luce +1.436.857 c de sobreabsorción.
+  3. CERRADOS y re-verificados: H-1, H-2, H-3, H-4, H-5, H-6, H-7, D7 y las
+  inyecciones — (a) 1 c / 1 min ⇒ I-E10-6 FAIL; (b) parte aprobado alterado ⇒
+  I-E10-17 FAIL («el run está CADUCADO») + I-E10-3 FAIL; (c) allocation_line de
+  1 c ⇒ I5, I-E5-9 e I-E5-12 FAIL. Sello `REQUIERE REVISIÓN` en los tres casos.
+Trazabilidad: OK. Las cuatro consultas del `byCell` reproducen la celda al céntimo
+  sin escribir nada: 316.000 − 28.755 = 287.245 y 4.800.000 − 900.000 = 3.900.000.
+Recomendación: acotar `imputado` de I-E10-12 a los repartos cuyo origen son cuentas
+  64x y compararlo contra el ejercicio, no contra el mes; alinear la definición con
+  la del fixture. Sin eso la guarda deja en REQUIERE REVISIÓN a quien use el driver
+  HOURS sobre un CECO que no es de personal — el caso del propio diseño.
+```

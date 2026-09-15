@@ -584,7 +584,22 @@ export function matchesPayrollPrefix(accountCode: string, prefixes: readonly str
 // O-E10-20 — la desviación de absorción
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type AbsorptionDirection = "SOBREABSORCION" | "INFRAABSORCION" | "EXACTA"
+/**
+ * **Ronda 3, punto menor.** `SIN_NOMINA_QUE_ABSORBER` es nuevo y no es un
+ * matiz: el desglose por CECO compara dos dimensiones que **no son la misma** —
+ * lo valorado se agrupa por el CECO del EMPLEADO que imputó las horas y la
+ * nómina por el CECO de la LÍNEA 64x, que es donde se contabiliza—. Cuando una
+ * unidad tiene gente imputando y su nómina se contabiliza en otro CECO (o
+ * directamente contra un proyecto), la fila salía como **sobreabsorción** y eso
+ * es falso: no hay nada que absorber ahí. La asimetría es del dato, no del
+ * cálculo —no existe la nómina por empleado— así que se **declara** en vez de
+ * disimularse, y la Σ de las filas sigue siendo la absorción total.
+ */
+export type AbsorptionDirection =
+  | "SOBREABSORCION"
+  | "INFRAABSORCION"
+  | "EXACTA"
+  | "SIN_NOMINA_QUE_ABSORBER"
 
 export type AbsorptionRow = {
   code: string
@@ -606,8 +621,10 @@ export type AbsorptionReport = {
   byCostCenter: readonly AbsorptionRow[]
 }
 
-const directionOf = (absorption: Cents): AbsorptionDirection =>
-  absorption === 0 ? "EXACTA" : absorption > 0 ? "SOBREABSORCION" : "INFRAABSORCION"
+const directionOf = (absorption: Cents, payrollCents?: Cents): AbsorptionDirection => {
+  if (payrollCents === 0 && absorption !== 0) return "SIN_NOMINA_QUE_ABSORBER"
+  return absorption === 0 ? "EXACTA" : absorption > 0 ? "SOBREABSORCION" : "INFRAABSORCION"
+}
 
 /**
  * **O-E10-20 — desviación de absorción.** La primera cifra que un CFO pide
@@ -643,7 +660,7 @@ export function absorptionVariance(input: {
           payrollCents: r.payrollCents,
           absorptionCents: abs,
           absorptionBps: bpsOf(abs, r.payrollCents),
-          direction: directionOf(abs),
+          direction: directionOf(abs, r.payrollCents),
         }
       }),
   }

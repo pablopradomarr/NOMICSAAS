@@ -30,6 +30,7 @@ import { budgetHash as computeBudgetHash } from "@/lib/budget/hash"
 import { budgetSealReasons, type E10SealReason } from "@/lib/budget/invariants-e10"
 import { buildBudgetMatrix } from "@/lib/budget/matrix"
 import { fiscalYearMonths, monthKey, type LocalDate } from "@/lib/budget/types"
+import type { Cents } from "@/lib/analytics/types"
 import type {
   AllocationRunAudit,
   BudgetBlock,
@@ -44,7 +45,7 @@ import type { TenantTransactionClient } from "@/lib/db"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
 import { getBudgetVersion } from "@/models/budget"
 import { getEmployeeRateRows, listHeadcount } from "@/models/employees"
-import { rateAt } from "@/lib/time/cost"
+import { costOfTime, rateAt, type EmployeeRateRow } from "@/lib/time/cost"
 import { getTimeRowsForWindow } from "@/models/time"
 
 export type BudgetTimeInvariantInput = {
@@ -80,7 +81,7 @@ export async function readBudgetInvariantInput(
   const budget = await readBudgetBlock(tx, { fiscalYearId: fy.id, code: fy.code, start, end, months }, opts.config)
   const time = await readTimeBlock(
     tx,
-    { fiscalYearId: fy.id, start, end },
+    { fiscalYearId: fy.id, code: fy.code, start, end },
     opts.config,
     opts.publishesHourlyCost === true
   )
@@ -257,7 +258,7 @@ const businessLineCodeOfProject = (config: AnalyticsConfig, projectCode: string)
 
 async function readTimeBlock(
   tx: TenantTransactionClient,
-  fy: { fiscalYearId: string; start: LocalDate; end: LocalDate },
+  fy: { fiscalYearId: string; code: string; start: LocalDate; end: LocalDate },
   config: AnalyticsConfig,
   publishesHourlyCost: boolean
 ): Promise<TimeBlock | undefined> {
@@ -297,7 +298,7 @@ async function readTimeBlock(
   ).map((l) => `${year}-${String(l.month).padStart(2, "0")}`)
 
   const runs = await readAllocationRunAudits(tx, fy, config)
-  const payroll = await readPayrollAbsorption(tx, fy)
+  const payroll = payrollAbsorptionOf(fy.code, entries, rates, window, await payrollOfFiscalYear(tx, fy))
 
   return {
     entries,
@@ -421,71 +422,63 @@ const periodLabelOf = (kind: string, start: LocalDate): string => {
 }
 
 /**
- * **I-E10-12**, la guarda: el personal imputado a proyectos por horas no puede
- * exceder al contabilizado en 64x. Un único agregado SQL por mes del ejercicio;
- * los partes no se materializan (§9).
+ * **I-E10-12**, la guarda: *el personal imputado a proyectos por horas no puede
+ * exceder al contabilizado en 64x*.
+ *
+ * **Ronda 3 · el único punto accionable del auditor.** Las dos mitades de la
+ * comparación estaban mal elegidas, y con la regla del propio diseño daba FAIL
+ * sobre datos íntegros:
+ *
+ *  · **El «imputado» no es «lo repartido por un driver `HOURS`».** El driver
+ *    dice **cómo** se reparte un saldo, no **qué** es: el saldo de `CC-OPS`
+ *    lleva su 628 de suministros además de su nómina, y contarlo entero como
+ *    personal imputado infla el numerador con gasto que no es de personal.
+ *    Mirar la línea de ORIGEN y no el driver es lo que distingue una cosa de la
+ *    otra — y en cuanto se hace, lo que queda es exactamente **el coste de las
+ *    horas valoradas a tarifa**, que es lo que el fixture sella (O-E10-20) y lo
+ *    que el informe de absorción publica. Se usa esa magnitud, la misma
+ *    `costOfTime()` del producto, en vez de una segunda definición paralela.
+ *  · **La comparación es del EJERCICIO, no mes a mes.** La nómina se devenga
+ *    con su calendario (pagas extra, finiquitos) y las horas con el suyo; exigir
+ *    la cota en cada mes convierte un desfase de calendario en un descuadre.
+ *    §5.2 define la absorción sobre el periodo del informe, y el fixture la
+ *    sella así: **2 617 213 c valorados ≤ 2 640 000 c de 64x**.
+ *
+ * Sigue siendo una GUARDA y no una medida: la infraabsorción —que aquí es de
+ * 22 787 c— la publica el informe (O-E10-20), porque endurecer esto a igualdad
+ * sería exigir horas y tarifas perfectas.
  */
-async function readPayrollAbsorption(
+function payrollAbsorptionOf(
+  fyCode: string,
+  entries: readonly TimeEntryAudit[],
+  rates: readonly EmployeeRateRow[],
+  window: { from: LocalDate; to: LocalDate },
+  payrollCents: Cents
+): PayrollAbsorptionRef[] {
+  const valued = costOfTime(entries, rates, window).totals.valuedCents
+  if (valued === 0 && payrollCents === 0) return []
+  return [{ periodLabel: fyCode, valuedCents: valued, payrollCents }]
+}
+
+/** Σ (debe − haber) de las 64x del ejercicio, sin regularización ni cierre. */
+async function payrollOfFiscalYear(
   tx: TenantTransactionClient,
   fy: { start: LocalDate; end: LocalDate }
-): Promise<PayrollAbsorptionRef[]> {
-  const rows = await tx.$queryRaw<{ period_label: string; valued_cents: bigint; payroll_cents: bigint }[]>`
-    WITH meses AS (
-      SELECT to_char(m, 'YYYY-MM') AS period_label,
-             m::date               AS mes_inicio,
-             (m + interval '1 month - 1 day')::date AS mes_fin
-        FROM generate_series(${toUtcDate(fy.start)}::date, ${toUtcDate(fy.end)}::date, interval '1 month') m
-    ),
-    imputado AS (
-      SELECT to_char(ar.period_start, 'YYYY-MM') AS period_label,
-             COALESCE(SUM(al.amount_cents), 0)::bigint AS cents
-        FROM allocation_lines al
-        JOIN allocation_runs ar
-          ON ar.id = al.run_id AND ar.organization_id = al.organization_id
-        JOIN allocation_rules r
-          ON r.id = al.rule_id AND r.organization_id = al.organization_id
-       WHERE al.organization_id = ${tx.$organizationId}::uuid
-         AND ar.status = 'SEALED'
-         AND ar.period_kind = 'MONTH'
-         AND r.driver = 'HOURS'
-         AND al.target_project_id IS NOT NULL
-       GROUP BY 1
-    ),
-    nomina AS (
-      SELECT to_char(je.entry_date, 'YYYY-MM') AS period_label,
-             COALESCE(SUM(jl.credit_cents - jl.debit_cents), 0)::bigint AS cents
-        FROM journal_lines jl
-        JOIN journal_entries je
-          ON je.id = jl.entry_id AND je.organization_id = jl.organization_id
-       WHERE jl.organization_id = ${tx.$organizationId}::uuid
-         AND je.entry_date BETWEEN ${toUtcDate(fy.start)}::date AND ${toUtcDate(fy.end)}::date
-         -- Re-auditoria de la ronda 1, regresion GRAVE. La MISMA convencion
-         -- que la PyG (I3, lib/analytics/margins.ts): los asientos de
-         -- regularizacion, cierre y apertura NO son gasto del periodo. El de
-         -- regularizacion ABONA las 640/642 para llevarlas a la 129, asi que
-         -- sin excluirlo la nomina de diciembre salia NEGATIVA (-2 640 000 c) y
-         -- la guarda leia 0 <= -2 640 000 como un exceso de 2 640 000 c: todo
-         -- ejercicio cerrado dejaba la familia PRESUPUESTO en FAIL y el periodo
-         -- en REQUIERE REVISION de forma permanente. Un invariante que falla
-         -- con datos limpios no distingue una manipulacion: es el mismo vicio
-         -- que H-2 en la ronda 0.
-         AND jl.entry_kind NOT IN ('REGULARIZATION', 'CLOSING', 'OPENING')
-         AND (jl.account_code LIKE '640%' OR jl.account_code LIKE '642%'
-              OR jl.account_code LIKE '645%' OR jl.account_code LIKE '649%')
-       GROUP BY 1
-    )
-    SELECT meses.period_label,
-           COALESCE(imputado.cents, 0) AS valued_cents,
-           COALESCE(-nomina.cents, 0)  AS payroll_cents
-      FROM meses
-      LEFT JOIN imputado ON imputado.period_label = meses.period_label
-      LEFT JOIN nomina   ON nomina.period_label   = meses.period_label
-     WHERE COALESCE(imputado.cents, 0) <> 0 OR COALESCE(nomina.cents, 0) <> 0
-     ORDER BY 1`
-
-  return rows.map((r) => ({
-    periodLabel: r.period_label,
-    valuedCents: Number(r.valued_cents),
-    payrollCents: Number(r.payroll_cents),
-  }))
+): Promise<Cents> {
+  const [row] = await tx.$queryRaw<{ cents: bigint | null }[]>`
+    SELECT COALESCE(SUM(jl.debit_cents - jl.credit_cents), 0)::bigint AS cents
+      FROM journal_lines jl
+      JOIN journal_entries je
+        ON je.id = jl.entry_id AND je.organization_id = jl.organization_id
+     WHERE jl.organization_id = ${tx.$organizationId}::uuid
+       AND je.entry_date BETWEEN ${toUtcDate(fy.start)}::date AND ${toUtcDate(fy.end)}::date
+       -- La MISMA convencion que la PyG (I3, lib/analytics/margins.ts): el
+       -- asiento de regularizacion ABONA las 640/642 para llevarlas a la 129, y
+       -- sin excluirlo la nomina del ejercicio salia NEGATIVA y la guarda leia
+       -- 0 <= -2 640 000 como un exceso: todo ejercicio cerrado quedaba en FAIL
+       -- con los datos intactos (regresion GRAVE de la ronda 1).
+       AND jl.entry_kind NOT IN ('REGULARIZATION', 'CLOSING', 'OPENING')
+       AND (jl.account_code LIKE '640%' OR jl.account_code LIKE '642%'
+            OR jl.account_code LIKE '645%' OR jl.account_code LIKE '649%')`
+  return Number(row?.cents ?? 0)
 }

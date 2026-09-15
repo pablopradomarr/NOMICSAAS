@@ -631,6 +631,10 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
     const alterada = checkOf(await sweep(), "I-E10-12")
     expect(alterada?.status, alterada?.evidencia).toBe("FAIL")
 
+    // Y la guarda compara el EJERCICIO, no mes a mes: la evidencia lo nombra con
+    // el código del ejercicio, no con un `AAAA-MM`.
+    expect(alterada?.evidencia).toContain("2026:")
+
     await owner(async (client) => {
       await client.query(`ALTER TABLE journal_lines DISABLE TRIGGER USER`)
       await client.query(
@@ -640,6 +644,73 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · ronda 1 (auditoría H-1…H-4 y QA B
       )
       await client.query(`DELETE FROM journal_lines WHERE entry_id = $1::uuid`, [REGULARIZATION_ENTRY])
       await client.query(`DELETE FROM journal_entries WHERE id = $1::uuid`, [REGULARIZATION_ENTRY])
+      await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER USER`)
+    })
+    expect(checkOf(await sweep(), "I-E10-12")?.status).toBe("PASS")
+  }, 300_000)
+
+  it("ronda 3 · un reparto por HORAS de un CECO con 628 NO cuenta como personal imputado", async () => {
+    // El auditor de la ronda 3: `imputado` contaba **toda** `allocation_line` de
+    // una regla con driver `HOURS`, y el driver dice CÓMO se reparte un saldo,
+    // no QUÉ es: el de `CC-OPS` lleva su 628 de suministros además de la nómina.
+    // Con una regla mensual repartiendo un saldo que es 628 puro, la guarda daba
+    // FAIL sobre datos íntegros con la regla del propio diseño.
+    await post({ accountCode: "628", debitCents: 900_000, costCenterId: ceco["CC-OPS"] })
+    await tenantTransaction(ORG, USER, async (tx) => {
+      await createAllocationRuleTx(
+        tx,
+        {
+          code: "AL-OPS-M",
+          name: "Operaciones a proyectos por horas, mensual",
+          sourceCostCenterId: ceco["CC-OPS"],
+          targetKind: "PROJECTS",
+          driver: "HOURS",
+          period: "MONTH",
+          priority: 5,
+          sourceShareBps: 10_000,
+          zeroBaseFallback: "SKIP_WARN",
+          targetFilter: { projectStatus: ["ACTIVE"] },
+          validFrom: "2026-01-01",
+          validTo: null,
+          targets: [],
+        } as never,
+        actor
+      )
+    })
+    const FEBRERO = { periodKind: "MONTH" as const, periodStart: "2026-02-01", periodEnd: "2026-02-28" }
+    await tenantTransaction(ORG, USER, async (tx) => {
+      await sealAllocationRunTx(tx, { ...FEBRERO, gitSha: "ronda3" }, actor)
+    })
+
+    // Con el run mensual de `HORAS` sellado y 900 000 c de 628 repartidos a
+    // proyectos, I-E10-12 sigue en PASS: lo imputado por PERSONAL son los
+    // 60 000 c de horas valoradas a tarifa, muy por debajo de los 300 000 c
+    // de 64x del ejercicio.
+    const run = await sweep()
+    const i12 = checkOf(run, "I-E10-12")
+    expect(i12?.status, i12?.evidencia).toBe("PASS")
+
+    await owner(async (client) => {
+      await client.query(`DELETE FROM allocation_lines WHERE organization_id = $1::uuid AND run_id IN
+        (SELECT id FROM allocation_runs WHERE organization_id = $1::uuid AND period_kind = 'MONTH')`, [ORG])
+      await client.query(
+        `DELETE FROM allocation_runs WHERE organization_id = $1::uuid AND period_kind = 'MONTH'`,
+        [ORG]
+      )
+      await client.query(`DELETE FROM allocation_rule_targets WHERE organization_id = $1::uuid AND rule_id IN
+        (SELECT id FROM allocation_rules WHERE organization_id = $1::uuid AND code = 'AL-OPS-M')`, [ORG])
+      await client.query(`DELETE FROM allocation_rules WHERE organization_id = $1::uuid AND code = 'AL-OPS-M'`, [ORG])
+      await client.query(`ALTER TABLE journal_lines DISABLE TRIGGER USER`)
+      await client.query(
+        `DELETE FROM journal_lines WHERE organization_id = $1::uuid AND entry_id IN
+           (SELECT entry_id FROM journal_lines WHERE organization_id = $1::uuid AND account_code = '628')`,
+        [ORG]
+      )
+      await client.query(
+        `DELETE FROM journal_entries WHERE organization_id = $1::uuid AND id NOT IN
+           (SELECT DISTINCT entry_id FROM journal_lines WHERE organization_id = $1::uuid)`,
+        [ORG]
+      )
       await client.query(`ALTER TABLE journal_lines ENABLE TRIGGER USER`)
     })
     expect(checkOf(await sweep(), "I-E10-12")?.status).toBe("PASS")

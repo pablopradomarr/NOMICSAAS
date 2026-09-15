@@ -799,6 +799,11 @@ export function checkIE1011(time: TimeBlock | undefined): CheckResult {
 export function checkIE1012(time: TimeBlock | undefined): CheckResult {
   if (!time?.payroll) return missing("I-E10-12", "falta el coste de personal valorado y el saldo de las cuentas 64x del periodo")
   if (time.payroll.length === 0) return info("I-E10-12", "ningún periodo con coste de personal que contrastar")
+  // **Ronda 3.** Lo valorado es el coste de las horas a tarifa (la magnitud que
+  // sella O-E10-20), no «lo repartido por un driver HORAS»: el driver dice cómo
+  // se reparte un saldo, no qué es, y el de un CECO lleva su 628 además de la
+  // nómina. Y la cota es del EJERCICIO: la nómina se devenga con su calendario
+  // —pagas extra, finiquitos— y las horas con el suyo.
   const problems: string[] = []
   for (const row of time.payroll) {
     if (row.valuedCents > row.payrollCents) {
@@ -812,7 +817,8 @@ export function checkIE1012(time: TimeBlock | undefined): CheckResult {
   return problems.length === 0
     ? pass(
         "I-E10-12",
-        `${time.payroll.length} periodo(s): el personal imputado por horas no excede al contabilizado en 64x ` +
+        `${time.payroll.length} periodo(s): el coste de las horas valoradas a tarifa no excede al personal ` +
+          `contabilizado en 64x ` +
           `(holgura ${holgura} c). Es una GUARDA: la infraabsorción la publica el informe de absorción (O-E10-20)`
       )
     : failed("I-E10-12", cut(problems))

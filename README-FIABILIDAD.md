@@ -54,6 +54,7 @@ diciendo qué falta — jamás en verde.
 | **Recurrentes, inmovilizado y periodificaciones** | `I-E9-1a`…`I-E9-7`, `I-E9-25` | Una ocurrencia por regla y periodo, y ninguna `GENERADA` sin asiento; el cuadro de amortización es determinista y su sello se recomputa, con la amortización acumulada cuadrada **por activo**; toda periodificación vencida está agotada; todo cuadro de deuda tiene desglose y no se puede alterar sin que se note |
 | **IVA periódico** | `I-E9-8a′`…`I-E9-11`, `I-E9-22`, `I-E9-26`, `I-E8-15a′/15c′` | La liquidación se reproduce línea a línea desde el libro registro; el libro, el diario y la liquidación sellada cuadran **también bajo RECC** (con 4728/4778); la prorrata definitiva se deriva del libro y nunca se inventa un porcentaje; ningún asiento con IVA entra en un periodo ya liquidado |
 | **Ajustes de cierre** | `I-E9-16`…`I-E9-19`, `I-E9-24` | La reclasificación largo↔corto no mueve el total y **ninguna deuda que venza dentro del año queda a largo**; las diferencias de cambio se reconocen sólo sobre partidas **monetarias** y a la tasa sellada; el valor actual devenga exactamente su descuento hasta el nominal |
+| **Presupuesto y horas** | `I-E10-1`…`I-E10-18` | La matriz del presupuesto suma sus líneas nivel a nivel y mes a mes; la desviación es `real − presupuesto` al céntimo y el % **no mueve el importe**; una versión sellada no cambia —el `budgetHash` recomputado lo delata, con sus líneas de horas dentro—; un parte APROBADO es inmutable y se corrige por contra-apunte; la base de los drivers `HOURS`/`HEADCOUNT` es reproducible y el `timeHash` de **todo** run de actividad se recomputa sobre la ventana que el run persiste; y presupuesto y real sólo se comparan **en el mismo estado de imputación** |
 | **Integridad del propio control** | `I-E7-7`, `I-E7-8`, `I7`–`I10` | El barrido no se puede editar sin que se note (`checksHash` recomputado); todo fichero del almacén tiene veredicto; no hay duplicados, ni fechas fuera de ejercicio abierto, ni una sola fila que cruce de organización |
 
 La lista completa, con su tolerancia y su redacción exacta, está en
@@ -77,13 +78,26 @@ retención no practicada…), E7 cuatro: `CONCILIACION_PENDIENTE`,
 `PARTIDA_EN_TRANSITO_ANTIGUA`, `DIFERENCIA_DE_CAMBIO_SIN_RECONOCER` y
 `ALMACEN_NO_BARRIDO`; y E9 cinco más, que viajan en el `ClosingRun`:
 `IVA_NO_LIQUIDADO`, `IMPUESTO_DIFERIDO_NO_RECONOCIDO`, `RESULTADO_SIN_DISTRIBUIR`,
-`MODELO_200_PRESENTADO` y `CIERRE_REABIERTO`.
+`MODELO_200_PRESENTADO` y `CIERRE_REABIERTO`; y E10 cinco de la familia
+`PRESUPUESTO`, con sus umbrales `EV-11`…`EV-13` y `EV-15`…`EV-17`:
+`DESVIACION_PRESUPUESTO` (la medida cambió, o uno de los cuatro KPI se disparó
+—incluida **la mayor desviación por dimensión**, que el total compañía compensa—),
+`PRESUPUESTO_AUSENTE`, `HORAS_SIN_APROBAR` (**también con base aprobada 0**),
+`PLANTILLA_AUSENTE` y `TARIFA_AUSENTE`.
 
 > **Todos mueven el sello.** Un aviso que no lo mueve es decorativo: firmar
 > «validado automáticamente» un periodo con la conciliación abierta es
 > exactamente lo que el sello existe para impedir. Lo que estos cuatro **no**
 > hacen es cambiar una cifra: por eso su naturaleza es `AVISO`/`ENTORNO` y no
 > `INVARIANTE`.
+
+> **Y alguien tiene que ejecutarlos.** Los veintisiete de E9 y los dieciocho de
+> E10 nacieron como **código muerto**: el motor los sabía calcular y el montaje
+> del barrido no rellenaba su bloque, así que su familia salía siempre
+> `SIN_EVALUAR` y ningún FAIL llegaba nunca al sello. Lo cazó el auditor las dos
+> veces. Que el bloque se componga —`readClosingInvariantInput`,
+> `readBudgetInvariantInput`— es parte del invariante, y el corolario está
+> escrito arriba: **una familia sin evaluar sale `SIN_EVALUAR`, jamás en verde**.
 
 ### El nivel de confianza de una cifra
 

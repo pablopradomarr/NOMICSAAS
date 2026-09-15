@@ -1,8 +1,47 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-14 (**✅ E9 CERRADA** tras tres rondas de corrección · **SIGUIENTE: `/epica E10`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-15 (**✅ E10 CERRADA** tras tres rondas de corrección · **SIGUIENTE: `/epica E11`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
-## ✅ E9 CERRADA (2026-09-14) — siguiente: `/epica E10`
+## ✅ E10 CERRADA (2026-09-15) — siguiente: `/epica E11`
+
+Presupuesto versionado y sellado, horas como unidad entera aprobada, drivers de
+actividad con su cuarto sello, forecast derivado y umbrales de desviación.
+Cerrada tras **tres rondas de corrección**:
+
+- **auditor-fiabilidad: CONFORME** (ronda 3). En la ronda 0, **DISCREPANCIA** con
+  H-1…H-7 —dos GRAVES: los **dieciocho `I-E10-*` que nadie ejecutaba** (el
+  montaje no rellenaba los bloques `budget`/`time`, así que la familia
+  `PRESUPUESTO` salía siempre `SIN_EVALUAR`) y el **`budgetHash` irreproducible**
+  en cuanto se relevaba una versión, porque `valid_to` —que el propio sellado
+  reescribe— entraba en la forma canónica—. En la re-auditoría de la ronda 1,
+  DISCREPANCIA por cuatro puntos: la **regresión de `I-E10-12`** con el ejercicio
+  regularizado, el bloque de absorción del **fixture** que contradecía al motor,
+  la **provenance por celda** que devolvía 0 filas en los niveles acumulados y la
+  inyección (b) sin run de actividad en el arnés. En la ronda 3, un solo punto
+  accionable: `I-E10-12` contaba como personal imputado **todo** lo repartido por
+  un driver `HOURS` —también el 628 del CECO— y lo comparaba mes a mes.
+- **revisor-codigo: APROBADO** (ronda 2). En la ronda 1, **BLOQUEADO** con 3
+  BLOQUEA (los nueve techos de §9 sin medir, tres deudas declaradas en
+  `runs/registro.jsonl` que no llegaron a `ESTADO.md`, y el `budgetHash` sin las
+  líneas de horas que ADR-0018 D2 exige), 5 DEBE y 7 PUEDE.
+- **QA**: BUG-E10-1 (`--reset-org` no vaciaba presupuesto ni horas y las suites
+  e2e se contaminaban entre ficheros) y BUG-E10-2 (un parte APROBADO no se podía
+  borrar **ni como operador**, de modo que el vaciado moría; cerrado con
+  **ADR-0018 D7**, un GUC verificado contra la organización y el rol) cerrados
+  con test propio.
+
+**Tests**: unit 2 250 ✓ · integración 2 967 ✓ · RLS 211 ✓ · e2e `presupuesto`
+10/10 y `horas-presupuesto-real` 6/6 ✓ · build OK · lint 0 errores · **los nueve
+techos de §9 activos** (`tests/integration/perf-budget.test.ts`). Fixture sellado
+**v1.2**; v1.0 y v1.1 quedan congelados como evidencia de cada ronda. Registros:
+`2026-09-15_e10_ronda1`, `…_reauditoria` y `…_e10_cierre`.
+
+**Deuda**, toda fechada abajo en «E10 — ronda 1 de corrección»: el agregado por
+(empleado, día) del calendario de `/time`, el contrato del bloque de rentabilidad
+por proyecto, la validación de extensión y mimetype del import en el borde y la
+granularidad `MONTH` de varios meses — **las cuatro en E11**.
+
+## ✅ E9 CERRADA (2026-09-14)
 
 Cierre de ejercicio, recurrentes y fiscalidad periódica, cerrada tras **tres
 rondas de corrección**:

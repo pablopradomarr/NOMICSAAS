@@ -267,12 +267,74 @@ enunciados originales (`Σ 472` y `Σ 477` a secas) se conservan para el régime
 general, y `lib/closing/vat.ts` los sustituye por los primados cuando hay RECC
 vigente.
 
+## E10 · Presupuesto y horas — `I-E10-1…18` (familia `PRESUPUESTO`)
+
+Los dieciocho viven en `lib/budget/invariants-e10.ts` (puros) y el bloque que los
+alimenta lo compone `models/budget-invariants.readBudgetInvariantInput`, en la
+misma transacción del barrido y **sólo con un ejercicio en el alcance**. Lección
+cara de E9 y de E10: un invariante que nadie ejecuta no vigila nada —los
+dieciocho fueron **código muerto** hasta la ronda 1—, y uno que falla con datos
+limpios no distingue una manipulación.
+
+| Id | Qué exige | Tolerancia |
+|---|---|---|
+| **I-E10-1** | `Σ` líneas por nivel = totales de la matriz, y los doce meses = el anual; ninguna celda queda fuera | 0 |
+| **I-E10-2** | `desviación = real − presupuesto`, celda a celda; el % redondeado **no mueve el importe** | 0 |
+| **I-E10-3** | `Σ driverBase` de las líneas `HOURS` = minutos aprobados y productivos de la ventana del **periodo**, ensanchada sólo si el `zeroBaseFallback` se aplicó | 0 |
+| **I-E10-4** | Un `TimeEntry` APROBADO es inmutable: se corrige por **contra-apunte**, que casa con su original y nunca lo excede | 0 |
+| **I-E10-5** | 0 ó 1 tarifa vigente por (empleado, fecha); sin tarifa el coste es **NO EVALUABLE**, jamás 0 ni la anterior | — |
+| **I-E10-6** | `budgetHash` recomputado = el sellado, **con** las líneas de horas y **sin** `valid_to` (mutable al relevar) | 0 |
+| **I-E10-7** | El forecast no solapa ni deja hueco: real hasta el corte, presupuesto después | 0 |
+| **I-E10-8** | Celda única por (versión, mes, dimensión, cuenta) y **una sola** dimensión (O-A6) | 0 |
+| **I-E10-9** | Una versión vigente por ejercicio y fecha; revisiones correlativas **por ejercicio** (BASE = 0, cada REVISADO la siguiente) | 0 |
+| **I-E10-10** | Partes bien formados: minutos ≠ 0, `|min| ≤ 1 440` por fila **y agregado** por (empleado, día), fecha dentro del ejercicio y fuera de mes bloqueado | 0 |
+| **I-E10-11** | Base `HEADCOUNT` = `Σ fteMilli` de los snapshots del periodo (**FTE·mes**); sin snapshot no es 0, es `PLANTILLA_AUSENTE` | 0 |
+| **I-E10-12** | **Guarda**: el coste de las horas valoradas a tarifa no excede al personal contabilizado en `64x` **del ejercicio**. No es «lo repartido por un driver `HOURS`» —el driver dice cómo se reparte un saldo, no qué es— ni una comparación mes a mes: la nómina se devenga con su calendario y las horas con el suyo. La infraabsorción la **publica** el informe (O-E10-20), no la castiga el invariante | ≤ |
+| **I-E10-13** | Reproducibilidad: dos ejecuciones con las mismas entradas dan el mismo JSON canónico; las **siete** tablas devuelven 0 filas y `42501` sin GUC | 0 |
+| **I-E10-14** | Toda celda declara su `analyticType` y su signo lo fuerza el tipo (O-E10-6 + O-E10-23) | 0 |
+| **I-E10-15** | Continuidad de vigencias: sin solape **y sin hueco** en el ejercicio (O-E10-8) | 0 |
+| **I-E10-16** | Completitud: una versión cubre los doce meses o **declara** su `partialFrom` | 0 |
+| **I-E10-17** | El `timeHash` sellado = el recomputado sobre la **ventana que el run persiste**, para **todo** run con driver de actividad; la ventana contiene el periodo y la consumida | 0 |
+| **I-E10-18** | Comparabilidad: presupuesto y real en el mismo estado de imputación, o las celdas por dimensión ≥ MC3 **no se publican** | 0 |
+
+### Familia `PRESUPUESTO` de la pestaña Auditoría
+
+Los dieciocho entran en la familia **`PRESUPUESTO`** de `lib/audit/families.ts`,
+con la misma regla que las otras ocho: **una familia sin evaluar sale
+`SIN_EVALUAR`, jamás en verde**. Sin presupuesto ni partes el bloque se omite
+entero —una organización que no presupuesta no ve dieciocho `INFO` inútiles—, y
+con uno solo de los dos el otro dice **qué falta**.
+
+### Motivos de sello que aporta el presupuesto (E10, ADR-0018 D5)
+
+Código cerrado. Los compone `budgetSealReasons()` **a partir de los datos** y no
+de los checks (lección H-4 de E7: el sello se calcula **después** de los motivos,
+y `seal` y `sealReasons` dicen lo mismo).
+
+| Motivo | Umbral | Qué dice |
+|---|---|---|
+| `DESVIACION_PRESUPUESTO` | **EV-11 / EV-13** | El `budgetHash` del periodo cambia respecto del run anterior, o dispara uno de los cuatro KPI de desviación (ingresos, EBITDA, MC3 y **la mayor por dimensión**, que es la que el total compañía compensa) |
+| `PRESUPUESTO_AUSENTE` | **EV-12** | No hay versión vigente para el periodo: las columnas derivadas salen **vacías con leyenda**, nunca a cero |
+| `HORAS_SIN_APROBAR` | **EV-15** | Hay minutos sin aprobar de receptores elegibles en la ventana del driver. Se emite **siempre**, también con base aprobada 0 (y entonces `shareOfBaseBps = null`): el 100 % sin firmar es el caso extremo del parcial, no una excepción |
+| `PLANTILLA_AUSENTE` | **EV-16** | Un receptor de una regla `HEADCOUNT` no tiene ningún snapshot en el periodo: peso 0, que no es lo mismo que «no hay nadie» |
+| `TARIFA_AUSENTE` | **EV-17** | Hay partes aprobados sin tarifa vigente ese día **y** el informe publica coste-hora o margen por hora |
+
+`PRESUPUESTO_NO_SELLADO` **no existe**: EV-14 se retiró (O-E10-5) y un borrador
+no produce un `ReportRun` —para eso está la previsualización—.
+
 ## Provenance por cifra
 ```json
 {"valor": 1245032, "moneda": "EUR", "metrica": "mc3.proyecto.P-2026-004", "run_id": "…", "ledgerHash": "…",
  "calculado_por": "lib/analytics/margins.ts@<git-sha>", "registros_origen": "SELECT id FROM journal_lines WHERE …", "confianza": "calculado"}
 ```
 Drill-down UI = ejecutar `registros_origen`.
+
+**Una celda de desviación necesita TRES consultas** (§5.1 de E10), y cada una
+tiene que devolver lo que la celda **acumula**: la matriz es cumulativa, así que
+la de MC3 pide los niveles `≤ MC3`, todos los meses del periodo y —en el
+presupuesto— la **composición** mes a mes (O-E10-9), no una versión suelta. Una
+provenance que devuelve cero filas sobre una celda con importe es peor que
+ninguna: afirma que no hay origen.
 
 ## Gobernanza
 Nivel 2 (ADR + firma humana): `lib/ledger/**`, `lib/analytics/**`, `invariants.ts`, esquema de `JournalEntry/JournalLine/AllocationRule`, RLS, prompt del auditor, umbrales. Nivel 1: resto, con diff cero en cifras sobre fixtures.

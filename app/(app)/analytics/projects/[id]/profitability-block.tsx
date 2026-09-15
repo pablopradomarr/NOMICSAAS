@@ -52,6 +52,11 @@ const formatBps = (bps: number | null): string => {
 const ABSORPTION_LABELS: Record<string, string> = {
   SOBREABSORCION: "sobreabsorción",
   INFRAABSORCION: "infraabsorción",
+  // El desglose agrupa lo valorado por el CECO del EMPLEADO y la nómina por el
+  // CECO de la línea 64x: una unidad cuya gente imputa pero cuya nómina se
+  // contabiliza en otro sitio NO está sobreabsorbiendo, es que ahí no hay nada
+  // que absorber.
+  SIN_NOMINA_QUE_ABSORBER: "sin nómina que absorber en este CECO",
   EXACTA: "absorción exacta",
 }
 
