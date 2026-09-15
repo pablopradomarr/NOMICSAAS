@@ -90,6 +90,15 @@ const E7_FAMILY: Readonly<Record<string, CheckFamily>> = {
   "I-E7-17": "ESTADOS",
 }
 
+/**
+ * E12 · ADR-0020 D6 — `I-E12-5` (escrituras de operador acotadas) es de la
+ * familia `PLATAFORMA`, no de `INTEGRIDAD`: habla de lo que la plataforma le
+ * hace a una organización, que es exactamente lo que esa familia agrupa.
+ */
+const E12_FAMILY: Readonly<Record<string, CheckFamily>> = {
+  "I-E12-5": "PLATAFORMA",
+}
+
 const PREFIX: readonly [string, CheckFamily][] = [
   ["I-E3-", "PARTIDA_DOBLE"],
   ["I-E4-", "ANALITICA"],
@@ -109,6 +118,10 @@ const PREFIX: readonly [string, CheckFamily][] = [
   // `I-E11-` si existiera; hoy `I-E1-` no está en la tabla, pero el orden se
   // deja escrito para que añadirlo mañana no se lleve por delante a E11.
   ["I-E11-", "PLATAFORMA"],
+  // E12 · §9: los `I-E12-1…8` son de la familia `INTEGRIDAD` **salvo el 5**, que
+  // es de `PLATAFORMA` y está arriba en `EXPLICIT` (ADR-0020 D6). El prefijo
+  // recoge a los otros siete para que ninguno caiga en `unknownCheckIds`.
+  ["I-E12-", "INTEGRIDAD"],
 ]
 
 /**
@@ -121,6 +134,8 @@ export function familyOf(checkId: string): CheckFamily {
   if (explicit !== undefined) return explicit
   const e7 = E7_FAMILY[id]
   if (e7 !== undefined) return e7
+  const e12 = E12_FAMILY[id]
+  if (e12 !== undefined) return e12
   for (const [prefix, family] of PREFIX) if (id.startsWith(prefix)) return family
   return "INTEGRIDAD"
 }
@@ -128,7 +143,7 @@ export function familyOf(checkId: string): CheckFamily {
 /** ¿Está el id declarado en alguna tabla, o lo estamos acogiendo por defecto? */
 export function isKnownCheckId(checkId: string): boolean {
   const id = checkId.trim()
-  if (EXPLICIT[id] !== undefined || E7_FAMILY[id] !== undefined) return true
+  if (EXPLICIT[id] !== undefined || E7_FAMILY[id] !== undefined || E12_FAMILY[id] !== undefined) return true
   return PREFIX.some(([prefix]) => id.startsWith(prefix))
 }
 

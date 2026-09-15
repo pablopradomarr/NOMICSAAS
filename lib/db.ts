@@ -203,6 +203,14 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "Subscription",
   "SubscriptionEvent",
   "PlatformInvoice",
+  // E12 · T12 — excepciones de operador (ADR-0020 D5). Nace con
+  // `SELECT app.enforce_tenant_rls('operator_exceptions')` en
+  // `20261001090000_e12_excepciones_de_operador`. Está aquí por las DOS razones
+  // de siempre: acota la barrera 1, y —regla E-4 de la v1.1 propuesta— con eso
+  // entra **sola** en el inventario del backup, en `reset-org` y en
+  // `purgeDerived`, sin que nadie mantenga una lista a mano. Es la quinta vez
+  // que se escribe esta nota y la primera en que la tabla nueva no se olvida.
+  "OperatorException",
 ])
 
 /**

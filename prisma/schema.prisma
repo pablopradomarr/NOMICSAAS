@@ -241,6 +241,8 @@ model Organization {
   backupRetentionDays Int @default(30) @map("backup_retention_days")
 
   onboardingRun OnboardingRun?
+  /// E12 · ADR-0020 — excepciones de operador vivas o caducadas de esta organización.
+  operatorExceptions OperatorException[]
 
   @@map("organizations")
 }
@@ -4308,4 +4310,63 @@ enum DepreciationStart {
   MES_SIGUIENTE
 
   @@map("depreciation_start")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T12 — Excepciones de operador (ADR-0020 D5/D6)
+// docs/design/E12-fiabilidad-dod.md §5.4
+//
+// Una excepción de operador NO es una excepción a un invariante: el invariante
+// que cerró la puerta sigue en FAIL y sigue moviendo el sello. Lo que caduca es
+// la PUERTA, no la comprobación. Y toda excepción viva mueve el sello con
+// `EXCEPCION_DE_OPERADOR_VIGENTE` (D6): sin esa regla, `/admin` sería la manera
+// elegante de apagar la capa de fiabilidad.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Qué guardia levanta la excepción. Enum, nunca texto libre (lección O-21).
+enum OperatorExceptionKind {
+  UNBLOCK_PERIOD_LOCK
+  UNBLOCK_CLOSING_GUARD
+  UNSTICK_RESTORE_JOB
+  UNSTICK_CRON_JOB
+
+  @@map("operator_exception_kind")
+}
+
+/// Sobre qué objeto concreto recae. `targetId` es opcional porque un job de cron
+/// se nombra por `(job, periodKey)` y no por un uuid de fila.
+enum OperatorTargetKind {
+  PERIOD_LOCK
+  FISCAL_YEAR
+  RESTORE_JOB
+  CRON_JOB
+
+  @@map("operator_target_kind")
+}
+
+/// E12 · ADR-0020 — una excepción de operador a una guardia, acotada y caduca.
+/// Append-only como el resto de registros de control: `REVOKE UPDATE, DELETE` +
+/// políticas `RESTRICTIVE`; revocar es escribir `revoked_at` por la función
+/// `SECURITY DEFINER` acotada `app.revoke_operator_exception`, no un `UPDATE`
+/// libre.
+model OperatorException {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  kind       OperatorExceptionKind
+  targetKind OperatorTargetKind    @map("target_kind")
+  targetId   String?               @map("target_id") @db.Uuid
+  /// Nombre legible del objetivo cuando no hay uuid (`job:periodKey` del cron).
+  targetRef  String?               @map("target_ref") @db.VarChar(120)
+
+  reason      String    @db.VarChar(1000)
+  requestedBy String    @map("requested_by") @db.VarChar(120)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  /// Caduca sola. CHECK: `expires_at > created_at` y `expires_at <= created_at + 24h`.
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+
+  @@index([organizationId, expiresAt])
+  @@map("operator_exceptions")
 }

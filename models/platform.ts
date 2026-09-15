@@ -45,6 +45,16 @@ export const PLATFORM_ACTIONS = {
    * ÚNICA forma de cambiar de plan — y por eso no puede ocurrir sin traza.
    */
   PLAN_CHANGED: "plan.changed",
+  /**
+   * **E12 · ADR-0020 D1/D3** — las **cuatro** escrituras de operador de
+   * `/admin`. Lista cerrada: no hay una quinta, y añadirla exige enmendar el
+   * ADR. `I-E12-5` las busca aquí por `action LIKE 'admin.%'` y exige de cada
+   * una motivo ≥ 20 caracteres, actor y confirmación por nombre.
+   */
+  ADMIN_RESET_ORG: "admin.reset_org",
+  ADMIN_UNBLOCK: "admin.unblock",
+  ADMIN_PLAN_CHANGED: "admin.plan_changed",
+  ADMIN_PURGE_RETENTION: "admin.purge_retention",
 } as const
 
 export type PlatformAction = (typeof PLATFORM_ACTIONS)[keyof typeof PLATFORM_ACTIONS]
@@ -79,7 +89,51 @@ const DETAIL_ALLOWED_KEYS = new Set([
   "limitKey",
   "current",
   "limit",
+  // E12 · ADR-0020 D3 — `detail` de una escritura de operador lleva SIEMPRE
+  // `{ reason, confirmedName, before, after, affectedCounts }`. `reason` ya
+  // estaba; las otras cuatro se añaden aquí, y las tres compuestas pasan por
+  // `sanitizeNested` (sólo escalares, una capa, sin PII).
+  "confirmedName",
+  "before",
+  "after",
+  "affectedCounts",
+  "kind",
+  "targetKind",
+  "targetId",
+  "targetRef",
+  "exceptionId",
+  "expiresAt",
+  "dryRun",
 ])
+
+/**
+ * Las tres claves de ADR-0020 D3 cuyo valor es un OBJETO y no un escalar: el
+ * antes, el después y los recuentos por tabla. Se admiten **una sola capa** de
+ * escalares — ni anidamiento, ni arrays de objetos, ni nada que pueda arrastrar
+ * una fila de negocio entera al registro de plataforma.
+ */
+const DETAIL_OBJECT_KEYS = new Set(["before", "after", "affectedCounts"])
+
+/** Máximo de claves dentro de un objeto de `detail`. Un recuento por tabla de
+ * ochenta tablas cabe; un volcado de filas, no. */
+const MAX_OBJECT_KEYS = 120
+
+function sanitizeNested(value: unknown): Prisma.InputJsonObject | null {
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) return null
+  const out: Record<string, string | number | boolean | null> = {}
+  let n = 0
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (n >= MAX_OBJECT_KEYS) break
+    if (v === null || v === undefined) out[k] = null
+    else if (typeof v === "number" || typeof v === "boolean") out[k] = v
+    else if (typeof v === "bigint") out[k] = v.toString()
+    else if (v instanceof Date) out[k] = v.toISOString()
+    else if (typeof v === "string") out[k] = v.slice(0, MAX_TEXT)
+    else continue // objetos anidados y arrays: fuera, sin excepción
+    n++
+  }
+  return out as Prisma.InputJsonObject
+}
 
 const MAX_TEXT = 256
 
@@ -88,6 +142,11 @@ export function sanitizeDetail(detail: Record<string, unknown>): Prisma.InputJso
   const salida: Record<string, string | number | boolean | null> = {}
   for (const [k, v] of Object.entries(detail)) {
     if (!DETAIL_ALLOWED_KEYS.has(k)) continue
+    if (DETAIL_OBJECT_KEYS.has(k)) {
+      const nested = sanitizeNested(v)
+      if (nested !== null) (salida as Record<string, unknown>)[k] = nested
+      continue
+    }
     if (v === null || v === undefined) {
       salida[k] = null
     } else if (typeof v === "number" || typeof v === "boolean") {

@@ -49,6 +49,8 @@ import {
   type E8SealReason,
   type E10SealReason,
   type E11SealReason,
+  type E12SealReason,
+  operatorSealReasons as operatorSealReasonsPure,
 } from "@/lib/ledger/invariants"
 import {
   contrastOf,
@@ -2104,6 +2106,8 @@ export async function runLedgerInvariants(
     let budgetSealReasonCodes: readonly E10SealReason[] = []
     /** E11 · §3.5/§5.4: los cuatro motivos de sello de la familia PLATAFORMA. */
     let platformSealReasonCodes: readonly E11SealReason[] = []
+    // E12 · ADR-0020 D6: el único motivo de las escrituras de operador.
+    let operatorSealReasonCodes: readonly E12SealReason[] = []
 
     if (total > MAX_MATERIALIZED_ENTRIES) {
       origen = "sql"
@@ -2301,6 +2305,21 @@ export async function runLedgerInvariants(
         platformBlock = await readPlatformInvariantInput(tx, { refDate: toUtcDate(opts.refDate) })
       }
 
+      // ── E12 · T12 · ADR-0020 — el bloque `operator` (I-E12-5) ─────────────
+      //
+      // Se compone en el MISMO barrido de auditoría que el de plataforma y por
+      // la misma razón: un invariante escrito y no ejecutado es el H-1 que E9,
+      // E10 y E11 pagaron tres veces seguidas. Y aquí el precio sería mayor,
+      // porque `I-E12-5` es una de las **tres vías** con las que ADR-0020 D2
+      // garantiza que ninguna escritura de operador alcanza el diario.
+      let operatorBlock: Awaited<
+        ReturnType<typeof import("@/models/operator-exceptions").readOperatorInvariantInput>
+      > | null = null
+      if (withAudit) {
+        const { readOperatorInvariantInput } = await import("@/models/operator-exceptions")
+        operatorBlock = await readOperatorInvariantInput(tx, { refDate: toUtcDate(opts.refDate) })
+      }
+
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),
         gitSha,
@@ -2342,9 +2361,13 @@ export async function runLedgerInvariants(
         // E11 · §11: la familia `PLATAFORMA`. Con el bloque salen los TRECE; lo
         // que no se pueda evaluar sale INFO diciendo qué falta.
         ...(platformBlock ? { platform: platformBlock.platform } : {}),
+        // E12 · ADR-0020: `I-E12-5`, familia `PLATAFORMA`. Sin bloque no se
+        // evalúa; con bloque incompleto sale INFO diciendo qué falta.
+        ...(operatorBlock ? { operator: operatorBlock.operator } : {}),
       }
       budgetSealReasonCodes = budgetBlock.sealReasons
       platformSealReasonCodes = platformBlock?.sealReasons ?? []
+      operatorSealReasonCodes = operatorBlock ? operatorSealReasonsPure({ operator: operatorBlock.operator }) : []
       validacion = runInvariantsPure(input, opts.refDate)
 
       // I1 e I7 los manda el agregado SQL: ve las MISMAS filas que la BD, no una
@@ -2409,6 +2432,11 @@ export async function runLedgerInvariants(
       // asiento** (D7): lo que hacen es impedir que se firme «VALIDADO
       // AUTOMÁTICAMENTE» un periodo con la plataforma en aviso.
       ...(platformSealReasonCodes.length > 0 ? { platformReasons: platformSealReasonCodes } : {}),
+      // E12 · ADR-0020 **D6**, la regla que sostiene todo `/admin`: un periodo
+      // con una excepción de operador VIVA no puede firmarse como «VALIDADO
+      // AUTOMÁTICAMENTE». Sin esto, `/admin` sería exactamente lo que el ADR
+      // existe para impedir: la manera elegante de apagar la capa de fiabilidad.
+      ...(operatorSealReasonCodes.length > 0 ? { operatorReasons: operatorSealReasonCodes } : {}),
     })
 
     let persistedRunId: string | undefined

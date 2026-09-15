@@ -78,6 +78,11 @@ export type AuditEntity =
   | "Employee"
   | "EmployeeRate"
   | "HeadcountSnapshot"
+  // E12 · T13 — escrituras de operador (ADR-0020 D3). La excepción de operador
+  // es una entidad auditable más, y la organización y la copia son los objetos
+  // sobre los que recaen las otras tres operaciones.
+  | "OperatorException"
+  | "BackupJob"
 
 export type AuditAction =
   | "create"
@@ -199,6 +204,14 @@ export type AuditAction =
   | "CAMBIO_DE_PLAN"
   /** §3.5 · excepción de cuota blanda concedida por el propio motor (O-3). */
   | "LIMITE_EXCEPCION_AUTOMATICA"
+  // E12 · T13 · ADR-0020 D3 — las CUATRO escrituras de operador, tal y como se
+  // ven desde el registro DEL CLIENTE: «alguien de la plataforma tocó algo mío».
+  // El prefijo `OPERATOR_` no es decorativo: `I-E12-5` cuenta por él las filas
+  // de operador que hubieran alcanzado el diario, que tienen que ser cero.
+  | "OPERATOR_RESET_ORG"
+  | "OPERATOR_UNBLOCK"
+  | "OPERATOR_PLAN_CHANGED"
+  | "OPERATOR_PURGE_RETENTION"
 
 export type AuditLogInput = {
   entity: AuditEntity

@@ -34,6 +34,12 @@ import {
   type E11SealReason,
   type PlatformInvariantInput,
 } from "@/lib/ledger/invariants-e11"
+import {
+  E12_SEAL_REASON_TEXT,
+  runOperatorInvariants,
+  type E12SealReason,
+  type OperatorInvariantInput,
+} from "@/lib/ledger/invariants-e12"
 import { compareDates, isValidLocalDate, monthOf } from "@/lib/ledger/dates"
 import { entryHash, HASH_VERSION, HashableLine, isHashVersion } from "@/lib/ledger/hash"
 import { reversalNetsToZero } from "@/lib/ledger/void"
@@ -125,6 +131,12 @@ export type InvariantInput = {
    * que la misma lección se paga (H-1 de E9, H-1 de E10).
    */
   platform?: PlatformInvariantInput
+  /**
+   * E12 · T12 (ADR-0020): bloque de **operador** (`I-E12-5`, familia
+   * `PLATAFORMA`). Con el bloque sale el invariante; sin él no se evalúa, y una
+   * cabecera de informe no paga por leer el registro de plataforma.
+   */
+  operator?: OperatorInvariantInput["operator"]
   /** Moneda base, que I-E8-19 necesita para saber qué es «divisa». */
   baseCurrency?: string
 }
@@ -594,6 +606,11 @@ export function runInvariants(input: InvariantInput, refDate: LocalDate): Valida
       // TRECE; sin él no se evalúa ninguno, porque una cabecera de informe no
       // paga por leer suscripciones, copias y objetos de almacén.
       ...(input.platform ? runPlatformInvariants(input.platform) : []),
+      // E12 · ADR-0020: `I-E12-5` (familia `PLATAFORMA`). Las escrituras de
+      // operador, acotadas: motivo, actor, confirmación, caducidad de 24 h y el
+      // diario intacto. Es la TERCERA vía de D2, además de los privilegios de
+      // base y del test estático sobre el AST de `app/(app)/admin/**`.
+      ...(input.operator ? runOperatorInvariants({ operator: input.operator }) : []),
     ],
   }
 }
@@ -726,6 +743,19 @@ export type SealOptions = {
    * pero tampoco un silencio**.
    */
   platformReasons?: readonly E11SealReason[]
+  /**
+   * E12 (ADR-0020 **D6**): el **único** motivo de las escrituras de operador,
+   * `EXCEPCION_DE_OPERADOR_VIGENTE`. Lo compone `operatorSealReasons()` **a
+   * partir de los datos** —¿hay alguna excepción viva a la fecha de referencia?—
+   * y no de los checks, mismo patrón que los seis de E8, los diez de E9, los
+   * cinco de E10 y los cuatro de E11.
+   *
+   * Es la regla que sostiene todo `/admin`: **un periodo con una excepción viva
+   * no puede firmarse como `VALIDADO AUTOMÁTICAMENTE`**. Su naturaleza es
+   * `ENTORNO` y no `INVARIANTE` porque no cambia una cifra: cambia lo que se
+   * puede afirmar de ella.
+   */
+  operatorReasons?: readonly E12SealReason[]
 }
 
 /**
@@ -785,6 +815,11 @@ export function seal(validacion: Validacion, opts: SealOptions): Seal {
   }
   for (const code of [...new Set(opts.platformReasons ?? [])].sort()) {
     razones.push({ kind: "PLATAFORMA", code, message: `${code} · ${E11_SEAL_REASON_TEXT[code]}` })
+  }
+  // ADR-0020 D6 — naturaleza `ENTORNO`: la excepción no mueve una cifra, mueve
+  // lo que se puede afirmar de ella. Su FAMILIA en /audit sí es `PLATAFORMA`.
+  for (const code of [...new Set(opts.operatorReasons ?? [])].sort()) {
+    razones.push({ kind: "ENTORNO", code, message: `${code} · ${E12_SEAL_REASON_TEXT[code]}` })
   }
 
   const motivos = razones.map((r) => r.message)
@@ -940,3 +975,32 @@ export {
   runPlatformInvariants,
 } from "@/lib/ledger/invariants-e11"
 export type { E11SealReason, PlatformInvariantInput } from "@/lib/ledger/invariants-e11"
+
+/**
+ * E12 · T12 — re-exportados para que el borde importe un solo módulo (mismo
+ * patrón que E9, E10 y E11). `I-E12-5` y el motivo de sello de ADR-0020.
+ */
+export {
+  E12_OPERATOR_INVARIANT_IDS,
+  MAX_EXCEPTION_HOURS,
+  E12_SEAL_REASONS,
+  E12_SEAL_REASON_TEXT,
+  FORBIDDEN_OPERATOR_TABLES,
+  OPERATOR_ACTIONS,
+  confirmsName,
+  isE12SealReason,
+  isLive,
+  isOperatorAction,
+  liveExceptions,
+  operatorSealReasons,
+  runOperatorInvariants,
+  validateReason,
+} from "@/lib/ledger/invariants-e12"
+export type {
+  E12SealReason,
+  OperatorAction,
+  OperatorAuditRef,
+  OperatorBlock,
+  OperatorExceptionRef,
+  OperatorInvariantInput,
+} from "@/lib/ledger/invariants-e12"

@@ -372,6 +372,37 @@ Código cerrado. Los compone `platformSealReasons()` **a partir de los datos**.
 | `RESTAURACION_SIN_VERIFICAR` | O-2 | Hay una restauración en `DONE_UNVERIFIED`: la organización se conserva como evidencia y **no acredita** reproducibilidad |
 | `COPIA_SIN_VERIFICAR` | §5.4.2 | Una copia emitida cuyo manifest no valida contra su firma |
 
+## E12 · Escrituras de operador — `I-E12-5` (familia `PLATAFORMA`)
+
+`docs/adr/0020-escrituras-de-operador-y-excepciones-auditadas.md` (APROBADO,
+D1–D6) · `docs/design/E12-fiabilidad-dod.md` §5.
+
+| ID | Invariante | Tol. |
+|---|---|---|
+| **I-E12-5** | **Escrituras de operador acotadas.** Toda fila de `PlatformAuditLog` con `action LIKE 'admin.%'` tiene **motivo ≥ 20 caracteres** (con lista negra de genéricos), **actor** y **confirmación por nombre**; la acción está entre las **cuatro** de D1 y no hay una quinta; **ninguna** escritura de `/admin` alcanza el diario ni las tablas append-only; y ninguna `OperatorException` dura > 24 h ni existe sin su línea en el registro | — |
+
+**Las tres vías de D2, y son tres a propósito.** Que ninguna escritura de
+operador toque `journal_entries`, `journal_lines`, `audit_logs`,
+`extraction_runs`, `invariant_runs` ni `closing_runs` se garantiza por
+**privilegios de base** (el rol no los tiene), por **test estático sobre el AST**
+de `app/(app)/admin/**` y por **`I-E12-5`** en el barrido. Una sola vía es una
+promesa; tres son un control.
+
+### Motivo de sello que aportan las escrituras de operador (E12, ADR-0020 D6)
+
+Código cerrado, de **uno**. Lo compone `operatorSealReasons()` **a partir de los
+datos** —¿hay alguna excepción viva a la fecha de referencia?—, no de los checks.
+
+| Motivo | Familia · naturaleza | Qué dice |
+|---|---|---|
+| `EXCEPCION_DE_OPERADOR_VIGENTE` | `PLATAFORMA` · `ENTORNO` | Hay una `OperatorException` viva sobre una guardia de esta organización. El periodo **no puede** firmarse como `VALIDADO AUTOMÁTICAMENTE` mientras dure. Caduca sola en ≤ 24 h (CHECK en base) y entonces el sello vuelve sin que nadie haga nada |
+
+**Una excepción de operador NO es una excepción a un invariante.** El invariante
+que cerró la puerta sigue en FAIL y sigue moviendo el sello: lo que caduca es la
+**puerta**, no la comprobación. Y si alguna vez se propone una excepción que *no*
+mueva el sello, la pregunta correcta no es cuál es el caso de uso: es por qué se
+quiere apagar el control.
+
 ### Lo que NO viaja en la copia del cliente
 
 El inventario se deriva de `BACKUP_TENANT_MODELS` = `TENANT_MODELS` ∪
