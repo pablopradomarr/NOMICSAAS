@@ -467,6 +467,26 @@ Entradas: la «Re-auditoría (ronda 1)» de `docs/design/E9-auditoria-informe.md
 Tests: `tests/integration/e9-ronda2.test.ts` (10). La deuda del **N+1 de la
 staleness de CECOs** queda fechada en **E10**.
 
+## E10 — ronda de integración (2026-09-15): los cuatro hallazgos de C2 y C3
+
+Los agentes de interfaz de la ola C dejaron nombrados cuatro defectos de la capa
+de modelo. Los cuatro están cerrados, cada uno con su test:
+
+| # | Defecto | Corrección |
+|---|---|---|
+| **1** (BLOQUEANTE) | `previewAllocationRun` y `sealAllocationRunTx` llamaban a `allocate()` **sin** `timeEntries` ni `headcount` aunque `loadRunContext` ya cargaba `ctx.activity` (sólo se usaba para el `timeHash`): `HORAS` y `PLANTILLA` caían **siempre** en su `zeroBaseFallback` | Los dos le pasan `ctx.activity.timeRows` y `ctx.activity.headcount`, la MISMA base que el cuarto sello firma. Con 720 min aprobados y 300 sin aprobar: `W-E10-UNAPPROVED-HOURS` con su % sobre la base, reparto real y run sellable (criterios 13 y 12-bis) |
+| **2** | `budgetVsActual` construía `buildVariance` **antes** que el forecast y sin pasárselo: la quinta columna estaba siempre vacía; y la vista no exponía los sellos de la cabecera | El forecast se construye primero (corte = último mes cerrado) y entra en la desviación; `BudgetVsActualView.seals` expone los **cinco** (`ledgerHash`, `analyticsKey`, `budgetHash`, `budgetRulesHash`, `gitSha`) en fresh, caché y previsualización |
+| **3** | `getAnalyticsConfig` resolvía la organización con un `$queryRaw`, que con el `db` de `tenantPage()` sale de la transacción y **sin** `app.current_org` | Usa el delegado `tx.organization.findUnique` —que la extensión despacha sobre la transacción abierta— y acepta `AnalyticsReadClient = TenantTransactionClient \| TenantClient` |
+| **4** | Vaciar una celda del editor la guardaba como `0,00 €` | `getBudgetVersion` devuelve el id de cada celda, la hoja lo propaga en `lineIds` y el editor separa lo tecleado (upsert) de lo vaciado (`deleteBudgetCellsTx`). **Teclear `0` sigue siendo un cero declarado** |
+
+**Deuda nueva, fechada.** Con granularidad `MONTH` la matriz etiqueta la celda
+con su mes cuando el periodo pedido cae dentro de **un** mes; un periodo de
+varios meses pedido como `MONTH` sigue devolviendo el acumulado con
+`month = null`. El desglose mes a mes **dentro de un mismo informe** se cierra en
+**E11**, junto con la descomposición volumen/precio (Q-6 / D6), que es la que
+fija la forma definitiva de la celda mensual. Registro:
+`2026-09-15_e10_ronda_integracion`.
+
 ## Higiene del entorno e2e (ronda 1 de E5, 2026-09-06)
 
 `tests/e2e/session.ts` **siembra** lo que necesita en vez de darlo por hecho

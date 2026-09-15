@@ -22,7 +22,11 @@
  *   interpretar ningún número.
  */
 
-import { saveBudgetCellsFromFormAction, type RawBudgetCell } from "@/app/(app)/analytics/budget/ui-actions"
+import {
+  deleteBudgetCellsFromFormAction,
+  saveBudgetCellsFromFormAction,
+  type RawBudgetCell,
+} from "@/app/(app)/analytics/budget/ui-actions"
 import {
   EXPECTED_SIGN,
   SIGN_LABEL,
@@ -139,12 +143,22 @@ export function BudgetSheet({
       setDone(null)
       setWarnings([])
       const cells: RawBudgetCell[] = []
+      // **Celda vaciada = línea retirada, nunca `0,00 €`.** Teclear `0` sí
+      // escribe un cero declarado —que es una decisión de presupuesto—; dejar
+      // la celda en blanco retira sus líneas, y si no tenía ninguna no escribe
+      // nada. Los ids los da el servidor en `cells[month].lineIds`.
+      const cellIds: string[] = []
       for (const [key, amountText] of Object.entries(edits)) {
         const separator = key.lastIndexOf("|")
         const rowKey = key.slice(0, separator)
         const month = key.slice(separator + 1)
         const row = rows.find((r) => r.key === rowKey)
         if (!row) continue
+        const stored = rowOf(row)?.cells[month]
+        if (typedSign(amountText) === "VACIO") {
+          cellIds.push(...(stored?.lineIds ?? []))
+          continue
+        }
         cells.push({
           month: `${month}-01`,
           accountCode: row.accountCode,
@@ -152,19 +166,39 @@ export function BudgetSheet({
           costCenterId: row.dimensionKind === "COST_CENTER" ? row.dimensionId : null,
           analyticType: row.analyticType,
           amountText,
-          signException: rowOf(row)?.cells[month]?.signException ?? false,
+          signException: stored?.signException ?? false,
         })
       }
-      if (cells.length === 0) return
-      const state = await saveBudgetCellsFromFormAction({ budgetId, cells })
-      if (!state.success) {
-        setError(state.error ?? "No se han podido guardar las celdas")
-        return
+      if (cells.length === 0 && cellIds.length === 0) return
+
+      let written = 0
+      let deleted = 0
+      let messages: readonly string[] = []
+      if (cells.length > 0) {
+        const state = await saveBudgetCellsFromFormAction({ budgetId, cells })
+        if (!state.success) {
+          setError(state.error ?? "No se han podido guardar las celdas")
+          return
+        }
+        written = state.data?.written ?? 0
+        messages = (state.data?.warnings ?? []).map((w) => w.message)
       }
+      if (cellIds.length > 0) {
+        const state = await deleteBudgetCellsFromFormAction({ budgetId, cellIds })
+        if (!state.success) {
+          setError(state.error ?? "No se han podido retirar las celdas vaciadas")
+          return
+        }
+        deleted = state.data?.deleted ?? 0
+      }
+
       setEdits({})
       setDrafts([])
-      setWarnings((state.data?.warnings ?? []).map((w) => w.message))
-      setDone(`Guardadas ${state.data?.written ?? 0} celdas. Los totales los ha recompuesto el servidor.`)
+      setWarnings(messages)
+      setDone(
+        `Guardadas ${written} celdas${deleted > 0 ? ` y retiradas ${deleted}` : ""}. ` +
+          "Los totales los ha recompuesto el servidor."
+      )
       router.refresh()
     })
 

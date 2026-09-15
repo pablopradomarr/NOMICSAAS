@@ -791,6 +791,10 @@ export async function previewAllocationRun(
     rules: ctx.rules,
     period: ctx.period,
     priorAllocations: ctx.priorAllocations,
+    // E10 · D1 — sin la base de actividad, `HOURS` y `PLANTILLA` caen SIEMPRE en
+    // su `zeroBaseFallback` aunque el contexto la traiga leída y sellada.
+    timeEntries: ctx.activity.timeRows,
+    headcount: ctx.activity.headcount,
   })
   if (!computed.ok) abortAllocation(computed.error)
   const result = computed.value
@@ -869,6 +873,9 @@ export async function sealAllocationRunTx(
     rules: ctx.rules,
     period: ctx.period,
     priorAllocations: ctx.priorAllocations,
+    // E10 · D1 — la misma base que la simulación, y la que el `timeHash` sella.
+    timeEntries: ctx.activity.timeRows,
+    headcount: ctx.activity.headcount,
   })
   if (!computed.ok) abortAllocation(computed.error)
   const result = computed.value

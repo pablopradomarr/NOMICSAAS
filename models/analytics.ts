@@ -66,7 +66,16 @@ const PAGE_SIZE = 2000
 // Configuración analítica vigente para el periodo
 // ─────────────────────────────────────────────────────────────────────────────
 
-type OrgAnalyticsRow = { analytics_required: boolean; non_analytic_level: NonAnalyticLevel }
+/**
+ * **Ronda de integración E10 (hallazgo menor de C3).** `getAnalyticsConfig`
+ * admite el cliente de una transacción de tenant **y** el `db` que reparte
+ * `tenantPage()`: los dos llevan `$organizationId` y los dos despachan los
+ * delegados de modelo sobre la transacción abierta (AsyncLocalStorage).
+ */
+export type AnalyticsReadClient = TenantTransactionClient | TenantClient
+
+/** Espejo del CHECK `organizations_non_analytic_level`. */
+const NON_ANALYTIC_LEVELS: readonly NonAnalyticLevel[] = ["EBITDA", "EBIT", "BAI"]
 
 /**
  * `AnalyticsConfig` de la organización para el periodo del informe.
@@ -88,18 +97,25 @@ type OrgAnalyticsRow = { analytics_required: boolean; non_analytic_level: NonAna
  * la matriz por dentro.
  */
 export async function getAnalyticsConfig(
-  tx: TenantTransactionClient,
+  tx: AnalyticsReadClient,
   opts: { periodEnd: LocalDate }
 ): Promise<AnalyticsConfig> {
   const organizationId = tx.$organizationId
   const at = toUtcDate(opts.periodEnd)
 
-  // El `$queryRaw` va solo: comparte conexión con las consultas de Prisma
-  // dentro de la transacción y en paralelo dispara el aviso del adaptador `pg`.
-  const orgRows = await tx.$queryRaw<OrgAnalyticsRow[]>`
-    SELECT analytics_required, non_analytic_level FROM organizations WHERE id = ${organizationId}::uuid`
+  // **Causa raíz del hallazgo menor de C3.** Esto era un `$queryRaw` sobre
+  // `organizations`: en un `TenantTransactionClient` los métodos `$…` van a la
+  // transacción y ven los GUC, pero en el `db` de `tenantPage()` —un
+  // `TenantClient`— salen por el cliente base, por OTRA conexión y **sin**
+  // `app.current_org` fijado, de modo que la fila se resolvía fuera del tenant
+  // de la página. El delegado de modelo no tiene ese problema: la extensión lo
+  // despacha siempre sobre la transacción abierta de ESTA organización.
+  const org = await tx.organization.findUnique({
+    where: { id: organizationId },
+    select: { analyticsRequired: true, nonAnalyticLevel: true },
+  })
 
-  // En SERIE por lo mismo: una sola conexión, `pg` las encola de todas formas.
+  // En SERIE: una sola conexión, `pg` las encola de todas formas.
   const businessLines = await tx.businessLine.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
   const projects = await tx.project.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
   const costCenters = await tx.costCenter.findMany({ orderBy: [{ sortOrder: "asc" }, { code: "asc" }] })
@@ -109,8 +125,16 @@ export async function getAnalyticsConfig(
   })
   const plan = await getPlan(tx)
 
-  const org = orgRows[0]
   if (!org) throw new Error(`getAnalyticsConfig: la organización ${organizationId} no es visible en esta transacción`)
+  // La columna es un `margin_level` y el CHECK `organizations_non_analytic_level`
+  // la restringe a EBITDA/EBIT/BAI; Prisma tipa el enum entero, así que la
+  // garantía de la base se comprueba también aquí en vez de castear a ciegas.
+  if (!NON_ANALYTIC_LEVELS.includes(org.nonAnalyticLevel as NonAnalyticLevel)) {
+    throw new Error(
+      `getAnalyticsConfig: nonAnalyticLevel inesperado (${org.nonAnalyticLevel}) en la organización ${organizationId}`
+    )
+  }
+  const nonAnalyticLevel = org.nonAnalyticLevel as NonAnalyticLevel
 
   const analyticTypeByAccount = new Map<string, AnalyticType | null>(
     [...plan.byCode.entries()].map(([code, account]) => [code, account.analyticType])
@@ -160,8 +184,8 @@ export async function getAnalyticsConfig(
     unassignedCostCenterId: costCenters.find((c) => c.code === UNASSIGNED_COST_CENTER_CODE)?.id ?? null,
     analyticTypeByAccount,
     incomeTaxPrefixes: INCOME_TAX_PREFIXES,
-    nonAnalyticLevel: org.non_analytic_level,
-    analyticsRequired: org.analytics_required,
+    nonAnalyticLevel,
+    analyticsRequired: org.analyticsRequired,
   }
 }
 
@@ -705,6 +729,8 @@ export async function updateAccountAnalyticType(
   })
   return row
 }
+
+type OrgAnalyticsRow = { analytics_required: boolean; non_analytic_level: NonAnalyticLevel }
 
 export async function setOrganizationAnalyticsPolicy(
   tx: TenantTransactionClient,

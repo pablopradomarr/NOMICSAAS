@@ -71,6 +71,12 @@ export type BudgetSheetCell = {
   amountCents: number | null
   /** Excepción de signo declarada (rappel, devolución, reversión): O-E10-6. */
   signException: boolean
+  /**
+   * Ids de las `BudgetLine` que componen la celda. **Vaciar la celda borra
+   * estas líneas**; teclear `0` escribe un cero declarado, que no es lo mismo.
+   * Vacío = la celda no tiene línea todavía (una fila recién añadida).
+   */
+  lineIds: readonly string[]
 }
 
 /** Una fila del editor: dimensión × cuenta × tipo analítico, y sus doce meses. */

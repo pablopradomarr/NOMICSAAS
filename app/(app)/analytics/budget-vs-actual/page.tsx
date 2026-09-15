@@ -211,11 +211,15 @@ export default tenantPage<SearchParamsProps>(
               Periodo {formatLocalDate(from)} – {formatLocalDate(to)} · moneda base {org.baseCurrency} ·{" "}
               {GRANULARITIES.find((g) => g.key === result.granularity)?.label ?? result.granularity}
             </p>
+            {/* Los CINCO sellos del informe (§5.1): sobre qué diario, qué capa
+                analítica, qué presupuesto, qué reglas de liquidación
+                presupuestaria y qué código se tomó la cifra. */}
             <p className="font-code text-xs text-muted-foreground" data-testid="budget-vs-actual-hashes">
-              run_id {view.runId ? shortHash(view.runId, 12) : "sin sellar"} · budgetHash{" "}
-              {shortHash(view.budgetHash, 16)}
-              {view.budgetRulesHash && <> · budgetRulesHash {shortHash(view.budgetRulesHash, 16)}</>} · origen{" "}
-              {view.origen}
+              run_id {view.runId ? shortHash(view.runId, 12) : "sin sellar"} · ledgerHash{" "}
+              {shortHash(view.seals.ledgerHash, 16)} · analyticsKey {shortHash(view.seals.analyticsKey, 16)} ·
+              budgetHash {shortHash(view.seals.budgetHash, 16)} · budgetRulesHash{" "}
+              {view.seals.budgetRulesHash ? shortHash(view.seals.budgetRulesHash, 16) : "—"} · gitSha{" "}
+              {shortHash(view.seals.gitSha, 12)} · origen {view.origen}
             </p>
             <p className="text-xs text-muted-foreground" data-testid="budget-composition">
               Procedencia del presupuesto:{" "}

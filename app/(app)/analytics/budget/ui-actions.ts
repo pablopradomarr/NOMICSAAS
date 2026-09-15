@@ -22,6 +22,7 @@
  */
 
 import {
+  deleteBudgetCellsAction,
   importBudgetCsvAction,
   proposeDepreciationBudgetAction,
   upsertBudgetCellsAction,
@@ -69,10 +70,17 @@ const clean = (value: string | null | undefined): string | null => {
 const toCents = (text: string): number => parseCents(text.replace(/−/g, "-")) ?? 0
 
 /**
- * Guardado **por lotes** de las celdas tocadas. Una celda vaciada se guarda
- * como `0,00 €`: dejarla en blanco en la hoja y borrar la línea no es lo mismo
- * —un cero declarado es una decisión de presupuesto— y retirar líneas de una
- * versión sellada es, por doctrina, una **revisión**, no un borrado.
+ * Guardado **por lotes** de las celdas tocadas.
+ *
+ * **Ronda de integración E10.** Aquí sólo llegan celdas CON importe: una celda
+ * que el usuario deja en blanco no es un `0,00 €`. Un cero declarado es una
+ * decisión de presupuesto —«este proyecto no factura en agosto»— y una celda
+ * vacía es la ausencia de decisión; escribir la primera por la segunda hacía
+ * que la columna de presupuesto del informe afirmara algo que nadie decidió.
+ * El editor separa las dos: lo tecleado viene por aquí y lo vaciado por
+ * `deleteBudgetCellsFromFormAction`. Retirar líneas de una versión SELLADA
+ * sigue siendo, por doctrina, una **revisión** y no un borrado: las dos
+ * acciones exigen `BORRADOR` (`assertDraft`).
  */
 export async function saveBudgetCellsFromFormAction(input: {
   budgetId: string
@@ -91,6 +99,18 @@ export async function saveBudgetCellsFromFormAction(input: {
       note: clean(cell.note),
     })),
   })
+}
+
+/**
+ * **Celda vaciada = línea retirada** (nunca `0,00 €`). El editor manda los ids
+ * de las `BudgetLine` que componían la celda, que es lo que `getBudgetVersion`
+ * devuelve en `cells[].id` y lo que `deleteBudgetCellsTx` espera.
+ */
+export async function deleteBudgetCellsFromFormAction(input: {
+  budgetId: string
+  cellIds: readonly string[]
+}): Promise<ActionState<{ deleted: number }>> {
+  return await deleteBudgetCellsAction({ budgetId: input.budgetId, cellIds: [...input.cellIds] })
 }
 
 /** Import CSV: el fichero se parsea en la acción de T14, no aquí. */

@@ -88,10 +88,22 @@ export type BudgetSeals = {
   sealedAt: string | null
 }
 
-export type StoredBudgetVersion = Omit<BudgetVersion, "hours"> & {
+export type StoredBudgetVersion = Omit<BudgetVersion, "cells" | "hours"> & {
   seals: BudgetSeals
+  cells: readonly BudgetCellRow[]
   hours: readonly BudgetHoursRow[]
 }
+
+/**
+ * **La celda de importe TAL COMO SE GUARDA: con el id de su `BudgetLine`.**
+ *
+ * Sin él, el editor no podía distinguir «vaciar la celda» de «teclear 0», y la
+ * vaciaba escribiendo `0,00 €` —un cero declarado, que es una decisión de
+ * presupuesto— en vez de retirar la línea. `deleteBudgetCellsTx` pide ids; el
+ * id sale de aquí. El motor puro sigue viendo un `BudgetCell` y el
+ * `budgetHash` no lo mira: es un dato de persistencia, no de presupuesto.
+ */
+export type BudgetCellRow = BudgetCell & { id: string }
 
 /** La celda de horas TAL COMO SE GUARDA: con el id del empleado, no sólo su código. */
 export type BudgetHoursRow = BudgetHoursCell & { employeeId: string | null }
@@ -268,6 +280,7 @@ export async function getBudgetVersion(
       sealedAt: header.sealedAt ? header.sealedAt.toISOString() : null,
     },
     cells: lines.map((l) => ({
+      id: l.id,
       month: fromUtcDate(l.month),
       accountCode: l.accountCode,
       dimension:

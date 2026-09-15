@@ -65,7 +65,7 @@ import { activeBudgetAt, getBudgetVersion } from "@/models/budget"
 import { getEmployeeRateRows, listHeadcount } from "@/models/employees"
 import { getTimeRowsForWindow } from "@/models/time"
 import { budgetHash as computeBudgetHash, type ComposedBudget } from "@/lib/budget/hash"
-import { fiscalYearMonths } from "@/lib/budget/types"
+import { fiscalYearMonths, monthKey } from "@/lib/budget/types"
 import { buildBudgetMatrix, settleBudgetMatrix } from "@/lib/budget/matrix"
 import { buildVariance, maxDimensionVariance, type VarianceCell } from "@/lib/budget/variance"
 import { buildForecast } from "@/lib/budget/forecast"
@@ -1828,10 +1828,36 @@ export type BudgetVsActualResult = {
   unresolvedBudgetCells: number
 }
 
+/**
+ * **Los CINCO sellos de la cabecera del informe** (§5.1, §7).
+ *
+ * Un informe de gestión que no dice sobre qué se tomó no es reproducible (P7),
+ * y hasta esta ronda la pantalla sólo podía imprimir dos de los cinco. Van
+ * juntos y con el mismo nombre que la provenance de la celda:
+ *
+ *  · `ledgerHash` — el diario del periodo (el REAL).
+ *  · `analyticsKey` — dimensiones + `marginConfigHash` + `allocationRunSetHash`
+ *    en una sola clave: la capa analítica con la que se compuso la matriz.
+ *  · `budgetHash` — la versión EFECTIVA compuesta (O-E10-9), no una suelta.
+ *  · `budgetRulesHash` — las reglas de la liquidación PRESUPUESTARIA (O-E10-4);
+ *    `null` sin imputaciones o cuando el presupuesto no pudo seguir al real.
+ *  · `gitSha` — el código que calculó. Dos de estas cifras salidas de dos
+ *    versiones del motor no son la misma cifra.
+ */
+export type BudgetVsActualSeals = {
+  ledgerHash: string
+  analyticsKey: string
+  budgetHash: string
+  budgetRulesHash: string | null
+  gitSha: string
+}
+
 export type BudgetVsActualView = {
   /** `null` en la PREVISUALIZACIÓN: no hay fila en `report_runs` que devolver. */
   runId: string | null
   sealed: boolean
+  /** Los cinco sellos que la cabecera imprime. */
+  seals: BudgetVsActualSeals
   budgetHash: string
   budgetRulesHash: string | null
   forecastCutoff: string | null
@@ -2072,11 +2098,21 @@ export async function budgetVsActual(
   })
 
   if (key.cached) {
+    const cachedRulesHash = (key.cached.params as Record<string, unknown>).budgetRulesHash as string | null
     return {
       runId: key.cached.id,
       sealed: true,
+      seals: {
+        // La fila en caché se buscó POR estos sellos: son los suyos por
+        // construcción, no una copia optimista de los del cálculo de ahora.
+        ledgerHash: key.ledgerHash,
+        analyticsKey: key.analyticsKey,
+        budgetHash: key.budgetHash,
+        budgetRulesHash: cachedRulesHash,
+        gitSha,
+      },
       budgetHash: key.budgetHash,
-      budgetRulesHash: (key.cached.params as Record<string, unknown>).budgetRulesHash as string | null,
+      budgetRulesHash: cachedRulesHash,
       forecastCutoff: key.cutoffMonth,
       result: key.cached.result as unknown as BudgetVsActualResult,
       sealReasons: key.cached.sealReasons as unknown as ReportSealReason[],
@@ -2136,11 +2172,19 @@ export async function budgetVsActual(
   if (preview) {
     // **Previsualización NO sellada**: ni una fila en `report_runs`. Es lo que
     // permite mirar un borrador sin que el borrador firme nada (O-E10-5).
+    const previewRulesHash = built.result.budgetAllocationState === "SETTLED" ? built.budgetRulesHash : null
     return {
       runId: null,
       sealed: false,
+      seals: {
+        ledgerHash: key.ledgerHash,
+        analyticsKey: key.analyticsKey,
+        budgetHash: key.budgetHash,
+        budgetRulesHash: previewRulesHash,
+        gitSha,
+      },
       budgetHash: key.budgetHash,
-      budgetRulesHash: built.result.budgetAllocationState === "SETTLED" ? built.budgetRulesHash : null,
+      budgetRulesHash: previewRulesHash,
       forecastCutoff: key.cutoffMonth,
       result: built.result,
       sealReasons: reasons,
@@ -2202,6 +2246,13 @@ export async function budgetVsActual(
     return {
       runId: stored.id,
       sealed: true,
+      seals: {
+        ledgerHash: key.ledgerHash,
+        analyticsKey: key.analyticsKey,
+        budgetHash: key.budgetHash,
+        budgetRulesHash: built.budgetRulesHash,
+        gitSha,
+      },
       budgetHash: key.budgetHash,
       budgetRulesHash: built.budgetRulesHash,
       forecastCutoff: key.cutoffMonth,
@@ -2307,14 +2358,11 @@ function buildBudgetVsActual(input: BuildBudgetInput) {
     }
   }
 
-  const variance = buildVariance({
-    actual: { matrixCents: actual.matrixCents, columns: actual.columns },
-    budget,
-    actualAllocationState: input.withAllocations ? "SETTLED" : "NONE",
-    month: null,
-  })
-
   // ── El FORECAST, mes a mes y con su procedencia (I-E10-7) ─────────────────
+  // **Antes que la desviación, y no después**: la quinta columna de la celda
+  // sale de aquí. Construir la desviación primero dejaba `forecastCents = null`
+  // en TODAS las celdas —la columna existía y siempre estaba vacía— aunque el
+  // bloque de totales del ejercicio sí se pintara.
   const months = fiscalYearMonths(input.fiscalYearStart, input.fiscalYearEnd)
   const actualByMonth: Record<string, Record<string, Record<string, Cents>>> = {}
   for (const month of months) {
@@ -2334,8 +2382,27 @@ function buildBudgetVsActual(input: BuildBudgetInput) {
     actualByMonth,
     budget,
     fiscalYearMonths: months,
+    // §3.4 — el corte es el ÚLTIMO MES CERRADO, y lo decide el borde
+    // (`forecastCutoffOf`): mayor `PeriodLock` del ejercicio, o fin del
+    // ejercicio si está `CLOSED`. Viaja en `paramsHash`, nunca de un reloj.
     cutoffMonth: input.cutoffMonth,
     budgetProvenanceByMonth: input.composition,
+  })
+
+  // **Granularidad mes** (§5.1): con `MONTH`, la celda es de UN mes y lo dice.
+  // `month: null` significa «acumulado del periodo», así que etiquetar de
+  // acumulado una matriz mensual hacía imposible distinguir las dos cosas en la
+  // provenance (`desviacion.mc3.PROJ:P-01.2026-03`).
+  const varianceMonth =
+    input.granularity === "MONTH" && monthKey(input.periodStart) === monthKey(input.periodEnd)
+      ? monthKey(input.periodStart)
+      : null
+  const variance = buildVariance({
+    actual: { matrixCents: actual.matrixCents, columns: actual.columns },
+    budget,
+    forecast,
+    actualAllocationState: input.withAllocations ? "SETTLED" : "NONE",
+    month: varianceMonth,
   })
 
   // ── §5.2 — rentabilidad por proyecto CON HORAS y absorción ────────────────

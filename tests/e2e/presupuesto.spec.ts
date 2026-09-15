@@ -186,6 +186,33 @@ test("crea la versión BASE y teclea celdas con totales compuestos en el servido
   await expect(page.getByTestId("budget-total").locator("span[data-cents]")).toHaveAttribute("data-cents", "120000")
 })
 
+/**
+ * **Celda vaciada = línea retirada, nunca `0,00 €`.** Un cero declarado es una
+ * decisión de presupuesto («este proyecto no factura en febrero») y una celda
+ * en blanco es la ausencia de decisión; guardar la primera por la segunda hacía
+ * que la columna de presupuesto del informe afirmara algo que nadie decidió.
+ */
+test("vaciar una celda retira su línea y no la guarda como 0,00 €", async ({ page, baseURL }) => {
+  await open(page, baseURL!, "/analytics/budget")
+
+  const secondMonth = `${ids.fiscalYearCode}-02`
+  const row = page.locator("tr[data-row-key]").first()
+  const cell = row.locator(`input[data-cell$="${secondMonth}"]`)
+
+  await cell.fill("300,00")
+  await page.getByTestId("save-budget-cells").click()
+  await expect(page.getByTestId("budget-sheet-done")).toBeVisible()
+  await expect(page.getByTestId("budget-total").locator("span[data-cents]")).toHaveAttribute("data-cents", "150000")
+
+  // Se vacía: la línea se retira y el total vuelve a ser el de enero solo.
+  await page.locator("tr[data-row-key]").first().locator(`input[data-cell$="${secondMonth}"]`).fill("")
+  await page.getByTestId("save-budget-cells").click()
+  await expect(page.getByTestId("budget-sheet-done")).toContainText("retiradas")
+  await expect(page.getByTestId("budget-total").locator("span[data-cents]")).toHaveAttribute("data-cents", "120000")
+  // Y la celda queda EN BLANCO, no en `0,00`.
+  await expect(page.locator("tr[data-row-key]").first().locator(`input[data-cell$="${secondMonth}"]`)).toHaveValue("")
+})
+
 test("avisa del signo en el acto y el servidor rechaza un gasto en positivo", async ({ page, baseURL }) => {
   await open(page, baseURL!, "/analytics/budget")
   const ids_ = await dimensionIds(ids.organizationId)
@@ -410,20 +437,18 @@ async function approveLateEntry(organizationId: string): Promise<void> {
 }
 
 /**
- * **Dependencia de backend, no de interfaz.** Con 720 minutos aprobados y 300
- * sin aprobar en noviembre, la simulación debería emitir
+ * **Criterio 13 + criterio 12-bis, de punta a punta.** Con 720 minutos
+ * aprobados y 300 sin aprobar en noviembre, la simulación emite
  * `W-E10-UNAPPROVED-HOURS` con sus minutos y su **% sobre la base aprobada**
- * (O-E10-2, criterio 13). Hoy emite `W-E10-NO-HOURS`: `previewAllocationRun` y
- * `sealAllocationRunTx` (`models/allocations.ts`) llaman a `allocate()`
- * **sin pasarle `timeEntries` ni `headcount`**, pese a que `loadRunContext` ya
- * carga `ctx.activity` (sólo se usa para el `timeHash`). Con la base vacía, los
- * dos drivers de actividad caen siempre en su `zeroBaseFallback`.
+ * (O-E10-2), reparte de verdad —y por eso se puede sellar— y el run toma su
+ * CUARTA huella sobre la ventana de los partes que consume.
  *
- * La interfaz que lo pinta está hecha y probada en el test anterior (el aviso,
- * su `%`, su motivo de sello y la ventana del `timeHash` en la tabla de runs);
- * esta comprobación se activa en cuanto el modelo pase la base de actividad.
+ * Estuvo en `fixme` durante la ola C: `previewAllocationRun` y
+ * `sealAllocationRunTx` llamaban a `allocate()` sin `timeEntries` ni
+ * `headcount`, de modo que los dos drivers de actividad caían siempre en su
+ * `zeroBaseFallback`. La ronda de integración les pasa `ctx.activity`.
  */
-test.fixme("reparte por horas, declara los minutos sin aprobar y caduca al aprobar un parte tardío", async ({
+test("reparte por horas, declara los minutos sin aprobar y caduca al aprobar un parte tardío", async ({
   page,
   baseURL,
 }) => {

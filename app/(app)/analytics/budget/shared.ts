@@ -96,6 +96,10 @@ export function buildBudgetSheet(version: StoredBudgetVersion, config: Analytics
     row.cells[month] = {
       amountCents: (previous?.amountCents ?? 0) + cell.amountCents,
       signException: (previous?.signException ?? false) || cell.signException,
+      // Una celda de la hoja puede agregar más de una línea (la misma
+      // dimensión, cuenta y tipo con dos líneas de origen distinto): vaciarla
+      // las retira TODAS, o la celda volvería a pintar un resto.
+      lineIds: [...(previous?.lineIds ?? []), cell.id],
     }
     row.totalCents += cell.amountCents
     monthTotals[month] = (monthTotals[month] ?? 0) + cell.amountCents

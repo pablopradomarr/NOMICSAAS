@@ -186,8 +186,14 @@ test("presupuesto vs real: cinco columnas, procedencia, drill-down y export", as
   await page.goto(reportUrl(), { waitUntil: "networkidle" })
   await expect(page.getByRole("heading", { name: "Presupuesto vs real" })).toBeVisible()
 
-  // Cabecera: sello, sellos abreviados y procedencia del presupuesto mes a mes.
-  await expect(page.getByTestId("budget-vs-actual-hashes")).toContainText("budgetHash")
+  // Cabecera: sello, los CINCO sellos abreviados y la procedencia del
+  // presupuesto mes a mes. Los cinco, no dos: un informe de gestión que no dice
+  // sobre qué diario, qué capa analítica, qué presupuesto, qué reglas de
+  // liquidación presupuestaria y qué código se tomó no es reproducible (P7).
+  const hashes = page.getByTestId("budget-vs-actual-hashes")
+  for (const seal of ["ledgerHash", "analyticsKey", "budgetHash", "budgetRulesHash", "gitSha"]) {
+    await expect(hashes).toContainText(seal)
+  }
   await expect(page.getByTestId("budget-composition")).toContainText(seed.label)
   await expect(page.locator("[data-seal]")).toBeVisible()
 
@@ -211,6 +217,12 @@ test("presupuesto vs real: cinco columnas, procedencia, drill-down y export", as
   await expect(revenueRow.getByTestId("cell-variance").locator("[data-cents]")).toHaveAttribute(
     "data-cents",
     String(actual - seed.revenueCents)
+  )
+  // La QUINTA columna trae cifra, no un hueco: `buildVariance` recibe el
+  // forecast del mismo `buildForecast` que pinta el bloque del ejercicio.
+  await expect(revenueRow.getByTestId("cell-forecast").locator("[data-cents]")).toHaveAttribute(
+    "data-cents",
+    /^-?\d+$/
   )
   await page.screenshot({ path: `${SHOTS}/05-presupuesto-real.png`, fullPage: true, caret: "initial" })
 
