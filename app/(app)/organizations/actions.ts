@@ -4,9 +4,7 @@ import { createOrganizationFormSchema, switchOrganizationSchema } from "@/forms/
 import { ActionState } from "@/lib/actions"
 import { getCurrentUser } from "@/lib/auth"
 import { setActiveOrg } from "@/lib/authz"
-import { tenantDb } from "@/lib/db"
-import { createOrganizationDefaults } from "@/models/defaults"
-import { createOrganizationWithOwner } from "@/models/organizations"
+import { createOrganizationWithSeed } from "@/models/onboarding"
 import { Organization } from "@/prisma/client"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
@@ -59,9 +57,14 @@ export async function createOrganizationAction(
   // creada y VACÍA —sin plan de cuentas— y el usuario entraba a un ERP que no
   // podía contabilizar nada. No hace falta borrado compensatorio: si algo
   // revienta dentro, Postgres revierte también el INSERT de la organización.
+  // **E11 · T12**: la siembra pasa por la ÚNICA puerta (`seedOrganization`), que
+  // añade a la semilla heredada las piezas que I-E11-10 exige y que antes nacían
+  // más tarde o no nacían: el ejercicio provisional, las dos series de
+  // facturación con el contador a cero y el `OnboardingRun`. Quien abandonaba el
+  // alta a medias dejaba el invariante fallando con datos limpios (O-7a/b).
   let organization: Organization
   try {
-    organization = await createOrganizationWithOwner(
+    ;({ organization } = await createOrganizationWithSeed(
       {
         name: validated.data.name,
         taxId: validated.data.taxId,
@@ -70,17 +73,8 @@ export async function createOrganizationAction(
         pgcVariant: validated.data.pgcVariant,
       },
       user.id,
-      now,
-      {
-        seed: async (organizationId) => {
-          await createOrganizationDefaults(tenantDb(organizationId), {
-            pgcVariant: validated.data.pgcVariant,
-            now,
-            userId: user.id,
-          })
-        },
-      }
-    )
+      now
+    ))
   } catch (error) {
     // Nada de `catch` mudo: sin este log, un fallo de siembra (seed corrupto,
     // presupuesto de transacción agotado, I-plan-1) sólo se ve como «no se ha

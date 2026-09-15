@@ -17,9 +17,10 @@
  * la matriz de roles de §10 no deja ver.
  */
 
+import { tenantTransaction } from "@/lib/db"
 import type { AnyClient } from "@/models/ledger"
 import { listEmployees } from "@/models/employees"
-import { listTimeEntries, minutesByTargetMonthSql } from "@/models/time"
+import { calendarByEmployeeDaySql, listTimeEntries, minutesByTargetMonthSql } from "@/models/time"
 import { Role } from "@/prisma/client"
 
 export type TimeCalendarCell = {
@@ -49,9 +50,17 @@ export async function readTimeList(
 ) {
   // En SERIE: dentro de una transacción hay UNA conexión (regla de E6-perf).
   const page = await listTimeEntries(db, opts.filter, opts.page)
+  // **SQL crudo dentro de la transacción de la petición.** `tenantDb(org)` NO
+  // enruta `$queryRaw` a la transacción abierta (límite 2 documentado en
+  // `lib/db.ts`): saldría por otra conexión, sin `app.current_org`, y con la RLS
+  // estricta de ADR-0009 eso **no da error, devuelve vacío**. `tenantTransaction`
+  // es reentrante: encuentra la transacción de `tenantPage` por el
+  // AsyncLocalStorage y da el cliente cuyo `$queryRaw` sí va por ella.
   const aggregate =
     opts.filter.from && opts.filter.to
-      ? await minutesByTargetMonthSql(db, { from: opts.filter.from, to: opts.filter.to }, { approvedOnly: true })
+      ? await tenantTransaction(db.$organizationId, async (tx) =>
+          minutesByTargetMonthSql(tx, { from: opts.filter.from as string, to: opts.filter.to as string }, { approvedOnly: true })
+        )
       : []
   const mine = await listEmployees(db, { includeArchived: true })
   const myEmployeeIds = mine.filter((e) => e.userId === opts.userId).map((e) => e.id)
@@ -79,42 +88,41 @@ export async function readTimeList(
   }
 }
 
-/** El calendario mensual por (empleado, día), con el techo diario AGREGADO. */
+/**
+ * El calendario mensual por (empleado, día), con el techo diario AGREGADO.
+ *
+ * **E11 · ola C · T21 — deuda heredada de E10 (registro C1), cerrada.** La
+ * versión de E10 traía hasta 5 000 partes del mes (`take: 5000`) y los agrupaba
+ * **en memoria**: con 250 empleados × 22 días el `take` empezaba a truncar en
+ * silencio, que es peor que ser lento. Ahora agrupa Postgres, en **una sola
+ * consulta** apoyada en `time_entries_org_date_employee_cover` (techo 10 de §12
+ * de E11: < 400 ms), y no hay límite que truncar.
+ */
 export async function readTimeCalendar(
   db: AnyClient,
   opts: { month: string; employeeId?: string; role: Role }
 ) {
   const from = `${opts.month}-01`
   const to = lastDayOf(opts.month)
-  const page = await listTimeEntries(
-    db,
-    { from, to, ...(opts.employeeId ? { employeeId: opts.employeeId } : {}) },
-    // 40 empleados × 31 días × varios partes: el techo de §9 es un mes.
-    { take: 5000 }
+  // Mismo motivo que arriba: el agregado va por SQL crudo y necesita el cliente
+  // de la transacción, o la RLS lo deja en cero sin decir nada.
+  const aggregated = await tenantTransaction(db.$organizationId, async (tx) =>
+    calendarByEmployeeDaySql(tx, { from, to }, opts.employeeId ? { employeeId: opts.employeeId } : {})
   )
 
+  // La redacción (§10 de E10) es de presentación, no de agregación: `VIEWER` ve
+  // las horas del mes sin saber de quién son.
   const nominal = opts.role === Role.EDITOR || opts.role === Role.ADMIN
-  const byCell = new Map<string, TimeCalendarCell>()
-  for (const e of page.entries) {
-    const key = `${e.employeeId}|${e.date}`
-    const cell = byCell.get(key) ?? {
-      employeeId: e.employeeId,
-      employeeCode: nominal ? e.employeeCode : "—",
-      employeeName: nominal ? e.employeeName : "—",
-      date: e.date,
-      minutes: 0,
-      approvedMinutes: 0,
-      targets: [],
-    }
-    cell.minutes += e.minutes
-    if (e.status === "APROBADO") cell.approvedMinutes += e.minutes
-    const target = e.projectCode ?? e.costCenterCode
-    if (target && !cell.targets.includes(target)) cell.targets = [...cell.targets, target]
-    byCell.set(key, cell)
-  }
-  const cells = [...byCell.values()].sort(
-    (a, b) => a.date.localeCompare(b.date) || a.employeeCode.localeCompare(b.employeeCode)
-  )
+  const cells: TimeCalendarCell[] = aggregated.map((cell) => ({
+    employeeId: cell.employeeId,
+    employeeCode: nominal ? cell.employeeCode : "—",
+    employeeName: nominal ? cell.employeeName : "—",
+    date: cell.date,
+    minutes: cell.minutes,
+    approvedMinutes: cell.approvedMinutes,
+    targets: cell.targets,
+  }))
+
   return {
     month: opts.month,
     cells,

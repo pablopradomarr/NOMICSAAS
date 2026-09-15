@@ -233,7 +233,62 @@ export function ProfitabilityBlock({
         sellada. Un coste-hora «con SS» y otro «sin SS» difieren ≈ 31,9 % y no son comparables: por eso la base se
         imprime siempre junto a la cifra.
       </p>
+
+      <ProfitabilityContract />
     </section>
+  )
+}
+
+/**
+ * **E11 · ola C · T21 — el contrato del bloque, declarado** (deuda C3 de E10).
+ *
+ * E10 dejó el bloque «abierto, sin fecha propia»: publicaba unas cifras y no
+ * decía cuáles eran ni de dónde salían, de modo que nadie podía saber si le
+ * faltaba algo. Lo que se cierra aquí es el **contrato**, no el desglose: qué
+ * publica el bloque, con qué procedencia, y qué **no** publica todavía y en qué
+ * épica llega. Un bloque cuyo alcance no está escrito es un bloque que crece por
+ * acumulación y acaba divergiendo del informe del que sale.
+ *
+ * El desglose **mensual** y la descomposición **volumen/precio** dependen de la
+ * celda mensual, que va a E12 con el CAPEX del presupuesto (§0.3 de E11): hasta
+ * entonces el bloque publica lo de §5.2 de E10 y lo dice.
+ */
+export const PROFITABILITY_BLOCK_CONTRACT = {
+  /** Toda cifra sale del MISMO `ReportRun` que el informe de presupuesto vs real. */
+  source: "ReportRun de presupuesto vs real (familia PRESUPUESTO)",
+  publishes: [
+    "horas reales aprobadas y productivas",
+    "horas presupuestadas y su desviación",
+    "coste-hora medio con su base (`basis`)",
+    "coste de las horas y margen por hora",
+    "absorción de la nómina del CECO con su motivo",
+  ],
+  /** Lo que el bloque NO publica, con la épica en que llega. */
+  deferred: [
+    { what: "desglose mensual de las cinco cifras", epic: "E12" },
+    { what: "descomposición volumen/precio de la desviación", epic: "E12" },
+  ],
+  /** Ninguna cifra se persiste ni se calcula en el cliente. */
+  persisted: false,
+} as const
+
+function ProfitabilityContract() {
+  return (
+    <details className="text-xs text-muted-foreground" data-testid="profitability-contract">
+      <summary className="cursor-pointer">Qué publica este bloque, y qué no</summary>
+      <div className="mt-2 space-y-1">
+        <p>
+          Procedencia: <strong>{PROFITABILITY_BLOCK_CONTRACT.source}</strong>. Las cifras de la ficha del proyecto y las
+          del informe son las mismas, del mismo run, para que no puedan divergir.
+        </p>
+        <p>Publica: {PROFITABILITY_BLOCK_CONTRACT.publishes.join(" · ")}.</p>
+        <p>
+          Todavía no publica:{" "}
+          {PROFITABILITY_BLOCK_CONTRACT.deferred.map((d) => `${d.what} (${d.epic})`).join(" · ")}. Se declara aquí para
+          que la ausencia se lea como una ausencia y no como un cero.
+        </p>
+      </div>
+    </details>
   )
 }
 

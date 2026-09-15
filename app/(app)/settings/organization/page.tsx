@@ -1,5 +1,9 @@
 import { CategoryDeductibilityTable, type CategoryFiscalView } from "@/components/settings/category-deductibility-table"
+import { OrganizationPreferencesForm } from "@/components/onboarding/organization-preferences-form"
 import { OrganizationSettingsForm } from "@/components/settings/organization-settings-form"
+import { PLATFORM_NOTICE_EMAIL_SETTING } from "@/forms/onboarding"
+import config from "@/lib/config"
+import { getSettings } from "@/models/settings"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { OrganizationFiscalForm } from "@/components/counterparties/organization-fiscal-form"
 import { Button } from "@/components/ui/button"
@@ -33,6 +37,10 @@ export default tenantPage(async ({ db, org, role }) => {
     orderBy: { code: "asc" },
   })
 
+  // En SERIE dentro de la transacción de `tenantPage`: una conexión, una
+  // transacción por petición (regla de E6-perf).
+  const settings = await getSettings(db)
+
   const rows: CategoryFiscalView[] = categories.map((category) => ({
     code: category.code,
     name: category.name,
@@ -51,6 +59,17 @@ export default tenantPage(async ({ db, org, role }) => {
       <Separator />
 
       <OrganizationFiscalForm roiRegistered={org.roiRegistered} ivaRegime={org.ivaRegime} canEdit={canEdit} />
+
+      <Separator />
+
+      {/* E11 · ola C · T14 (§6.4, D-3) — las preferencias del motor. */}
+      <OrganizationPreferencesForm
+        depreciationStartsOn={org.depreciationStartsOn}
+        backupRetentionDays={org.backupRetentionDays}
+        platformNoticeEmail={settings[PLATFORM_NOTICE_EMAIL_SETTING] ?? ""}
+        brand={{ product: config.brand.product, company: config.brand.company }}
+        canEdit={canEdit}
+      />
 
       <Separator />
 

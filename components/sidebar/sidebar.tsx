@@ -131,7 +131,13 @@ const settingsItems = [
   // Los lee cualquier rol; cambiarlos es de ADMIN y lo exige la acción.
   { title: "Umbrales de revisión", href: "/settings/review-thresholds", icon: Gauge, adminOnly: false },
   { title: "Currencies", href: "/settings/currencies", icon: Coins, adminOnly: false },
-  { title: "Backup & Restore", href: "/settings/backups", icon: DatabaseBackup, adminOnly: true },
+  // E11 · ola C · T22 — copias de seguridad reescritas (§10): crear, descargar y
+  // restaurar SIEMPRE a una organización nueva, con las seis comprobaciones a la
+  // vista. Y la suscripción, que la LEE cualquier rol —el uso es información de
+  // trabajo—: el plan y las facturas se ocultan dentro de la propia pantalla,
+  // que es donde se puede distinguir «oculto» de «no hay».
+  { title: "Copias de seguridad", href: "/settings/backups", icon: DatabaseBackup, adminOnly: true },
+  { title: "Suscripción y uso", href: "/settings/subscription", icon: Gauge, adminOnly: false },
 ]
 
 export function AppSidebar({

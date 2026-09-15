@@ -2,6 +2,7 @@
 
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
+import { UploadValidationError, assertAcceptableUpload } from "@/lib/uploads"
 import { EXPORT_AND_IMPORT_FIELD_MAP } from "@/models/export_and_import"
 import { getFields } from "@/models/fields"
 import { createTransaction, defaultCurrencyCode, findDuplicateTransaction } from "@/models/transactions"
@@ -9,21 +10,50 @@ import { Transaction } from "@/prisma/client"
 import { parse } from "@fast-csv/parse"
 import { revalidatePath } from "next/cache"
 
+/**
+ * **E11 · ola C · T21 — D-9 / PUEDE 14 de E10, cerrada.**
+ *
+ * El import comprobaba la extensión y nada más: un `.xlsx` renombrado a `.csv`
+ * entraba como binario y salía como **30 000 rechazos fila a fila** en vez de un
+ * «esto no es un CSV». Ahora pasa por `assertAcceptableUpload` —la misma lista
+ * blanca, el mismo *sniff* de cabecera binaria y el mismo techo de tamaño que
+ * los documentos de E8—, y sólo se admite lo que además declara `text/csv`.
+ *
+ * La validación es de borde: rechaza antes de leer una sola fila.
+ */
 export async function parseCSVAction(
   _prevState: ActionState<string[][]> | null,
   formData: FormData
 ): Promise<ActionState<string[][]>> {
+  // El import escribe operaciones: exige EDITOR como la acción de guardado.
+  await requireOrg("EDITOR")
+
   const file = formData.get("file") as File
-  if (!file) {
-    return { success: false, error: "No file uploaded" }
+  if (!file || file.size === 0) {
+    return { success: false, error: "No se ha subido ningún fichero" }
   }
 
-  if (!file.name.toLowerCase().endsWith(".csv")) {
-    return { success: false, error: "Only CSV files are allowed" }
+  let buffer: Buffer
+  try {
+    buffer = Buffer.from(await file.arrayBuffer())
+  } catch {
+    return { success: false, error: "No se ha podido leer el fichero" }
   }
 
   try {
-    const buffer = Buffer.from(await file.arrayBuffer())
+    const mimetype = assertAcceptableUpload(file.name, buffer)
+    if (mimetype !== "text/csv") {
+      return {
+        success: false,
+        error: `El fichero ${file.name} es de tipo ${mimetype}: el import sólo admite CSV. Expórtalo como CSV y vuelve a intentarlo.`,
+      }
+    }
+  } catch (error) {
+    if (error instanceof UploadValidationError) return { success: false, error: error.message }
+    throw error
+  }
+
+  try {
     const rows: string[][] = []
 
     const parser = parse()

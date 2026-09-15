@@ -282,6 +282,100 @@ export async function minutesByTargetMonthSql(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// E11 · ola C · T21 — D-8: el calendario, agregado por (empleado, día) en SQL
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TimeCalendarCellRow = {
+  employeeId: string
+  employeeCode: string
+  employeeName: string
+  date: LocalDate
+  minutes: number
+  approvedMinutes: number
+  /** Receptores distintos de ese día, para la etiqueta de la celda. */
+  targets: string[]
+}
+
+/**
+ * **Deuda heredada de E10 (registro C1), cerrada aquí.** El calendario traía
+ * hasta 5 000 partes del mes y los agrupaba **en memoria**: con 40 empleados y 22
+ * días son 880 filas, pero con 250 empleados el mes se va a 5 500 y el `take`
+ * empieza a truncar en silencio, que es peor que ser lento.
+ *
+ * Ahora la agrupación la hace Postgres: **una sola consulta agregada** por
+ * (empleado, día), con el índice de cobertura
+ * `time_entries_org_date_employee_cover` de
+ * `20260926090000_e11_onboarding_demo_preferencias`. Techo 10 de §12: 250
+ * empleados × 22 días en < 400 ms y **una** consulta.
+ *
+ * Los códigos de empleado y de receptor se unen DESPUÉS, sobre las filas ya
+ * agregadas, nunca sobre los partes: es la misma lección de
+ * `minutesByTargetMonthSql`.
+ *
+ * No calcula ninguna cifra contable: suma minutos.
+ */
+export async function calendarByEmployeeDaySql(
+  db: AnyClient,
+  window: DateWindow,
+  opts: { employeeId?: string } = {}
+): Promise<TimeCalendarCellRow[]> {
+  const organizationId = db.$organizationId
+  const rows = await db.$queryRaw<
+    {
+      employee_id: string
+      employee_code: string
+      employee_name: string
+      date: Date
+      minutes: bigint
+      approved_minutes: bigint
+      targets: string[] | null
+    }[]
+  >`
+    WITH agregado AS (
+      SELECT t.employee_id,
+             t.date,
+             SUM(t.minutes)::bigint                                                AS minutes,
+             SUM(CASE WHEN t.status = 'APROBADO' THEN t.minutes ELSE 0 END)::bigint AS approved_minutes,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT t.project_id), NULL)                   AS project_ids,
+             ARRAY_REMOVE(ARRAY_AGG(DISTINCT t.cost_center_id), NULL)               AS cost_center_ids
+        FROM time_entries t
+       WHERE t.organization_id = ${organizationId}::uuid
+         AND t.date BETWEEN ${toUtcDate(window.from)}::date AND ${toUtcDate(window.to)}::date
+         AND (${opts.employeeId ?? null}::uuid IS NULL OR t.employee_id = ${opts.employeeId ?? null}::uuid)
+       GROUP BY 1, 2
+    )
+    SELECT a.employee_id,
+           e.code AS employee_code,
+           e.name AS employee_name,
+           a.date,
+           a.minutes,
+           a.approved_minutes,
+           (
+             SELECT ARRAY_AGG(code ORDER BY code)
+               FROM (
+                 SELECT p.code FROM projects p
+                  WHERE p.organization_id = ${organizationId}::uuid AND p.id = ANY (a.project_ids)
+                  UNION
+                 SELECT c.code FROM cost_centers c
+                  WHERE c.organization_id = ${organizationId}::uuid AND c.id = ANY (a.cost_center_ids)
+               ) AS codes
+           ) AS targets
+      FROM agregado a
+      JOIN employees e ON e.id = a.employee_id AND e.organization_id = ${organizationId}::uuid
+     ORDER BY a.date, e.code`
+
+  return rows.map((r) => ({
+    employeeId: r.employee_id,
+    employeeCode: r.employee_code,
+    employeeName: r.employee_name,
+    date: fromUtcDate(r.date),
+    minutes: Number(r.minutes),
+    approvedMinutes: Number(r.approved_minutes),
+    targets: r.targets ?? [],
+  }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Escrituras
 // ─────────────────────────────────────────────────────────────────────────────
 

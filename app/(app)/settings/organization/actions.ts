@@ -1,12 +1,14 @@
 "use server"
 
 import { categoryFiscalFormSchema } from "@/forms/counterparties"
+import { PLATFORM_NOTICE_EMAIL_SETTING, organizationPreferencesSchema } from "@/forms/onboarding"
 import { updateOrganizationFormSchema } from "@/forms/organizations"
 import { ActionState } from "@/lib/actions"
 import { validateVariantChange } from "@/lib/accounts/validate"
 import { requireOrg, withOrg } from "@/lib/authz"
 import { recordAuditLog, writeAuditLog } from "@/models/audit-log"
 import { updateOrganization } from "@/models/organizations"
+import { updateSettings } from "@/models/settings"
 import { Organization, Role } from "@/prisma/client"
 import { revalidatePath } from "next/cache"
 
@@ -128,4 +130,59 @@ export async function updateCategoryFiscalAction(input: unknown): Promise<Action
     revalidatePath("/settings/organization")
     return { success: true, data: { code: parsed.data.code } }
   })()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E11 · ola C · T14 — preferencias del MOTOR (§6.4, D-3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Mes de arranque de la amortización, retención de copias y destinatario de los
+ * avisos. Sólo ADMIN, y **denegada en `READ_ONLY`** (matriz de §8.2): cambiar el
+ * criterio de amortización de una organización en mora no es llevanza, es
+ * configuración.
+ *
+ * La preferencia de amortización se guarda tal cual; ninguna cifra se recalcula
+ * aquí. Los cuadros ya contabilizados conservan el criterio con el que nacieron:
+ * se aplica a los activos que se den de alta después.
+ */
+export async function updateOrganizationPreferencesAction(
+  _prevState: ActionState<{ depreciationStartsOn: string }> | null,
+  formData: FormData
+): Promise<ActionState<{ depreciationStartsOn: string }>> {
+  return await withOrg(
+    Role.ADMIN,
+    async ({ db, org, user }): Promise<ActionState<{ depreciationStartsOn: string }>> => {
+      const validated = organizationPreferencesSchema.safeParse(Object.fromEntries(formData))
+      if (!validated.success) {
+        return { success: false, error: validated.error.issues[0]?.message ?? "Datos inválidos" }
+      }
+
+      const before = {
+        depreciationStartsOn: org.depreciationStartsOn,
+        backupRetentionDays: org.backupRetentionDays,
+      }
+
+      await updateOrganization(org.id, {
+        depreciationStartsOn: validated.data.depreciationStartsOn,
+        backupRetentionDays: validated.data.backupRetentionDays,
+      })
+      await updateSettings(db, PLATFORM_NOTICE_EMAIL_SETTING, validated.data.platformNoticeEmail)
+
+      await recordAuditLog(org.id, {
+        entity: "Organization",
+        entityId: org.id,
+        action: "update",
+        before,
+        after: {
+          depreciationStartsOn: validated.data.depreciationStartsOn,
+          backupRetentionDays: validated.data.backupRetentionDays,
+        },
+        userId: user.id,
+      })
+
+      revalidatePath("/settings/organization")
+      return { success: true, data: { depreciationStartsOn: validated.data.depreciationStartsOn } }
+    }
+  )()
 }

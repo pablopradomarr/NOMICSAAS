@@ -1,151 +1,152 @@
-"use client"
-
-import { FormError } from "@/components/forms/error"
+import { BackupsPanel, type BackupJobView, type RestoreCheckView, type RestoreJobView } from "@/components/backups/backups-panel"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { useDownload } from "@/hooks/use-download"
-import { useProgress } from "@/hooks/use-progress"
-import { Download, Loader2 } from "lucide-react"
-import { useActionState } from "react"
-import { resetFieldsAndCategoriesAction, resetLLMSettingsAction, restoreBackupAction } from "./actions"
+import { tenantPage } from "@/lib/page-tenant"
+import { platformDeployment } from "@/models/platform-deployment"
+import { getSubscriptionContext } from "@/models/subscriptions"
+import { Role } from "@/prisma/client"
+import { Metadata } from "next"
+import { resetFieldsAndCategoriesAction, resetLLMSettingsAction } from "./actions"
 
-function SettingsSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-4 max-w-xl">
-      <div className="space-y-1">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </div>
-      {children}
-    </div>
-  )
-}
+export const metadata: Metadata = { title: "Copias de seguridad" }
 
-export default function BackupSettingsPage() {
-  const [restoreState, restoreBackup, restorePending] = useActionState(restoreBackupAction, null)
+/**
+ * E11 · ola C · **T22** — `/settings/backups`, **reescrita** (§10).
+ *
+ * La pantalla heredada de TaxHacker ofrecía «restaurar» sobre la propia
+ * organización, borrando todo lo que hubiera. Eso ya no existe: la restauración
+ * crea una organización nueva y la actual no se toca (criterio 35).
+ *
+ * Lo que sí hay: la lista de copias con su estado, su progreso, su tamaño, su
+ * sha256, sus tres sellos y su caducidad; el botón de crear; la descarga de
+ * portabilidad sin cuota cuando la organización no está en `FULL` (O-4); y, por
+ * cada restauración, **las seis comprobaciones** de §5.4 enfrentadas una a una.
+ */
+export default tenantPage(
+  async ({ db, org, role }) => {
+    const canEdit = role === Role.ADMIN
+    const now = new Date()
 
-  const { isLoading, startProgress, progress } = useProgress({
-    onError: (error) => {
-      console.error("Backup progress error:", error)
-    },
-  })
-
-  const { download, isDownloading } = useDownload({
-    onError: (error) => {
-      console.error("Download error:", error)
-    },
-  })
-
-  const handleDownload = async () => {
-    try {
-      const progressId = await startProgress("backup")
-      const downloadUrl = `/settings/backups/data?progressId=${progressId || ""}`
-      await download(downloadUrl, "taxhacker-backup.zip")
-    } catch (error) {
-      console.error("Failed to start backup:", error)
+    // En SERIE: una transacción por petición (E6-perf).
+    const deployed = await platformDeployment(db)
+    if (!deployed.backups) {
+      return (
+        <div className="space-y-8">
+          <SettingsPageHeader
+            title="Copias de seguridad"
+            description="Descarga todos tus datos cuando quieras y restaura una copia en una organización nueva."
+          />
+          <p className="max-w-3xl rounded-md border border-dashed p-4 text-sm" data-testid="platform-not-deployed">
+            <strong>Todavía no disponible en esta instalación.</strong> Las copias de seguridad necesitan las tablas de
+            plataforma, que se despliegan con el resto de la épica. Aun así, la regla no cambia: cuando estén, la
+            restauración creará una <strong>organización nueva</strong> y la actual no se tocará.
+          </p>
+        </div>
+      )
     }
-  }
 
-  return (
-    <div className="space-y-8">
-      <SettingsPageHeader
-        title="Backup & Restore"
-        description="Download your data, restore from a backup, or reset settings to defaults."
-      />
+    const context = deployed.billing
+      ? await getSubscriptionContext(org.id, now, { organizationIsActive: org.isActive })
+      : { access: { level: "FULL" as const, reason: null, graceUntil: null } }
+    const jobRows = await db.backupJob.findMany({ orderBy: { createdAt: "desc" }, take: 20 })
+    const restoreRows = await db.restoreJob.findMany({ orderBy: { createdAt: "desc" }, take: 10 })
 
-      <SettingsSection
-        title="Download backup"
-        description="Create a ZIP archive with all uploaded files and JSON exports of your transactions, categories, projects, fields, currencies, and settings."
-      >
-        <Button onClick={handleDownload} disabled={isLoading || isDownloading}>
-          {isLoading ? (
-            progress?.current ? (
-              `Archiving ${progress.current}/${progress.total} files`
-            ) : (
-              "Preparing backup. Don't close the page..."
-            )
-          ) : isDownloading ? (
-            "Archive is created. Downloading..."
-          ) : (
-            <>
-              <Download className="mr-2" /> Download Data Archive
-            </>
-          )}
-        </Button>
-      </SettingsSection>
+    const jobs: BackupJobView[] = jobRows.map((job) => ({
+      id: job.id,
+      status: String(job.status),
+      trigger: String(job.trigger),
+      progressBps: job.progressBps,
+      sizeBytes: job.sizeBytes === null ? null : Number(job.sizeBytes),
+      archiveSha256: job.archiveSha256,
+      ledgerHash: job.ledgerHash,
+      analyticsKey: job.analyticsKey,
+      budgetHash: job.budgetHash,
+      expiresAt: job.expiresAt ? job.expiresAt.toISOString() : null,
+      createdAt: job.createdAt.toISOString(),
+      error: job.error,
+      // Un ZIP caducado no se descarga: la fila se queda para poder explicarlo.
+      downloadable: String(job.status) === "DONE" && job.objectKey !== null,
+    }))
 
-      <Separator />
+    const restores: RestoreJobView[] = restoreRows.map((restore) => ({
+      id: restore.id,
+      status: String(restore.status),
+      verified: restore.verified,
+      progressBps: restore.progressBps,
+      createdAt: restore.createdAt.toISOString(),
+      checks: readChecks(restore.verification),
+      error: restore.error,
+    }))
 
-      <SettingsSection
-        title="Restore from backup"
-        description="Replace all current data with a previously downloaded archive. This action is irreversible — make a backup first."
-      >
-        <Card className="flex flex-col gap-2 p-5 bg-red-50 border-red-100">
-          <form action={restoreBackup}>
-            <div className="flex flex-col gap-4">
-              <label>
-                <input type="file" name="file" required />
-              </label>
-              <label className="flex flex-row gap-2 items-center">
-                <input type="checkbox" name="removeExistingData" required />
-                <span className="text-red-500">I understand that it will permanently delete all existing data</span>
-              </label>
-              <Button type="submit" variant="destructive" disabled={restorePending}>
-                {restorePending ? (
-                  <>
-                    <Loader2 className="animate-spin" /> Restoring from backup... (it can take a while)
-                  </>
-                ) : (
-                  "Restore from backup"
-                )}
-              </Button>
-            </div>
-          </form>
-          {restoreState?.error && <FormError>{restoreState.error}</FormError>}
-        </Card>
+    return (
+      <div className="space-y-8">
+        <SettingsPageHeader
+          title="Copias de seguridad"
+          description="Descarga todos tus datos cuando quieras y restaura una copia en una organización nueva. La organización en la que estás nunca se sobrescribe."
+        />
 
-        {restoreState?.success && (
-          <Card className="flex flex-col gap-2 p-5 bg-green-100">
-            <h4 className="text-lg font-semibold">Backup restored successfully</h4>
-            <p className="text-sm text-muted-foreground">You can now continue using the app. Import stats:</p>
-            <ul className="list-disc list-inside">
-              {Object.entries(restoreState.data?.counters || {}).map(([key, value]) => (
-                <li key={key}>
-                  <span className="font-bold">{key}</span>: {value} items
-                </li>
-              ))}
-            </ul>
-          </Card>
+        <BackupsPanel
+          jobs={jobs}
+          restores={restores}
+          accessLevel={context.access.level}
+          retentionDays={org.backupRetentionDays}
+          canEdit={canEdit}
+        />
+
+        {canEdit && (
+          <>
+            <Separator />
+            <section className="space-y-3">
+              <div className="space-y-1">
+                <h3 className="text-lg font-semibold">Restablecer catálogos</h3>
+                <p className="max-w-3xl text-sm text-muted-foreground">
+                  Devuelve a sus valores por defecto el prompt de extracción, o los campos, categorías y monedas. No
+                  toca ningún asiento ni ningún documento: son catálogos de trabajo. Úsalo sólo si algo se ha
+                  desconfigurado.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <form action={resetLLMSettingsAction}>
+                  <Button variant="outline" size="sm" type="submit">
+                    Restablecer el prompt de extracción
+                  </Button>
+                </form>
+                <form action={resetFieldsAndCategoriesAction}>
+                  <Button variant="outline" size="sm" type="submit">
+                    Restablecer campos, categorías y monedas
+                  </Button>
+                </form>
+              </div>
+            </section>
+          </>
         )}
-      </SettingsSection>
+      </div>
+    )
+  },
+  { minRole: Role.ADMIN }
+)
 
-      <Separator />
-
-      <SettingsSection
-        title="Reset LLM settings"
-        description="Reset the system prompt and other LLM settings to their default values. Use only if something is broken."
-      >
-        <form action={resetLLMSettingsAction}>
-          <Button variant="destructive" type="submit">
-            Reset main LLM prompt
-          </Button>
-        </form>
-      </SettingsSection>
-
-      <Separator />
-
-      <SettingsSection
-        title="Reset fields, currencies and categories"
-        description="Reset all fields, currencies, and categories to their default values. Use only if something is broken."
-      >
-        <form action={resetFieldsAndCategoriesAction}>
-          <Button variant="destructive" type="submit">
-            Reset fields, currencies and categories
-          </Button>
-        </form>
-      </SettingsSection>
-    </div>
-  )
+/**
+ * `restoreVerification.json` lo escribe la ola B (T9). Se lee **a la defensiva**:
+ * lo que no venga no se pinta en verde, se omite. Nunca un ✓ que no se haya
+ * comprobado.
+ */
+function readChecks(verification: unknown): RestoreCheckView[] {
+  if (!verification || typeof verification !== "object") return []
+  const checks = (verification as { checks?: unknown }).checks
+  if (!Array.isArray(checks)) return []
+  return checks.flatMap((raw): RestoreCheckView[] => {
+    if (!raw || typeof raw !== "object") return []
+    const entry = raw as { key?: unknown; label?: unknown; ok?: unknown; detail?: unknown }
+    if (typeof entry.key !== "string") return []
+    return [
+      {
+        key: entry.key,
+        label: typeof entry.label === "string" ? entry.label : entry.key,
+        ok: entry.ok === true,
+        detail: typeof entry.detail === "string" ? entry.detail : null,
+      },
+    ]
+  })
 }

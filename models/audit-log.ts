@@ -181,6 +181,12 @@ export type AuditAction =
   | "SET_TAX_FILING_STATUS"
   /** Distribución del resultado acordada por la junta (T-35, O-18). */
   | "DISTRIBUTE_PROFIT"
+  // E11 · ola C · T22 — portabilidad. Pedir una copia y pedir una restauración
+  // son decisiones, no operaciones: quedan con su motivo y su destinatario.
+  /** Copia de seguridad encolada, con su trigger y su caducidad. */
+  | "REQUEST_BACKUP"
+  /** Restauración pedida. SIEMPRE a organización nueva, y con motivo (§5.4). */
+  | "REQUEST_RESTORE"
 
 export type AuditLogInput = {
   entity: AuditEntity
