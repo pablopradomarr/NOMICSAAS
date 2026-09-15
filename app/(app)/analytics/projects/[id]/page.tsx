@@ -1,4 +1,6 @@
 import { analyticPnlAction, listAnalyticsAction } from "@/app/(app)/analytics/actions"
+import { projectProfitabilityAction } from "@/app/(app)/analytics/budget-vs-actual/actions"
+import { ProfitabilityBlock } from "@/app/(app)/analytics/projects/[id]/profitability-block"
 import { dimensionOptions, projectExtras } from "@/app/(app)/analytics/shared"
 import { accountNames, defaultPeriod } from "@/app/(app)/ledger/shared"
 import { ProjectDialog, ProjectStateButtons } from "@/components/analytics/dimension-forms"
@@ -8,6 +10,7 @@ import { AmountPlain, formatLocalDate } from "@/components/ledger/amount"
 import { Button } from "@/components/ui/button"
 import { ConfidenceBadge } from "@/components/ui/confidence-badge"
 import { marginBps } from "@/lib/analytics/margins"
+import type { AbsorptionReport } from "@/lib/time/cost"
 import { MARGIN_LEVELS } from "@/lib/analytics/types"
 import { tenantTransaction } from "@/lib/db"
 import { tenantPage } from "@/lib/page-tenant"
@@ -91,6 +94,29 @@ export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ db, org,
         ? (codeOfCostCenter.get(line.costCenterId) ?? "CECO")
         : "sin destino",
   })).filter((l) => l.id !== "")
+
+  // E10 · T16 — rentabilidad con horas y absorción (§5.2). Sale del MISMO
+  // informe de presupuesto vs real para que la ficha y el informe no diverjan;
+  // sin presupuesto sellado se cae a la previsualización, que no escribe nada.
+  const profitabilityRequest = openFy
+    ? { fiscalYearId: openFy.id, periodStart: period.from, periodEnd: period.to }
+    : null
+  const profitabilityState = profitabilityRequest ? await projectProfitabilityAction(profitabilityRequest) : null
+  const profitabilityRow =
+    profitabilityState?.success
+      ? (profitabilityState.data?.rows.find((r) => r.projectCode === project.code) ?? null)
+      : null
+  const absorption =
+    profitabilityState?.success && profitabilityState.data
+      ? (profitabilityState.data.absorption as AbsorptionReport | null)
+      : null
+  const profitabilityUnavailable = !openFy
+    ? "el proyecto no tiene ejercicio abierto con el que fijar el periodo"
+    : !profitabilityState?.success
+      ? (profitabilityState?.error ?? "no se ha podido componer el informe de horas")
+      : profitabilityRow === null
+        ? null
+        : null
 
   const revenueCents = pnl?.matrixCents.INGRESOS?.[column] ?? 0
   const projectRow = {
@@ -198,6 +224,14 @@ export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ db, org,
         </p>
       </section>
 
+      <ProfitabilityBlock
+        row={profitabilityRow}
+        absorption={absorption}
+        currency={org.baseCurrency}
+        sealed={profitabilityState?.data?.sealed ?? false}
+        unavailableReason={profitabilityUnavailable}
+      />
+
       <section className="space-y-2">
         <h2 className="text-sm font-semibold tracking-tight">Líneas del proyecto en el periodo</h2>
         <div className="overflow-x-auto rounded-md border">
@@ -247,4 +281,6 @@ export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ db, org,
       </section>
     </div>
   )
-})
+  // E10 · T16 — el bloque de rentabilidad emite un `ReportRun` sellado: la
+  // transacción de la página no puede ser de sólo lectura.
+}, { readOnly: false })

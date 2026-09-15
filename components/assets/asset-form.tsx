@@ -21,8 +21,26 @@ import { toast } from "sonner"
  *   que la amortización **fiscal no se contabiliza** (O-23): si difiere de la
  *   económica, la diferencia es un ajuste extracontable del modelo 200 y nunca
  *   una segunda dotación en el diario.
+ *
+ * **E10 · T17 (deuda §0-bis #7).** El formulario gana el **destino analítico**
+ * —proyecto *xor* centro de coste—, que el schema admitía desde E9 y la pantalla
+ * no ofrecía: en una organización con destino analítico obligatorio, un activo
+ * dado de alta por pantalla no se podía vender hasta que alguien le declarara el
+ * destino por SQL. La dotación de `68x` y el resultado de la baja (`671`/`771`)
+ * heredan ese destino.
  */
-export function AssetForm() {
+export type AssetDimensionOption = { id: string; code: string; name: string }
+
+export function AssetForm({
+  projects = [],
+  costCenters = [],
+  analyticsRequired = false,
+}: {
+  projects?: readonly AssetDimensionOption[]
+  costCenters?: readonly AssetDimensionOption[]
+  /** `true` = las cuentas 6/7 exigen destino (C-9): sin él, el alta se bloquea. */
+  analyticsRequired?: boolean
+}) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [pending, start] = useTransition()
@@ -34,6 +52,14 @@ export function AssetForm() {
     const residual = parseCents(String(form.get("residual") ?? "")) ?? 0
     if (cost === null) {
       toast.error("El coste de adquisición no se entiende como importe")
+      return
+    }
+    // Destino analítico: UN proyecto o UN centro de coste, nunca los dos.
+    const [targetKind, targetId] = String(form.get("analyticTarget") ?? "").split(":")
+    if (analyticsRequired && !targetId) {
+      toast.error(
+        "Esta organización exige destino analítico en las cuentas 6/7: elige el proyecto o el centro de coste que soporta la amortización"
+      )
       return
     }
     start(async () => {
@@ -50,6 +76,8 @@ export function AssetForm() {
         method: "LINEAL",
         usefulLifeMonths: Number(form.get("usefulLifeMonths") ?? 0),
         isCapitalGood: form.get("isCapitalGood") === "on",
+        ...(targetId && targetKind === "PROJ" ? { projectId: targetId } : {}),
+        ...(targetId && targetKind === "CECO" ? { costCenterId: targetId } : {}),
       })
       if (!state.success) {
         toast.error(state.error ?? "No se ha podido dar de alta el activo")
@@ -158,6 +186,56 @@ export function AssetForm() {
               </option>
             ))}
           </select>
+        </div>
+        <div className="space-y-1 md:col-span-4">
+          <Label htmlFor="asset-analytic-target">
+            Destino analítico de la amortización {analyticsRequired ? "(obligatorio)" : "(opcional)"}
+          </Label>
+          <select
+            id="asset-analytic-target"
+            name="analyticTarget"
+            required={analyticsRequired}
+            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            data-testid="asset-analytic-target"
+          >
+            <option value="">Sin destino — la dotación quedará sin dimensión</option>
+            <optgroup label="Proyectos">
+              {projects.map((p) => (
+                <option key={p.id} value={`PROJ:${p.id}`}>
+                  {p.code} · {p.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Centros de coste">
+              {costCenters.map((c) => (
+                <option key={c.id} value={`CECO:${c.id}`}>
+                  {c.code} · {c.name}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+          <p
+            className={
+              analyticsRequired
+                ? "rounded-md border border-[#F5A623] bg-[#F5A623]/10 px-2 py-1 text-xs"
+                : "text-xs text-muted-foreground"
+            }
+            data-testid="asset-analytics-required"
+          >
+            {analyticsRequired ? (
+              <>
+                <strong>Esta organización exige destino analítico</strong> en las cuentas de los grupos 6 y 7 (C-9). Un
+                activo sin destino no podrá amortizarse ni venderse: la dotación de <span className="font-code">68x</span>{" "}
+                y el resultado de la baja (<span className="font-code">671</span> / <span className="font-code">771</span>)
+                lo heredan de aquí.
+              </>
+            ) : (
+              <>
+                Un proyecto <strong>o</strong> un centro de coste, nunca los dos. La dotación de{" "}
+                <span className="font-code">68x</span> y el resultado de la baja lo heredan.
+              </>
+            )}
+          </p>
         </div>
       </div>
 

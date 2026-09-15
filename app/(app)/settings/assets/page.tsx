@@ -4,6 +4,8 @@ import { AssetsPanel } from "@/components/assets/assets-panel"
 import type { AssetView } from "@/components/assets/types"
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { tenantPage } from "@/lib/page-tenant"
+import { tenantTransaction } from "@/lib/db"
+import { getAnalyticsConfig } from "@/models/analytics"
 import { todayLocalDate } from "@/models/ledger"
 import { Role } from "@/prisma/client"
 import type { Metadata } from "next"
@@ -22,12 +24,15 @@ export const metadata: Metadata = { title: "Inmovilizado" }
  * cuadro sellado explica y el valor neto contable— se calculan **aquí, en el
  * servidor**, y viajan ya hechas: el navegador no suma cifras contables.
  */
-export default tenantPage(async ({ role }) => {
+export default tenantPage(async ({ org, role }) => {
   const canEdit = role === Role.EDITOR || role === Role.ADMIN
   const isAdmin = role === Role.ADMIN
   const cutoff = todayLocalDate()
 
   const assets = await listAssetsAction({ cutoff })
+  // E10 · T17 (deuda §0-bis #7): el alta necesita el catálogo analítico vigente
+  // y saber si la organización exige destino en las cuentas 6/7.
+  const config = await tenantTransaction(org.id, async (tx) => getAnalyticsConfig(tx, { periodEnd: cutoff }))
   if (!assets.success) {
     return (
       <div className="space-y-6">
@@ -58,7 +63,13 @@ export default tenantPage(async ({ role }) => {
   return (
     <div className="space-y-6">
       <Header />
-      {canEdit && <AssetForm />}
+      {canEdit && (
+        <AssetForm
+          projects={config.projects.map((p) => ({ id: p.id, code: p.code, name: p.name }))}
+          costCenters={config.costCenters.map((c) => ({ id: c.id, code: c.code, name: c.name }))}
+          analyticsRequired={config.analyticsRequired}
+        />
+      )}
       <AssetsPanel assets={views} cutoff={cutoff} canEdit={canEdit} isAdmin={isAdmin} />
     </div>
   )

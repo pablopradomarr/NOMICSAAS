@@ -120,6 +120,13 @@ const settingsItems = [
   // el CRUD heredado lo sustituye `/analytics/projects` (D-E4-1) y la ruta
   // antigua redirige.
   { title: "Analítica", href: "/settings/analytics", icon: SlidersHorizontal, adminOnly: false },
+  // E10 · T17 — empleados y tarifas, y plantilla por centro de coste y mes. Los
+  // LEE cualquier rol: la tarifa individual se oculta a quien no es ADMIN dentro
+  // de la propia pantalla (§10), que es donde se puede distinguir «oculta» de
+  // «no hay». Registrar plantilla es de EDITOR y fijar tarifas de ADMIN, y lo
+  // exigen las acciones.
+  { title: "Empleados", href: "/settings/employees", icon: Contact, adminOnly: false },
+  { title: "Plantilla", href: "/settings/headcount", icon: Target, adminOnly: false },
   // E6 · T17 — umbrales de variación del sello (`Organization.reviewThresholds`).
   // Los lee cualquier rol; cambiarlos es de ADMIN y lo exige la acción.
   { title: "Umbrales de revisión", href: "/settings/review-thresholds", icon: Gauge, adminOnly: false },
@@ -329,7 +336,14 @@ export function AppSidebar({
               <SidebarMenu>
                 {[
                   { title: "PyG analítica", href: "/analytics/pyg", icon: Scale },
+                  // E10 · T16 — presupuesto vs real: la matriz con las cinco
+                  // columnas por celda. La LEE cualquier rol.
+                  { title: "Presupuesto vs real", href: "/analytics/budget-vs-actual", icon: Gauge },
                   { title: "Proyectos", href: "/analytics/projects", icon: FolderKanban },
+                  // E10 · T17 — partes de horas: el driver de actividad. Los LEE
+                  // cualquier rol; capturar y aprobar es de EDITOR y lo exige la
+                  // acción, no el menú.
+                  { title: "Horas", href: "/time", icon: Hourglass },
                   { title: "Centros de coste", href: "/analytics/cost-centers", icon: Target },
                   { title: "Líneas de negocio", href: "/analytics/business-lines", icon: Waypoints },
                   // E10 · T15 — Presupuesto: la decisión con la que se mide el
