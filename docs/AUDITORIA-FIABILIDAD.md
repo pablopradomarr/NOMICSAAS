@@ -153,6 +153,23 @@ Severidad: **ALTA** = puede producir una cifra errónea sin detección · **MEDI
 
 **Totales:** ALTA 6 (G-01…G-06) · MEDIA 10 (G-07…G-16) · BAJA 6 (G-17…G-22) · **22 gaps**.
 
+> **Nota de E12 (2026-09-15) — los identificadores de esta tabla son inmutables.**
+> Este documento **no se reenumera ni se reescribe**: es la Fase 1 de la
+> SPEC-FIABILIDAD y su valor está en que un `G-nn` signifique siempre lo mismo.
+> Tres identificadores se han usado fuera de aquí para otra cosa, y las tres
+> veces costó una épica de confusión. Se corrigen **en los documentos que las
+> inventaron**, nunca aquí (regla **E-10** de
+> `docs/spec/SPEC-FIABILIDAD-v1.1-propuesta.md`):
+>
+> | Id | Qué significa **aquí**, y sólo aquí | Uso indebido, y dónde se corrige |
+> |---|---|---|
+> | **G-14** | **Roles no separados**: un solo prompt extrae y redacta, el único auditor es el humano, no hay validación automática (P5) | `docs/ESTADO.md` §«E8 — deuda» lo rotulaba «conciliación bancaria», que **E7 entregó entera**. Fila corregida. El G-14 real lo cierra **E12** con el auditor adversarial automatizado |
+> | **G-15** | **Backups** omiten campos y el restore silencia errores por fila | Se usó además para «facturación emitida completa», que no tiene gap asignado y es la épica **E14**. Corregido en `ROADMAP.md` y `ESTADO.md` en el cierre de E11 |
+> | **G-20** | **Sin tests** de `models/stats.ts`, `lib/stats.ts`, `ai/*` | Se usó además para «restaurar un ZIP ajeno desde la interfaz», que es el resto de G-15: se renombra **`G-15b`** en `ESTADO.md`, `ROADMAP.md` y `codebase-taxhacker/SKILL.md`. Los dos los cierra **E12** (T18 y T16) |
+>
+> **Estado a 2026-09-15:** cerrados 20 de 22. Abiertos: **G-14** y **G-20**, los
+> dos con tarea en `docs/design/E12-fiabilidad-dod.md`.
+
 ---
 
 ## 3. Cobertura de principios (vista agregada)

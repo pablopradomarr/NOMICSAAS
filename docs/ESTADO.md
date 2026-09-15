@@ -1,8 +1,51 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-15 (**✅ E11 CERRADA** — auditor **CONFORME** en la ronda 2, revisor sin ningún BLOQUEA, QA con BUG-E11-1 y BUG-E11-2 cerrados · **SIGUIENTE: `/epica E12`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-15 (**✅ E12 DISEÑADA** — `docs/design/E12-fiabilidad-dod.md`, 584 h / 26 tareas / 3 olas; **ADR-0020 APROBADO** y **ADR-0018 D2 ENMENDADA** · **SIGUIENTE: `/sprint E12`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
-## ✅ E11 CERRADA (2026-09-15) — siguiente: `/epica E12`
+## ✅ E12 DISEÑADA (2026-09-15) — siguiente: `/sprint E12`
+
+Diseño: `docs/design/E12-fiabilidad-dod.md` (**584 h · 26 tareas · 3 olas + cola
+de verificación**). E12 no añade contabilidad: **demuestra** lo que las once
+épicas anteriores afirman y tacha, punto por punto, la *Definition of Done* que
+la propia `SPEC-FIABILIDAD v1.0` tiene escrita en su §6.
+
+**Lo que el diseño encontró al hacer la matriz P1–P7 × C1–C7:** cinco principios
+cumplidos y demostrados; **P4 y P5 en PARCIAL por la misma razón — el mecanismo
+existe y nadie lo ha ejercido nunca de extremo a extremo**. Es la misma patología
+que el auditor destapó en E9, E10 y E11 (invariantes que el motor sabía calcular
+y el barrido nunca componía), sólo que un nivel más arriba.
+
+**Decisiones de Pablo (permiso delegado de 2026-09-04), resueltas el 2026-09-15:**
+
+| # | Decisión |
+|---|---|
+| **P-1** | **ADR-0020 APROBADO**, D1–D6 — escrituras de operador en `/admin`: cuatro operaciones, motivo obligatorio, `PlatformAuditLog` **+** `AuditLog` del cliente, doble confirmación **verificada en el servidor**, `OperatorException` que **caduca sola a las 24 h**, **toda excepción viva mueve el sello** (`EXCEPCION_DE_OPERADOR_VIGENTE`) y **ninguna toca el diario** (privilegios + test de AST + I-E12-5). Desbloquea T12 y T13 |
+| **P-2** | **ADR-0018 D2 ENMENDADA** — CAPEX dentro del `budgetHash`, fixture sellado a **v1.4** (v1.0–v1.3 congeladas). Desbloquea T19 |
+| **P-3** | **T19 se queda en E12.** El controlling mensual (celda mensual, volumen/precio, rentabilidad por proyecto) es **núcleo para un CFO**. Con esto **E12 no re-fecha ni una deuda** |
+| **P-4** | **Errata G-14 corregida** aquí y anotada en `AUDITORIA-FIABILIDAD.md` **sin reenumerar** (regla E-10) |
+| **P-5** | `docs/spec/SPEC-FIABILIDAD-v1.1-propuesta.md` se entrega **como propuesta**; su firma no bloquea el cierre de E12 |
+
+**El núcleo técnico** es `scripts/audit-reconstruct.ts`: un segundo motor en SQL
+crudo que **no puede importar `lib/**`, `models/**` ni `ai/**`** —comprobado por
+test estático sobre el AST, no por un comentario— y que reconstruye las **12
+cifras canónicas** exigiendo **Δ = 0**, en CI, en cada `push`. Hasta hoy la Capa 2
+de la spec la hacía un agente en contexto limpio **una vez por épica**, y encontró
+lo que los tests no veían las cuatro veces: eso prueba que funciona y, a la vez,
+que no basta. Lo escribe **un agente que no toca ninguna de las otras 25 tareas**:
+si el mismo agente escribe el motor y su refutador, la refutación es teatro.
+
+**Deuda:** de las 16 entradas fechadas en E12, **15 se cierran** y **ninguna se
+re-fecha**. La decimosexta (arqueo de caja como fuente equivalente al extracto) se
+**retira**, no se aplaza: un arqueo lo firma quien lleva la caja, y admitirlo
+degradaría la etiqueta más fuerte del sistema.
+
+**Gaps:** quedan **G-14** (segregación sin Capa 2 automática → T5/T6) y **G-20**
+(sin tests de `stats`/`ai` → T18). Los dos cierran en E12, y con ellos los 22 de
+la auditoría de Fase 1.
+
+Registro: `2026-09-15_e12_diseno`.
+
+## ✅ E11 CERRADA (2026-09-15)
 
 Tres rondas: integración de las tres olas (`18b3326`), **ronda 1 de corrección**
 (`1ef4692`) y **ronda 2** (este commit).
@@ -470,7 +513,7 @@ seguimiento. Las decisiones de fondo están en `docs/adr/0014-estados-transaccio
 | **RECC y REDEME** — `Organization.ivaRegime` distinto de `GENERAL` **bloquea** la contabilización automática (RC-24 FAIL, `blocksBatch`) | ABIERTA, declarada y bloqueante (no silenciosa) | **E9** | Criterio de caja (arts. 163 terdecies y quaterdecies LIVA) y devolución mensual cambian el devengo y la deducción al cobro y al pago: no es un ajuste de plantilla, es otro calendario. Bloquear es lo correcto hasta tenerlo; contabilizar como GENERAL sería declarar mal |
 | **`DUA_IMPORTACION` con plantilla `null`** — un DUA no entra por ninguna plantilla de compra (`TEMPLATE_FOR_DOC`) | ABIERTA por diseño | **E9** (T-20) | El IVA de importación lo liquida el propio DUA contra la Aduana, con su base de valor en aduana + aranceles, que no es la de la factura del proveedor. La factura extracomunitaria sí se contabiliza (C10/C15 del fixture): base sin IVA contra 400/523 |
 | **668 / 768 · diferencias de cambio** — no existe ninguna línea de resultado por diferencias de cambio | ABIERTA por diseño | **E9** | En el reconocimiento inicial NO hay diferencia de cambio (NRV 11ª): el residuo de conversión se elimina por construcción repartiéndolo entre las cuotas (ADR-0014 D2). Las diferencias nacen al **liquidar** y al **cerrar**, que es E9. Documentado en `lib/fx/convert.ts`: si alguna vez procediera reconocer un residuo, su cuenta sería 668/768 y jamás 669/769 |
-| **G-14 · conciliación bancaria** | ABIERTA | **E12** | El extracto bancario tiene plantilla `null` a propósito: sus cifras las calcula un tercero y entran por la conciliación, no por una plantilla de compra |
+| ~~**G-14 · conciliación bancaria**~~ → **conciliación bancaria (sin gap `G-` asignado)** | **CERRADA (2026-09-07, E7)** | — | **ERRATA DE DOBLE NUMERACIÓN, corregida en E12 (regla E-10).** El `G-14` **canónico** de `docs/AUDITORIA-FIABILIDAD.md` es *«roles no separados: un solo prompt extrae y redacta; el único auditor es el humano; no existe validación automática»* (P5), **no** la conciliación bancaria. La conciliación la entregó **E7** entera (`BankAccount`/`BankStatement`/`BankMatchGroup`, I-E7-1…13, sugerencias deterministas sin LLM). Lo que nota decía —el extracto con plantilla `null` a propósito— sigue siendo cierto y no es deuda. **El `G-14` de verdad se cierra en E12** con el auditor adversarial **automatizado** (`scripts/audit-reconstruct.ts`, T5/T6 de `docs/design/E12-fiabilidad-dod.md`) |
 | **G-15 · facturación emitida completa** (PDF, envío, cobro) | ABIERTA | **E11** | E8 cierra la numeración sin huecos (I-E8-20), la serie rectificativa y el asiento de la factura emitida; el ciclo comercial es de E11 |
 | **Serie `ORDINARIA` no sembrada** | **NO es deuda de código**: la serie se crea desde Configuración → Facturación (`createInvoiceSeriesAction`, panel `invoice-series-panel`), que es donde una organización decide su prefijo y su numeración | **E11** para la siembra automática al activar el módulo de facturación | Sembrarla en el alta obligaría a inventar un prefijo por la organización y a dejar un contador vivo que nadie pidió; I-E8-20 lo trata bien (`INFO` mientras no hay números emitidos). En E11, al activar facturación, se crea con el prefijo que elija el usuario |
 | **Endurecimiento condicional de `files.sha256`** — la columna es `NOT NULL` desde `20260914090000`, pero la comprobación de los BYTES depende de que el almacén responda | **CERRADA en esta ronda** en lo que era el hueco real (auditor H-3): `readDocumentsInvariantInput` lee el fichero del almacén **en streaming** y compara; si no está, **I-E8-2 FAIL** con la ruta, y la vista previa devuelve `410` con `X-Document-Status: NO_DISPONIBLE` en vez de un 404 mudo | **E7** para el barrido masivo | Lo que queda para E7 es el barrido de TODO el almacén desde la pestaña Auditoría (aquí se comprueban sólo los ficheros que respaldan un asiento, que son los que I-E8-2 mira) y el aviso de reingesta desde la propia pantalla |

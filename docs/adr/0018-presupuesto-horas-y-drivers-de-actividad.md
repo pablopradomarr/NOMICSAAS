@@ -1,6 +1,6 @@
 # ADR-0018 — Presupuesto versionado y sellado, horas como unidad entera aprobada, drivers de actividad con su cuarto sello, forecast derivado y umbrales de desviación
 
-**Estado:** **APROBADO por Pablo el 2026-09-14** (permiso general delegado de 2026-09-04), **D1–D6**, más **D7 aprobado el 2026-09-15** (ronda 1) · **Nivel:** 2 · **Fecha:** 2026-09-14 · **Ronda 1** (validación de control de gestión incorporada) · **Épica:** E10 ·
+**Estado:** **APROBADO por Pablo el 2026-09-14** (permiso general delegado de 2026-09-04), **D1–D6**, más **D7 aprobado el 2026-09-15** (ronda 1) · **D2 ENMENDADA el 2026-09-15** (CAPEX dentro del `budgetHash`, fixture a v1.4; se implementa en **E12 · T19**) · **Nivel:** 2 · **Fecha:** 2026-09-14 · **Ronda 1** (validación de control de gestión incorporada) · **Épica:** E10 ·
 **Complementa:** ADR-0003 (informes derivados, `ReportRun`, sello), ADR-0004 (capa analítica paralela), ADR-0006 (dinero en céntimos), ADR-0010 (reclasificación analítica), ADR-0012 (umbrales y motivos de sello), **ADR-0013 (liquidación de CECOs; este ADR cumple su D4)** · **No enmienda ninguno** ·
 **Diseño:** `docs/design/E10-presupuesto-horas.md` ·
 **Validación de control de gestión:** `docs/design/E10-validacion-controlling.md` (**CONFORME CON OBSERVACIONES**; cinco bloqueantes O-E10-1/2/4/5/6, veintidós observaciones O-E10-0…22, respuestas a Q-1…Q-7, cinco invariantes nuevos I-E10-14…18 y el contrato de cifras de su §6). **Las veintidós están incorporadas** y este ADR pasa de cinco decisiones a **seis**: **D6** congela ese contrato.
@@ -156,6 +156,20 @@ la forma canónica de la salida. El test byte a byte contra
 `liquidacion-esperada.json` sigue en verde **sin tocar el fixture**.
 
 ### D2 — Presupuesto versionado, sellado e inmutable; signo forzado; O-A6 cerrada
+
+> **ENMENDADA en E12 · APROBADA por Pablo (permiso delegado de 2026-09-04) el
+> 2026-09-15.** El `budgetHash` pasa a incluir las **líneas de CAPEX**
+> (`BudgetCapexLine`, Q-4 de E10), igual que ya incluye las de horas. Con ello el
+> fixture sellado se reversiona a **`presupuesto-horas-esperado.v1.4.json`**
+> (v1.0–v1.3 quedan **congeladas** como evidencia de E10 y de sus dos rondas de
+> corrección). Nada de lo escrito abajo cambia de sentido: **se amplía el
+> conjunto sellado, no su forma canónica** —que sigue sin admitir campos mutables
+> (regla E-5 de `docs/spec/SPEC-FIABILIDAD-v1.1-propuesta.md`)—. Implementación:
+> **T19** de `docs/design/E12-fiabilidad-dod.md`, junto con la granularidad
+> `MONTH` de varios meses, el desglose mes a mes, la descomposición
+> **volumen/precio** (D6) y el bloque de rentabilidad por proyecto (C3 de E10).
+> Esta enmienda es la que ADR-0019 dejó escrito que se decidiría «en E12, donde
+> se implementa».
 
 **Identidad y vigencia.** Una versión es `(organización, ejercicio, escenario,
 revisión)`, con `escenario ∈ {BASE, REVISADO}` y `revisión` 0 para la `BASE` y
