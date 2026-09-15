@@ -745,15 +745,12 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T14 — server actions de presupuest
 
       const runsBefore = await listAllocationRunsAction({ periodKind: "MONTH" })
       const mayBefore = runsBefore.data!.find((r) => r.periodStart === "2026-05-01" && r.status === "SEALED")
-      // Recién sellado, el `timeHash` de su ventana coincide: la CUARTA causa
-      // de `STALE` no está entre sus motivos.
-      //
-      // (No se afirma `isStale === false`: hoy el run sale desfasado por la
-      // segunda causa —«se ha reclasificado alguna línea»— porque el espejo SQL
-      // de `marginConfigHash` de `periodSealsBatch` no reproduce
-      // `canonicalMarginConfigForm`. Es un defecto de T12, ajeno a este lote,
-      // levantado en el registro de la ola: aquí se mide lo que T14 aporta.)
-      expect((mayBefore?.staleReasons ?? []).join(" ")).not.toMatch(/hora/i)
+      // Recién sellado, el run está VIGENTE y ninguna de las cuatro causas
+      // aparece —el espejo SQL de `marginConfigHash` reproduce ya
+      // `canonicalMarginConfigForm` (lote C4, hallazgo de C1)—, y en particular
+      // no la CUARTA, la de los partes de horas.
+      expect(mayBefore?.staleReasons ?? []).toEqual([])
+      expect(mayBefore?.isStale).toBe(false)
 
       // Un parte TARDÍO de la misma ventana, aprobado después de sellar: el
       // `timeHash` cambia y el run queda STALE (cuarta causa de ADR-0018 D1).

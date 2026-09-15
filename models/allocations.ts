@@ -28,6 +28,7 @@ import {
   type PriorAllocation,
   type TargetFilter,
 } from "@/lib/analytics/allocate"
+import { INCOME_TAX_PREFIXES } from "@/lib/analytics/types"
 import type { AnalyticLine, Cents, CostCenterMarginLevel, LocalDate } from "@/lib/analytics/types"
 import {
   fteMonthsByCostCenter,
@@ -46,7 +47,8 @@ import { listHeadcount } from "@/models/employees"
 import { getTimeRowsForWindow } from "@/models/time"
 import { writeAuditLog } from "@/models/audit-log"
 import { LedgerAbort, computeLedgerHash, modelErr, type LedgerModelError } from "@/models/ledger"
-import type { AllocationRunStatus, AllocPeriod, Driver, Prisma, TargetKind, ZeroBaseFallback } from "@/prisma/client"
+import { Prisma } from "@/prisma/client"
+import type { AllocationRunStatus, AllocPeriod, Driver, TargetKind, ZeroBaseFallback } from "@/prisma/client"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Traducción de errores del motor al español contable
@@ -1484,6 +1486,14 @@ export type PeriodSeals = {
   ledgerHash: string
   dimensionsHash: string
   marginConfigHash: string
+  /**
+   * Instante del último cambio registrado en la configuración de márgenes
+   * (`margin_level_configs`) o en los CECOs. **No decide** la staleness —eso lo
+   * deciden los hashes—: sólo ATRIBUYE la causa cuando el `dimensionsHash`
+   * difiere, para no anunciar una reclasificación que no ha ocurrido. En
+   * milisegundos desde época, para no depender de la zona horaria del proceso.
+   */
+  configChangedAtMs: number | null
 }
 
 type PeriodRef = { periodStart: LocalDate; periodEnd: LocalDate }
@@ -1508,45 +1518,25 @@ export async function periodSealsBatch(
   const starts = periods.map((p) => toUtcDate(p.periodStart))
   const ends = periods.map((p) => toUtcDate(p.periodEnd))
 
+  const organizationId = tx.$organizationId
   const rows = await tx.$queryRaw<
-    { period_start: Date; period_end: Date; ledger_hash: string; dimensions_hash: string; margin_config_hash: string }[]
-  >`
+    {
+      period_start: Date
+      period_end: Date
+      ledger_hash: string
+      dimensions_hash: string
+      margin_config_hash: string
+      config_changed_at_ms: number | null
+    }[]
+  >(Prisma.sql`
     WITH periodos AS (
       SELECT * FROM unnest(${starts}::date[], ${ends}::date[]) AS t(period_start, period_end)
     ),
-    -- La configuración de márgenes vigente AL FIN DE CADA PERIODO. Espejo de
-    -- canonicalMarginConfigForm (lib/analytics/hash.ts): los niveles vigentes
-    -- con su reparto de tipos, el desdoblamiento de NO_ANALITICO y el
-    -- marginLevel de cada CECO — sin los CECOs, mover CC-OPS de MC3 a EBITDA
-    -- no cambiaría ningún hash (R-A7).
     cfg AS (
       SELECT p.period_start, p.period_end,
-             encode(sha256(convert_to(
-               concat_ws(E'\n',
-                 'nonAnalyticLevel'  || E'\t' || o.non_analytic_level::text,
-                 'incomeTaxPrefixes' || E'\t' || ${INCOME_TAX_PREFIXES_CSV},
-                 (SELECT string_agg(
-                           concat_ws(E'\t', m.level::text, m.sort_order::text, m.tipos,
-                                     to_char(m.valid_from, 'YYYY-MM-DD'),
-                                     COALESCE(to_char(m.valid_to, 'YYYY-MM-DD'), '∅')),
-                           E'\n' ORDER BY m.sort_order, m.level::text COLLATE "C")
-                    FROM (
-                      SELECT mlc.level, mlc.sort_order, mlc.valid_from, mlc.valid_to,
-                             (SELECT string_agg(x::text, ',' ORDER BY x::text COLLATE "C")
-                                FROM unnest(mlc.analytic_types) x) AS tipos
-                        FROM margin_level_configs mlc
-                       WHERE mlc.organization_id = o.id
-                         AND mlc.valid_from <= p.period_end
-                         AND (mlc.valid_to IS NULL OR mlc.valid_to >= p.period_end)
-                    ) m),
-                 (SELECT string_agg(
-                           concat_ws(E'\t', c.code, c.kind::text, c.margin_level::text,
-                                     CASE WHEN c.allocatable THEN '1' ELSE '0' END),
-                           E'\n' ORDER BY c.code COLLATE "C")
-                    FROM cost_centers c WHERE c.organization_id = o.id)
-               ), 'UTF8')), 'hex') AS margin_config_hash
+             ${marginConfigFormSql(organizationId)} AS margin_config_form
         FROM periodos p
-        JOIN organizations o ON o.id = ${tx.$organizationId}::uuid
+        JOIN organizations o ON o.id = ${organizationId}::uuid
     )
     SELECT cfg.period_start,
            cfg.period_end,
@@ -1554,29 +1544,29 @@ export async function periodSealsBatch(
            -- que computeLedgerHash escribe para UN periodo.
            COALESCE((
              SELECT encode(sha256(convert_to(
-                      COALESCE(string_agg(f.fila, E'\n' ORDER BY f.entry_date, f.entry_number, f.line_no), ''),
+                      COALESCE(string_agg(f.fila, E'\\n' ORDER BY f.entry_date, f.entry_number, f.line_no), ''),
                       'UTF8')), 'hex')
                FROM (
                  SELECT l.entry_date, e.entry_number, l.line_no,
-                        concat_ws(E'\t',
+                        concat_ws(E'\\t',
                           to_char(l.entry_date, 'YYYY-MM-DD'), e.entry_number::text, l.line_no::text,
                           l.account_code, l.debit_cents::text, l.credit_cents::text, l.entry_kind::text
                         ) AS fila
                    FROM journal_lines l
                    JOIN journal_entries e ON e.id = l.entry_id AND e.organization_id = l.organization_id
-                  WHERE l.organization_id = ${tx.$organizationId}::uuid
+                  WHERE l.organization_id = ${organizationId}::uuid
                     AND l.entry_date BETWEEN cfg.period_start AND cfg.period_end
                ) f), ${EMPTY_SHA256}) AS ledger_hash,
            -- dimensionsHash: canonicalAnalyticsForm ‖ marginConfigHash,
            -- con el allocationRunSetHash a ∅ — un run no se sella con un hash
            -- que se incluya a sí mismo (§3.5).
            encode(sha256(convert_to(
-             concat_ws(E'\n',
+             concat_ws(E'\\n',
                COALESCE((
-                 SELECT string_agg(g.fila, E'\n' ORDER BY g.entry_id COLLATE "C", g.line_no)
+                 SELECT string_agg(g.fila, E'\\n' ORDER BY g.entry_id COLLATE "C", g.line_no)
                    FROM (
                      SELECT l.entry_id::text AS entry_id, l.line_no,
-                            concat_ws(E'\t',
+                            concat_ws(E'\\t',
                               l.entry_id::text, l.line_no::text,
                               COALESCE(l.project_id::text, '∅'),
                               COALESCE(l.cost_center_id::text, '∅'),
@@ -1584,13 +1574,28 @@ export async function periodSealsBatch(
                               COALESCE(l.analytic_type::text, '∅')
                             ) AS fila
                        FROM journal_lines l
-                      WHERE l.organization_id = ${tx.$organizationId}::uuid
+                      WHERE l.organization_id = ${organizationId}::uuid
                         AND l.entry_date BETWEEN cfg.period_start AND cfg.period_end
                    ) g), ''),
-               'marginConfigHash' || E'\t' || cfg.margin_config_hash
+               'marginConfigHash' || E'\\t' ||
+                 encode(sha256(convert_to(cfg.margin_config_form, 'UTF8')), 'hex')
              ), 'UTF8')), 'hex') AS dimensions_hash,
-           cfg.margin_config_hash
-      FROM cfg`
+           encode(sha256(convert_to(cfg.margin_config_form, 'UTF8')), 'hex') AS margin_config_hash,
+           -- Cuándo se tocó por última vez la configuración que ese sello
+           -- resume. NO decide la staleness —eso lo deciden los hashes—, sólo
+           -- ATRIBUYE la causa: sin él, cambiar un MarginLevelConfig se anuncia
+           -- como «se ha reclasificado alguna línea», que es falso.
+           -- En EPOCH y con el 'UTC' explícito: las columnas son timestamp sin
+           -- zona con valores UTC (los escribe Prisma), y compararlas con runAt
+           -- a través de un Date del driver ataría el resultado a la zona
+           -- horaria del proceso.
+           (SELECT extract(epoch FROM max(t) AT TIME ZONE 'UTC') * 1000 FROM (
+              SELECT max(mlc.updated_at) AS t
+                FROM margin_level_configs mlc WHERE mlc.organization_id = ${organizationId}::uuid
+              UNION ALL
+              SELECT max(c.updated_at) FROM cost_centers c WHERE c.organization_id = ${organizationId}::uuid
+            ) u(t))::float8 AS config_changed_at_ms
+      FROM cfg`)
 
   for (const r of rows) {
     const key = `${fromUtcDate(r.period_start)}|${fromUtcDate(r.period_end)}`
@@ -1600,8 +1605,38 @@ export async function periodSealsBatch(
       ledgerHash: r.ledger_hash,
       dimensionsHash: r.dimensions_hash,
       marginConfigHash: r.margin_config_hash,
+      configChangedAtMs: r.config_changed_at_ms,
     })
   }
+  return out
+}
+
+/**
+ * **El espejo, en crudo.** Devuelve la FORMA canónica (no su sello) que el SQL
+ * construye para cada periodo, que es lo que el test espejo TS ↔ SQL compara
+ * contra `canonicalMarginConfigForm` de `lib/analytics/hash.ts`.
+ *
+ * Comparar hashes dice QUE divergen; comparar formas dice DÓNDE. El hallazgo de
+ * C1 —todo run sellado salía `STALE`— vivió porque nadie comparaba ninguna de
+ * las dos cosas.
+ */
+export async function marginConfigFormsBatch(
+  tx: TenantTransactionClient,
+  periods: readonly PeriodRef[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (periods.length === 0) return out
+  const starts = periods.map((p) => toUtcDate(p.periodStart))
+  const ends = periods.map((p) => toUtcDate(p.periodEnd))
+  const organizationId = tx.$organizationId
+  const rows = await tx.$queryRaw<{ period_start: Date; period_end: Date; margin_config_form: string }[]>(Prisma.sql`
+    WITH periodos AS (
+      SELECT * FROM unnest(${starts}::date[], ${ends}::date[]) AS t(period_start, period_end)
+    )
+    SELECT p.period_start, p.period_end, ${marginConfigFormSql(organizationId)} AS margin_config_form
+      FROM periodos p
+      JOIN organizations o ON o.id = ${organizationId}::uuid`)
+  for (const r of rows) out.set(`${fromUtcDate(r.period_start)}|${fromUtcDate(r.period_end)}`, r.margin_config_form)
   return out
 }
 
@@ -1609,7 +1644,56 @@ export async function periodSealsBatch(
 const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 /** R-A11, la misma constante que `lib/analytics/types.ts` expone al motor. */
-const INCOME_TAX_PREFIXES_CSV = "630,633,638"
+const INCOME_TAX_PREFIXES_CSV = INCOME_TAX_PREFIXES.join(",")
+
+/**
+ * **El espejo SQL de `canonicalMarginConfigForm`** (`lib/analytics/hash.ts`), la
+ * configuración de márgenes vigente AL FIN DEL PERIODO (`p.period_end`, del
+ * `SELECT` que lo envuelve): los niveles vigentes con su reparto de tipos, el
+ * desdoblamiento de `NO_ANALITICO` (R-A11) y el `marginLevel` de cada CECO —sin
+ * los CECOs, mover `CC-OPS` de MC3 a EBITDA no cambiaría ningún hash (R-A7)—.
+ *
+ * Reproduce la forma **byte a byte**. El defecto que arreglaba el lote C4 —y que
+ * dejaba `STALE` a TODO run sellado (hallazgo de C1)— era exactamente uno:
+ * `concat_ws` **omite los argumentos NULL**, y el campo de tipos de un nivel con
+ * `analytic_types = '{}'` —`MC3` y `EBITDA` lo son en la configuración por
+ * defecto— llegaba NULL desde el `string_agg` sobre el `unnest` vacío. La fila
+ * salía con CUATRO campos donde TS escribe CINCO con el tercero vacío, y de ahí
+ * en adelante divergían `marginConfigHash`, `dimensionsHash` y el veredicto. De
+ * ahí el `COALESCE(m.tipos, '')`.
+ *
+ * Los DOS agregados de fuera (niveles y CECOs) se dejan a propósito sin
+ * `COALESCE`: sin niveles o sin CECOs, TS no escribe línea alguna y el NULL que
+ * `concat_ws` omite reproduce justo eso.
+ *
+ * El `COLLATE "C"` no es cosmético: JavaScript ordena por unidad de código y la
+ * colación por defecto de la base ignora la puntuación, así que sin él las dos
+ * formas divergen en cuanto un código lleva un guión (`CC-GA` vs `CCGA`).
+ */
+const marginConfigFormSql = (organizationId: string): Prisma.Sql => Prisma.sql`
+  concat_ws(E'\\n',
+    'nonAnalyticLevel'  || E'\\t' || o.non_analytic_level::text,
+    'incomeTaxPrefixes' || E'\\t' || ${INCOME_TAX_PREFIXES_CSV},
+    (SELECT string_agg(
+              concat_ws(E'\\t', m.level::text, m.sort_order::text, COALESCE(m.tipos, ''),
+                        to_char(m.valid_from, 'YYYY-MM-DD'),
+                        COALESCE(to_char(m.valid_to, 'YYYY-MM-DD'), '∅')),
+              E'\\n' ORDER BY m.sort_order, m.level::text COLLATE "C")
+       FROM (
+         SELECT mlc.level, mlc.sort_order, mlc.valid_from, mlc.valid_to,
+                (SELECT string_agg(x::text, ',' ORDER BY x::text COLLATE "C")
+                   FROM unnest(mlc.analytic_types) x) AS tipos
+           FROM margin_level_configs mlc
+          WHERE mlc.organization_id = ${organizationId}::uuid
+            AND mlc.valid_from <= p.period_end
+            AND (mlc.valid_to IS NULL OR mlc.valid_to >= p.period_end)
+       ) m),
+    (SELECT string_agg(
+              concat_ws(E'\\t', c.code, c.kind::text, c.margin_level::text,
+                        CASE WHEN c.allocatable THEN '1' ELSE '0' END),
+              E'\\n' ORDER BY c.code COLLATE "C")
+       FROM cost_centers c WHERE c.organization_id = ${organizationId}::uuid)
+  )`
 
 /**
  * Consulta 3 de las tres: el `timeHash` de N ventanas **en una sola pasada**,
@@ -1664,6 +1748,13 @@ export type StalenessRunRef = Pick<
   "id" | "periodKind" | "periodStart" | "periodEnd" | "ledgerHash" | "analyticsHash" | "rulesHash"
 > & {
   fiscalYearId?: string
+  /**
+   * Instante del sellado (ISO). **Opcional y sólo para ATRIBUIR la causa** de un
+   * `dimensionsHash` distinto: con él se distingue «han tocado la configuración»
+   * de «han reclasificado una línea». Sin él, el run sigue saliendo `STALE`; lo
+   * que se pierde es la precisión del motivo, nunca el veredicto.
+   */
+  runAt?: string
   /** O-E10-1: el CUARTO sello y la ventana que lo produjo. */
   timeHash?: string
   timeHashWindowStart?: LocalDate | null
@@ -1739,7 +1830,21 @@ export async function allocationRunStalenessBatch(
       continue
     }
     if (seal.ledgerHash !== run.ledgerHash) reasons.push("el diario del periodo ha cambiado")
-    if (seal.dimensionsHash !== run.analyticsHash) reasons.push("se ha reclasificado alguna línea del periodo")
+    if (seal.dimensionsHash !== run.analyticsHash) {
+      // El `dimensionsHash` resume DOS cosas —las dimensiones de las líneas y la
+      // configuración de márgenes— y el run guarda un solo sello, así que el
+      // veredicto (hay diferencia) es exacto y la causa se ATRIBUYE: si la
+      // configuración se tocó después del sellado, decir «se ha reclasificado
+      // alguna línea» es sencillamente falso.
+      const sealedAt = run.runAt ? new Date(run.runAt) : null
+      const configTouched =
+        seal.configChangedAtMs !== null && sealedAt !== null && seal.configChangedAtMs > sealedAt.getTime()
+      reasons.push(
+        configTouched
+          ? "ha cambiado la configuración analítica del periodo (niveles de margen o CECOs)"
+          : "se ha reclasificado alguna línea del periodo"
+      )
+    }
 
     const effective = effectiveRules(specs, {
       kind: run.periodKind,
