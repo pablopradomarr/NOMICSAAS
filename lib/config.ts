@@ -24,6 +24,34 @@ const envSchema = z.object({
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),
 
+  /**
+   * **E11 · ADR-0019 D9 (aprobado por Pablo el 2026-09-15) — modo de facturación.**
+   *
+   * `none` (por defecto, **INTERNO**): el producto es de uso interno y no se
+   * cobra. No hay Stripe, no hay facturas de plataforma y **toda organización
+   * nace con el plan `ILIMITADO`**. `READ_ONLY` por impago **no existe** en este
+   * modo: no puede haber mora donde no hay precio.
+   *
+   * `stripe`: el modo que describen D1…D8. Se enciende poniendo esta variable, y
+   * sólo entonces `/api/stripe/*` deja de devolver 404.
+   *
+   * El valor por defecto es el seguro: una instalación que se olvide de
+   * configurarlo **no cobra**, en vez de cobrar mal.
+   */
+  BILLING_PROVIDER: z.enum(["none", "stripe"]).default("none"),
+  /**
+   * Correos del **administrador de plataforma** (ADR-0019 D9), separados por
+   * comas. Es quien puede cambiar el plan de una organización para probar
+   * límites, con su `PlatformAuditLog`.
+   *
+   * Vacío en modo INTERNO significa «el ADMIN de la organización»: en una
+   * instalación de uso interno quien opera y quien administra son la misma
+   * persona, y exigir una variable para poder cambiar de plan sería un candado
+   * sin cerradura. Vacío en modo `stripe` significa **nadie**: allí el plan se
+   * cambia en el portal, que es donde está la tarjeta.
+   */
+  PLATFORM_ADMIN_EMAILS: z.string().default(""),
+
   // ── E11 · plataforma SaaS (docs/design/E11-plataforma-saas.md §9.1) ────────
   // Los secretos viven en el ENTORNO, nunca en la base de datos. Los de
   // organización (IMAP) siguen cifrados con `lib/encryption.ts`.
@@ -131,6 +159,17 @@ const config = {
   brand: {
     product: "NOMIC",
     company: "CFOnomic",
+  },
+  /**
+   * **ADR-0019 D9.** `provider === "none"` es el modo INTERNO: sin Stripe, sin
+   * cobro, plan `ILIMITADO` y acceso `FULL` siempre. Lo consulta
+   * `lib/platform/billing.ts`, que es quien traduce el modo a comportamiento.
+   */
+  billing: {
+    provider: env.BILLING_PROVIDER,
+    adminEmails: env.PLATFORM_ADMIN_EMAILS.split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter((email) => email.length > 0),
   },
   stripe: {
     secretKey: env.STRIPE_SECRET_KEY,

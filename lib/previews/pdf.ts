@@ -2,27 +2,35 @@
 
 import { fileExists, getOrganizationPreviewsDirectory, OrganizationRef, safePathJoin } from "@/lib/files"
 import fs from "fs/promises"
-import path from "path"
-import { fromPath } from "pdf2pic"
+import { fromBuffer } from "pdf2pic"
 import config from "../config"
 import { DEFAULT_PREVIEW_FORMAT, PreviewFormat, previewContentType, previewExtension } from "./format"
 
+/**
+ * E11 · integración — convierte el PDF **desde los bytes** (`fromBuffer`), no
+ * desde una ruta del volumen local.
+ *
+ * La caché sigue en `uploads/<org>/previews/`, nombrada por el **sha256 del
+ * original** (`cacheKey`): direccionable por contenido, de modo que dos
+ * documentos distintos no pueden compartir miniatura y un documento modificado
+ * no puede servir la vieja.
+ */
 export async function pdfToImages(
   organization: OrganizationRef,
-  origFilePath: string,
+  cacheKey: string,
+  bytes: Buffer,
   format: PreviewFormat = DEFAULT_PREVIEW_FORMAT
 ): Promise<{ contentType: string; pages: string[] }> {
   const previewsDirectory = getOrganizationPreviewsDirectory(organization)
   await fs.mkdir(previewsDirectory, { recursive: true })
 
-  const basename = path.basename(origFilePath, path.extname(origFilePath))
   const extension = previewExtension(format)
   const contentType = previewContentType(format)
 
-  // Check if converted pages already exist
+  // ¿Ya están convertidas? La caché se recorre hasta el primer hueco.
   const existingPages: string[] = []
   for (let i = 1; i <= config.upload.pdfs.maxPages; i++) {
-    const convertedFilePath = safePathJoin(previewsDirectory, `${basename}.${i}.${extension}`)
+    const convertedFilePath = safePathJoin(previewsDirectory, `${cacheKey}.${i}.${extension}`)
     if (await fileExists(convertedFilePath)) {
       existingPages.push(convertedFilePath)
     } else {
@@ -34,10 +42,9 @@ export async function pdfToImages(
     return { contentType, pages: existingPages }
   }
 
-  // If not — convert the file as store in previews folder
   const pdf2picOptions = {
     density: config.upload.pdfs.dpi,
-    saveFilename: basename,
+    saveFilename: cacheKey,
     savePath: previewsDirectory,
     format: extension,
     quality: config.upload.pdfs.quality,
@@ -47,13 +54,10 @@ export async function pdfToImages(
   }
 
   try {
-    const convert = fromPath(origFilePath, pdf2picOptions)
-    const results = await convert.bulk(-1, { responseType: "image" }) // TODO: respect MAX_PAGES here too
+    const convert = fromBuffer(bytes, pdf2picOptions)
+    const results = await convert.bulk(-1, { responseType: "image" })
     const paths = results.filter((result) => result && result.path).map((result) => result.path) as string[]
-    return {
-      contentType,
-      pages: paths,
-    }
+    return { contentType, pages: paths.slice(0, config.upload.pdfs.maxPages) }
   } catch (error) {
     console.error("Error converting PDF to image:", error)
     throw error

@@ -42,7 +42,6 @@ export default async function CloudPaymentSuccessPage({
         membershipPlan: plan?.code,
         membershipExpiresAt: new Date(subscription.items.data[0].current_period_end * 1000),
         storageLimit: plan?.limits.storage,
-        aiBalance: plan?.limits.ai,
       }
     )
 

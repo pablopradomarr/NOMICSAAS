@@ -36,11 +36,10 @@ import {
   extractionRateLimitKey,
   serverAnalyzeQueue,
 } from "@/lib/analyze-queue"
-import { isAiBalanceExhausted, isSubscriptionExpired } from "@/lib/auth"
+import { isSubscriptionExpired } from "@/lib/auth"
 import type { TenantClient } from "@/lib/db"
 import { consumeRateLimit } from "@/lib/rate-limit"
 import { getFileById } from "@/models/files"
-import { updateOrganization } from "@/models/organizations"
 import { getOrCreateProgress, incrementProgress, updateProgress } from "@/models/progress"
 import { getAnalyzeConcurrency, getSettings } from "@/models/settings"
 import type { ExtractionRun, Organization } from "@/prisma/client"
@@ -90,13 +89,6 @@ export class ExtractionRateLimitedError extends Error {
   }
 }
 
-export class AiBalanceExhaustedError extends Error {
-  constructor() {
-    super("La organización ha agotado su saldo de análisis con IA.")
-    this.name = "AiBalanceExhaustedError"
-  }
-}
-
 export class SubscriptionExpiredError extends Error {
   constructor() {
     super("La suscripción de la organización ha caducado.")
@@ -114,7 +106,7 @@ export type EnqueueOptions = RunExtractionOptions & {
  *
  * **Firma pública para T13** (`analyzeFileAction`).
  *
- * @throws ExtractionRateLimitedError · AiBalanceExhaustedError ·
+ * @throws ExtractionRateLimitedError ·
  *         SubscriptionExpiredError · DocumentAlteredError · ExtractionFailedError
  */
 export async function enqueueExtraction(
@@ -131,7 +123,14 @@ export async function enqueueExtraction(
     throw new ExtractionRateLimitedError(limit.resetAt, perMinute, organization.membershipPlan ?? null)
   }
 
-  if (isAiBalanceExhausted(organization)) throw new AiBalanceExhaustedError()
+  /**
+   * **E11 · M6** — el saldo prepagado `ai_balance` ya no existe (ADR-0019 D1.5):
+   * era una cifra almacenada que se decrementaba al escribir —lo que P2/P4
+   * prohíben— y que además nunca se decrementaba (G-12). La cuota de OCR es hoy
+   * `maxOcrDocsMonth`, DERIVADA del uso y aplicada por `assertWithinLimit` en
+   * `analyzeFileAction`, que es donde `requireOrg` ya decide además que el OCR
+   * no sobrevive a la mora (O-16).
+   */
   if (isSubscriptionExpired(organization)) throw new SubscriptionExpiredError()
 
   const file = await getFileById(db, fileId)
@@ -143,9 +142,6 @@ export async function enqueueExtraction(
   const run = await serverAnalyzeQueue.run(organization.id, concurrency, () =>
     runExtraction(db, organization, file, actor, options)
   )
-
-  // Saldo: por RUN CREADO, y sólo tras el INSERT (G-12).
-  await updateOrganization(organization.id, { aiBalance: { decrement: 1 } })
 
   return run
 }

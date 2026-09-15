@@ -16,7 +16,6 @@ const { createTransaction, getTransactions, getTransactionById, bulkDeleteTransa
 const { getSettings, updateSettings } = await import("@/models/settings")
 const { createFile, getUnsortedFiles, getFileById } = await import("@/models/files")
 const { importCategory, importProject } = await import("@/models/export_and_import")
-const { modelToJSON, MODEL_BACKUP } = await import("@/models/backups")
 
 const ORG_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa10"
 const ORG_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb10"
@@ -136,9 +135,12 @@ describe.skipIf(!TEST_DATABASE_URL)("models de negocio acotados por organizació
   })
 
   it("export/backup: el volcado sólo contiene filas de la organización", async () => {
-    const transactionsBackup = MODEL_BACKUP.find((m) => m.filename === "transactions.json")!
-    const json = JSON.parse(await modelToJSON(dbA, transactionsBackup)) as { name: string }[]
-    expect(json.map((row) => row.name)).toEqual(["Factura de A"])
+    // E11 · integración — el volcado heredado (`MODEL_BACKUP`/`modelToJSON`, nueve
+    // tablas sin manifest ni firma) se ha retirado. Lo que hay que comprobar
+    // sigue siendo lo mismo, pero sobre el cliente de tenant, que es la barrera
+    // real: el backup 2.0 recorre `TENANT_MODELS` con este mismo cliente.
+    const { transactions } = await getTransactions(dbA)
+    expect(transactions.map((row) => row.name)).toEqual(["Factura de A"])
   })
 
   it("mutaciones dirigidas por code no tocan la fila homónima de la otra organización", async () => {

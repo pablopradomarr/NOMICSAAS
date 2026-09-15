@@ -100,6 +100,10 @@ beforeAll(async () => {
   // en función de `STRIPE_SECRET_KEY`.
   process.env.DATABASE_URL = OWNER_URL
   process.env.DIRECT_URL = OWNER_URL
+  // **ADR-0019 D9** — esta suite describe el modo de PAGO, que sigue existiendo
+  // y no cambia. Se enciende explícitamente: el modo por defecto de la
+  // instalación es `none` (INTERNO) y ahí `/api/stripe/*` responde 404.
+  process.env.BILLING_PROVIDER = "stripe"
   process.env.STRIPE_SECRET_KEY = "sk_test_e11a_suite"
   process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET
   process.env.CRON_SECRET = CRON_SECRET

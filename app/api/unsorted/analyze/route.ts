@@ -16,7 +16,6 @@
 
 import { DocumentAlteredError, ExtractionFailedError } from "@/ai/analyze"
 import {
-  AiBalanceExhaustedError,
   ExtractionRateLimitedError,
   SubscriptionExpiredError,
   enqueueExtraction,
@@ -68,9 +67,7 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     if (error instanceof ExtractionRateLimitedError) return fail(error.message, 429)
-    if (error instanceof AiBalanceExhaustedError || error instanceof SubscriptionExpiredError) {
-      return fail(error.message, 402)
-    }
+    if (error instanceof SubscriptionExpiredError) return fail(error.message, 402)
     if (error instanceof DocumentAlteredError) return fail(error.message, 409)
     if (error instanceof ExtractionFailedError) {
       const rateLimited = error.attempts.some((attempt) => attempt.errorCode === "HTTP_429")

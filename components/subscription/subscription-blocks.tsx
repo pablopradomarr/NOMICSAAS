@@ -20,7 +20,15 @@ import Link from "next/link"
  *    sus formularios: la tarjeta y los datos fiscales viven allí.
  */
 
-const DATE_ES = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" })
+// E11 · integración — zona FIJA: sin ella el servidor formatea en UTC y el
+// navegador en la del usuario, y una fecha que no coincide aborta la
+// hidratación de la pantalla entera (ver `components/backups/backups-panel`).
+const DATE_ES = new Intl.DateTimeFormat("es-ES", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  timeZone: "Europe/Madrid",
+})
 
 const STATUS_LABELS: Record<string, string> = {
   TRIALING: "en periodo de prueba",
@@ -50,11 +58,16 @@ export function PlanBlock({
   plan,
   access,
   stripeConfigured,
+  internalBilling = false,
+  internalNotice = null,
 }: {
   subscription: SubscriptionView
   plan: PlanRow | null
   access: AccessVerdict
   stripeConfigured: boolean
+  /** **ADR-0019 D9** — modo INTERNO: sin portal, sin checkout, sin facturas. */
+  internalBilling?: boolean
+  internalNotice?: string | null
 }) {
   return (
     <section className="space-y-4" data-testid="plan-block" data-access-level={access.level}>
@@ -109,7 +122,16 @@ export function PlanBlock({
         )}
       </div>
 
-      {stripeConfigured ? (
+      {/*
+        **ADR-0019 D9.** En modo INTERNO no hay portal al que mandar a nadie: no
+        existe cuenta de Stripe, ni tarjeta, ni factura. Se dice con esas
+        palabras en vez de dejar un botón que llevaría a un 404.
+      */}
+      {internalBilling ? (
+        <p className="rounded-md border border-dashed px-3 py-2 text-sm" data-testid="internal-billing-notice">
+          <strong>Modo interno: sin facturación.</strong> {internalNotice}
+        </p>
+      ) : stripeConfigured ? (
         <Button asChild size="sm" data-testid="stripe-portal">
           <Link href="/api/stripe/portal">Gestionar el plan, la tarjeta y los datos fiscales</Link>
         </Button>

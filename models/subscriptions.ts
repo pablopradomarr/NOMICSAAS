@@ -18,10 +18,27 @@ import { tenantDb, tenantTransaction, withTenantGucs } from "@/lib/db"
 import { accessLevelOf, exportWindowUntilOf, graceUntilOf } from "@/lib/platform/subscription"
 import type { AccessVerdict } from "@/lib/platform/subscription"
 import type { PlanLimits, SubscriptionRow } from "@/lib/platform/types"
-import { getPlanById, limitsOf } from "@/models/plans"
+import {
+  INTERNAL_PLAN_CODE,
+  INTERNAL_PLAN_LIMITS,
+  defaultPlanCodeFor,
+  internalAccessLevel,
+  type BillingProvider,
+} from "@/lib/platform/billing"
+import config from "@/lib/config"
+import { getPlanAt, getPlanById, limitsOf } from "@/models/plans"
 import type { Prisma, SubscriptionStatus } from "@/prisma/client"
 
 type AnyTenantClient = TenantClient | TenantTransactionClient
+
+/**
+ * El cliente que necesita la siembra al alta: **el de `withTenantGucs`**, que no
+ * lleva `$organizationId` porque la organización se está creando en ese mismo
+ * instante. Se pide lo mínimo —SQL crudo— en vez de exigir un `TenantClient`
+ * completo que ahí no existe.
+ */
+type SeedClient = Pick<TenantTransactionClient, "$queryRaw" | "$executeRaw">
+
 
 type SubscriptionDbRow = {
   id: string
@@ -109,12 +126,18 @@ export type SubscriptionContext = {
 export async function getSubscriptionContext(
   organizationId: string,
   refDate: Date,
-  opts: { organizationIsActive?: boolean } = {}
+  opts: { organizationIsActive?: boolean; billingProvider?: BillingProvider } = {}
 ): Promise<SubscriptionContext> {
   const db = tenantDb(organizationId)
   const subscription = await getSubscription(db)
+  const provider = opts.billingProvider ?? config.billing.provider
 
   if (!subscription) {
+    // **ADR-0019 D9.** En modo INTERNO, una organización sin fila de suscripción
+    // no está «en sólo lectura hasta que se regularice»: no hay nada que
+    // regularizar. Rige `ILIMITADO` y el acceso es pleno.
+    const interno = internalAccessLevel(provider, opts)
+    if (interno) return { subscription: null, limits: INTERNAL_PLAN_LIMITS, access: interno }
     return {
       subscription: null,
       limits: null,
@@ -130,7 +153,10 @@ export async function getSubscriptionContext(
 
   const plan = await getPlanById(db, subscription.planId)
   const limits = plan ? limitsOf(plan) : null
-  const access = accessLevelOf(subscription, { graceDays: limits?.graceDays ?? 0 }, refDate, opts)
+  const access = accessLevelOf(subscription, { graceDays: limits?.graceDays ?? 0 }, refDate, {
+    ...opts,
+    billingProvider: provider,
+  })
   return { subscription, limits, access }
 }
 
@@ -318,3 +344,113 @@ export async function listSubscriptionEvents(db: AnyTenantClient, limit = 50) {
     take: limit,
   })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Siembra al alta y cambio de plan por el administrador de plataforma (D9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * **La suscripción nace con la organización** (ADR-0019 **D9**).
+ *
+ * Se llama DENTRO de la transacción que crea la organización, junto a la
+ * membresía y al plan de cuentas: o nace todo o no nace nada. Antes de D9 la
+ * fila la ponía sólo el backfill de M4, de modo que **toda organización creada
+ * después de la migración se quedaba sin suscripción** — y `getSubscriptionContext`
+ * la mandaba a `READ_ONLY` con un motivo que no era verdad.
+ *
+ * En modo INTERNO asigna `ILIMITADO`; en modo `stripe`, `FREE`, que es lo que el
+ * backfill de M4 ya hacía. Idempotente: si la fila está, no la toca (el
+ * `@@unique(organizationId)` la protege igualmente).
+ *
+ * Nunca lanza por catálogo incompleto: una instalación a la que le falte la
+ * versión del plan vigente no puede quedarse sin poder crear organizaciones.
+ * Se avisa por consola y la organización nace sin fila, que es exactamente el
+ * caso que I-E11-5 sabe describir.
+ */
+export async function ensureSubscriptionForOrganization(
+  tx: SeedClient,
+  organizationId: string,
+  refDate: Date,
+  provider: BillingProvider = config.billing.provider
+): Promise<void> {
+  const existentes = await tx.$queryRaw<{ n: bigint }[]>`
+    SELECT count(*)::bigint AS n FROM "subscriptions" WHERE "organization_id" = ${organizationId}::uuid`
+  if ((existentes[0]?.n ?? BigInt(0)) > BigInt(0)) return
+
+  const code = defaultPlanCodeFor(provider)
+  let plan: { id: string } | null = null
+  try {
+    plan = await getPlanAt(tx as unknown as TenantTransactionClient, code, refDate)
+  } catch (error) {
+    console.warn(`[subscriptions] no hay versión vigente del plan ${code}: la organización nace sin fila`, error)
+    return
+  }
+
+  await tx.$executeRaw`
+    INSERT INTO "subscriptions" ("organization_id", "plan_code", "plan_id", "status", "created_at", "updated_at")
+    VALUES (${organizationId}::uuid, ${code}, ${plan.id}::uuid, 'ACTIVE', ${refDate}, ${refDate})
+    ON CONFLICT ("organization_id") DO NOTHING`
+}
+
+/**
+ * **Cambio de plan por el administrador de plataforma** (ADR-0019 D9).
+ *
+ * En modo INTERNO no hay checkout ni portal, así que la única forma de **probar
+ * los límites** es que quien opera la instalación asigne otro plan a una
+ * organización. Se registra en `platform_audit_logs` con el plan de antes y el
+ * de después: un cambio de límites sin traza sería un `READ_ONLY` —o un
+ * bloqueo de cuota— que nadie sabe explicar, que es justo lo que D1.3 evita en
+ * el webhook.
+ *
+ * No emite `SubscriptionEvent`: ese registro es de eventos de **Stripe** y tiene
+ * `stripe_event_id UNIQUE`; inventarle uno sintético ensuciaría la idempotencia
+ * del webhook. La traza de plataforma es el sitio correcto.
+ */
+export async function changeOrganizationPlan(
+  organizationId: string,
+  planCode: string,
+  refDate: Date,
+  actor: string
+): Promise<{ planCode: string; planId: string; previousPlanCode: string | null }> {
+  const resultado = await tenantTransaction(organizationId, async (tx) => {
+    const plan = await getPlanAt(tx, planCode, refDate)
+    const antes = await getSubscription(tx)
+
+    if (!antes) {
+      await tx.$executeRaw`
+        INSERT INTO "subscriptions" ("organization_id", "plan_code", "plan_id", "status", "created_at", "updated_at")
+        VALUES (${organizationId}::uuid, ${plan.code}, ${plan.id}::uuid, 'ACTIVE', ${refDate}, ${refDate})`
+      return { planCode: plan.code, planId: plan.id, previousPlanCode: null }
+    }
+
+    await tx.$executeRaw`
+      UPDATE "subscriptions"
+         SET "plan_code" = ${plan.code}, "plan_id" = ${plan.id}::uuid, "updated_at" = ${refDate}
+       WHERE "id" = ${antes.id}::uuid AND "organization_id" = ${organizationId}::uuid`
+
+    await tx.auditLog.create({
+      data: {
+        organizationId,
+        entity: "Subscription",
+        entityId: antes.id,
+        action: "CAMBIO_DE_PLAN",
+        before: { planCode: antes.planCode },
+        after: { planCode: plan.code },
+        reason: `Cambio de plan por el administrador de plataforma (${actor})`,
+      },
+    })
+    return { planCode: plan.code, planId: plan.id, previousPlanCode: antes.planCode }
+  })
+
+  const { PLATFORM_ACTIONS, recordPlatformAudit } = await import("@/models/platform")
+  await recordPlatformAudit({
+    actor,
+    action: PLATFORM_ACTIONS.PLAN_CHANGED,
+    organizationId,
+    detail: { planCode: resultado.planCode, reason: `antes: ${resultado.previousPlanCode ?? "sin suscripción"}` },
+  })
+  return resultado
+}
+
+/** El código del plan interno, reexportado para quien sólo importa este módulo. */
+export { INTERNAL_PLAN_CODE }

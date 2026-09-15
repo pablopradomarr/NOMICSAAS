@@ -26,6 +26,7 @@ import { NextResponse } from "next/server"
 import type Stripe from "stripe"
 
 import config from "@/lib/config"
+import { stripeModuleOff } from "../disabled"
 import { mapStripeStatus } from "@/lib/platform/subscription"
 import { stripeClient } from "@/lib/stripe"
 import { getPlanByStripePriceId } from "@/models/plans"
@@ -69,6 +70,10 @@ function unixToDate(seconds: number | null | undefined): Date | null {
 }
 
 export async function POST(request: Request) {
+  // **ADR-0019 D9** — Stripe apagado: 404 antes de verificar firma o consumir cuota.
+  const apagado = stripeModuleOff()
+  if (apagado) return apagado
+
   const signature = request.headers.get("stripe-signature")
   const body = await request.text()
 

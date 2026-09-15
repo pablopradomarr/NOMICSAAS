@@ -1,7 +1,7 @@
 import { previewProposalAction } from "@/app/(app)/unsorted/actions"
 import { AnalyzeDocumentButton } from "@/components/unsorted/analyze-document-button"
 import { DocumentViewer } from "@/components/unsorted/document-viewer"
-import { fileExists, fullPathForFile } from "@/lib/files"
+import { documentBytesExist } from "@/lib/documents"
 import { ProposalForm } from "@/components/unsorted/proposal-form"
 import { RevoidRedoDialog } from "@/components/unsorted/revoid-redo-dialog"
 import { RunSelector } from "@/components/unsorted/run-selector"
@@ -67,7 +67,8 @@ export default tenantPage<{
    * fichero delante. Coincide con lo que dirá I-E8-2 en la Auditoría y con el
    * `410` de `/files/preview/[fileId]`.
    */
-  const documentoDisponible = await fileExists(fullPathForFile(org, file))
+  // **E11 · integración** — se pregunta al ALMACÉN (ADR-0019 D3), no al disco.
+  const documentoDisponible = await documentBytesExist(org.id, file)
 
   const fileView: DocumentFileView = {
     id: file.id,

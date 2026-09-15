@@ -71,13 +71,21 @@ const TRIGGER_LABELS: Record<string, string> = {
 }
 
 /** Las seis comprobaciones, con su nombre en español contable. */
+/**
+ * **E11 · integración** — las claves son los `CheckId` que escribe el motor
+ * (`lib/platform/backup.ts`), no un juego paralelo. La ola C las bautizó a mano
+ * (`rowCounts`, `numbering`, …) mientras la ola B no había aterrizado, y ninguna
+ * coincidía: el resultado era que las seis comprobaciones se pintaban con su
+ * identificador crudo en vez de con su nombre. Un diccionario de etiquetas que
+ * no acierta ninguna clave es peor que no tenerlo.
+ */
 export const RESTORE_CHECK_LABELS: Record<string, string> = {
-  rowCounts: "Recuentos por tabla, iguales al origen",
-  numbering: "Numeración de asientos y series, sin huecos ni duplicados",
-  derivedSeals: "Todos los sellos derivados, recomputados en el destino",
-  auditLog: "Huella del registro de auditoría, íntegra",
-  closing: "Los tres sellos y el estado del cierre",
-  invariantSweep: "Barrido de las nueve familias de invariantes",
+  RECUENTOS: "Recuentos por tabla, iguales al origen",
+  NUMERACION: "Numeración de asientos y series, sin huecos ni duplicados",
+  SELLOS_DERIVADOS: "Todos los sellos derivados, recomputados en el destino",
+  AUDIT_LOG: "Huella del registro de auditoría, íntegra",
+  SELLOS_Y_CIERRE: "Los tres sellos de contenido y el estado del cierre",
+  BARRIDO_INVARIANTES: "Barrido de las nueve familias de invariantes",
 }
 
 function bytes(n: number | null): string {
@@ -95,12 +103,28 @@ function bytes(n: number | null): string {
 
 const shortSha = (sha: string | null): string => (sha ? `${sha.slice(0, 12)}…` : "—")
 
+/**
+ * **E11 · integración — la hora se pinta en una zona FIJA, y se dice cuál.**
+ *
+ * Sin `timeZone`, `Intl` usa la del entorno: el servidor renderiza en UTC y el
+ * navegador en `Europe/Madrid`, así que las dos horas no coincidían y React
+ * abortaba la hidratación de esta pantalla. En producción eso es un parpadeo
+ * feo; en desarrollo **deja la página sin JavaScript**, y con ella los botones
+ * de crear copia y restaurar, que son toda la pantalla.
+ *
+ * `Europe/Madrid` es la zona de la organización por defecto del producto
+ * (`timezone` de `Organization`), y la etiqueta la acompaña para que nadie lea
+ * una hora sin saber de dónde es.
+ */
+const ZONA = "Europe/Madrid"
+
 const DATE_ES = new Intl.DateTimeFormat("es-ES", {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
   hour: "2-digit",
   minute: "2-digit",
+  timeZone: ZONA,
 })
 
 const fecha = (iso: string | null): string => (iso ? DATE_ES.format(new Date(iso)) : "—")
@@ -262,12 +286,37 @@ function BackupList({ jobs }: { jobs: BackupJobView[] }) {
 function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEdit: boolean }) {
   const [pending, start] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  /**
+   * **E11 · integración** — el resultado de la restauración que se acaba de
+   * lanzar se enseña AQUÍ y no en la lista de abajo, y hay un motivo: el
+   * `RestoreJob` vive en la organización **destino** (es la que acota su RLS),
+   * así que desde la de origen no se puede leer. La lista sigue enseñando las
+   * restauraciones *hacia* esta organización; este bloque, la que acabas de
+   * pedir, con sus seis comprobaciones enfrentadas.
+   */
+  const [recien, setRecien] = useState<RestoreJobView | null>(null)
+  const [destino, setDestino] = useState<{ id: string; name: string } | null>(null)
 
   const submit = (formData: FormData) =>
     start(async () => {
       setError(null)
+      setRecien(null)
+      setDestino(null)
       const result = await startRestoreAction(formData)
-      if (!result.success) setError(result.error ?? "No se ha podido iniciar la restauración")
+      if (!result.success || !result.data) {
+        setError(result.error ?? "No se ha podido iniciar la restauración")
+        return
+      }
+      setDestino({ id: result.data.organizationId, name: result.data.organizationName })
+      setRecien({
+        id: result.data.restoreJobId,
+        status: result.data.status,
+        verified: result.data.verified,
+        progressBps: 10000,
+        createdAt: new Date().toISOString(),
+        checks: result.data.checks,
+        error: null,
+      })
     })
 
   return (
@@ -308,6 +357,16 @@ function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEd
           </Button>
           {error && <FormError>{error}</FormError>}
         </form>
+      )}
+
+      {recien && destino && (
+        <div className="space-y-2" data-testid="restore-result">
+          <p className="text-sm">
+            Restaurada en la organización nueva <strong>{destino.name}</strong>. La organización en la que estás no se
+            ha tocado.
+          </p>
+          <RestoreVerification restore={recien} />
+        </div>
       )}
 
       <div className="space-y-4">

@@ -1,11 +1,12 @@
 import { SettingsPageHeader } from "@/components/settings/page-header"
 import { InvoicesBlock, PlanBlock, type PlatformInvoiceView } from "@/components/subscription/subscription-blocks"
+import { PlanSwitcher } from "@/components/subscription/plan-switcher"
 import { UsageBars } from "@/components/subscription/usage-bars"
 import { Separator } from "@/components/ui/separator"
 import config from "@/lib/config"
+import { INTERNAL_BILLING_NOTICE_ES, isInternalBilling } from "@/lib/platform/billing"
 import { tenantPage } from "@/lib/page-tenant"
-import { platformDeployment } from "@/models/platform-deployment"
-import { getPlanById } from "@/models/plans"
+import { getPlanById, listPlans } from "@/models/plans"
 import { getSubscriptionContext } from "@/models/subscriptions"
 import { listPlatformInvoices } from "@/models/platform-invoices"
 import { getUsage } from "@/models/usage"
@@ -40,27 +41,21 @@ export default tenantPage(async ({ db, org, role }) => {
   // En SERIE dentro de la transacción de `tenantPage`: una conexión por
   // petición (E6-perf). `getUsage` y `getSubscriptionContext` entran en la
   // transacción abierta en vez de tomar otra del pool.
-  const deployed = await platformDeployment(db)
-  if (!deployed.billing && !deployed.usage) {
-    return (
-      <div className="space-y-8">
-        <SettingsPageHeader
-          title="Suscripción y uso"
-          description="Tu plan, lo que llevas consumido este mes y las facturas que te hemos emitido."
-        />
-        <p className="max-w-3xl rounded-md border border-dashed p-4 text-sm" data-testid="platform-not-deployed">
-          <strong>Todavía no disponible en esta instalación.</strong> El módulo de suscripción y uso necesita las
-          tablas de plataforma, que se despliegan con el resto de la épica. No se enseña un contador a cero porque no
-          sería un cero: sería un «no lo sé».
-        </p>
-      </div>
-    )
-  }
-
+  /**
+   * **E11 · integración** — sin el puente `platformDeployment()`: su comentario
+   * ya decía que era «un puente con fecha de caducidad», y la fecha es hoy.
+   */
+  const interno = isInternalBilling(config.billing.provider)
   const context = await getSubscriptionContext(org.id, now, { organizationIsActive: org.isActive })
   const plan = context.subscription ? await getPlanById(db, context.subscription.planId) : null
   const usage = await getUsage(org.id, now)
-  const invoiceRows = isAdmin && deployed.invoices ? await listPlatformInvoices(db, 24) : []
+  // **ADR-0019 D9** — en modo INTERNO no hay facturas de plataforma que listar,
+  // porque no se emite ninguna: sin contraprestación no hay operación sujeta
+  // (art. 4.Uno LIVA) y una factura a cero no documenta nada.
+  const invoiceRows = isAdmin && !interno ? await listPlatformInvoices(db, 24) : []
+  // La lista incluye los planes NO vendibles (`ILIMITADO` entre ellos): esto no
+  // es un escaparate, es la herramienta con la que se ejercitan los límites.
+  const planCodes = isAdmin && interno ? [...new Set((await listPlans(db)).map((row) => row.code))].sort() : []
 
   const invoices: PlatformInvoiceView[] = invoiceRows.map((invoice) => ({
     id: invoice.id,
@@ -95,11 +90,20 @@ export default tenantPage(async ({ db, org, role }) => {
           plan={plan}
           access={context.access}
           stripeConfigured={Boolean(config.stripe.secretKey)}
+          internalBilling={interno}
+          internalNotice={INTERNAL_BILLING_NOTICE_ES}
         />
       ) : (
         <p className="text-sm text-muted-foreground" data-testid="viewer-notice">
           Tu rol te deja ver el consumo de la organización. El plan y las facturas los gestiona quien la administra.
         </p>
+      )}
+
+      {isAdmin && interno && planCodes.length > 0 && (
+        <>
+          <Separator />
+          <PlanSwitcher planCodes={planCodes} currentCode={context.subscription?.planCode ?? null} />
+        </>
       )}
 
       <Separator />
@@ -113,7 +117,7 @@ export default tenantPage(async ({ db, org, role }) => {
         periodMonth={usage.periodMonth}
       />
 
-      {isAdmin && (
+      {isAdmin && !interno && (
         <>
           <Separator />
           <InvoicesBlock invoices={invoices} />

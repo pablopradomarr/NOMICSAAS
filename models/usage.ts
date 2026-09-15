@@ -253,6 +253,28 @@ export async function getUsage(
 
     const figures = computeUsage(input, refDate)
     const durationMs = Date.now() - startedAt
+
+    /**
+     * **E11 · integración — la caché no se calienta dentro de una transacción de
+     * SÓLO LECTURA.**
+     *
+     * `tenantTransaction` entra en la transacción ya abierta cuando la hay, y la
+     * de `tenantPage` es `READ ONLY` (E6-perf). Intentar el `INSERT` ahí no
+     * devolvía una caché fría: devolvía `25006` y **la página entera reventaba**
+     * con un `DriverAdapterError`, porque en Postgres una sentencia fallida
+     * envenena la transacción. `/settings/subscription` no cargaba.
+     *
+     * Se pregunta antes de escribir en vez de capturar después, precisamente por
+     * eso: capturar llega tarde, la transacción ya está abortada. Y la cifra se
+     * devuelve igual —**calculada**, no inventada—: la caché es una optimización
+     * y su ausencia no puede quitarle al usuario el dato.
+     */
+    const [{ transaction_read_only: soloLectura }] = await tx.$queryRaw<{ transaction_read_only: string }[]>`
+      SELECT current_setting('transaction_read_only') AS transaction_read_only`
+    if (soloLectura === "on") {
+      return { organizationId, periodMonth, figures, sourceHash, gitSha, computedAt: new Date(), durationMs, fromCache: false }
+    }
+
     await tx.usageRun.createMany({
       data: [
         {

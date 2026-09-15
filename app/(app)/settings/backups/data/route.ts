@@ -1,142 +1,70 @@
-import { requireOrg } from "@/lib/authz"
-import { fileExists, getOrganizationUploadsDirectory } from "@/lib/files"
-import { MODEL_BACKUP, modelToJSON } from "@/models/backups"
-import { updateProgress } from "@/models/progress"
-import fs from "fs/promises"
-import JSZip from "jszip"
-import { NextResponse } from "next/server"
-import path from "path"
+/**
+ * E11 · integración — **descarga de una copia 2.0**.
+ *
+ * Lo que había aquí era el volcado heredado de TaxHacker: construía un ZIP de
+ * formato 1.0 con nueve tablas —ninguna contable—, sin manifest, sin firma y
+ * empaquetando el directorio de disco. ADR-0019 D2.1 es explícito: *«el formato
+ * 1.0 de TaxHacker no se lee ni se escribe»*. Se ha retirado.
+ *
+ * Lo que hay ahora: un `BackupJob` ya construido y firmado se entrega desde el
+ * **almacén**. La ruta no genera nada, no vuelca nada y no toca el disco; sólo
+ * comprueba que el trabajo es de esta organización, que está `DONE` y que su
+ * objeto sigue vivo.
+ *
+ * **Permitida en `READ_ONLY`** (D5/D6, O-4): descargar una copia completa de sus
+ * libros es la portabilidad que ningún precio puede desactivar, y `requireOrg`
+ * no la deniega porque la clase de escritura aquí no es ninguna: es una lectura.
+ */
 
-const MAX_FILE_SIZE = 64 * 1024 * 1024 // 64MB
-const BACKUP_VERSION = "1.0"
-const PROGRESS_UPDATE_INTERVAL_MS = 2000 // 2 seconds
+import { requireOrg } from "@/lib/authz"
+import { encodeFilename } from "@/lib/utils"
+import { getObjectBuffer } from "@/models/storage"
+import { NextResponse } from "next/server"
 
 export async function GET(request: Request) {
-  // Backup = volcado íntegro del tenant → ADMIN.
-  // E1-fix (#4): el backup empaqueta el directorio de la ORGANIZACIÓN, no el
-  // del ADMIN que lo lanza (antes se perdían los ficheros de los demás miembros).
-  const { db, org, user } = await requireOrg("ADMIN")
-  const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
-  const url = new URL(request.url)
-  const progressId = url.searchParams.get("progressId")
+  const { db } = await requireOrg("ADMIN")
 
-  try {
-    const zip = new JSZip()
-    const rootFolder = zip.folder("data")
-    if (!rootFolder) {
-      console.error("Failed to create zip folder")
-      return new NextResponse("Internal Server Error", { status: 500 })
-    }
+  const jobId = new URL(request.url).searchParams.get("jobId")
+  if (!jobId) {
+    return NextResponse.json({ error: "Falta el identificador de la copia" }, { status: 400 })
+  }
 
-    // Add metadata with version information
-    rootFolder.file(
-      "metadata.json",
-      JSON.stringify(
-        {
-          version: BACKUP_VERSION,
-          timestamp: new Date().toISOString(),
-          models: MODEL_BACKUP.map((m) => m.filename),
-        },
-        null,
-        2
-      )
-    )
-
-    // Backup models
-    for (const backup of MODEL_BACKUP) {
-      try {
-        const jsonContent = await modelToJSON(db, backup)
-        rootFolder.file(backup.filename, jsonContent)
-      } catch (error) {
-        console.error(`Error exporting table ${backup.filename}:`, error)
-      }
-    }
-
-    const uploadsFolder = rootFolder.folder("uploads")
-    if (!uploadsFolder) {
-      console.error("Failed to create uploads folder")
-      return new NextResponse("Internal Server Error", { status: 500 })
-    }
-
-    const uploadedFiles = await getAllFilePaths(organizationUploadsDirectory)
-
-    // Update progress with total files if progressId is provided
-    if (progressId) {
-      await updateProgress(db, user.id, progressId, { total: uploadedFiles.length })
-    }
-
-    let processedFiles = 0
-    let lastProgressUpdate = Date.now()
-
-    for (const file of uploadedFiles) {
-      try {
-        // Check file size before reading
-        const stats = await fs.stat(file)
-        if (stats.size > MAX_FILE_SIZE) {
-          console.warn(
-            `Skipping large file ${file} (${Math.round(stats.size / 1024 / 1024)}MB > ${
-              MAX_FILE_SIZE / 1024 / 1024
-            }MB limit)`
-          )
-          continue
-        }
-
-        const fileContent = await fs.readFile(file)
-        uploadsFolder.file(file.replace(organizationUploadsDirectory, ""), fileContent)
-
-        processedFiles++
-
-        // Update progress every PROGRESS_UPDATE_INTERVAL_MS milliseconds
-        const now = Date.now()
-        if (progressId && now - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL_MS) {
-          await updateProgress(db, user.id, progressId, { current: processedFiles })
-          lastProgressUpdate = now
-        }
-      } catch (error) {
-        console.error(`Error reading file ${file}:`, error)
-      }
-    }
-
-    // Final progress update
-    if (progressId) {
-      await updateProgress(db, user.id, progressId, { current: uploadedFiles.length })
-    }
-
-    const archive = await zip.generateAsync({ type: "blob" })
-
-    return new NextResponse(archive, {
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Disposition": `attachment; filename="taxhacker-backup.zip"`,
+  const job = await db.backupJob.findFirst({ where: { id: jobId } })
+  if (!job) {
+    return NextResponse.json({ error: "Esa copia no existe o no es de esta organización" }, { status: 404 })
+  }
+  if (job.status !== "DONE" || !job.objectKey) {
+    return NextResponse.json(
+      {
+        error:
+          job.status === "EXPIRED"
+            ? "Esa copia ha caducado: el ZIP se ha borrado según la retención del plan. Los libros y los " +
+              "justificantes NO se borran (art. 30 CCom): pide una copia nueva."
+            : `La copia está en estado ${job.status} y todavía no se puede descargar.`,
       },
-    })
-  } catch (error) {
-    console.error("Error exporting database:", error)
-    return new NextResponse("Internal Server Error", { status: 500 })
-  }
-}
-
-async function getAllFilePaths(dirPath: string): Promise<string[]> {
-  const filePaths: string[] = []
-
-  async function readDirectoryRecursively(currentPath: string) {
-    const isDirExists = await fileExists(currentPath)
-    if (!isDirExists) {
-      return
-    }
-
-    const entries = await fs.readdir(currentPath, { withFileTypes: true })
-    for (const entry of entries) {
-      const fullPath = path.join(currentPath, entry.name)
-      if (entry.isDirectory()) {
-        await readDirectoryRecursively(fullPath)
-      } else {
-        filePaths.push(fullPath)
-      }
-    }
+      { status: 409 }
+    )
   }
 
-  await readDirectoryRecursively(dirPath)
+  let bytes: Buffer
+  try {
+    bytes = await getObjectBuffer(db, job.objectKey)
+  } catch {
+    // Fila viva y objeto ausente es exactamente lo que I-E11-6 detecta. Se dice,
+    // no se devuelve un ZIP vacío que parecería una copia buena.
+    return NextResponse.json(
+      { error: "El archivo de esa copia no está en el almacén. I-E11-6 lo marcará en la Auditoría." },
+      { status: 410 }
+    )
+  }
 
-  return filePaths
+  const nombre = `copia-${job.createdAt.toISOString().slice(0, 10)}-${job.id.slice(0, 8)}.zip`
+  return new NextResponse(new Uint8Array(bytes), {
+    headers: {
+      "Content-Type": "application/zip",
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "no-store",
+      "Content-Disposition": `attachment; filename*=${encodeFilename(nombre)}`,
+    },
+  })
 }

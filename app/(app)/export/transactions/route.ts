@@ -1,7 +1,6 @@
 import { requireOrg } from "@/lib/authz"
+import { documentBytesExist, readDocumentBytes } from "@/lib/documents"
 import {
-  fileExists,
-  fullPathForFile,
   getTransactionExportFileName,
   getTransactionExportFilePath,
   getTransactionExportRelativeFolder,
@@ -12,7 +11,6 @@ import { getFilesByTransactionId } from "@/models/files"
 import { updateProgress } from "@/models/progress"
 import { getTransactions } from "@/models/transactions"
 import { format } from "@fast-csv/format"
-import fs from "fs/promises"
 import JSZip from "jszip"
 import { NextResponse } from "next/server"
 import { Readable } from "stream"
@@ -60,8 +58,10 @@ export async function GET(request: Request) {
             if (includeFilePaths) {
               const paths: string[] = []
               for (const file of transactionFiles) {
-                const fullFilePath = fullPathForFile(org, file)
-                if (await fileExists(fullFilePath)) {
+                // **E11 · integración** — se pregunta al ALMACÉN (ADR-0019 D3),
+                // no al volumen local: en Vercel el disco es `/tmp` y la ruta
+                // exportada apuntaría a un fichero que el ZIP no lleva.
+                if (await documentBytesExist(org.id, file)) {
                   paths.push(getTransactionExportFilePath(transaction, file, transactionFiles.length))
                 }
               }
@@ -151,12 +151,11 @@ export async function GET(request: Request) {
         if (!transactionFolder) continue
 
         for (const file of transactionFiles) {
-          const fullFilePath = fullPathForFile(org, file)
-          if (await fileExists(fullFilePath)) {
+          const fileData = await readDocumentBytes(org.id, file)
+          if (fileData) {
             console.log(
               `Processing file ${++totalFilesProcessed}/${totalFilesToProcess}: ${file.filename} for transaction ${transaction.id}`
             )
-            const fileData = await fs.readFile(fullFilePath)
             transactionFolder.file(getTransactionExportFileName(transaction, file), fileData)
 
             // Update progress every PROGRESS_UPDATE_INTERVAL_MS milliseconds

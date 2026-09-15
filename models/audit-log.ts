@@ -187,6 +187,18 @@ export type AuditAction =
   | "REQUEST_BACKUP"
   /** Restauración pedida. SIEMPRE a organización nueva, y con motivo (§5.4). */
   | "REQUEST_RESTORE"
+  // E11 · integración — el resultado de la restauración, con las seis
+  // comprobaciones que fallaron (si alguna). `DONE_UNVERIFIED` es un FAIL y así
+  // queda escrito (O-2): el registro de auditoría no dice «casi bien».
+  | "RESTORE_FINISHED"
+  /**
+   * **ADR-0019 D9** — el administrador de plataforma asigna otro plan. En modo
+   * INTERNO no hay checkout ni portal, así que es el ÚNICO camino, y un cambio
+   * de límites sin traza es un bloqueo de cuota que nadie sabría explicar.
+   */
+  | "CAMBIO_DE_PLAN"
+  /** §3.5 · excepción de cuota blanda concedida por el propio motor (O-3). */
+  | "LIMITE_EXCEPCION_AUTOMATICA"
 
 export type AuditLogInput = {
   entity: AuditEntity

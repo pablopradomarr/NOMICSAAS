@@ -3,7 +3,6 @@ import { SettingsPageHeader } from "@/components/settings/page-header"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { tenantPage } from "@/lib/page-tenant"
-import { platformDeployment } from "@/models/platform-deployment"
 import { getSubscriptionContext } from "@/models/subscriptions"
 import { Role } from "@/prisma/client"
 import { Metadata } from "next"
@@ -28,27 +27,16 @@ export default tenantPage(
     const canEdit = role === Role.ADMIN
     const now = new Date()
 
+    /**
+     * **E11 · integración** — el puente `platformDeployment()` se ha retirado.
+     * Era un `to_regclass` en cada carga para sobrevivir a una instalación con
+     * las migraciones a medio aplicar, y tenía fecha de caducidad escrita: «en
+     * cuanto las tres migraciones estén aplicadas». Lo están. Una instalación
+     * sin migrar no es un estado que la pantalla tenga que dibujar: es un
+     * despliegue incompleto, y `prisma migrate deploy` es su arreglo.
+     */
     // En SERIE: una transacción por petición (E6-perf).
-    const deployed = await platformDeployment(db)
-    if (!deployed.backups) {
-      return (
-        <div className="space-y-8">
-          <SettingsPageHeader
-            title="Copias de seguridad"
-            description="Descarga todos tus datos cuando quieras y restaura una copia en una organización nueva."
-          />
-          <p className="max-w-3xl rounded-md border border-dashed p-4 text-sm" data-testid="platform-not-deployed">
-            <strong>Todavía no disponible en esta instalación.</strong> Las copias de seguridad necesitan las tablas de
-            plataforma, que se despliegan con el resto de la épica. Aun así, la regla no cambia: cuando estén, la
-            restauración creará una <strong>organización nueva</strong> y la actual no se tocará.
-          </p>
-        </div>
-      )
-    }
-
-    const context = deployed.billing
-      ? await getSubscriptionContext(org.id, now, { organizationIsActive: org.isActive })
-      : { access: { level: "FULL" as const, reason: null, graceUntil: null } }
+    const context = await getSubscriptionContext(org.id, now, { organizationIsActive: org.isActive })
     const jobRows = await db.backupJob.findMany({ orderBy: { createdAt: "desc" }, take: 20 })
     const restoreRows = await db.restoreJob.findMany({ orderBy: { createdAt: "desc" }, take: 10 })
 

@@ -2,12 +2,10 @@ import { File as PrismaFile, Organization, User } from "@/prisma/client"
 import { TenantClient } from "@/lib/db"
 import { createFile, findFilesBySha256 } from "@/models/files"
 import { createHash, randomUUID } from "crypto"
-import { mkdir, writeFile } from "fs/promises"
+import { mkdir } from "fs/promises"
 import path from "path"
 import config from "./config"
 import {
-  getOrganizationStorageUsed,
-  getOrganizationUploadsDirectory,
   getStaticDirectory,
   isEnoughStorageToUploadFile,
   safePathJoin,
@@ -276,20 +274,24 @@ export async function ingestUnsortedFileWithDedupe(
   const relativeFilePath = unsortedFilePath(fileUuid, input.filename)
 
   /**
-   * **E11 · T7 (D-11, ADR-0019 D3).** Los bytes van al ALMACÉN, identificados
-   * por su `sha256`, y de ahí sale el `StoredObject` que I-E11-6 comprueba.
-   * Hasta esta épica todo colgaba de `FILE_UPLOAD_PATH`, que en Vercel es
-   * `/tmp`: efímero entre despliegues y no compartido entre funciones, de modo
-   * que el `sha256 NOT NULL` de E8 vigilaba unos bytes que el despliegue
-   * siguiente no tenía.
+   * **E11 · T7 (D-11, ADR-0019 D3) + integración de olas.** Los bytes van al
+   * ALMACÉN y **sólo** al almacén, identificados por su `sha256`, y de ahí sale
+   * el `StoredObject` que I-E11-6 comprueba. Hasta esta épica todo colgaba de
+   * `FILE_UPLOAD_PATH`, que en Vercel es `/tmp`: efímero entre despliegues y no
+   * compartido entre funciones, de modo que el `sha256 NOT NULL` de E8 vigilaba
+   * unos bytes que el despliegue siguiente no tenía.
    *
-   * **Se sigue escribiendo también en disco, a propósito**, mientras los
-   * lectores heredados (descarga, vistas previas, export ZIP) no estén
-   * cableados al almacén: son de la ola C y de E12. La verdad es el almacén —es
-   * lo que se verifica y lo que se vuelca en el backup—; la copia en disco es
-   * transitoria y `scripts/migrate-uploads-to-storage.ts` es su contrapartida
-   * para lo ya subido. Con el driver `local` las dos escrituras van al mismo
-   * volumen, así que el coste es el de un fichero pequeño duplicado.
+   * **La doble escritura de T7 se retira aquí.** Era explícitamente transitoria
+   * («mientras los lectores heredados no estén cableados al almacén»): los seis
+   * lectores —descarga, vista previa, OCR, ZIP de exportación, volcado del
+   * backup y las dos pantallas que comprueban si el papel sigue ahí— pasan hoy
+   * por `lib/documents.ts`. Mantener la copia en disco a partir de ahora sería
+   * pagar el doble de bytes por una réplica que nadie lee y que I-E11-6 no
+   * vigila. Lo subido ANTES de la migración sigue en disco y lo sube
+   * `scripts/migrate-uploads-to-storage.ts`, que es idempotente.
+   *
+   * `file.path` sobrevive como **etiqueta lógica** (en qué carpeta iría el
+   * documento), no como localización: la localización es la clave del almacén.
    */
   await putObject(db, {
     organizationId: organization.id,
@@ -298,10 +300,6 @@ export async function ingestUnsortedFileWithDedupe(
     mimeType: mimetype,
     body: input.buffer,
   })
-
-  const fullFilePath = safePathJoin(getOrganizationUploadsDirectory(organization), relativeFilePath)
-  await mkdir(path.dirname(fullFilePath), { recursive: true })
-  await writeFile(fullFilePath, input.buffer)
 
   const file = await createFile(db, {
     id: fileUuid,
@@ -328,9 +326,23 @@ export async function ingestUnsortedFile(
   return (await ingestUnsortedFileWithDedupe(ctx, input)).file
 }
 
-/** Recalcula y persiste el consumo de disco de la organización (cuota T11). */
+/**
+ * Recalcula y persiste el consumo de la organización.
+ *
+ * **E11 · integración** — la cifra sale del **ALMACÉN**, no del directorio de
+ * disco. Retirada la doble escritura, `getOrganizationStorageUsed` mediría un
+ * árbol de carpetas cada vez más vacío y la barra del perfil enseñaría una
+ * mentira decreciente.
+ *
+ * `organizations.storage_used` sigue **deprecada** (ADR-0019 D1.5): la cifra
+ * buena es la derivada de `models/usage.ts`, que además excluye por `kind` lo
+ * que no es cuota del cliente (O-12c). Esta columna se conserva mientras el
+ * código heredado del perfil la lea, y su retirada está fechada en E12.
+ */
 export async function syncOrganizationStorage(organizationId: string): Promise<number> {
-  const storageUsed = await getOrganizationStorageUsed({ id: organizationId })
+  const { storageBytesUsed } = await import("@/models/storage")
+  const { tenantDb } = await import("@/lib/db")
+  const storageUsed = await storageBytesUsed(tenantDb(organizationId))
   await updateOrganization(organizationId, { storageUsed })
-  return storageUsed
+  return Number(storageUsed)
 }

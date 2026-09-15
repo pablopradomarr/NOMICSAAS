@@ -1,8 +1,82 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-15 (**✅ E10 CERRADA** · **✅ E11 DISEÑADA**, ADR-0019 APROBADO · **SIGUIENTE: `/sprint E11`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-15 (**✅ E10 CERRADA** · **E11 EN EJECUCIÓN**: olas A, B y C aterrizadas e **INTEGRADAS**, ADR-0019 **D9** aprobado · **SIGUIENTE: cierre de E11**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
 
-## ✅ E11 DISEÑADA (2026-09-15) — siguiente: `/sprint E11`
+## 🔗 E11 · RONDA DE INTEGRACIÓN DE LAS TRES OLAS (2026-09-15)
+
+Commits de las olas: `4a43350` (A · planes, webhook, serie propia, reloj),
+`4358e75` (B · almacén, uso derivado, dos clases de cuota, backup 2.0),
+`75a2237` (C · siembra, asistente, pantallas). Esta ronda **cose lo que cada ola
+dejó abierto a propósito** y añade la decisión **D9**.
+
+### ADR-0019 · D9 — el SaaS es de USO INTERNO (decisión de Pablo, 2026-09-15)
+
+`BILLING_PROVIDER=none` es **el modo por defecto**. Significa, literalmente:
+
+| | Modo INTERNO (`none`) | Modo de pago (`stripe`) |
+|---|---|---|
+| Stripe | **Apagado**: `/api/stripe/*` responde **404**, ninguna clave necesaria | D1…D8 tal cual |
+| Plan al alta | **`ILIMITADO`** (fila nueva del catálogo: los siete límites a `-1`, **no vendible**, sin `stripePriceId`) | `FREE` |
+| `READ_ONLY` por impago | **Nunca.** `accessLevelOf` devuelve `FULL` siempre | Según D6/D7 |
+| Facturas de plataforma | **Ninguna**: sin contraprestación no hay operación sujeta (art. 4.Uno LIVA) | Serie `PLT-AAAA-NNNN` (D8) |
+| `/settings/subscription` | «Modo interno: sin facturación» + plan + **uso**, sin portal ni facturas | Plan, uso, facturas y portal |
+| Cambio de plan | **Acción de administración de plataforma**, con `PlatformAuditLog` (`plan.changed`) y `AuditLog` — es como se **prueban los límites** | Portal de Stripe |
+
+`BLOCKED` sigue existiendo y sigue siendo lo que era: la desactivación que decide
+el propio ADMIN de la organización. No es una mora.
+
+### Migración M6 (`20260928090000_e11_m6_plan_ilimitado_bigint`)
+
+Plan `ILIMITADO` + backfill (organizaciones sin suscripción, y las que M4 dejó en
+`FREE` **sin haber contratado nada**; ninguna con `stripe_subscription_id` se toca),
+con el baile `NO FORCE → backfill → FORCE`. Además cierra las dos deudas que la ola
+A aplazó por escrito: **`storage_used` / `storage_limit` a `bigint`** (§2.7 —
+`integer` topaba en 2,147 GB contra un plan PRO de 100 GB) y la **retirada de
+`ai_balance`** (D1.5, O-14), con la misma guardia y la misma salida de operador
+(`app.e11_ai_balance_resuelto`) que M4.
+
+`backup_retention_days` del plan interno es **3650 días** y no `-1`: el CHECK
+`plans_gracia_no_negativa` exige `> 0`, y con razón — una retención de cero
+caducaría el ZIP en el instante de crearlo.
+
+### Lo que la integración cose entre olas
+
+| Puente retirado | Qué era | Qué hay ahora |
+|---|---|---|
+| `models/platform-deployment.ts` | `to_regclass` en cada carga para sobrevivir a una instalación sin migrar. Su propio comentario se fechaba: «un puente con fecha de caducidad» | **Eliminado.** Una instalación sin migrar no es un estado que la pantalla dibuje: es un despliegue incompleto |
+| `startRestoreAction` se negaba | La ola C no tenía motor; la ola B aterrizó el mismo día | Cableada a `requestBackup` / `runBackupJob` / `restoreBackupIntoOrganization` / `verifyRestore`, con las **seis comprobaciones** a la vista |
+| Doble escritura almacén + disco | T7 la declaró transitoria «mientras los lectores no estén cableados» | **Retirada.** Los seis lectores (descarga, vista previa, OCR, ZIP de exportación, volcado del backup y las dos pantallas que comprueban el papel) pasan por `lib/documents.ts` |
+| Bloque heredado de `models/backups.ts` | `MODEL_BACKUP`, `modelToJSON`, `modelFromJSON`, `preprocessRowData` (la cuenta `0400` → `400`) y `cleanupOrganizationTables` | **Eliminado**, junto con la ruta 1.0 `/settings/backups/data`, que ahora entrega el ZIP 2.0 del almacén |
+| `STORAGE_DRIVER` / `STORAGE_S3_*` frente a `STORAGE_BACKEND` / `STORAGE_*` | Dos juegos de variables para una sola cosa: así se despliega una instalación que cree tener S3 y escribe en `/tmp` | Manda el de `.env.example`; los de la ola B se leen como alias |
+
+### Cuatro defectos que la integración destapó, y su arreglo
+
+1. **`/settings/subscription` no cargaba.** `getUsage` calentaba su caché dentro
+   de la transacción `READ ONLY` de `tenantPage`: `25006`, la transacción quedaba
+   envenenada y la página entera reventaba. Ahora se **pregunta antes de
+   escribir** —capturar llega tarde— y la cifra se devuelve calculada.
+2. **La hidratación de `/settings/backups` fallaba** por una hora formateada sin
+   `timeZone`: servidor en UTC, navegador en Europe/Madrid. En desarrollo eso deja
+   la pantalla **sin JavaScript**, y con ella los dos botones que son la pantalla.
+3. **La restauración abortaba con `23505`** por `invitations.token_hash`, que es
+   `UNIQUE` global. Copiarlo tampoco valía: **un mismo enlace de invitación daría
+   acceso a dos organizaciones**. Se **reemite** en el destino, y `token_hash`
+   sale de `derivedSealColumns()` — no es un sello derivado, es un secreto, y
+   compararlo castigaría hacer lo correcto.
+4. **La suscripción del archivo chocaba** con la que el alta siembra en el destino
+   (`UNIQUE (organization_id)`). Se omite, como la membresía de quien restaura:
+   la copia conserva sus libros, **no hereda el contrato**.
+
+### Deuda que esta ronda deja abierta, con épica de cierre
+
+| Deuda | Épica | Motivo |
+|---|---|---|
+| **El ZIP del backup se construye EN MEMORIA** (`JSZip`) | **E12** | Un volcado de 2 GB no cabe en el heap de una función serverless. El troceado en streaming exige cambiar el generador y subir en multipart; no es barato y no cabe en una ronda de integración. Techo medido en §12 |
+| **El camino de lectura al disco heredado** (`lib/documents.ts`) | **E12** | Lo subido antes de E11 sólo está en disco. Se retira cuando `scripts/migrate-uploads-to-storage.ts --apply` haya corrido en todos los entornos (runbook `docs/deploy/e11-plataforma.md`) |
+| **`organizations.storage_used` / `storage_limit`** siguen vivas y deprecadas | **E12** | La cifra buena es la derivada de `models/usage.ts`, que excluye por `kind` lo que no es cuota del cliente (O-12c). `syncOrganizationStorage` ya las alimenta **desde el almacén**, no desde el disco |
+| **Ficheros `static/` (logo, avatar)** siguen en disco | **E12** | Se nombran por su nombre, no por su `sha256`, así que migrarlos al almacén exige un índice que no existe. No son justificantes: son la marca de la organización |
+
+## ✅ E11 DISEÑADA (2026-09-15) — el diseño y su validación
 
 Diseño: `docs/design/E11-plataforma-saas.md` (**726 h / 28 tareas**, tres olas).
 ADR: `docs/adr/0019-plataforma-saas.md` — **APROBADO por Pablo el 2026-09-15**

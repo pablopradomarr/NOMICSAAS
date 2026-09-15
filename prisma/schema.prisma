@@ -69,9 +69,13 @@ model Organization {
   stripeCustomerId    String?   @unique @map("stripe_customer_id")
   membershipPlan      String?   @map("membership_plan")
   membershipExpiresAt DateTime? @map("membership_expires_at")
-  storageUsed         Int       @default(0) @map("storage_used")
-  storageLimit        Int       @default(-1) @map("storage_limit")
-  aiBalance           Int       @default(0) @map("ai_balance")
+  // E11 · M6 (§2.7): `bigint`. `integer` topaba en 2,147 GB y el plan PRO promete
+  // 100 GB, así que la columna se desbordaba antes de llegar al límite del plan.
+  // DEPRECADAS: el uso real es DERIVADO (`stored_objects`), no un contador.
+  storageUsed         BigInt    @default(0) @map("storage_used")
+  storageLimit        BigInt    @default(-1) @map("storage_limit")
+  // `aiBalance` RETIRADA en M6 (ADR-0019 D1.5, O-14): era un saldo que se
+  // decrementaba al escribir —prohibido por P2/P4— y que además nunca funcionó.
 
   // E2 — política fiscal de la organización (D2-8; la consume el motor en E3)
   /// Prorrata general aplicable en PUNTOS BÁSICOS (90 % = 9000). Null = 100 %

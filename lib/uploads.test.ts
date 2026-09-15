@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it, vi } from "vitest"
 import { mkdtemp, readFile, rm } from "fs/promises"
+import { createHash } from "node:crypto"
 import { tmpdir } from "os"
 import path from "path"
 
@@ -7,7 +8,7 @@ const tmpRoot = await mkdtemp(path.join(tmpdir(), "th-uploads-"))
 process.env.UPLOAD_PATH = tmpRoot
 // E11 · T7: la ingesta escribe además en el ALMACÉN. En los tests el almacén es
 // un `LocalDriver` sobre el mismo directorio temporal — nunca una red.
-process.env.STORAGE_DRIVER = "local"
+process.env.STORAGE_BACKEND = "local"
 process.env.STORAGE_LOCAL_ROOT = path.join(tmpRoot, "_store")
 process.env.SELF_HOSTED_MODE = "true"
 
@@ -30,6 +31,7 @@ vi.mock("@/models/organizations", () => ({ updateOrganization: vi.fn() }))
 
 const { ingestUnsortedFile, assertAcceptableUpload, sniffFileExtension, UploadValidationError, MAX_UPLOAD_FILE_SIZE } =
   await import("./uploads")
+const { objectKey, normalizePrefix } = await import("@/lib/storage/keys")
 
 const user = { id: "user-1", email: "u@example.com" } as Record<string, unknown>
 // E1 (T11): la cuota es de la organización; el contexto de subida lleva db + org + user.
@@ -72,8 +74,21 @@ describe("ingestUnsortedFile", () => {
     expect(file.path).toMatch(/^unsorted\/.+\.pdf$/)
     expect((file.metadata as Record<string, unknown>).source).toBe("email")
 
-    const onDisk = await readFile(path.join(tmpRoot, organization.id as string, file.path))
-    expect(onDisk.equals(buffer)).toBe(true)
+    /**
+     * **E11 · integración** — los bytes van al ALMACÉN y **sólo** al almacén: la
+     * doble escritura de T7 era explícitamente transitoria y se ha retirado. La
+     * clave es `<prefijo>/<org>/DOCUMENT/<sha[0:2]>/<sha>` y el fichero está
+     * bajo `STORAGE_LOCAL_ROOT`, no bajo `UPLOAD_PATH`.
+     */
+    const sha = createHash("sha256").update(buffer).digest("hex")
+    const key = objectKey({ prefix: normalizePrefix(process.env.STORAGE_PREFIX), organizationId: organization.id as string, kind: "DOCUMENT", sha256: sha })
+    const inStore = await readFile(path.join(tmpRoot, "_store", key))
+    expect(inStore.equals(buffer)).toBe(true)
+    expect(storedObjects).toHaveLength(1)
+    expect(storedObjects[0].sha256).toBe(sha)
+
+    // Y **no** hay copia en el disco heredado: es lo que esta ronda retira.
+    await expect(readFile(path.join(tmpRoot, organization.id as string, file.path))).rejects.toThrow()
     expect(created).toHaveLength(1)
   })
 

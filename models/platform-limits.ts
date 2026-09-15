@@ -53,6 +53,8 @@ import {
   type SoftWarning,
 } from "@/lib/platform/limits"
 import { accessLevelOf } from "@/lib/platform/subscription"
+import { INTERNAL_PLAN_LIMITS, isInternalBilling } from "@/lib/platform/billing"
+import config from "@/lib/config"
 import { limitsOf } from "@/lib/platform/plan"
 import type { PlanRow } from "@/lib/platform/types"
 import { readUsageInTransaction } from "@/models/usage"
@@ -113,7 +115,14 @@ export const defaultPlanContextResolver: PlanContextResolver = async (tx, organi
     where: { id: organizationId },
     select: { isActive: true },
   })
-  if (!subscription) return { limits: UNLIMITED_PLAN, access: "FULL", reason: null }
+  /**
+   * **ADR-0019 D9 · modo INTERNO.** Sin fila no hay plan que resolver, y en uso
+   * interno la respuesta correcta es `ILIMITADO`, no un bloqueo.
+   */
+  if (!subscription) {
+    const limitesSinFila = isInternalBilling(config.billing.provider) ? INTERNAL_PLAN_LIMITS : UNLIMITED_PLAN
+    return { limits: limitesSinFila, access: "FULL", reason: null }
+  }
 
   const limits = limitsOf(planRowOf(subscription.plan))
   const verdict = accessLevelOf(
@@ -124,7 +133,7 @@ export const defaultPlanContextResolver: PlanContextResolver = async (tx, organi
     },
     limits,
     refDate,
-    { organizationIsActive: organization?.isActive !== false }
+    { organizationIsActive: organization?.isActive !== false, billingProvider: config.billing.provider }
   )
   return { limits, access: verdict.level, reason: verdict.reason }
 }

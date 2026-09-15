@@ -10,6 +10,7 @@ import config from "@/lib/config"
 import { TenantClient, tenantDb } from "@/lib/db"
 import { getMembership, getMembershipWithOrganization, getUserMemberships } from "@/models/memberships"
 import { accessLevelOf, canWrite } from "@/lib/platform/subscription"
+import { internalAccessLevel } from "@/lib/platform/billing"
 import { limitsOf } from "@/lib/platform/plan"
 import { READ_ONLY_MESSAGE_ES } from "@/lib/platform/limits"
 import type { AccessLevel, PlanRow, WriteKind } from "@/lib/platform/types"
@@ -152,6 +153,12 @@ async function accessOf(
   organizationIsActive: boolean,
   refDate: Date = new Date()
 ): Promise<{ access: AccessLevel; reason: string | null }> {
+  // **ADR-0019 D9.** En modo INTERNO no hay suscripción que consultar ni mora
+  // que aplicar: el acceso es `FULL` y se ahorra el viaje a la base en el camino
+  // caliente de TODA petición. `BLOCKED` sigue siendo cosa del ADMIN.
+  const interno = internalAccessLevel(config.billing.provider, { organizationIsActive })
+  if (interno) return { access: interno.level, reason: interno.reason }
+
   try {
     const db = tenantDb(organizationId)
     const subscription = await db.subscription.findFirst({
@@ -172,7 +179,7 @@ async function accessOf(
       },
       limits,
       refDate,
-      { organizationIsActive }
+      { organizationIsActive, billingProvider: config.billing.provider }
     )
     return { access: verdict.level, reason: verdict.reason }
   } catch {

@@ -43,6 +43,7 @@ import { transactionFormSchema } from "@/forms/transactions"
 import { enqueueExtraction, enqueueExtractionBatch } from "@/ai/queue"
 import { ActionState } from "@/lib/actions"
 import { requireOrg, withOrg } from "@/lib/authz"
+import { readDocumentBytes } from "@/lib/documents"
 import { tenantTransaction, type TenantClient } from "@/lib/db"
 import { proposalHash } from "@/lib/extraction/hash"
 import { reconcile, type ReconcileResult } from "@/lib/extraction/reconcile"
@@ -56,6 +57,7 @@ import { getOrganizationUploadsDirectory, getTransactionFileUploadPath, safePath
 import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
 import { writeAuditLog } from "@/models/audit-log"
 import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
+import { putObject } from "@/models/storage"
 import { createFile, deleteFile, getFileById, updateFile } from "@/models/files"
 import { createRevisionRun, getExtractionRun, proposalOf } from "@/models/extraction"
 import {
@@ -78,7 +80,7 @@ import {
 } from "@/models/transactions"
 import type { ExtractionRun, File, Organization, Transaction } from "@/prisma/client"
 import { createHash, randomUUID } from "crypto"
-import { mkdir, readFile, rename, writeFile } from "fs/promises"
+import { mkdir, rename } from "fs/promises"
 import { revalidatePath } from "next/cache"
 import path from "path"
 
@@ -1375,11 +1377,23 @@ export async function saveFileAsTransactionAction(
     const originalFileName = path.basename(file.path)
     const newRelativeFilePath = getTransactionFileUploadPath(file.id, originalFileName, transaction)
 
-    // Move file to new location and name
-    const oldFullFilePath = safePathJoin(organizationUploadsDirectory, file.path)
-    const newFullFilePath = safePathJoin(organizationUploadsDirectory, newRelativeFilePath)
-    await mkdir(path.dirname(newFullFilePath), { recursive: true })
-    await rename(path.resolve(oldFullFilePath), path.resolve(newFullFilePath))
+    /**
+     * **E11 · integración** — los bytes viven en el ALMACÉN bajo una clave
+     * derivada de su `sha256` (ADR-0019 D3), así que `file.path` pasa a ser una
+     * ETIQUETA lógica —«dónde iría este documento en el árbol»— y no la
+     * localización real. Se sigue moviendo la copia heredada del disco cuando
+     * está, para que un self-hosted que aún no ha migrado conserve su árbol de
+     * carpetas; **que no esté es el caso normal**, no un error.
+     */
+    try {
+      const oldFullFilePath = safePathJoin(organizationUploadsDirectory, file.path)
+      const newFullFilePath = safePathJoin(organizationUploadsDirectory, newRelativeFilePath)
+      await mkdir(path.dirname(newFullFilePath), { recursive: true })
+      await rename(path.resolve(oldFullFilePath), path.resolve(newFullFilePath))
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code
+      if (code !== "ENOENT") throw error
+    }
 
     // Update file record
     await updateFile(db, file.id, {
@@ -1441,9 +1455,11 @@ export async function splitFileIntoItemsAction(
       return { success: false, error: "Original file not found" }
     }
 
-    const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
-    const originalFilePath = safePathJoin(organizationUploadsDirectory, originalFile.path)
-    const fileContent = await readFile(originalFilePath)
+    // **E11 · integración** — los bytes salen del ALMACÉN (ADR-0019 D3).
+    const fileContent = await readDocumentBytes(org.id, originalFile)
+    if (!fileContent) {
+      return { success: false, error: "El documento original no está en el almacén: no se puede trocear" }
+    }
 
     // Ronda 2 (#7): el nombre de la parte conserva la EXTENSIÓN del original (si
     // no, `unsortedFilePath` derivaba una extensión del nombre del item) y el
@@ -1457,10 +1473,19 @@ export async function splitFileIntoItemsAction(
       const fileName = `${originalBaseName}-part-${item.name}${originalExtension}`
       const mimetype = assertAcceptableUpload(fileName, fileContent)
       const relativeFilePath = unsortedFilePath(fileUuid, fileName)
-      const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
+      const sha256 = sha256OfBuffer(fileContent)
 
-      await mkdir(path.dirname(fullFilePath), { recursive: true })
-      await writeFile(fullFilePath, fileContent)
+      // **E11 · integración** — la parte se escribe en el ALMACÉN y **sólo** en
+      // el almacén: se acabó la doble escritura de T7. La clave se deriva del
+      // sha256, así que N partes con los mismos bytes comparten objeto y no se
+      // duplica un solo byte en el bucket.
+      await putObject(db, {
+        organizationId: org.id,
+        kind: "DOCUMENT",
+        sha256,
+        mimeType: mimetype,
+        body: fileContent,
+      })
 
       await createFile(db, {
         id: fileUuid,
@@ -1469,14 +1494,14 @@ export async function splitFileIntoItemsAction(
         filename: fileName,
         path: relativeFilePath,
         mimetype,
-        sha256: sha256OfBuffer(fileContent),
+        sha256,
         sizeBytes: fileContent.length,
         metadata: originalFile.metadata ?? undefined,
         isSplitted: true,
       })
     }
 
-    await deleteFile(db, fileId, organizationUploadsDirectory)
+    await deleteFile(db, fileId, getOrganizationUploadsDirectory(org))
     await syncOrganizationStorage(org.id)
 
     revalidatePath("/unsorted")

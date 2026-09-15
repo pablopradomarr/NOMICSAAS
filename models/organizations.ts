@@ -136,6 +136,22 @@ export async function createOrganizationWithOwner(
       },
     })
 
+    /**
+     * **E11 · integración (ADR-0019 D9)** — la **suscripción nace con la
+     * organización**, en esta misma transacción.
+     *
+     * Antes de D9 la fila la ponía sólo el backfill de M4, de modo que toda
+     * organización creada después de la migración se quedaba sin ninguna y
+     * `getSubscriptionContext` la mandaba a `READ_ONLY` con un motivo que no era
+     * verdad. En modo INTERNO se asigna `ILIMITADO`; en modo `stripe`, `FREE`.
+     *
+     * Va aquí y no en `models/onboarding.ts` porque hay tres caminos de alta
+     * —el asistente, la organización personal y la demo— y una siembra repartida
+     * por tres es una siembra que el cuarto camino se olvida.
+     */
+    const { ensureSubscriptionForOrganization } = await import("@/models/subscriptions")
+    await ensureSubscriptionForOrganization(tx, organization.id, now)
+
     // Siembra dentro de la MISMA unidad: o nace todo (organización + membresía
     // + plan de cuentas + mapa + tipos impositivos) o no nace nada. Antes eran
     // dos transacciones y un fallo en la segunda dejaba una organización
@@ -182,6 +198,10 @@ export async function ensurePersonalOrganization(
       update: {},
       create: { organizationId: organization.id, userId: user.id, role: Role.ADMIN, acceptedAt: now },
     })
+
+    // **ADR-0019 D9** — también la organización personal nace con su suscripción.
+    const { ensureSubscriptionForOrganization } = await import("@/models/subscriptions")
+    await ensureSubscriptionForOrganization(tx, organization.id, now)
 
     return organization
   })

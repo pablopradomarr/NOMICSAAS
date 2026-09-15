@@ -1,5 +1,6 @@
 import { requireOrg } from "@/lib/authz"
-import { fileExists, fullPathForFile, safeDownloadHeaders } from "@/lib/files"
+import { readDocumentBytes } from "@/lib/documents"
+import { safeDownloadHeaders } from "@/lib/files"
 import { resolvePreviewFormat } from "@/lib/previews/format"
 import { generateFilePreviews } from "@/lib/previews/generate"
 import { getFileById } from "@/models/files"
@@ -60,10 +61,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
       return new NextResponse("File not found or does not belong to the organization", { status: 404 })
     }
 
-    // Los bytes del documento: si no están, se dice y se dice por qué.
-    const fullFilePath = fullPathForFile(org, file)
-    const isFileExists = await fileExists(fullFilePath)
-    if (!isFileExists) {
+    /**
+     * **E11 · integración** — los bytes salen del ALMACÉN (ADR-0019 D3). Si no
+     * están ni allí ni en el disco heredado, se dice y se dice por qué.
+     */
+    const bytes = await readDocumentBytes(org.id, file)
+    if (!bytes) {
       return unavailable(
         file.id,
         file.path,
@@ -72,23 +75,26 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
       )
     }
 
-    // Generate previews
+    // La miniatura se cachea por el sha256 del original: direccionable por
+    // contenido, así que nunca puede servirse la de otro documento.
     const settings = await getSettings(db)
     const format = resolvePreviewFormat(settings.llm_attachment_format)
-    const { contentType, previews } = await generateFilePreviews(org, fullFilePath, file.mimetype, format)
-    if (page > previews.length) {
+    const cacheKey = file.sha256 ?? file.id
+    const { contentType, previews } = await generateFilePreviews(org, cacheKey, bytes, file.mimetype, format)
+    if (previews.length > 0 && page > previews.length) {
       return new NextResponse("Page not found", { status: 404 })
     }
-    const previewPath = previews[page - 1] || fullFilePath
+    const previewPath = previews[page - 1] ?? null
 
-    // Read file
-    const fileBuffer = await fs.readFile(previewPath)
+    // Sin miniatura (formato sin vista previa, o `sharp` que no pudo) se sirven
+    // los bytes originales, que ya están en memoria: nunca un 500.
+    const fileBuffer = previewPath ? await fs.readFile(previewPath) : bytes
+    const filenameForHeader = previewPath ? path.basename(previewPath) : file.filename
 
-    // Return file with proper content type
-    return new NextResponse(fileBuffer, {
+    return new NextResponse(new Uint8Array(fileBuffer), {
       headers: {
-        ...safeDownloadHeaders(contentType),
-        "Content-Disposition": `inline; filename*=${encodeFilename(path.basename(previewPath))}`,
+        ...safeDownloadHeaders(previewPath ? contentType : file.mimetype),
+        "Content-Disposition": `inline; filename*=${encodeFilename(filenameForHeader)}`,
       },
     })
   } catch (error) {

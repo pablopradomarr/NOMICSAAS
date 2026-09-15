@@ -1,6 +1,6 @@
 import { checkAuthAttempt } from "@/lib/auth-rate-limit"
 import config from "@/lib/config"
-import { getSelfHostedUser, getUserById, SELF_HOSTED_MEMBERSHIP_PLAN } from "@/models/users"
+import { getSelfHostedUser, getUserById } from "@/models/users"
 import { Organization, User } from "@/prisma/client"
 import { betterAuth } from "better-auth"
 import { prismaAdapter } from "better-auth/adapters/prisma"
@@ -41,7 +41,6 @@ export type UserProfile = {
   membershipPlan: string
   storageUsed: number
   storageLimit: number
-  aiBalance: number
 }
 
 export const auth = betterAuth({
@@ -188,11 +187,4 @@ export function isSubscriptionExpired(organization: Organization) {
     return false
   }
   return Boolean(organization.membershipExpiresAt && organization.membershipExpiresAt < new Date())
-}
-
-export function isAiBalanceExhausted(organization: Organization) {
-  if (config.selfHosted.isEnabled || organization.membershipPlan === SELF_HOSTED_MEMBERSHIP_PLAN) {
-    return false
-  }
-  return organization.aiBalance <= 0
 }

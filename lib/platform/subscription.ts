@@ -20,6 +20,7 @@
 
 import type { AccessLevel, SubscriptionRow, WriteKind } from "./types"
 import { EXPORT_WINDOW_DAYS } from "./types"
+import { internalAccessLevel, type BillingProvider } from "./billing"
 import type { SubscriptionStatus } from "@/prisma/client"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,8 +149,20 @@ export function accessLevelOf(
   sub: Pick<SubscriptionRow, "status" | "currentPeriodEnd" | "graceUntil">,
   limits: { graceDays: number },
   refDate: Date,
-  opts: { organizationIsActive?: boolean } = {}
+  opts: { organizationIsActive?: boolean; billingProvider?: BillingProvider } = {}
 ): AccessVerdict {
+  /**
+   * **ADR-0019 D9 · modo INTERNO.** Antes que cualquier estado de suscripción:
+   * donde no hay precio no puede haber mora, y `READ_ONLY` por impago sería un
+   * castigo por una deuda que no existe. Lo único que sigue bloqueando es la
+   * desactivación que decide el propio ADMIN.
+   *
+   * El valor por defecto es `"stripe"` a propósito: las suites del modo de pago
+   * llaman a esta función sin el cuarto argumento y no cambian de veredicto.
+   */
+  const interno = internalAccessLevel(opts.billingProvider ?? "stripe", opts)
+  if (interno) return interno
+
   if (opts.organizationIsActive === false) {
     return {
       level: "BLOCKED",

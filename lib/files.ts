@@ -162,8 +162,12 @@ export async function getOrganizationStorageUsed(organization: OrganizationRef):
  * también lo es el directorio físico (`uploads/<organizationId>/…`).
  */
 export function isEnoughStorageToUploadFile(organization: Organization, fileSize: number) {
-  if (config.selfHosted.isEnabled || organization.storageLimit < 0) {
+  // E11 · M6: las dos columnas son `bigint` (§2.7) — `integer` topaba en 2,147 GB
+  // y el plan PRO promete 100 GB. Mezclar `bigint` y `number` en una suma lanza
+  // en tiempo de ejecución, así que se compara todo en `bigint`.
+  const limit = BigInt(organization.storageLimit)
+  if (config.selfHosted.isEnabled || limit < BigInt(0)) {
     return true
   }
-  return organization.storageUsed + fileSize <= organization.storageLimit
+  return BigInt(organization.storageUsed) + BigInt(Math.max(0, Math.trunc(fileSize))) <= limit
 }

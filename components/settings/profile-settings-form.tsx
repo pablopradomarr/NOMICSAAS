@@ -9,7 +9,6 @@ import { Organization, User } from "@/prisma/client"
 import { CircleCheckBig } from "lucide-react"
 import { useActionState } from "react"
 import { ChangePasswordForm } from "./change-password-form"
-import { SubscriptionPlan } from "./subscription-plan"
 
 export default function ProfileSettingsForm({
   user,
@@ -28,8 +27,13 @@ export default function ProfileSettingsForm({
 
   return (
     <div className="space-y-8">
-      <SubscriptionPlan organization={organization} />
-
+      {/*
+        E11 · integración — el panel heredado de TaxHacker («Current Plan», saldo
+        de IA, fecha de caducidad) sale de aquí: leía `membershipPlan`,
+        `storageLimit` y `aiBalance`, las cuatro columnas deprecadas por
+        ADR-0019 D1.5, y `aiBalance` ya no existe. El plan, el uso y las facturas
+        viven en `/settings/subscription`, que los deriva del catálogo versionado.
+      */}
       <form action={saveAction} className="space-y-8">
         <div className="space-y-4">
           <h3 className="text-lg font-semibold">Your TaxHacker Profile</h3>

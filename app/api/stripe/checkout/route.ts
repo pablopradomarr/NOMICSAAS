@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
 import config from "@/lib/config"
+import { stripeModuleOff } from "../disabled"
 import { tenantDb } from "@/lib/db"
 import { requireOrg } from "@/lib/authz"
 import { assertB2BSellable, PlatformInvoiceError } from "@/lib/platform/invoice"
@@ -27,6 +28,10 @@ import { PLATFORM_ACTIONS, recordPlatformAudit } from "@/models/platform"
 import { getSubscription } from "@/models/subscriptions"
 
 export async function POST(request: NextRequest) {
+  // **ADR-0019 D9** — Stripe apagado: 404 antes de sesión, clave o base de datos.
+  const apagado = stripeModuleOff()
+  if (apagado) return apagado
+
   // Facturación → ADMIN. El cliente de Stripe cuelga de la organización (T11).
   const { org } = await requireOrg("ADMIN")
 

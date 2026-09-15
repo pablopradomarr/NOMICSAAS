@@ -39,6 +39,12 @@ export const PLATFORM_ACTIONS = {
   CRON_UNAUTHORIZED: "cron.unauthorized",
   /** §3.5 · la excepción de cuota blanda, que concede el propio motor (O-3). */
   SOFT_LIMIT_EXCEEDED: "limit.soft_exceeded",
+  /**
+   * **ADR-0019 D9** · el administrador de plataforma asigna otro plan a una
+   * organización. En modo INTERNO no hay checkout ni portal, así que ésta es la
+   * ÚNICA forma de cambiar de plan — y por eso no puede ocurrir sin traza.
+   */
+  PLAN_CHANGED: "plan.changed",
 } as const
 
 export type PlatformAction = (typeof PLATFORM_ACTIONS)[keyof typeof PLATFORM_ACTIONS]

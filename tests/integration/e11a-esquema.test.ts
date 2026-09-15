@@ -180,7 +180,12 @@ describe("M4 · catálogo de planes", () => {
       grace_days: number
       backup_retention_days: number
       stripe_price_id: string | null
-    }>(`SELECT * FROM plans ORDER BY list_price_cents`)
+      // E11 · integración — `ILIMITADO` (M6, ADR-0019 D9) también vale 0 y
+      // entraría en medio del orden por precio. Esta prueba describe el
+      // **catálogo vendible** de §17.1, así que se filtra por `is_public`: el
+      // plan del modo interno tiene su propia prueba en `e11-integracion-d9`.
+      is_public: boolean
+    }>(`SELECT * FROM plans WHERE is_public ORDER BY list_price_cents`)
 
     expect(filas.map((f) => f.code)).toEqual(["FREE", "STARTER", "PRO"])
 
@@ -299,9 +304,13 @@ describe("M4 · backfill y O-14", () => {
       `SELECT a.attname AS column_name, col_description(a.attrelid, a.attnum) AS comentario
          FROM pg_attribute a
         WHERE a.attrelid = 'organizations'::regclass
-          AND a.attname IN ('ai_balance', 'membership_plan', 'membership_expires_at', 'storage_limit')`
+          AND a.attname IN ('membership_plan', 'membership_expires_at', 'storage_limit')`
     )
-    expect(filas).toHaveLength(4)
+    // `ai_balance` ya no está en la lista: **M6 la retiró** (ADR-0019 D1.5).
+    // Lo que O-14 exigía —comprobar el saldo antes de darla de baja— lo hacen
+    // las dos migraciones; que la columna ya no exista lo prueba
+    // `e11-integracion-d9`.
+    expect(filas).toHaveLength(3)
     for (const f of filas) {
       expect(f.comentario, f.column_name).toMatch(/DEPRECADA/)
       expect(f.comentario, f.column_name).toMatch(/E12/)

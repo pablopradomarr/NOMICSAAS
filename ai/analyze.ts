@@ -39,7 +39,7 @@ import {
 } from "@/ai/schema"
 import { requestLLM, type LLMAttempt } from "@/ai/providers/llmProvider"
 import type { TenantClient } from "@/lib/db"
-import { fullPathForFile } from "@/lib/files"
+import { readDocumentBytes } from "@/lib/documents"
 import { proposalHash } from "@/lib/extraction/hash"
 import type { ExtractionProposal, FieldOrigins } from "@/lib/extraction/types"
 import { sha256OfBuffer } from "@/lib/uploads"
@@ -48,7 +48,6 @@ import { currentGitSha } from "@/models/reports"
 import { getLLMSettings, getSettings } from "@/models/settings"
 import { listTaxRates } from "@/models/tax-rates"
 import type { ExtractionRun, File, Organization, Prisma } from "@/prisma/client"
-import fs from "fs/promises"
 
 /** Fallo de extracción. Lleva la cadena de intentos: sin ella nadie sabe por qué. */
 export class ExtractionFailedError extends Error {
@@ -209,7 +208,13 @@ export async function runExtraction(
 
 /** Relee los bytes y los sella. Una vez por run, como manda §9. */
 async function verifyFileSha(organization: Organization, file: File): Promise<string> {
-  const buffer = await fs.readFile(fullPathForFile(organization, file))
+  // **E11 · integración** — los bytes salen del ALMACÉN (ADR-0019 D3). El sello
+  // se recalcula sobre lo que de verdad se va a analizar, que es el punto de
+  // I-E8-2: detectar «un documento alterado bajo los pies del ERP».
+  const buffer = await readDocumentBytes(organization.id, file)
+  if (!buffer) {
+    throw new Error("El documento no está en el almacén: no se puede extraer de un documento que no existe")
+  }
   const actual = sha256OfBuffer(buffer)
   if (file.sha256 && file.sha256 !== actual) {
     throw new DocumentAlteredError(file.sha256, actual)

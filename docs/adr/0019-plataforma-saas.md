@@ -1,7 +1,8 @@
 # ADR-0019 — Plataforma SaaS: facturación y límites por organización, backup/restore como criterio de reproducibilidad, almacenamiento de objetos, cron de plataforma, portabilidad irrenunciable y serie de facturación propia
 
 **Estado:** **APROBADO por Pablo** (permiso general delegado de 2026-09-04)
-**el 2026-09-15**, **D1 … D8** · **Nivel:** 2 · **Fecha:** 2026-09-15 ·
+**el 2026-09-15**, **D1 … D8**; **D9 APROBADA por Pablo en chat el 2026-09-15**
+(ronda de integración de las tres olas) · **Nivel:** 2 · **Fecha:** 2026-09-15 ·
 **Ronda 2** (validación contable incorporada, más **O-16** y **O-17** del cierre) ·
 **Épica:** E11 ·
 **Diseño:** `docs/design/E11-plataforma-saas.md` ·
@@ -351,6 +352,60 @@ auditor.
    habría si se concediera a vinculados, y entonces base = valor de mercado
    (art. 79.Cinco). *Parametrizable.*
 
+
+### D9 ✚ · El SaaS es de USO INTERNO: `BILLING_PROVIDER=none` es el modo por defecto
+
+**Aprobada por Pablo en chat el 2026-09-15**, tras aterrizar las tres olas. No
+enmienda D1…D8: **las apaga**. D1…D8 describen el modo de pago y siguen vigentes
+palabra por palabra el día que `BILLING_PROVIDER=stripe` se encienda.
+
+> **La decisión, textual:** *el producto es de uso interno y no se cobra por
+> ahora. Sin Stripe, sin facturas de plataforma, sin cobro. Toda organización
+> nace con el plan `ILIMITADO`. `READ_ONLY` por impago NUNCA en modo interno.*
+
+1. **`BILLING_PROVIDER=none` es el DEFECTO**, y es el defecto seguro: una
+   instalación que se olvide de configurarlo **no cobra**, en vez de cobrar mal.
+2. **Plan `ILIMITADO`**: una **fila más del catálogo** (no una constante de
+   TypeScript — ése era el defecto que E11 vino a cerrar), con los **siete
+   límites a `-1`**, `is_public = false` y sin `stripePriceId`. No es vendible y
+   no aparece en el alta. Lo asigna **la propia alta** en la misma transacción
+   que la organización y su membresía (`ensureSubscriptionForOrganization`): antes
+   de D9 la fila la ponía sólo el backfill, así que toda organización creada
+   después de la migración se quedaba sin suscripción y `getSubscriptionContext`
+   la mandaba a `READ_ONLY` con un motivo que no era verdad.
+3. **`accessLevelOf` devuelve `FULL` siempre** en este modo, cualquiera que sea
+   el estado de la suscripción. *Donde no hay precio no puede haber mora, y
+   `READ_ONLY` sería un castigo por una deuda que no existe.* Lo único que sigue
+   produciendo `BLOCKED` es la desactivación que decide el propio ADMIN (D6).
+4. **El administrador de plataforma puede cambiar el plan de una organización**,
+   con `PlatformAuditLog` (`plan.changed`) y `AuditLog`. No es una comodidad: sin
+   ella **los límites no se pueden ejercitar**, y un producto cuyos límites no se
+   prueban es un producto cuyos límites no se saben. Quién lo es lo dice
+   `PLATFORM_ADMIN_EMAILS`; vacía, en modo interno lo es el ADMIN de la
+   organización (quien opera y quien administra son la misma persona) y en modo
+   `stripe`, **nadie**: allí el plan se cambia donde está la tarjeta.
+5. **Stripe queda como módulo apagado.** `/api/stripe/*` responde **404** —no 501
+   ni 403: los dos confirmarían que la ruta existe—, **ninguna clave es
+   necesaria** y la comprobación es de configuración, así que se resuelve antes
+   de tocar el cliente, la sesión o la base de datos.
+6. **No se emite ninguna factura de plataforma**, y es la respuesta correcta, no
+   una omisión: sin contraprestación **no hay operación sujeta** (art. 4.Uno
+   LIVA) y una factura a cero ensucia la serie sin documentar nada — que es
+   exactamente lo que D8.9 ya decía del plan FREE.
+7. **`/settings/subscription`** enseña «Modo interno: sin facturación», el plan y
+   **el uso**. Sin portal, sin checkout y sin facturas. El uso se enseña igual:
+   una instalación que no cobra no deja de tener derecho a saber cuánto consume.
+8. **Migración aditiva M6** con el plan, el backfill (organizaciones sin
+   suscripción, y las que M4 dejó en `FREE` **sin haber contratado nada**;
+   ninguna con `stripe_subscription_id` se toca) y el baile
+   `NO FORCE → backfill → FORCE`.
+
+**Qué NO cambia.** Las dos clases de cuota de D7 siguen siendo las de D7: con los
+límites a `-1`, `checkLimit` devuelve `ok` antes de mirar el uso y la cuota blanda
+no avisa. El modo interno **no es un camino paralelo** en el guardián — es el
+mismo guardián con otros números, que es lo que hace que asignar `STARTER` a una
+organización sirva para probarlo.
+
 ---
 
 ## Lo que sale de este ADR (ronda 2)
@@ -472,7 +527,8 @@ Este ADR se da por cumplido cuando:
 ## Firma
 
 - [x] **Pablo** — **APROBADO el 2026-09-15**, **D1 … D8**, por permiso general
-      delegado de 2026-09-04. **P-1 … P-8** resueltas y recogidas en §17 del diseño;
+      delegado de 2026-09-04. **D9 APROBADA en chat el mismo día**, en la ronda
+      de integración de las tres olas: el SaaS es de uso interno y no se cobra. **P-1 … P-8** resueltas y recogidas en §17 del diseño;
       **O-16** y **O-17** incorporadas en el cierre.
 - [x] **`experto-contable`** — **OBSERVACIONES** (`E11-validacion-plataforma.md`):
       C-1…C-7 respondidas y **las quince observaciones incorporadas**. Su condición

@@ -102,7 +102,9 @@ describe.skipIf(!OWNER_URL)("models/ ejecutados como app_runtime (RLS efectiva)"
 
   it("updateOrganization() pasa el WITH CHECK de organizations", async () => {
     const updated = await updateOrganization(orgA.id, { storageUsed: 4096 })
-    expect(updated.storageUsed).toBe(4096)
+    // E11 · M6: `storage_used` es `bigint` (§2.7) — `integer` topaba en 2,147 GB
+    // contra un plan PRO de 100 GB.
+    expect(updated.storageUsed).toBe(BigInt(4096))
   })
 
   it("CRUD de categorías y transacciones por tenantDb bajo RLS", async () => {

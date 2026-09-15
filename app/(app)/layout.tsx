@@ -82,9 +82,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     avatar: user.avatar ? user.avatar + "?" + user.id : undefined,
     organizationName: org.name,
     membershipPlan: org.membershipPlan || "unlimited",
-    storageUsed: org.storageUsed || 0,
-    storageLimit: org.storageLimit || -1,
-    aiBalance: org.aiBalance || 0,
+    // E11 · M6: `storage_used` / `storage_limit` son `bigint` (§2.7) y siguen
+    // DEPRECADAS — el uso real se deriva de `stored_objects`. `aiBalance` se
+    // retiró en M6 (ADR-0019 D1.5, O-14).
+    storageUsed: Number(org.storageUsed ?? 0),
+    storageLimit: Number(org.storageLimit ?? -1),
   }
 
   return (

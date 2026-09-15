@@ -13,7 +13,7 @@
  * calidad, y eso tiene que ser visible en la evidencia, no sólo en un ajuste.
  */
 
-import { fileExists, fullPathForFile } from "@/lib/files"
+import { readDocumentBytes } from "@/lib/documents"
 import { resolvePreviewFormat } from "@/lib/previews/format"
 import { generateFilePreviews } from "@/lib/previews/generate"
 import { TenantClient } from "@/lib/db"
@@ -50,15 +50,28 @@ export const loadAttachmentsForAI = async (
   organization: Organization,
   file: File
 ): Promise<LoadedAttachments> => {
-  const fullFilePath = fullPathForFile(organization, file)
-  if (!(await fileExists(fullFilePath))) {
-    throw new Error("El fichero no está en disco: no se puede extraer de un documento que no existe")
+  // **E11 · integración** — los bytes salen del ALMACÉN (ADR-0019 D3).
+  const bytes = await readDocumentBytes(organization.id, file)
+  if (!bytes) {
+    throw new Error("El documento no está en el almacén: no se puede extraer de un documento que no existe")
   }
 
   const settings = await getSettings(db)
   const format = resolvePreviewFormat(settings.llm_attachment_format)
   const maxPages = resolveMaxPages(settings[MAX_PAGES_SETTING])
-  const { contentType, previews } = await generateFilePreviews(organization, fullFilePath, file.mimetype, format)
+  const cacheKey = file.sha256 ?? file.id
+  const { contentType, previews } = await generateFilePreviews(organization, cacheKey, bytes, file.mimetype, format)
+
+  // Sin miniaturas (un formato que no las tiene) se manda el original: lo que
+  // no puede pasar es mandar CERO adjuntos y pedirle al modelo que extraiga.
+  if (previews.length === 0) {
+    return {
+      attachments: [{ filename: file.filename, contentType: file.mimetype, base64: bytes.toString("base64") }],
+      pagesSent: 1,
+      pagesTotal: 1,
+      maxPages,
+    }
+  }
 
   const selected = previews.slice(0, maxPages)
   const attachments = await Promise.all(

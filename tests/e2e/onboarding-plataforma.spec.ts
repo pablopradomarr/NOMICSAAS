@@ -333,40 +333,167 @@ test("las preferencias guardan el mes de arranque de la amortización", async ({
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8 · Suscripción y copias: estados vacíos con texto, no con un hueco
+// 8 · Suscripción y uso en **modo INTERNO** (ADR-0019 D9)
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("la pantalla de suscripción enseña el uso del mes, o dice por qué no puede", async ({ page, baseURL }) => {
+test("la pantalla de suscripción enseña el uso del mes y, en modo interno, lo dice", async ({ page, baseURL }) => {
   await open(page, baseURL!, "/settings/subscription")
-  // Dos estados legítimos, y ninguno es una pantalla en blanco ni un 500: con las
-  // tablas de plataforma desplegadas, las seis barras; sin ellas, el aviso de que
-  // el módulo no está en esta instalación. Un contador a cero sin tablas no sería
-  // un cero, sería un «no lo sé».
-  const barras = page.getByTestId("usage-bars")
-  const aviso = page.getByTestId("platform-not-deployed")
-  await expect(barras.or(aviso)).toBeVisible({ timeout: 120_000 })
 
-  if (await barras.isVisible()) {
-    for (const key of ["members", "entries", "ocrDocs", "exports", "backups", "storageBytes"]) {
-      await expect(page.getByTestId(`usage-${key}`)).toBeVisible()
-    }
-    // P6: la cifra derivada viaja con su sello.
-    await expect(page.getByTestId("usage-seal")).toBeVisible()
+  // **El puente `platformDeployment` se ha retirado**: ya no hay un estado «las
+  // tablas no están». O las seis barras, o la pantalla está rota — y eso es un
+  // fallo, no una alternativa legítima.
+  const barras = page.getByTestId("usage-bars")
+  await expect(barras).toBeVisible({ timeout: 120_000 })
+
+  for (const key of ["members", "entries", "ocrDocs", "exports", "backups", "storageBytes"]) {
+    await expect(page.getByTestId(`usage-${key}`)).toBeVisible()
   }
+  // P6: la cifra derivada viaja con su sello.
+  await expect(page.getByTestId("usage-seal")).toBeVisible()
+
+  // **D9** — sin facturación: ni portal, ni checkout, ni facturas.
+  await expect(page.getByTestId("internal-billing-notice")).toContainText("Modo interno: sin facturación")
+  await expect(page.getByTestId("stripe-portal")).toHaveCount(0)
+  await expect(page.getByTestId("invoices-block")).toHaveCount(0)
+  // Y el acceso es COMPLETO: no hay mora donde no hay precio.
+  await expect(page.getByTestId("plan-block")).toHaveAttribute("data-access-level", "FULL")
+})
+
+test("toda organización nace con el plan ILIMITADO (D9)", async () => {
+  const filas = await withDb(async (client) =>
+    (
+      await client.query<{ plan_code: string; status: string }>(
+        `SELECT plan_code, status FROM subscriptions WHERE organization_id = $1`,
+        [organizationId]
+      )
+    ).rows
+  )
+  expect(filas).toHaveLength(1)
+  expect(filas[0].plan_code).toBe("ILIMITADO")
+  expect(filas[0].status).toBe("ACTIVE")
+})
+
+test("las rutas de Stripe responden 404 con el módulo apagado (D9)", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!)
+  for (const ruta of ["/api/stripe/portal", "/api/stripe/checkout?code=PRO", "/api/stripe/webhook"]) {
+    const metodo = ruta === "/api/stripe/portal" ? "get" : "post"
+    const respuesta = await page.request[metodo](ruta, { failOnStatusCode: false })
+    expect(respuesta.status(), ruta).toBe(404)
+  }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9 · Copia → restaurar en organización NUEVA → verificación PASS (§5.4, O-1/O-2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let restoredOrganizationId: string | null = null
+let backupJobId = ""
+
+test.afterAll(async () => {
+  if (!restoredOrganizationId) return
+  await withDb(async (client) => {
+    await client.query(`DELETE FROM organizations WHERE id = $1`, [restoredOrganizationId])
+  })
 })
 
 test("la pantalla de copias avisa de que restaurar crea una organización nueva", async ({ page, baseURL }) => {
   await open(page, baseURL!, "/settings/backups")
-  const panel = page.getByTestId("backups-panel")
-  const aviso = page.getByTestId("platform-not-deployed")
-  await expect(panel.or(aviso)).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByTestId("backups-panel")).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByTestId("restore-warning")).toContainText("organización nueva")
+})
 
-  // La regla se dice en los dos estados: restaurar NUNCA sobrescribe la
-  // organización actual.
-  if (await panel.isVisible()) {
-    await expect(page.getByTestId("restore-warning")).toContainText("organización nueva")
-    await expect(page.getByTestId("backup-list-empty")).toBeVisible()
-  } else {
-    await expect(aviso).toContainText("organización nueva")
+test("crear una copia deja un ZIP firmado, descargable y con sus tres sellos", async ({ page, baseURL }) => {
+  await open(page, baseURL!, "/settings/backups")
+  await expect(page.getByTestId("backups-panel")).toBeVisible({ timeout: 120_000 })
+
+  await page.getByTestId("backup-create").click()
+
+  // El volcado corre en la misma petición: la fila llega a DONE con su firma.
+  await expect(page.getByTestId("backup-list-empty")).toHaveCount(0, { timeout: 180_000 })
+
+  const job = await withDb(async (client) =>
+    (
+      await client.query<{
+        id: string
+        status: string
+        archive_sha256: string | null
+        signature: string | null
+        ledger_hash: string | null
+        object_key: string | null
+      }>(
+        `SELECT id, status, archive_sha256, signature, ledger_hash, object_key
+           FROM backup_jobs WHERE organization_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [organizationId]
+      )
+    ).rows[0]
+  )
+
+  expect(job, "la copia no se ha encolado").toBeTruthy()
+  expect(job.status).toBe("DONE")
+  // `DONE` exige objeto, manifest y firma: lo impone también un CHECK de M2.
+  expect(job.archive_sha256).toBeTruthy()
+  expect(job.signature).toBeTruthy()
+  expect(job.object_key).toBeTruthy()
+  expect(job.ledger_hash).toBeTruthy()
+  backupJobId = job.id
+})
+
+
+test("restaurar esa copia crea una organización NUEVA y la verificación pasa", async ({ page, baseURL }) => {
+  expect(backupJobId, "hace falta la copia del test anterior").toBeTruthy()
+  await open(page, baseURL!, "/settings/backups")
+  await expect(page.getByTestId("backups-panel")).toBeVisible({ timeout: 120_000 })
+
+  // El ZIP se descarga por la misma ruta que usa el botón de la pantalla, con
+  // la sesión del navegador: si esa ruta no sirviera, el test lo diría aquí.
+  const descarga = await page.request.get(`/settings/backups/data?jobId=${backupJobId}`)
+  expect(descarga.status(), await descarga.text().catch(() => "")).toBe(200)
+  const zip = Buffer.from(await descarga.body())
+  expect(zip.byteLength).toBeGreaterThan(0)
+
+  await page.getByTestId("restore-file").setInputFiles({
+    name: "copia.zip",
+    mimeType: "application/zip",
+    buffer: zip,
+  })
+  await page.getByTestId("restore-reason").fill("Prueba de reproducibilidad P7 del recorrido e2e")
+  await page.getByTestId("restore-submit").click()
+
+  // **Las seis comprobaciones, enfrentadas.** `DONE_UNVERIFIED` es un FAIL, no
+  // un «casi bien» (O-2): el bloque lleva el estado en un atributo para que no
+  // haya que leerlo del texto.
+  const resultado = page.getByTestId("restore-result")
+  await expect(resultado).toBeVisible({ timeout: 240_000 })
+  await expect(resultado.locator("[data-status]")).toHaveAttribute("data-status", "DONE")
+
+  for (const check of ["RECUENTOS", "NUMERACION", "SELLOS_DERIVADOS", "AUDIT_LOG", "SELLOS_Y_CIERRE", "BARRIDO_INVARIANTES"]) {
+    const fila = page.getByTestId(`restore-check-${check}`)
+    if ((await fila.count()) > 0) await expect(fila).toHaveAttribute("data-ok", "true")
   }
+
+  // La organización de origen **no se ha tocado** y la nueva existe.
+  const nuevas = await withDb(async (client) =>
+    (
+      await client.query<{ id: string; name: string }>(
+        `SELECT id, name FROM organizations WHERE name LIKE $1 ORDER BY created_at DESC LIMIT 1`,
+        [`${NOMBRE} — restaurada%`]
+      )
+    ).rows
+  )
+  expect(nuevas).toHaveLength(1)
+  restoredOrganizationId = nuevas[0].id
+  expect(restoredOrganizationId).not.toBe(organizationId)
+
+  // Y la restauración quedó verificada en la organización DESTINO, que es la que
+  // acota su RLS (`restore_jobs.organization_id`).
+  const restore = await withDb(async (client) =>
+    (
+      await client.query<{ status: string; verified: boolean }>(
+        `SELECT status, verified FROM restore_jobs WHERE organization_id = $1`,
+        [restoredOrganizationId]
+      )
+    ).rows[0]
+  )
+  expect(restore.status).toBe("DONE")
+  expect(restore.verified).toBe(true)
 })

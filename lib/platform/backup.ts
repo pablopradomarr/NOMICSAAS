@@ -71,12 +71,29 @@ export function backupInventory(tenantModels: ReadonlySet<string>, meta: readonl
  * Que el criterio sea sintáctico no es una debilidad: es lo que hace que una
  * columna-sello nueva de la épica 68 aparezca aquí sin que nadie se acuerde.
  */
+/**
+ * **No toda columna que acaba en `_hash` es un sello.**
+ *
+ * `invitations.token_hash` es el hash de un **secreto de acceso**, no una huella
+ * derivada del contenido: no se puede recomputar desde los datos y **no debe
+ * viajar igual a la copia** —el mismo enlace de invitación abriría dos
+ * organizaciones distintas—. La restauración lo reemite (ver
+ * `reissueGlobalSecrets` en `models/backups.ts`), así que compararlo byte a byte
+ * contra el origen daría `FAIL` sobre un comportamiento **correcto y deliberado**,
+ * que es la peor clase de invariante: el que castiga hacer lo que hay que hacer.
+ *
+ * Lista cerrada y explícita, como `hash_version`: cualquier columna-sello nueva
+ * entra sola en la comprobación, que es lo que O-1.3 pide.
+ */
+const NO_SON_SELLOS: ReadonlySet<string> = new Set(["invitations.token_hash"])
+
 export function derivedSealColumns(meta: readonly SchemaModel[]): Array<{ table: string; column: string }> {
   const out: Array<{ table: string; column: string }> = []
   for (const model of meta) {
     for (const column of model.columns) {
       if (column.type !== "String") continue
       if (column.column === "hash_version") continue
+      if (NO_SON_SELLOS.has(`${model.table}.${column.column}`)) continue
       if (!/(^|_)(sha256|sha|hash)$/.test(column.column)) continue
       out.push({ table: model.table, column: column.column })
     }
