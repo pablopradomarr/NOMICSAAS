@@ -162,7 +162,94 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "Employee",
   "EmployeeRate",
   "HeadcountSnapshot",
+  // E11 · ola B — almacén, uso derivado y backup
+  // (docs/design/E11-plataforma-saas.md §2.3/§2.4/§2.5). Las CUATRO nacen con
+  // `SELECT app.enforce_tenant_rls('<tabla>')` en M2
+  // (`20260927090000_e11_m2_uso_backups_almacen`): o están aquí o la barrera 1
+  // no las acota y una consulta fuera de `tenantDb` devuelve VACÍO en silencio.
+  //
+  // Y hay una segunda razón, que es la que cierra **I-E11-7**: el inventario del
+  // backup **se DERIVA de este conjunto** (`backupInventory`). Una tabla de
+  // negocio que falte aquí no se acota Y ADEMÁS no se vuelca — que es el fallo
+  // repetido en BUG-E7-1, BUG-E9-5 y BUG-E10-1.
+  "UsageRun",
+  "BackupJob",
+  "RestoreJob",
+  "StoredObject",
+  // E11 · ola C — el asistente de alta (§2.6). Lleva `organization_id` y nace con
+  // `SELECT app.enforce_tenant_rls('onboarding_runs')` en
+  // `20260926090000_e11_onboarding_demo_preferencias`: o está aquí o la barrera 1
+  // no la acota y una consulta fuera de `tenantDb` devuelve VACÍO en silencio.
+  "OnboardingRun",
+  // E11 · ola A — facturación por organización (§2.2, §9.5). Las TRES nacen con
+  // `SELECT app.enforce_tenant_rls('<tabla>')` en M1
+  // (`20260926210000_e11_m1_planes_suscripciones`) y M5
+  // (`20260926240000_e11_m5_facturacion_plataforma`): o están aquí o la barrera 1
+  // no las acota y una consulta fuera de `tenantDb` devuelve VACÍO en silencio.
+  //
+  // Lo que NO está, y es deliberado (§9.5): `plans` y `platform_invoice_series`
+  // son catálogo GLOBAL, y `cron_runs`, `rate_limit_buckets` y
+  // `platform_audit_logs` no llevan `organization_id` — si estuvieran, `tenantDb`
+  // les inyectaría un filtro por una columna inexistente y toda lectura fallaría
+  // (el aviso que ADR-0014 D7 dejó escrito).
+  "Subscription",
+  "SubscriptionEvent",
+  "PlatformInvoice",
 ])
+
+/**
+ * **E11 · T7 (I-E11-7)** — metadatos del esquema, DERIVADOS del cliente generado.
+ *
+ * El inventario del backup y la lista de columnas-sello no se escriben a mano:
+ * se derivan de `TENANT_MODELS` y de esto. Es la decisión que impide repetir por
+ * cuarta vez el mismo fallo (BUG-E7-1, BUG-E9-5, BUG-E10-1: la tabla nueva de la
+ * épica que nadie añadió a la lista).
+ *
+ * Se lee del `runtimeDataModel` del cliente Prisma —la misma fuente con la que
+ * el cliente construye sus consultas—, así que **no puede divergir del esquema**:
+ * si mañana alguien añade `payment_runs` con su `organization_id`, aparece aquí
+ * sin tocar una línea. Se expone desde `lib/db.ts` y se PASA por parámetro a las
+ * funciones puras de `lib/platform/backup.ts`, que no pueden importar el cliente.
+ */
+export type SchemaColumnMeta = { field: string; column: string; type: string; kind: string }
+export type SchemaModelMeta = { model: string; table: string; columns: SchemaColumnMeta[] }
+
+type RuntimeDataModel = {
+  models: Record<
+    string,
+    { dbName?: string | null; fields: Array<{ name: string; dbName?: string | null; type: string; kind: string }> }
+  >
+}
+
+let schemaMetaCache: readonly SchemaModelMeta[] | null = null
+
+/** Camel → snake, como hace Prisma cuando no hay `@map` explícito. */
+function snakeCase(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase()
+}
+
+export function prismaSchemaMeta(): readonly SchemaModelMeta[] {
+  if (schemaMetaCache) return schemaMetaCache
+  const runtime = (prisma as unknown as { _runtimeDataModel?: RuntimeDataModel })._runtimeDataModel
+  if (!runtime?.models) {
+    throw new TenantError("prismaSchemaMeta: el cliente Prisma no expone su modelo de datos")
+  }
+  schemaMetaCache = Object.entries(runtime.models)
+    .map(([model, def]) => ({
+      model,
+      table: def.dbName ?? snakeCase(model),
+      columns: def.fields
+        .filter((field) => field.kind === "scalar" || field.kind === "enum")
+        .map((field) => ({
+          field: field.name,
+          column: field.dbName ?? snakeCase(field.name),
+          type: field.type,
+          kind: field.kind,
+        })),
+    }))
+    .sort((a, b) => (a.model < b.model ? -1 : a.model > b.model ? 1 : 0))
+  return schemaMetaCache
+}
 
 /** Modelos con organizationId nullable: lectura híbrida (org ∪ global), escritura siempre con org. */
 export const TENANT_MODELS_WITH_GLOBAL: ReadonlySet<string> = new Set(["Currency"])

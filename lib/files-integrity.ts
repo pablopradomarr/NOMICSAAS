@@ -93,3 +93,46 @@ export async function sha256OfStoredFile(
     return { error: `no se puede leer (${code ?? (error instanceof Error ? error.message : String(error))})` }
   }
 }
+
+/**
+ * **E11 · T7 (D-11, ADR-0019 D3)** — el sha256 de los bytes, **leídos del
+ * almacén** y, si allí no están, del disco heredado.
+ *
+ * I-E8-2 **no cambia de enunciado**: sigue prometiendo detectar «un documento
+ * alterado bajo los pies del ERP». Lo único que cambia es de dónde se leen los
+ * bytes, y eso ya se **inyecta** desde el arreglo de H-3 de E8
+ * (`readStoredFile`), así que el invariante no se entera.
+ *
+ * El orden importa: primero el almacén, que es la verdad desde E11, y sólo
+ * después el disco, que es lo que queda por migrar. Al revés, una organización
+ * ya migrada seguiría verificándose contra una copia vieja del volumen local y
+ * un fichero alterado EN EL ALMACÉN pasaría desapercibido.
+ *
+ * Nunca lanza: «no se puede leer» es justamente la evidencia que el invariante
+ * tiene que enseñar.
+ */
+export async function sha256OfStoredDocument(
+  organizationId: string,
+  file: { sha256: string; path: string }
+): Promise<{ sha256: string } | { error: string }> {
+  try {
+    const { storage } = await import("@/lib/storage")
+    const { objectKey } = await import("@/lib/storage/keys")
+    const { driver, prefix } = storage()
+    const key = objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256: file.sha256 })
+    const head = await driver.head(key)
+    if (head) {
+      const { createHash: hashOf } = await import("node:crypto")
+      const hash = hashOf("sha256")
+      const stream = await driver.get(key)
+      for await (const chunk of stream) hash.update(chunk as Buffer)
+      return { sha256: hash.digest("hex") }
+    }
+  } catch (error) {
+    // Un almacén mal configurado no puede convertir I-E8-2 en una excepción que
+    // tumbe la pestaña de auditoría: se cae al disco y, si tampoco está, se
+    // devuelve el motivo.
+    if (process.env.NODE_ENV === "development") console.warn("almacén no disponible:", error)
+  }
+  return await sha256OfStoredFile(organizationId, file.path)
+}

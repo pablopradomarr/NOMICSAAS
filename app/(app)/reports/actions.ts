@@ -28,7 +28,7 @@ import { z } from "zod"
 
 import type { ActionState } from "@/lib/actions"
 import { withOrg } from "@/lib/authz"
-import { tenantDb } from "@/lib/db"
+import { tenantDb, tenantTransaction } from "@/lib/db"
 import {
   balanceParamsSchema,
   cashflowParamsSchema,
@@ -55,6 +55,7 @@ import {
   type ReportDiffRow,
   type ReportRunView,
 } from "@/models/reports"
+import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
 import { ReportType, Role } from "@/prisma/client"
 
 const REPORTS_PATH = "/reports"
@@ -213,12 +214,38 @@ export type ExportedReport = {
  */
 export const exportReportAction = withOrg(
   Role.VIEWER,
-  async ({ org }, input: unknown): Promise<ActionState<ExportedReport>> => {
+  async ({ org, user }, input: unknown): Promise<ActionState<ExportedReport>> => {
     const parsed = exportReportSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
     try {
       const run = await getReportRun(tenantDb(org.id), parsed.data.runId)
       if (!run) return { success: false, error: "El informe pedido no existe" }
+
+      /**
+       * **E11 · T13 (§3.5).** Cuota DURA de `maxExportsMonth`, y la traza que la
+       * hace DERIVABLE: el uso no lleva contador, así que `exports` se cuenta
+       * sobre el `AuditLog` (`EXPORT_REPORT`). Un informe visto en pantalla no
+       * es una exportación; llevarse el fichero, sí. Las dos cosas —guardián y
+       * traza— van en la MISMA transacción, antes de generar un solo byte.
+       */
+      try {
+        await tenantTransaction(org.id, async (tx) => {
+          await assertWithinLimit(tx, "maxExportsMonth", BigInt(1), { refDate: new Date() })
+          await tx.auditLog.create({
+            data: {
+              organizationId: org.id,
+              userId: user.id,
+              entity: "ReportRun",
+              entityId: run.id,
+              action: "EXPORT_REPORT",
+              after: { type: run.type, format: parsed.data.format },
+            },
+          })
+        })
+      } catch (error) {
+        if (error instanceof LimitExceededError) return { success: false, error: error.message }
+        throw error
+      }
       const exported = await exportRun(
         {
           id: run.id,

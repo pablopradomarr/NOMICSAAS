@@ -5,6 +5,10 @@ import path from "path"
 
 const tmpRoot = await mkdtemp(path.join(tmpdir(), "th-uploads-"))
 process.env.UPLOAD_PATH = tmpRoot
+// E11 · T7: la ingesta escribe además en el ALMACÉN. En los tests el almacén es
+// un `LocalDriver` sobre el mismo directorio temporal — nunca una red.
+process.env.STORAGE_DRIVER = "local"
+process.env.STORAGE_LOCAL_ROOT = path.join(tmpRoot, "_store")
 process.env.SELF_HOSTED_MODE = "true"
 
 const created: Record<string, unknown>[] = []
@@ -35,7 +39,19 @@ const organization = {
   storageUsed: 0,
   storageLimit: -1,
 } as Record<string, unknown>
-const ctx = { db: {}, organization, user } as unknown as Parameters<typeof ingestUnsortedFile>[0]
+// E11 · T7 — el `db` del contexto necesita el delegado de `StoredObject`: la
+// ingesta registra la localización de los bytes además de escribirlos.
+const storedObjects: Record<string, unknown>[] = []
+const db = {
+  storedObject: {
+    findFirst: async () => null,
+    create: async ({ data }: { data: Record<string, unknown> }) => {
+      storedObjects.push(data)
+      return data
+    },
+  },
+}
+const ctx = { db, organization, user } as unknown as Parameters<typeof ingestUnsortedFile>[0]
 
 afterAll(async () => {
   await rm(tmpRoot, { recursive: true, force: true })

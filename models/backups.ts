@@ -280,3 +280,1237 @@ function preprocessRowData(row: BackupRow): BackupRow {
 
   return processedRow
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// E11 · T10 — BACKUP Y RESTAURACIÓN, FORMATO 2.0
+// (docs/design/E11-plataforma-saas.md §5, ADR-0019 D2, observaciones O-1 y O-2)
+//
+// Todo lo que hay POR ENCIMA de esta línea es el backup heredado de TaxHacker
+// (G-15): nueve tablas de las sesenta y seis, ninguna contable, sin manifest, sin
+// firma y con un `catch` por fila que sumaba igual al recuento. **Está obsoleto**
+// y sigue aquí sólo mientras `app/(app)/settings/backups/**` —que es de la ola C—
+// lo consume; se retira con T22, en la misma épica.
+//
+// Lo de abajo es el sustituto. Sus cuatro decisiones:
+//
+//   1. **El inventario se DERIVA de `TENANT_MODELS`** (`backupInventory`), nunca
+//      se escribe a mano. Es lo que impide repetir BUG-E7-1, BUG-E9-5 y
+//      BUG-E10-1 por cuarta vez, y lo que comprueba I-E11-7.
+//   2. **Una sola fila rechazada ABORTA el trabajo entero**, con tabla, número de
+//      línea y motivo. Se acabó el `catch` que suma igual.
+//   3. **Restaurar es SIEMPRE a organización nueva.** La de origen no se toca,
+//      nunca; el usuario compara y decide.
+//   4. **`DONE` exige las SEIS comprobaciones de §5.4.** Si falta una,
+//      `DONE_UNVERIFIED` (O-2) con la organización conservada y marcada: borrarla
+//      sería destruir la evidencia.
+// ═════════════════════════════════════════════════════════════════════════════
+
+import JSZip from "jszip"
+import { createHash, randomUUID } from "node:crypto"
+import { TENANT_MODELS, prismaSchemaMeta, tenantTransaction, type TenantTransactionClient } from "@/lib/db"
+import {
+  BACKUP_FORMAT_VERSION,
+  auditLogCanonicalSha256,
+  backupInventory,
+  compareCounts,
+  decodeRow,
+  derivedSealColumns,
+  encodeRow,
+  isVerified,
+  manifestSha256,
+  numberingOf,
+  restoreStatusOf,
+  sealColumnSha256,
+  signManifest,
+  verifyManifest,
+  type BackupManifest,
+  type CheckResult,
+  type RestoreVerification,
+} from "@/lib/platform/backup"
+import { computeLedgerHash } from "@/models/ledger"
+import { currentGitSha } from "@/models/reports"
+import { putObject } from "@/models/storage"
+import { storage } from "@/lib/storage"
+import { backupConsumesQuota } from "@/lib/platform/limits"
+import type { BackupTrigger } from "@/prisma/client"
+
+const sha256hex = (input: string | Buffer): string => createHash("sha256").update(input).digest("hex")
+
+/** Versión del esquema que viaja en el manifest: la última migración aplicada. */
+async function schemaVersionOf(tx: TenantTransactionClient): Promise<string> {
+  const rows = await tx.$queryRaw<{ migration_name: string }[]>`
+    SELECT migration_name FROM _prisma_migrations
+     WHERE finished_at IS NOT NULL ORDER BY migration_name DESC LIMIT 1`
+  return (rows[0]?.migration_name ?? "desconocida").slice(0, 16)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sellos del contenido
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ContentSeals = { ledgerHash: string; analyticsKey: string; budgetHash: string | null }
+
+/**
+ * Los tres sellos, calculados **en la base** con la misma forma canónica en
+ * origen y en destino. Es lo que hace comparables las dos organizaciones: si se
+ * calcularan por caminos distintos, la comprobación 5 no probaría nada.
+ *
+ * `analyticsKey` reproduce `canonicalAnalyticsForm` de `lib/analytics/hash.ts`
+ * —`(entryId, lineNo, proyecto, CECO, línea de negocio, tipo analítico)`, TSV,
+ * `∅` para nulos, ordenado por `(entryId, lineNo)`— pero sobre las **claves
+ * naturales** (códigos) y no los uuid: una restauración crea filas nuevas con
+ * uuid nuevos, y un sello que dependiera de ellos no podría coincidir jamás.
+ */
+export async function computeContentSeals(tx: TenantTransactionClient): Promise<ContentSeals> {
+  const organizationId = tx.$organizationId
+  const ledgerHash = await computeLedgerHash(tx, {})
+
+  const analytics = await tx.$queryRaw<{ hash: string }[]>`
+    SELECT encode(sha256(convert_to(COALESCE(string_agg(fila, E'\n' ORDER BY entry_date, entry_number, line_no), ''), 'UTF8')), 'hex') AS hash
+      FROM (
+        SELECT l.entry_date, e.entry_number, l.line_no,
+               concat_ws(E'\t',
+                 to_char(l.entry_date, 'YYYY-MM-DD'),
+                 e.entry_number::text,
+                 l.line_no::text,
+                 COALESCE(p.code, '_'),
+                 COALESCE(cc.code, '_'),
+                 COALESCE(bl.code, '_'),
+                 COALESCE(l.analytic_type::text, '_')
+               ) AS fila
+          FROM journal_lines l
+          JOIN journal_entries e ON e.id = l.entry_id AND e.organization_id = l.organization_id
+          LEFT JOIN projects p       ON p.id  = l.project_id
+          LEFT JOIN cost_centers cc  ON cc.id = l.cost_center_id
+          LEFT JOIN business_lines bl ON bl.id = l.business_line_id
+         WHERE l.organization_id = ${organizationId}::uuid
+      ) AS canonico`
+
+  const budget = await tx.$queryRaw<{ hash: string | null }[]>`
+    SELECT encode(sha256(convert_to(COALESCE(string_agg(b.budget_hash, E'\n' ORDER BY b.budget_hash), ''), 'UTF8')), 'hex') AS hash
+      FROM budgets b
+     WHERE b.organization_id = ${organizationId}::uuid AND b.budget_hash IS NOT NULL`
+
+  const budgetRows = await tx.budget.count({ where: { budgetHash: { not: null } } })
+
+  return {
+    ledgerHash,
+    analyticsKey: analytics[0]?.hash ?? sha256hex(""),
+    budgetHash: budgetRows === 0 ? null : (budget[0]?.hash ?? null),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Volcado
+// ─────────────────────────────────────────────────────────────────────────────
+
+type TableDump = { name: string; rows: number; jsonl: string; sha256: string; body: string }
+
+/** Nombre de la columna de tenant. Se quita del volcado: lo inyecta el destino. */
+const TENANT_COLUMN = "organization_id"
+
+async function dumpTable(tx: TenantTransactionClient, table: string): Promise<TableDump> {
+  const rows = await tx.$queryRawUnsafe<Record<string, unknown>[]>(
+    `SELECT * FROM "${table}" WHERE ${TENANT_COLUMN} = $1::uuid ORDER BY id`,
+    tx.$organizationId
+  )
+  const lines = rows.map((row) => {
+    const copy = { ...row }
+    // **`organization_id` no se vuelca**: así un backup no puede aterrizar en
+    // otra organización por accidente. Lo inyecta `tenantDb` al restaurar.
+    delete copy[TENANT_COLUMN]
+    return encodeRow(copy)
+  })
+  const body = lines.join("\n")
+  return { name: table, rows: rows.length, jsonl: `data/${table}.jsonl`, sha256: sha256hex(body), body }
+}
+
+/**
+ * **O-1.5** — `exchange_rates` es tabla GLOBAL: no está en `TENANT_MODELS` y por
+ * tanto **no saldría en el backup**. Sin ella el destino no reproduce
+ * `convertedTotal` (I-E8-5). Se vuelcan **sólo las referenciadas** por lo que se
+ * ha volcado, y las referencias se descubren del propio esquema: cualquier
+ * columna que se llame `exchange_rate_id`.
+ */
+async function dumpReferencedExchangeRates(tx: TenantTransactionClient): Promise<{ rows: number; sha256: string; body: string }> {
+  const meta = prismaSchemaMeta()
+  const referencing = meta
+    .filter((model) => TENANT_MODELS.has(model.model))
+    .flatMap((model) => model.columns.filter((c) => c.column === "exchange_rate_id").map(() => model.table))
+
+  const ids = new Set<string>()
+  for (const table of referencing) {
+    const found = await tx.$queryRawUnsafe<{ exchange_rate_id: string | null }[]>(
+      `SELECT DISTINCT exchange_rate_id FROM "${table}" WHERE ${TENANT_COLUMN} = $1::uuid AND exchange_rate_id IS NOT NULL`,
+      tx.$organizationId
+    )
+    for (const row of found) if (row.exchange_rate_id) ids.add(row.exchange_rate_id)
+  }
+
+  if (ids.size === 0) return { rows: 0, sha256: sha256hex(""), body: "" }
+  const rates = await tx.$queryRawUnsafe<Record<string, unknown>[]>(
+    `SELECT * FROM "exchange_rates" WHERE id = ANY($1::uuid[]) ORDER BY id`,
+    [...ids]
+  )
+  const body = rates.map((row) => encodeRow(row)).join("\n")
+  return { rows: rates.length, sha256: sha256hex(body), body }
+}
+
+/** Numeración por ejercicio: huecos y duplicados, que los hashes no cubren (O-1.2). */
+async function dumpNumbering(tx: TenantTransactionClient): Promise<BackupManifest["numbering"]> {
+  const years = await tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } })
+  const out: BackupManifest["numbering"] = []
+  for (const year of years) {
+    const rows = await tx.journalEntry.findMany({
+      where: { fiscalYearId: year.id },
+      select: { entryNumber: true },
+    })
+    const numbering = numberingOf(rows.map((row) => row.entryNumber))
+    out.push({
+      fiscalYearId: year.id,
+      fiscalYearCode: year.code,
+      maxEntryNumber: numbering.max,
+      count: numbering.count,
+      gaps: numbering.gaps,
+      duplicates: numbering.duplicates,
+    })
+  }
+  return out
+}
+
+/** **O-1.3** — el sha256 de cada columna-sello, sobre la lista derivada del código. */
+async function dumpDerivedSeals(tx: TenantTransactionClient, tables: readonly string[]): Promise<BackupManifest["derivedSeals"]> {
+  const wanted = new Set(tables)
+  const out: BackupManifest["derivedSeals"] = []
+  for (const { table, column } of derivedSealColumns(prismaSchemaMeta())) {
+    if (!wanted.has(table)) continue
+    const rows = await tx.$queryRawUnsafe<{ v: string | null }[]>(
+      `SELECT "${column}" AS v FROM "${table}" WHERE ${TENANT_COLUMN} = $1::uuid`,
+      tx.$organizationId
+    )
+    out.push({ table, column, rows: rows.length, sha256: sealColumnSha256(rows.map((row) => row.v)) })
+  }
+  return out
+}
+
+/** **O-1.4** — quién forzó qué y con qué motivo. Sin esto se pierde. */
+async function dumpAuditLog(tx: TenantTransactionClient): Promise<{ rows: number; canonicalSha256: string }> {
+  const rows = await tx.auditLog.findMany({ select: { entity: true, entityId: true, action: true, reason: true, ts: true } })
+  return { rows: rows.length, canonicalSha256: auditLogCanonicalSha256(rows) }
+}
+
+async function dumpClosing(tx: TenantTransactionClient): Promise<BackupManifest["closing"]> {
+  const years = await tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } })
+  const closingRuns = await tx.closingRun.count()
+  return {
+    fiscalYears: years.map((year) => ({
+      code: year.code,
+      status: year.status,
+      closedAt: year.closedAt ? year.closedAt.toISOString() : null,
+    })),
+    closingRuns,
+  }
+}
+
+export type BackupResult = {
+  manifest: BackupManifest
+  manifestSha: string
+  signature: string
+  archive: Buffer
+}
+
+export type BuildBackupOptions = {
+  refDate: Date
+  signingKey: Buffer
+  signingKeyId: string
+  /** Bytes de cada `File`. Se inyecta para poder probar sin almacén de red. */
+  readFileBytes?: (file: { id: string; sha256: string; path: string }) => Promise<Buffer | null>
+}
+
+/**
+ * Produce el ZIP 2.0 completo.
+ *
+ * **Los sellos se calculan al principio y se recalculan al final.** Si difieren,
+ * el diario cambió durante el volcado: se falla con `LEDGER_MOVED_DURING_BACKUP`
+ * y se reencola. *Un backup de un estado que nunca existió es peor que no tener
+ * backup.*
+ */
+export async function buildBackupArchive(organizationId: string, options: BuildBackupOptions): Promise<BackupResult> {
+  return await tenantTransaction(
+    organizationId,
+    async (tx) => {
+      const meta = prismaSchemaMeta()
+      const inventory = backupInventory(TENANT_MODELS, meta)
+      const sealsBefore = await computeContentSeals(tx)
+
+      const organization = await tx.organization.findFirst({ where: { id: organizationId } })
+      if (!organization) throw new Error(`organización desconocida: ${organizationId}`)
+
+      const dumps: TableDump[] = []
+      for (const table of inventory) dumps.push(await dumpTable(tx, table))
+
+      const exchangeRates = await dumpReferencedExchangeRates(tx)
+      const numbering = await dumpNumbering(tx)
+      const series = await tx.invoiceSeries.findMany({ orderBy: { code: "asc" } })
+      const derivedSeals = await dumpDerivedSeals(tx, inventory)
+      const auditLog = await dumpAuditLog(tx)
+      const closing = await dumpClosing(tx)
+
+      // Ficheros: los bytes se leen del almacén por su sha256 y se guardan bajo
+      // `files/<sha[0:2]>/<sha>`. Un `File` sin bytes NO se calla: entra en el
+      // manifest con tamaño -1 y la comprobación 6 lo enseña.
+      const files = await tx.file.findMany({ select: { id: true, sha256: true, path: true } })
+      const read = options.readFileBytes ?? defaultReadFileBytes(organizationId)
+      const fileEntries: BackupManifest["files"] = []
+      const fileBodies = new Map<string, Buffer>()
+      for (const file of files) {
+        if (fileBodies.has(file.sha256)) continue
+        const bytes = await read(file)
+        if (!bytes) {
+          fileEntries.push({ path: `files/${file.sha256.slice(0, 2)}/${file.sha256}`, sha256: file.sha256, sizeBytes: -1 })
+          continue
+        }
+        const actual = sha256hex(bytes)
+        if (actual !== file.sha256) {
+          throw new Error(`el fichero ${file.id} tiene sha256 ${actual} y el registro dice ${file.sha256}`)
+        }
+        fileBodies.set(file.sha256, bytes)
+        fileEntries.push({ path: `files/${file.sha256.slice(0, 2)}/${file.sha256}`, sha256: file.sha256, sizeBytes: bytes.length })
+      }
+
+      const sealsAfter = await computeContentSeals(tx)
+      if (
+        sealsAfter.ledgerHash !== sealsBefore.ledgerHash ||
+        sealsAfter.analyticsKey !== sealsBefore.analyticsKey ||
+        sealsAfter.budgetHash !== sealsBefore.budgetHash
+      ) {
+        throw new Error("LEDGER_MOVED_DURING_BACKUP")
+      }
+
+      const manifest: BackupManifest = {
+        formatVersion: BACKUP_FORMAT_VERSION,
+        schemaVersion: await schemaVersionOf(tx),
+        gitSha: currentGitSha().slice(0, 40),
+        organization: {
+          id: organization.id,
+          slug: organization.slug,
+          baseCurrency: organization.baseCurrency,
+          timezone: organization.timezone,
+          pgcVariant: organization.pgcVariant,
+        },
+        createdAt: options.refDate.toISOString(),
+        seals: sealsAfter,
+        numbering,
+        invoiceSeries: series.map((row) => ({ code: row.code, kind: row.kind, lastNumber: row.nextNumber - 1 })),
+        derivedSeals,
+        auditLog,
+        tables: dumps.map(({ name, rows, jsonl, sha256 }) => ({ name, rows, jsonl, sha256 })),
+        globalRefs: { exchangeRates: { rows: exchangeRates.rows, sha256: exchangeRates.sha256 } },
+        files: fileEntries,
+        closing,
+        totals: {
+          tables: dumps.length,
+          rows: dumps.reduce((sum, dump) => sum + dump.rows, 0),
+          files: fileEntries.length,
+          bytes: fileEntries.reduce((sum, entry) => sum + Math.max(entry.sizeBytes, 0), 0),
+        },
+      }
+
+      const manifestSha = manifestSha256(manifest)
+      const signature = signManifest(manifestSha, options.signingKey, options.signingKeyId)
+
+      const zip = new JSZip()
+      zip.file("manifest.json", JSON.stringify(manifest, null, 2))
+      zip.file("manifest.sha256", manifestSha)
+      zip.file("signature.txt", signature)
+      zip.file("README.txt", README_ES)
+      for (const dump of dumps) zip.file(dump.jsonl, dump.body)
+      zip.file("global/exchange_rates.jsonl", exchangeRates.body)
+      zip.file(
+        "seals.json",
+        JSON.stringify({ seals: sealsAfter, numbering, invoiceSeries: manifest.invoiceSeries, derivedSeals, auditLog, closing }, null, 2)
+      )
+      for (const [sha, body] of fileBodies) zip.file(`files/${sha.slice(0, 2)}/${sha}`, body)
+
+      const archive = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
+      return { manifest, manifestSha, signature, archive }
+    },
+    { timeout: 120_000, maxWait: 10_000 }
+  )
+}
+
+/** Lee los bytes del almacén y, si no están, del disco heredado. */
+function defaultReadFileBytes(organizationId: string) {
+  return async (file: { sha256: string; path: string }): Promise<Buffer | null> => {
+    const { driver, prefix } = storage()
+    const { objectKey } = await import("@/lib/storage/keys")
+    try {
+      return await driver.getBuffer(objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256: file.sha256 }))
+    } catch {
+      // Almacén heredado en disco: mientras la migración de T7 no haya corrido.
+      try {
+        const { readFile } = await import("node:fs/promises")
+        const { storedFilePath } = await import("@/lib/files-integrity")
+        return await readFile(storedFilePath(organizationId, file.path))
+      } catch {
+        return null
+      }
+    }
+  }
+}
+
+const README_ES = `COPIA COMPLETA DE TUS LIBROS — formato 2.0
+
+Este archivo contiene TODOS los datos de tu organización en el ERP: el libro
+diario completo, la analítica, los presupuestos, los documentos originales con su
+sha256 y el registro de auditoría.
+
+  manifest.json    Inventario firmado: tablas, recuentos, sellos y sha256 de cada
+                   parte. Se verifica ANTES de descomprimir nada.
+  signature.txt    Firma HMAC-SHA256 del manifest, con el identificador de clave.
+  data/*.jsonl     Una fila por línea, con los tipos declarados explícitamente.
+  global/          Tasas de cambio referenciadas (son datos públicos del BCE).
+  files/           Los documentos, nombrados por su sha256.
+  seals.json       Sellos, numeración por ejercicio, series y estado del cierre.
+
+CÓMO SE RESTAURA. Desde Configuración → Copias de seguridad, subiendo este ZIP.
+La restauración crea SIEMPRE una organización NUEVA y verifica seis cosas antes
+de darla por buena: recuentos, numeración sin huecos, sellos derivados, registro
+de auditoría, sellos de contenido con el estado del cierre y el barrido completo
+de invariantes. Si alguna falla, la organización se conserva y se marca como NO
+VERIFICADA: no se borra nada.
+
+CONSERVACIÓN. El art. 30 del Código de Comercio (seis años; diez con bases
+imponibles negativas, art. 26.5 LIS) obliga sobre los LIBROS y los
+JUSTIFICANTES, que viven en la base de datos y en el almacén de documentos. NO
+obliga sobre estos ZIP: que una copia caduque no significa que se haya destruido
+documentación.
+`
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Restauración — SIEMPRE a organización nueva (§5.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Número de línea del archivo, oculto en la fila para el mensaje de rechazo. */
+const LINE_NUMBER = Symbol("lineNumber")
+
+export class RestoreAbort extends Error {
+  constructor(
+    readonly table: string,
+    readonly line: number,
+    readonly motivo: string
+  ) {
+    super(`fila rechazada en ${table}, línea ${line}: ${motivo}`)
+    this.name = "RestoreAbort"
+  }
+}
+
+/**
+ * Orden de inserción **derivado de las FK reales de la base**, no de una lista
+ * que alguien tenga que mantener. Un ciclo (autorreferencia, como
+ * `journal_entries.reverses_entry_id`) no rompe el orden: las autorreferencias
+ * se ignoran para el grafo y la FK se satisface porque el padre va en el mismo
+ * lote, insertado antes por el `ORDER BY id` del volcado… y si no, la fila se
+ * rechaza y el trabajo aborta, que es lo correcto.
+ */
+export async function restoreOrder(tx: TenantTransactionClient, tables: readonly string[]): Promise<string[]> {
+  const edges = await tx.$queryRaw<{ child: string; parent: string }[]>`
+    SELECT c.conrelid::regclass::text AS child, c.confrelid::regclass::text AS parent
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace`
+  const wanted = new Set(tables)
+  const parents = new Map<string, Set<string>>(tables.map((t) => [t, new Set<string>()]))
+  for (const edge of edges) {
+    const child = edge.child.replace(/^public\./, "").replace(/"/g, "")
+    const parent = edge.parent.replace(/^public\./, "").replace(/"/g, "")
+    if (child === parent) continue
+    if (!wanted.has(child) || !wanted.has(parent)) continue
+    parents.get(child)!.add(parent)
+  }
+  const out: string[] = []
+  const done = new Set<string>()
+  // Kahn con desempate alfabético: el orden es DETERMINISTA, que es lo que hace
+  // reproducible una restauración y comparable un fallo entre dos ejecuciones.
+  while (out.length < tables.length) {
+    const ready = [...wanted].filter((t) => !done.has(t) && [...parents.get(t)!].every((p) => done.has(p))).sort()
+    if (ready.length === 0) {
+      // Ciclo entre tablas distintas: se rompe por orden alfabético y se avisa.
+      const rest = [...wanted].filter((t) => !done.has(t)).sort()
+      for (const t of rest) {
+        out.push(t)
+        done.add(t)
+      }
+      break
+    }
+    for (const t of ready) {
+      out.push(t)
+      done.add(t)
+    }
+  }
+  return out
+}
+
+/**
+ * FK **de una tabla consigo misma** (`accounts.parent_code`,
+ * `journal_entries.reverses_entry_id`, `budgets.superseded_by_id`…). El volcado
+ * sale ordenado por `id`, que no tiene por qué respetar la jerarquía, así que
+ * las filas de esas tablas se reordenan antes de insertar: el padre primero.
+ *
+ * Se leen de `pg_constraint`, no de una lista: una autorreferencia nueva en la
+ * épica 68 se respeta sola.
+ */
+export type SelfReference = { from: string[]; to: string[] }
+
+/**
+ * Columnas que son **FK de verdad**, leídas de `pg_constraint`. La reasignación
+ * de identificadores se limita a ellas y a `id`: remapear por el nombre de la
+ * columna («acaba en `_id`, luego es una referencia») sería adivinar, que es
+ * justo lo que este formato no hace. `audit_logs.entity_id`, por ejemplo, es un
+ * varchar libre y **no** se toca: el libro de auditoría cuenta lo que pasó en la
+ * organización de ORIGEN, y la restaurada es una copia, no su continuación.
+ */
+export async function foreignKeyColumns(tx: TenantTransactionClient): Promise<Map<string, Set<string>>> {
+  const rows = await tx.$queryRaw<{ table_name: string; column_name: string }[]>`
+    SELECT c.conrelid::regclass::text AS table_name, a.attname::text AS column_name
+      FROM pg_constraint c
+      JOIN unnest(c.conkey) AS k(attnum) ON true
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+     WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace`
+  const out = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const table = row.table_name.replace(/^public\./, "").replace(/"/g, "")
+    const set = out.get(table) ?? new Set<string>()
+    set.add(row.column_name)
+    out.set(table, set)
+  }
+  return out
+}
+
+export async function selfReferences(tx: TenantTransactionClient): Promise<Map<string, SelfReference[]>> {
+  const rows = await tx.$queryRaw<{ table_name: string; from_cols: string[]; to_cols: string[] }[]>`
+    SELECT c.conrelid::regclass::text AS table_name,
+           (SELECT array_agg(a.attname::text ORDER BY x.ord)
+              FROM unnest(c.conkey) WITH ORDINALITY AS x(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum) AS from_cols,
+           (SELECT array_agg(a.attname::text ORDER BY x.ord)
+              FROM unnest(c.confkey) WITH ORDINALITY AS x(attnum, ord)
+              JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = x.attnum) AS to_cols
+      FROM pg_constraint c
+     WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace AND c.conrelid = c.confrelid`
+  const out = new Map<string, SelfReference[]>()
+  for (const row of rows) {
+    const table = row.table_name.replace(/^public\./, "").replace(/"/g, "")
+    const list = out.get(table) ?? []
+    list.push({ from: row.from_cols, to: row.to_cols })
+    out.set(table, list)
+  }
+  return out
+}
+
+/**
+ * Orden topológico de las filas de UNA tabla con autorreferencias. Una fila
+ * cuyo padre no esté en el archivo (o sea nulo) va primero; un ciclo —que el
+ * esquema no admite pero la aritmética sí— se rompe por orden estable y la FK
+ * decidirá, que es lo correcto: si de verdad no cuadra, la fila se rechaza y el
+ * trabajo aborta.
+ */
+export function sortRowsBySelfReference(
+  rows: readonly Record<string, unknown>[],
+  refs: readonly SelfReference[]
+): Record<string, unknown>[] {
+  if (refs.length === 0) return [...rows]
+  const keyOf = (row: Record<string, unknown>, columns: string[]): string | null => {
+    const parts = columns.map((column) => row[column])
+    if (parts.some((part) => part === null || part === undefined)) return null
+    return parts.map((part) => String(part)).join("\u0000")
+  }
+  const present = new Map<string, number>()
+  rows.forEach((row, index) => {
+    for (const ref of refs) {
+      const key = keyOf(row, ref.to)
+      if (key !== null) present.set(`${ref.to.join(",")}|${key}`, index)
+    }
+  })
+  const out: Record<string, unknown>[] = []
+  const state = new Array<0 | 1 | 2>(rows.length).fill(0)
+  const visit = (index: number): void => {
+    if (state[index] !== 0) return
+    state[index] = 1
+    for (const ref of refs) {
+      const parentKey = keyOf(rows[index], ref.from)
+      if (parentKey === null) continue
+      const parent = present.get(`${ref.to.join(",")}|${parentKey}`)
+      if (parent !== undefined && parent !== index && state[parent] === 0) visit(parent)
+    }
+    state[index] = 2
+    out.push(rows[index])
+  }
+  for (let index = 0; index < rows.length; index += 1) visit(index)
+  return out
+}
+
+export type RestoreOptions = {
+  archive: Buffer
+  targetOrganizationId: string
+  backupJobId?: string | null
+  requestedById?: string | null
+  refDate: Date
+  /** Claves de firma conocidas, por `keyId`. Una firma sin clave es un rechazo. */
+  keys: ReadonlyMap<string, Buffer>
+  /** Escribe los bytes restaurados. Por defecto, el almacén configurado. */
+  writeFileBytes?: (sha256: string, bytes: Buffer) => Promise<void>
+}
+
+export type RestoreOutcome = {
+  status: "DONE" | "DONE_UNVERIFIED" | "FAILED"
+  verification: RestoreVerification | null
+  rejected: { table: string; line: number; motivo: string } | null
+  error: string | null
+}
+
+/**
+ * Restaura el ZIP dentro de una organización **ya creada y vacía**.
+ *
+ * El orden es el de §5.4 y no es negociable:
+ *   2. firma y manifest **antes de descomprimir un byte**;
+ *   4. tabla por tabla en orden de FK, **abortando a la primera fila rechazada**;
+ *   5. las `exchange_rates` referenciadas;
+ *   6. los ficheros, **verificando el sha256 de cada uno**;
+ *   7. las **seis** comprobaciones;
+ *   8. `DONE` sólo con las seis en verde; si no, `DONE_UNVERIFIED` (O-2).
+ */
+export async function restoreBackupIntoOrganization(options: RestoreOptions): Promise<RestoreOutcome> {
+  const zip = await JSZip.loadAsync(options.archive)
+
+  const manifestRaw = await zip.file("manifest.json")?.async("string")
+  const declaredSha = (await zip.file("manifest.sha256")?.async("string"))?.trim()
+  const signature = (await zip.file("signature.txt")?.async("string"))?.trim()
+  if (!manifestRaw || !declaredSha || !signature) {
+    return { status: "FAILED", verification: null, rejected: null, error: "el archivo no lleva manifest, sha o firma" }
+  }
+  const manifest = JSON.parse(manifestRaw) as BackupManifest
+  const verdict = verifyManifest(manifest, declaredSha, signature, options.keys)
+  if (!verdict.ok) {
+    return { status: "FAILED", verification: null, rejected: null, error: `${verdict.reason}: ${verdict.detail}` }
+  }
+
+  let rejected: RestoreOutcome["rejected"] = null
+  const target = options.targetOrganizationId
+
+  try {
+    await tenantTransaction(
+      target,
+      async (tx) => {
+        const tables = manifest.tables.map((table) => table.name)
+        const order = await restoreOrder(tx, tables)
+        const selfRefs = await selfReferences(tx)
+        const fkByTable = await foreignKeyColumns(tx)
+        const byName = new Map(manifest.tables.map((table) => [table.name, table] as const))
+
+        /**
+         * **La reasignación de identificadores, y por qué es obligatoria.**
+         *
+         * La restauración va SIEMPRE a una organización nueva, pero **en la
+         * misma base**, y todas las claves primarias del esquema son `id` uuid
+         * global —no `(organization_id, id)`—. Conservar los ids del origen
+         * chocaría contra su propia fila en cuanto la organización de origen
+         * siga viva, que es el caso normal: el usuario compara las dos.
+         *
+         * Se reasigna en dos pasadas: primero se recogen TODOS los ids del
+         * archivo y se les asigna uno nuevo; después se insertan las filas
+         * traduciendo `id` y toda columna `*_id` que apunte a algo del propio
+         * archivo. Las que apuntan fuera —`user_id`, `posted_by_id`,
+         * `exchange_rate_id`— no están en el mapa y pasan intactas, que es
+         * justamente lo que se quiere.
+         *
+         * Esto NO afecta a los sellos comparables: `ledgerHash` y el analítico
+         * están definidos **sin uuid** precisamente por esto (ADR-0011), y los
+         * sellos de FILA que sí los llevan se vuelven a sellar más abajo.
+         */
+        const remap = new Map<string, string>()
+        for (const entry of manifest.tables) {
+          const body = await zip.file(entry.jsonl)?.async("string")
+          if (body === undefined) throw new RestoreAbort(entry.name, 0, "falta el fichero de datos en el archivo")
+          if (body === "") continue
+          for (const line of body.split("\n")) {
+            const id = (JSON.parse(line) as Record<string, { v: unknown }>).id?.v
+            if (typeof id === "string") remap.set(id, randomUUID())
+          }
+        }
+
+        for (const table of order) {
+          const entry = byName.get(table)
+          if (!entry) continue
+          const body = await zip.file(entry.jsonl)?.async("string")
+          if (body === undefined) throw new RestoreAbort(table, 0, "falta el fichero de datos en el archivo")
+          if (sha256hex(body) !== entry.sha256) {
+            throw new RestoreAbort(table, 0, "el sha256 del fichero de datos no coincide con el manifest")
+          }
+          const lines = body === "" ? [] : body.split("\n")
+          if (lines.length !== entry.rows) {
+            throw new RestoreAbort(table, lines.length, `el manifest declara ${entry.rows} filas y hay ${lines.length}`)
+          }
+          const decoded = lines.map((line, position) => {
+            const row = applyRemap(decodeRow(line), remap, fkByTable.get(table) ?? new Set())
+            row[TENANT_COLUMN] = target
+            // El número de LÍNEA del archivo viaja con la fila: si se reordena
+            // por la jerarquía, el motivo del rechazo tiene que seguir señalando
+            // la línea de verdad y no la posición de inserción.
+            Object.defineProperty(row, LINE_NUMBER, { value: position + 1, enumerable: false })
+            return row
+          })
+          const ordered = sortRowsBySelfReference(decoded, selfRefs.get(table) ?? [])
+
+          /**
+           * **La única excepción declarada: la membresía de quien restaura.**
+           *
+           * Una organización no existe sin dueño, así que la de destino nace ya
+           * con la membresía de quien pidió la restauración. Si esa persona
+           * también era miembro del origen —el caso normal: es su backup—, la
+           * fila del archivo chocaría contra la suya. Se omite **esa** fila, y
+           * sólo ésa: cualquier otra colisión sigue abortando el trabajo.
+           */
+          const alreadyMember =
+            table === "memberships"
+              ? new Set(
+                  (await tx.membership.findMany({ select: { userId: true } })).map((membership) => membership.userId)
+                )
+              : new Set<string>()
+
+          for (let index = 0; index < ordered.length; index += 1) {
+            const row = ordered[index]
+            if (table === "memberships" && alreadyMember.has(String(row.user_id))) continue
+            try {
+              await insertRow(tx, table, row)
+            } catch (error) {
+              // **Una sola fila rechazada aborta el trabajo entero.** Se acabó
+              // el `catch` que sumaba igual a `insertedCount` (G-15).
+              throw new RestoreAbort(
+                table,
+                (row as { [LINE_NUMBER]?: number })[LINE_NUMBER] ?? index + 1,
+                error instanceof Error ? error.message : String(error)
+              )
+            }
+          }
+        }
+
+        /**
+         * **Re-sellado de los sellos DE FILA** (I-E3-7, ADR-0011). `entry_hash`
+         * lleva todas las columnas del asiento, uuid incluidos: su oficio es
+         * detectar cualquier mutación, no ser comparable entre organizaciones.
+         * Con los ids reasignados hay que volver a sellarlo, y el trigger
+         * `journal_entries_entry_hash_guard` sólo deja escribir el sello
+         * recalculado — de modo que si esto estuviera mal, la base lo impediría.
+         */
+        const resealed = tx as unknown as { $queryRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown> }
+        await resealed.$queryRawUnsafe(
+          `UPDATE journal_entries SET entry_hash = app.journal_entry_hash(id) WHERE organization_id = $1::uuid`,
+          target
+        )
+
+        // 5 · las tasas referenciadas (O-1.5). Append-only y única por
+        // `(fecha, par, fuente)`: si existe con OTRO valor, se falla.
+        const ratesBody = (await zip.file("global/exchange_rates.jsonl")?.async("string")) ?? ""
+        if (sha256hex(ratesBody) !== manifest.globalRefs.exchangeRates.sha256) {
+          throw new RestoreAbort("exchange_rates", 0, "el sha256 de las tasas no coincide con el manifest")
+        }
+        const rateLines = ratesBody === "" ? [] : ratesBody.split("\n")
+        for (let index = 0; index < rateLines.length; index += 1) {
+          const rate = decodeRow(rateLines[index])
+          try {
+            await insertExchangeRate(tx, rate)
+          } catch (error) {
+            throw new RestoreAbort("exchange_rates", index + 1, error instanceof Error ? error.message : String(error))
+          }
+        }
+      },
+      { timeout: 300_000, maxWait: 15_000 }
+    )
+  } catch (error) {
+    if (error instanceof RestoreAbort) {
+      rejected = { table: error.table, line: error.line, motivo: error.motivo }
+      return { status: "FAILED", verification: null, rejected, error: error.message }
+    }
+    return { status: "FAILED", verification: null, rejected: null, error: error instanceof Error ? error.message : String(error) }
+  }
+
+  // 6 · los ficheros, verificando el sha256 de CADA uno contra el manifest.
+  const write = options.writeFileBytes ?? defaultWriteFileBytes(target)
+  const filesRestored: string[] = []
+  const filesMissing: string[] = []
+  for (const entry of manifest.files) {
+    const body = await zip.file(entry.path)?.async("nodebuffer")
+    if (!body) {
+      filesMissing.push(entry.sha256)
+      continue
+    }
+    const actual = sha256hex(body)
+    if (actual !== entry.sha256) {
+      return {
+        status: "FAILED",
+        verification: null,
+        rejected: { table: "files", line: 0, motivo: `${entry.path} tiene sha256 ${actual} y el manifest dice ${entry.sha256}` },
+        error: "fichero alterado dentro del archivo",
+      }
+    }
+    await write(entry.sha256, body)
+    filesRestored.push(entry.sha256)
+  }
+
+  // 7 · las SEIS comprobaciones.
+  const verification = await verifyRestore({
+    manifest,
+    targetOrganizationId: target,
+    backupJobId: options.backupJobId ?? null,
+    refDate: options.refDate,
+    filesRestored,
+    filesMissing,
+  })
+
+  return { status: restoreStatusOf(verification.checks), verification, rejected: null, error: null }
+}
+
+/**
+ * Traduce `id` y toda columna `*_id` cuyo valor esté en el mapa. Lo que no está
+ * en el mapa apunta fuera del archivo (usuarios, tasas globales) y no se toca.
+ */
+function applyRemap(
+  row: Record<string, unknown>,
+  remap: ReadonlyMap<string, string>,
+  fkColumns: ReadonlySet<string>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [column, value] of Object.entries(row)) {
+    if ((column === "id" || fkColumns.has(column)) && typeof value === "string") {
+      out[column] = remap.get(value) ?? value
+      continue
+    }
+    out[column] = value
+  }
+  return out
+}
+
+/** Inserta una fila cruda con sus columnas tal cual venían. */
+async function insertRow(tx: TenantTransactionClient, table: string, row: Record<string, unknown>): Promise<void> {
+  const columns = Object.keys(row)
+  const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ")
+  const quoted = columns.map((column) => `"${column}"`).join(", ")
+  // `$executeRawUnsafe` no está en `TenantTransactionClient` a propósito (es la
+  // puerta trasera que ESLint prohíbe en `models/`); aquí la restauración sí lo
+  // necesita —columnas dinámicas— y va acotada por el `organization_id` que se
+  // inyecta en cada fila y por la política RLS de la transacción.
+  const raw = tx as unknown as { $queryRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown> }
+  await raw.$queryRawUnsafe(
+    `INSERT INTO "${table}" (${quoted}) VALUES (${placeholders})`,
+    ...columns.map((column) => row[column])
+  )
+}
+
+/**
+ * Tasa global: se inserta si falta y **falla si existe con otro valor** (O-1.5).
+ * Dos empresas no pueden convertir el mismo día a tipos distintos.
+ */
+async function insertExchangeRate(tx: TenantTransactionClient, rate: Record<string, unknown>): Promise<void> {
+  const existing = await tx.$queryRawUnsafe<{ rate_micro: bigint | number }[]>(
+    `SELECT rate_micro FROM exchange_rates WHERE id = $1::uuid`,
+    rate.id
+  )
+  if (existing.length > 0) {
+    if (String(existing[0].rate_micro) !== String(rate.rate_micro)) {
+      throw new Error(`la tasa ${String(rate.id)} ya existe con otro valor`)
+    }
+    return
+  }
+  await insertRow(tx, "exchange_rates", rate)
+}
+
+function defaultWriteFileBytes(organizationId: string) {
+  return async (sha256: string, bytes: Buffer): Promise<void> => {
+    await tenantTransaction(organizationId, async (tx) => {
+      await putObject(tx, { organizationId, kind: "DOCUMENT", sha256, mimeType: "application/octet-stream", body: bytes })
+    })
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Las SEIS comprobaciones (§5.4, O-1) — `restoreVerification.json`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sellos **de fila** que incluyen uuid por diseño (ADR-0011): no se comparan
+ * byte a byte contra el origen —los ids son otros— sino que se **recalculan**
+ * fila a fila en el destino, que es lo que su invariante promete.
+ */
+const ROW_SEALS_WITH_UUID: ReadonlySet<string> = new Set(["journal_entries.entry_hash"])
+
+export type VerifyRestoreInput = {
+  manifest: BackupManifest
+  targetOrganizationId: string
+  backupJobId: string | null
+  refDate: Date
+  filesRestored: readonly string[]
+  filesMissing: readonly string[]
+  /** El barrido de invariantes. Se inyecta para poder probarlo aislado. */
+  sweep?: (tx: TenantTransactionClient, refDate: Date) => Promise<{ families: number; failed: string[]; checksHash: string }>
+}
+
+export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreVerification> {
+  const { manifest, targetOrganizationId: target } = input
+
+  const checks = await tenantTransaction(
+    target,
+    async (tx): Promise<CheckResult[]> => {
+      const out: CheckResult[] = []
+
+      // 1 · RECUENTOS, con `=` y no `⊇`.
+      const actualCounts = new Map<string, number>()
+      for (const table of manifest.tables) {
+        const rows = await tx.$queryRawUnsafe<{ n: bigint }[]>(
+          `SELECT count(*) AS n FROM "${table.name}" WHERE ${TENANT_COLUMN} = $1::uuid`,
+          target
+        )
+        actualCounts.set(table.name, Number(rows[0]?.n ?? 0))
+      }
+      out.push(compareCounts(new Map(manifest.tables.map((t) => [t.name, t.rows])), actualCounts))
+
+      // 2 · NUMERACIÓN: máximo, huecos, duplicados y series.
+      const years = await tx.fiscalYear.findMany({ orderBy: { startDate: "asc" } })
+      const evidence: CheckResult["evidence"] = []
+      for (const expected of manifest.numbering) {
+        const year = years.find((row) => row.code === expected.fiscalYearCode)
+        if (!year) {
+          evidence.push({ label: `ejercicio ${expected.fiscalYearCode}`, expected: "presente", actual: "ausente", ok: false })
+          continue
+        }
+        const rows = await tx.journalEntry.findMany({ where: { fiscalYearId: year.id }, select: { entryNumber: true } })
+        const actual = numberingOf(rows.map((row) => row.entryNumber))
+        evidence.push({
+          label: `ejercicio ${expected.fiscalYearCode} · nº máximo y recuento`,
+          expected: `${expected.maxEntryNumber}/${expected.count}`,
+          actual: `${actual.max}/${actual.count}`,
+          ok: actual.max === expected.maxEntryNumber && actual.count === expected.count,
+        })
+        evidence.push({
+          label: `ejercicio ${expected.fiscalYearCode} · huecos y duplicados`,
+          expected: `${expected.gaps.length}/${expected.duplicates.length}`,
+          actual: `${actual.gaps.length}/${actual.duplicates.length}`,
+          ok: actual.gaps.length === expected.gaps.length && actual.duplicates.length === expected.duplicates.length,
+        })
+      }
+      const series = await tx.invoiceSeries.findMany({ orderBy: { code: "asc" } })
+      for (const expected of manifest.invoiceSeries) {
+        const row = series.find((candidate) => candidate.code === expected.code)
+        evidence.push({
+          label: `serie ${expected.code} · último número`,
+          expected: String(expected.lastNumber),
+          actual: row ? String(row.nextNumber - 1) : "serie ausente",
+          ok: row !== undefined && row.nextNumber - 1 === expected.lastNumber,
+        })
+      }
+      out.push({
+        id: "NUMERACION",
+        status: evidence.every((row) => row.ok) ? "PASS" : "FAIL",
+        title: "Numeración correlativa por ejercicio, sin huecos ni duplicados, y series de facturación",
+        evidence,
+        note: "Los tres sellos NO cubren esto: dos asientos con los números intercambiados dan el mismo ledgerHash.",
+      })
+
+      // 3 · SELLOS DERIVADOS, recomputados sobre `derivedSealColumns()`.
+      const sealEvidence: CheckResult["evidence"] = []
+      for (const expected of manifest.derivedSeals) {
+        const rows = await tx.$queryRawUnsafe<{ v: string | null }[]>(
+          `SELECT "${expected.column}" AS v FROM "${expected.table}" WHERE ${TENANT_COLUMN} = $1::uuid`,
+          target
+        )
+        if (ROW_SEALS_WITH_UUID.has(`${expected.table}.${expected.column}`)) {
+          /**
+           * **Sello DE FILA, que lleva uuid** (ADR-0011): su oficio es detectar
+           * cualquier mutación, no ser comparable entre organizaciones. Con los
+           * ids reasignados, comparar el valor byte a byte probaría lo
+           * contrario de lo que se quiere. Lo que se comprueba —y es más
+           * fuerte— es que **cada fila del destino cuadra con su propio
+           * recálculo**: exactamente el enunciado de I-E3-7.
+           */
+          const mismatched = await tx.$queryRawUnsafe<{ n: bigint }[]>(
+            `SELECT count(*) AS n FROM journal_entries
+              WHERE ${TENANT_COLUMN} = $1::uuid AND entry_hash IS DISTINCT FROM app.journal_entry_hash(id)`,
+            target
+          )
+          const bad = Number(mismatched[0]?.n ?? 0)
+          sealEvidence.push({
+            label: `${expected.table}.${expected.column} · recalculado fila a fila (${rows.length} filas)`,
+            expected: "0 discrepancias",
+            actual: `${bad} discrepancias`,
+            ok: bad === 0 && rows.length === expected.rows,
+          })
+          continue
+        }
+        const actual = sealColumnSha256(rows.map((row) => row.v))
+        sealEvidence.push({
+          label: `${expected.table}.${expected.column} (${expected.rows} filas)`,
+          expected: expected.sha256,
+          actual,
+          ok: actual === expected.sha256 && rows.length === expected.rows,
+        })
+      }
+      out.push({
+        id: "SELLOS_DERIVADOS",
+        status: sealEvidence.every((row) => row.ok) ? "PASS" : "FAIL",
+        title: "Recomputo de TODOS los sellos derivados sobre la lista derivada del código",
+        evidence: sealEvidence,
+      })
+
+      // 4 · AUDIT LOG: recuento y sha256 de su forma canónica.
+      const auditRows = await tx.auditLog.findMany({
+        select: { entity: true, entityId: true, action: true, reason: true, ts: true },
+      })
+      const auditSha = auditLogCanonicalSha256(auditRows)
+      out.push({
+        id: "AUDIT_LOG",
+        status: auditRows.length === manifest.auditLog.rows && auditSha === manifest.auditLog.canonicalSha256 ? "PASS" : "FAIL",
+        title: "Registro de auditoría: quién forzó qué y con qué motivo",
+        evidence: [
+          { label: "filas", expected: String(manifest.auditLog.rows), actual: String(auditRows.length), ok: auditRows.length === manifest.auditLog.rows },
+          { label: "sha256 canónico", expected: manifest.auditLog.canonicalSha256, actual: auditSha, ok: auditSha === manifest.auditLog.canonicalSha256 },
+        ],
+      })
+
+      // 5 · LOS TRES SELLOS + el estado del cierre.
+      const seals = await computeContentSeals(tx)
+      const closing = await dumpClosing(tx)
+      const sealsEvidence: CheckResult["evidence"] = [
+        { label: "ledgerHash", expected: manifest.seals.ledgerHash, actual: seals.ledgerHash, ok: seals.ledgerHash === manifest.seals.ledgerHash },
+        { label: "analyticsKey", expected: manifest.seals.analyticsKey, actual: seals.analyticsKey, ok: seals.analyticsKey === manifest.seals.analyticsKey },
+        {
+          label: "budgetHash",
+          expected: manifest.seals.budgetHash ?? "∅",
+          actual: seals.budgetHash ?? "∅",
+          ok: (seals.budgetHash ?? null) === (manifest.seals.budgetHash ?? null),
+        },
+        {
+          label: "estado del cierre",
+          expected: JSON.stringify(manifest.closing.fiscalYears),
+          actual: JSON.stringify(closing.fiscalYears),
+          ok: JSON.stringify(manifest.closing.fiscalYears) === JSON.stringify(closing.fiscalYears),
+        },
+        {
+          label: "ejecuciones de cierre",
+          expected: String(manifest.closing.closingRuns),
+          actual: String(closing.closingRuns),
+          ok: manifest.closing.closingRuns === closing.closingRuns,
+        },
+      ]
+      out.push({
+        id: "SELLOS_Y_CIERRE",
+        status: sealsEvidence.every((row) => row.ok) ? "PASS" : "FAIL",
+        title: "Los tres sellos de contenido y el estado del cierre",
+        evidence: sealsEvidence,
+      })
+
+      // 6 · BARRIDO de las nueve familias + correspondencia `File` ↔ objeto.
+      const sweep = input.sweep ?? defaultInvariantSweep
+      const swept = await sweep(tx, input.refDate)
+      const fileRows = await tx.file.findMany({ select: { sha256: true } })
+      const restored = new Set(input.filesRestored)
+      const orphans = fileRows.filter((row) => !restored.has(row.sha256))
+      out.push({
+        id: "BARRIDO_INVARIANTES",
+        status: swept.failed.length === 0 && orphans.length === 0 && input.filesMissing.length === 0 ? "PASS" : "FAIL",
+        title: "Barrido completo de las nueve familias de invariantes y correspondencia fichero ↔ objeto",
+        evidence: [
+          // El número de familias que produce el barrido depende de qué módulos
+          // tienen datos en la organización: se ENSEÑA, no se exige un número
+          // mágico. Lo que sí se exige es que no haya ni un FAIL.
+          { label: "familias barridas", expected: "≥ 1", actual: String(swept.families), ok: swept.families >= 1 },
+          { label: "invariantes en FAIL", expected: "0", actual: swept.failed.join(", ") || "0", ok: swept.failed.length === 0 },
+          { label: "checksHash del barrido", expected: "—", actual: swept.checksHash, ok: true },
+          {
+            label: "ficheros sin bytes",
+            expected: "0",
+            actual: String(orphans.length + input.filesMissing.length),
+            ok: orphans.length === 0 && input.filesMissing.length === 0,
+          },
+        ],
+      })
+
+      return out
+    },
+    { timeout: 300_000, maxWait: 15_000 }
+  )
+
+  return {
+    formatVersion: BACKUP_FORMAT_VERSION,
+    backupJobId: input.backupJobId,
+    sourceOrganizationId: manifest.organization.id,
+    targetOrganizationId: target,
+    verifiedAt: input.refDate.toISOString(),
+    checks,
+    verified: isVerified(checks),
+  }
+}
+
+/**
+ * El barrido real: `runLedgerInvariants` sobre el destino. Se carga de forma
+ * diferida porque `models/ledger.ts` arrastra medio producto y esto sólo corre
+ * al final de una restauración.
+ */
+async function defaultInvariantSweep(
+  tx: TenantTransactionClient,
+  refDate: Date
+): Promise<{ families: number; failed: string[]; checksHash: string }> {
+  const { runLedgerInvariants } = await import("@/models/ledger")
+  const { checksHashOf } = await import("@/lib/audit/run")
+  const run = await runLedgerInvariants(tx.$organizationId, {
+    refDate: refDate.toISOString().slice(0, 10),
+    // `audit: true` es lo que trae el bloque E7 y, con él, las NUEVE familias.
+    // Sin esto el barrido sería el de una cabecera de informe y la
+    // comprobación 6 se estaría dando por buena a medias — que es H-1 de E9 y
+    // H-1 de E10, otra vez.
+    audit: true,
+    noCache: true,
+  })
+  const checks = run.validacion.checks
+  // La familia es el prefijo del identificador: `I7` → base, `I-E8-2` → E8.
+  const families = new Set(checks.map((check) => /^I-(E\d+)-/.exec(check.id)?.[1] ?? "BASE"))
+  return {
+    families: families.size,
+    failed: checks.filter((check) => check.status === "FAIL").map((check) => check.id),
+    checksHash: checksHashOf(checks),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El trabajo: cola, cuota y retención (§5.3, §5.5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Clave de firma de plataforma y su identificador. La lee el proceso, no el motor. */
+export function signingKeyFromEnv(env: NodeJS.ProcessEnv = process.env): { key: Buffer; keyId: string } {
+  const raw = env.PLATFORM_SIGNING_KEY
+  if (!raw || raw.trim() === "") {
+    throw new Error("PLATFORM_SIGNING_KEY no está definida: un backup sin firma no se emite")
+  }
+  return { key: Buffer.from(raw, "utf8"), keyId: (env.PLATFORM_SIGNING_KEY_ID ?? "k1").slice(0, 16) }
+}
+
+export type RequestBackupInput = {
+  organizationId: string
+  trigger: BackupTrigger
+  requestedById?: string | null
+  refDate: Date
+  /** Días de retención de la organización. Por defecto, los 30 de §5.5. */
+  retentionDays?: number
+}
+
+/**
+ * Encola un backup. **Aquí vive la cuota**, y no en la server action: la acción
+ * de `/settings/backups` es de la ola C y una cuota que se cablea en la interfaz
+ * es una cuota que la siguiente pantalla se olvida.
+ *
+ * **O-4 · portabilidad sin cuota**: `EXIT` y `SCHEDULED` no consumen nunca, y
+ * `MANUAL` tampoco cuando `accessLevelOf ≠ FULL`. Un FREE que ya gastó su único
+ * backup del mes **puede llevarse sus libros**.
+ */
+export async function requestBackup(input: RequestBackupInput) {
+  const { assertWithinLimit, defaultPlanContextResolver } = await import("@/models/platform-limits")
+  return await tenantTransaction(input.organizationId, async (tx) => {
+    const { access } = await defaultPlanContextResolver(tx, input.organizationId, input.refDate)
+    if (backupConsumesQuota(input.trigger, access)) {
+      await assertWithinLimit(tx, "maxBackupsMonth", BigInt(1), { refDate: input.refDate })
+    }
+    const retentionDays = input.retentionDays ?? 30
+    return await tx.backupJob.create({
+      data: {
+        organizationId: input.organizationId,
+        status: "QUEUED",
+        trigger: input.trigger,
+        formatVersion: BACKUP_FORMAT_VERSION,
+        schemaVersion: await schemaVersionOf(tx),
+        gitSha: currentGitSha().slice(0, 40),
+        requestedById: input.requestedById ?? null,
+        expiresAt: new Date(input.refDate.getTime() + retentionDays * 86_400_000),
+      },
+    })
+  })
+}
+
+/**
+ * Ejecuta un `BackupJob` encolado: construye el ZIP, lo sube al almacén con
+ * `kind = BACKUP` —que **no** consume cuota del cliente (O-12c)— y sella el
+ * trabajo. Un fallo deja el motivo escrito, nunca un `DONE` a medias: el CHECK
+ * `backup_jobs_done_is_complete` lo impide también en la base.
+ */
+export async function runBackupJob(organizationId: string, backupJobId: string, refDate: Date) {
+  const { key, keyId } = signingKeyFromEnv()
+  try {
+    const result = await buildBackupArchive(organizationId, { refDate, signingKey: key, signingKeyId: keyId })
+    const archiveSha = sha256hex(result.archive)
+    return await tenantTransaction(organizationId, async (tx) => {
+      const object = await putObject(tx, {
+        organizationId,
+        kind: "BACKUP",
+        sha256: archiveSha,
+        mimeType: "application/zip",
+        body: result.archive,
+      })
+      return await tx.backupJob.update({
+        where: { id: backupJobId },
+        data: {
+          status: "DONE",
+          progressBps: 10000,
+          objectKey: object.objectKey,
+          sizeBytes: object.sizeBytes,
+          archiveSha256: archiveSha,
+          manifestSha256: result.manifestSha,
+          signature: result.signature,
+          signingKeyId: keyId,
+          ledgerHash: result.manifest.seals.ledgerHash,
+          analyticsKey: result.manifest.seals.analyticsKey,
+          budgetHash: result.manifest.seals.budgetHash,
+          rowCounts: Object.fromEntries(result.manifest.tables.map((table) => [table.name, table.rows])),
+          startedAt: refDate,
+          finishedAt: refDate,
+        },
+      })
+    })
+  } catch (error) {
+    await tenantTransaction(organizationId, async (tx) => {
+      await tx.backupJob.update({
+        where: { id: backupJobId },
+        data: {
+          status: "FAILED",
+          error: (error instanceof Error ? error.message : String(error)).slice(0, 1024),
+          finishedAt: refDate,
+        },
+      })
+    })
+    throw error
+  }
+}
+
+/**
+ * Caducidad (§5.5, I-E11-11). Borra el **objeto** y pasa la fila a `EXPIRED`.
+ *
+ * Dos prohibiciones, y las dos tienen test: **nunca** se borra un backup con un
+ * `RestoreJob` vivo que lo referencie, y **nunca** se toca un `StoredObject` de
+ * `kind = PLATFORM_INVOICE` (O-11): son NUESTRAS facturas emitidas, sujetas a
+ * conservación (art. 165.Uno LIVA, arts. 19–23 RD 1619/2012), no ZIP de
+ * exportación.
+ */
+export async function expireBackups(organizationId: string, refDate: Date): Promise<number> {
+  const { deleteObject } = await import("@/models/storage")
+  return await tenantTransaction(organizationId, async (tx) => {
+    const candidates = await tx.backupJob.findMany({
+      where: { status: "DONE", expiresAt: { lt: refDate }, objectKey: { not: null } },
+      include: { restores: { where: { status: { in: ["QUEUED", "RUNNING", "VERIFYING"] } }, select: { id: true } } },
+    })
+    let expired = 0
+    for (const job of candidates) {
+      if (job.restores.length > 0) continue
+      const object = await tx.storedObject.findFirst({ where: { objectKey: job.objectKey! } })
+      if (object && object.kind !== "PLATFORM_INVOICE") await deleteObject(tx, object.id)
+      await tx.backupJob.update({ where: { id: job.id }, data: { status: "EXPIRED" } })
+      expired += 1
+    }
+    return expired
+  })
+}

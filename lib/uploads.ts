@@ -14,6 +14,7 @@ import {
   unsortedFilePath,
 } from "./files"
 import { updateOrganization } from "@/models/organizations"
+import { putObject } from "@/models/storage"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // E1-fix (#18) — validación de subidas: lista blanca, límite de tamaño y
@@ -273,8 +274,32 @@ export async function ingestUnsortedFileWithDedupe(
 
   const fileUuid = randomUUID()
   const relativeFilePath = unsortedFilePath(fileUuid, input.filename)
-  const fullFilePath = safePathJoin(getOrganizationUploadsDirectory(organization), relativeFilePath)
 
+  /**
+   * **E11 · T7 (D-11, ADR-0019 D3).** Los bytes van al ALMACÉN, identificados
+   * por su `sha256`, y de ahí sale el `StoredObject` que I-E11-6 comprueba.
+   * Hasta esta épica todo colgaba de `FILE_UPLOAD_PATH`, que en Vercel es
+   * `/tmp`: efímero entre despliegues y no compartido entre funciones, de modo
+   * que el `sha256 NOT NULL` de E8 vigilaba unos bytes que el despliegue
+   * siguiente no tenía.
+   *
+   * **Se sigue escribiendo también en disco, a propósito**, mientras los
+   * lectores heredados (descarga, vistas previas, export ZIP) no estén
+   * cableados al almacén: son de la ola C y de E12. La verdad es el almacén —es
+   * lo que se verifica y lo que se vuelca en el backup—; la copia en disco es
+   * transitoria y `scripts/migrate-uploads-to-storage.ts` es su contrapartida
+   * para lo ya subido. Con el driver `local` las dos escrituras van al mismo
+   * volumen, así que el coste es el de un fichero pequeño duplicado.
+   */
+  await putObject(db, {
+    organizationId: organization.id,
+    kind: "DOCUMENT",
+    sha256,
+    mimeType: mimetype,
+    body: input.buffer,
+  })
+
+  const fullFilePath = safePathJoin(getOrganizationUploadsDirectory(organization), relativeFilePath)
   await mkdir(path.dirname(fullFilePath), { recursive: true })
   await writeFile(fullFilePath, input.buffer)
 

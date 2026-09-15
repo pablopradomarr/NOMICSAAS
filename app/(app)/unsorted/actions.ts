@@ -43,7 +43,7 @@ import { transactionFormSchema } from "@/forms/transactions"
 import { enqueueExtraction, enqueueExtractionBatch } from "@/ai/queue"
 import { ActionState } from "@/lib/actions"
 import { requireOrg, withOrg } from "@/lib/authz"
-import type { TenantClient } from "@/lib/db"
+import { tenantTransaction, type TenantClient } from "@/lib/db"
 import { proposalHash } from "@/lib/extraction/hash"
 import { reconcile, type ReconcileResult } from "@/lib/extraction/reconcile"
 import { applyFieldOverride, documentWarnings, sealedReconcile } from "@/lib/extraction/seal"
@@ -55,6 +55,7 @@ import type { TemplateCode } from "@/lib/ledger/templates/types"
 import { getOrganizationUploadsDirectory, getTransactionFileUploadPath, safePathJoin, unsortedFilePath } from "@/lib/files"
 import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
 import { writeAuditLog } from "@/models/audit-log"
+import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
 import { createFile, deleteFile, getFileById, updateFile } from "@/models/files"
 import { createRevisionRun, getExtractionRun, proposalOf } from "@/models/extraction"
 import {
@@ -186,6 +187,22 @@ const analyzeFileActionImpl = withOrg(
       const file = await getFileById(db, parsed.data.fileId)
       if (!file) return { success: false, error: "El fichero no existe en esta organización" }
 
+      /**
+       * **E11 · T13 (§3.5, O-16).** Cuota DURA de `maxOcrDocsMonth`, y un run
+       * raíz consume 1: un run de revisión no, que ya lo pagó el original
+       * (ADR-0014 D5). El guardián va ANTES de encolar, en su propia
+       * transacción: si rechaza, la cola devuelve el documento a PENDIENTE con
+       * el motivo y no queda ni una fila a medias.
+       */
+      try {
+        await tenantTransaction(org.id, async (tx) => {
+          await assertWithinLimit(tx, "maxOcrDocsMonth", BigInt(1), { refDate: new Date() })
+        })
+      } catch (error) {
+        if (error instanceof LimitExceededError) return { success: false, error: error.message }
+        throw error
+      }
+
       const run = await enqueueExtraction(db, org, parsed.data.fileId, { id: user.id }, {
         ...(parsed.data.receptionDate ? { receptionDate: parsed.data.receptionDate } : {}),
         ...(parsed.data.promptCode ? { promptCode: parsed.data.promptCode as never } : {}),
@@ -204,7 +221,11 @@ const analyzeFileActionImpl = withOrg(
     } catch (error) {
       return { success: false, error: messageOf(error) }
     }
-  }
+  },
+  // **O-16**: el OCR es consumo de un proveedor que pagamos nosotros, no un acto
+  // de llevanza. En mora se DENIEGA, y no crea incumplimiento: el documento se
+  // puede registrar y el asiento teclear a mano.
+  { writeKind: "CONSUMO_IA" }
 )
 
 const analyzeBatchActionImpl = withOrg(
