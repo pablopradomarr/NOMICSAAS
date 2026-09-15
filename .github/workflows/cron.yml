@@ -1,0 +1,112 @@
+# E11 · ola A · T17 — el reloj de la plataforma (§7.2, ADR-0019 D4, P-5).
+#
+# **Un camino, dos relojes.** Este workflow y el `crons` de `vercel.json` llaman
+# a la MISMA ruta autenticada, `POST /api/cron/[job]`. No hay lógica aquí: si la
+# hubiera, el respaldo de Vercel haría algo distinto que el principal, y el día
+# que se usara nadie lo sabría.
+#
+# Por qué GitHub Actions y no Vercel Cron como principal (P-5): es gratis y
+# admite cadencias de 5 y 15 minutos; los planes de Vercel Cron limitan la
+# frecuencia. Vercel queda como **respaldo diario**.
+#
+# **R-6 · GitHub Actions no garantiza puntualidad**: los `schedule` se retrasan
+# con carga. Da igual. La idempotencia por `(job, periodKey)` y el `refDate`
+# explícito hacen el retraso **inocuo** (criterio 49), y `/api/health` enseña la
+# edad del último run.
+#
+# Secretos requeridos en el repositorio:
+#   · `CRON_SECRET`   — el mismo valor que la variable de entorno del despliegue.
+#   · `CRON_BASE_URL` — p. ej. `https://erp.cfonomic.com` (sin barra final).
+
+name: Reloj de plataforma (E11)
+
+on:
+  schedule:
+    # Cada 5 min: el worker de backup. Es el único que necesita esta cadencia.
+    - cron: "*/5 * * * *"
+    # Cada 15 min: margen para que el retraso de GitHub no deje un hueco.
+    - cron: "*/15 * * * *"
+    # 06:00 Europe/Madrid ≈ 04:00 UTC en verano / 05:00 en invierno. El cron de
+    # GitHub es UTC y no conoce el horario de verano: se lanza a las 04:00 UTC y
+    # la idempotencia por periodo absorbe la hora de diferencia — la ocurrencia
+    # se fecha por su periodo de devengo, no por la hora de ejecución (O-13).
+    - cron: "0 4 * * *"
+    # 03:00 Europe/Madrid, barrido de invariantes.
+    - cron: "0 1 * * *"
+    # Domingo 04:00 Europe/Madrid, retención.
+    - cron: "0 2 * * 0"
+  # Para que un operador pueda lanzar un job a mano, con su `refDate`, sin
+  # abrir una terminal contra producción.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Job a ejecutar"
+        required: true
+        type: choice
+        options: [recurring-due, invariant-sweep, backup-worker, retention]
+      ref_date:
+        description: "Fecha de referencia ISO (O-13). Vacío = ahora"
+        required: false
+        type: string
+
+concurrency:
+  # Dos ejecuciones simultáneas no romperían nada —para eso está el UNIQUE de
+  # `cron_runs`—, pero gastarían minutos de Actions para acabar en `skipped`.
+  group: reloj-plataforma
+  cancel-in-progress: false
+
+jobs:
+  llamar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Decidir qué jobs toca lanzar
+        id: plan
+        env:
+          DISPARO: ${{ github.event.schedule }}
+          MANUAL: ${{ github.event.inputs.job }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MANUAL:-}" ]; then
+            echo "jobs=${MANUAL}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "${DISPARO}" in
+            "*/5 * * * *")  echo "jobs=backup-worker"   >> "$GITHUB_OUTPUT" ;;
+            "*/15 * * * *") echo "jobs=backup-worker"   >> "$GITHUB_OUTPUT" ;;
+            "0 4 * * *")    echo "jobs=recurring-due"   >> "$GITHUB_OUTPUT" ;;
+            "0 1 * * *")    echo "jobs=invariant-sweep" >> "$GITHUB_OUTPUT" ;;
+            "0 2 * * 0")    echo "jobs=retention"       >> "$GITHUB_OUTPUT" ;;
+            *)              echo "jobs="                >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Llamar a la ruta autenticada
+        if: steps.plan.outputs.jobs != ''
+        env:
+          BASE_URL: ${{ secrets.CRON_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          REF_DATE: ${{ github.event.inputs.ref_date }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "Faltan los secretos CRON_BASE_URL o CRON_SECRET" >&2
+            exit 1
+          fi
+          for job in ${{ steps.plan.outputs.jobs }}; do
+            echo "→ ${job}"
+            cuerpo='{}'
+            if [ -n "${REF_DATE:-}" ]; then cuerpo="{\"refDate\":\"${REF_DATE}\"}"; fi
+            # `--fail-with-body` para que un 5xx marque el paso en rojo, pero un
+            # 202 (PARTIAL, con cursor) NO: es un resultado legítimo del troceado.
+            codigo=$(curl -sS -o /tmp/salida.json -w '%{http_code}' \
+              -X POST "${BASE_URL}/api/cron/${job}" \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              -H "Content-Type: application/json" \
+              --max-time 300 \
+              -d "${cuerpo}")
+            cat /tmp/salida.json; echo
+            case "${codigo}" in
+              200|202) ;;
+              *) echo "El job ${job} devolvió ${codigo}" >&2; exit 1 ;;
+            esac
+          done

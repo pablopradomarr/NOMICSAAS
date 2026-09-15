@@ -23,9 +23,62 @@ const envSchema = z.object({
   RESEND_AUDIENCE_ID: z.string().default(""),
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),
+
+  // ── E11 · plataforma SaaS (docs/design/E11-plataforma-saas.md §9.1) ────────
+  // Los secretos viven en el ENTORNO, nunca en la base de datos. Los de
+  // organización (IMAP) siguen cifrados con `lib/encryption.ts`.
+  /** §7.2 · protege `POST /api/cron/[job]`. Vacío = la ruta está CERRADA. */
+  CRON_SECRET: z.string().default(""),
+  /** §5.2 · HMAC-SHA256 del manifest del backup. La usa la ola B. */
+  PLATFORM_SIGNING_KEY: z.string().default(""),
+  /** `keyId` del manifest, para poder ROTAR: `verifyManifest` acepta la vigente y la anterior. */
+  PLATFORM_SIGNING_KEY_ID: z.string().default("k1"),
+  PLATFORM_SIGNING_KEY_PREVIOUS: z.string().default(""),
+  /** §4 · almacén de objetos. `local` en desarrollo y self-hosted; `s3` en cloud (P-3). */
+  STORAGE_BACKEND: z.enum(["local", "s3"]).default("local"),
+  STORAGE_BUCKET: z.string().default(""),
+  /** Un bucket por ENTORNO con prefijo por organización (ADR-0019 D3). */
+  STORAGE_PREFIX: z.string().default("erp"),
+  STORAGE_ENDPOINT: z.string().default(""),
+  STORAGE_REGION: z.string().default("auto"),
+  STORAGE_ACCESS_KEY_ID: z.string().default(""),
+  STORAGE_SECRET_ACCESS_KEY: z.string().default(""),
+  /** Sello de versión del despliegue; lo publica `/api/health` (§7.3). */
+  GIT_SHA: z.string().default("desconocido"),
 })
 
 const env = envSchema.parse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")))
+
+/**
+ * **§9.1 · el secreto por defecto hace fallar el arranque fuera de self-hosted.**
+ *
+ * `BETTER_AUTH_SECRET` es la clave de la que `lib/encryption.ts` deriva (scrypt)
+ * la de AES-256-GCM con la que se cifran los secretos por organización. Arrancar
+ * una instalación cloud con el valor de ejemplo significa que **todas** esas
+ * credenciales están cifradas con una clave pública, y el fallo es silencioso:
+ * todo funciona, y no hay cifrado.
+ *
+ * Se falla al ARRANCAR y no al primer uso, que es cuando ya hay datos cifrados.
+ * En self-hosted se avisa y se sigue: ahí el operador es el dueño de la máquina
+ * y TaxHacker genera y persiste una clave por él.
+ */
+const SECRETOS_DE_EJEMPLO = new Set([
+  "please-set-your-key-here",
+  "insecure-self-hosted-secret",
+  "random-secret-key",
+  "change-me",
+])
+
+if (SECRETOS_DE_EJEMPLO.has(env.BETTER_AUTH_SECRET)) {
+  const mensaje =
+    "BETTER_AUTH_SECRET tiene el valor de ejemplo. De esa clave deriva el cifrado AES-256-GCM de los " +
+    "secretos por organizacion (lib/encryption.ts): con el valor por defecto no hay cifrado, solo apariencia " +
+    "de cifrado. Defina una cadena larga y aleatoria."
+  if (env.SELF_HOSTED_MODE === "false") {
+    throw new Error(`E11 · §9.1 — ${mensaje}`)
+  }
+  console.warn(`[config] ${mensaje}`)
+}
 
 const config = {
   app: {
@@ -84,6 +137,28 @@ const config = {
     webhookSecret: env.STRIPE_WEBHOOK_SECRET,
     paymentSuccessUrl: `${env.BASE_URL}/cloud/payment/success?session_id={CHECKOUT_SESSION_ID}`,
     paymentCancelUrl: `${env.BASE_URL}/cloud`,
+  },
+  // E11 · §7.2 y §9.1 — el reloj y la firma de los backups.
+  cron: {
+    /** Vacío = `/api/cron/[job]` responde 401 a todo. Cerrado por defecto. */
+    secret: env.CRON_SECRET,
+  },
+  platform: {
+    signingKey: env.PLATFORM_SIGNING_KEY,
+    signingKeyId: env.PLATFORM_SIGNING_KEY_ID,
+    /** Rotación: `verifyManifest` acepta la vigente y la anterior (§9.1). */
+    signingKeyPrevious: env.PLATFORM_SIGNING_KEY_PREVIOUS,
+    gitSha: env.GIT_SHA,
+  },
+  // E11 · §4 — almacenamiento de objetos (ADR-0019 D3). Lo consume la ola B.
+  storage: {
+    backend: env.STORAGE_BACKEND,
+    bucket: env.STORAGE_BUCKET,
+    prefix: env.STORAGE_PREFIX,
+    endpoint: env.STORAGE_ENDPOINT,
+    region: env.STORAGE_REGION,
+    accessKeyId: env.STORAGE_ACCESS_KEY_ID,
+    secretAccessKey: env.STORAGE_SECRET_ACCESS_KEY,
   },
   email: {
     apiKey: env.RESEND_API_KEY,

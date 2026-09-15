@@ -46,6 +46,17 @@ describe.skipIf(!TEST_DATABASE_URL)("migración de una base TaxHacker pre-E1 (CA
 
     const url = adminUrl(TEMP_DB)
 
+    // E11 · O-14 — el volcado pre-E1 trae un usuario con `ai_balance = 10`, y la
+    // migración M4 ABORTA ante cualquier saldo prepagado: es un PASIVO (438/485)
+    // y darlo de baja exige canje o devolución aceptados, no una novación
+    // unilateral. Aquí se ejerce la **salida documentada**: el operador declara
+    // que lo ha resuelto, y la migración lo deja escrito en
+    // `platform_audit_logs` en vez de callárselo. Sin esta línea, CA-1 falla —
+    // que es exactamente lo que O-14 quiere que pase en una base real.
+    await withAdmin(async (admin) => {
+      await admin.query(`ALTER DATABASE "${TEMP_DB}" SET app.e11_ai_balance_resuelto = 'si'`)
+    })
+
     // 1. Volcado pre-E1 (esquema + datos + _prisma_migrations de las 10 heredadas)
     execFileSync("psql", ["-v", "ON_ERROR_STOP=1", "-q", "-f", "tests/fixtures/taxhacker-pre-e1.sql", url], {
       stdio: "pipe",

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/recurring-due",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/invariant-sweep",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/backup-worker",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/retention",
+      "schedule": "0 2 * * 0"
+    }
+  ],
+  "functions": {
+    "app/api/cron/[job]/route.ts": {
+      "maxDuration": 300
+    }
+  }
+}

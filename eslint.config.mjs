@@ -33,6 +33,18 @@ const TENANT_FREE_FILES = [
   "models/organizations.ts",
   "models/memberships.ts",
   "models/invitations.ts",
+  // E11 · T15/T19 — tablas de PLATAFORMA sin `organization_id` (§9.5):
+  // `cron_runs`, `rate_limit_buckets` y `platform_audit_logs`. No hay
+  // organización que acotar —el reloj no es de nadie, el cubo se llena antes de
+  // saber quién llama y un webhook huérfano es justo la fila que hay que ver—,
+  // así que `tenantDb` no aplica y el cliente sin acotar es el correcto.
+  "models/cron.ts",
+  "models/rate-limit.ts",
+  "models/platform.ts",
+  // Recorre TODAS las organizaciones para decidir a cuáles llamar: el reloj es
+  // de plataforma y no tiene organización activa. Cada trabajo por organización
+  // SÍ entra por `tenantDb`/`runLedgerTransaction`.
+  "models/cron-jobs.ts",
   "app/(app)/apps/email/scripts/**",
   "seeds/**",
   "scripts/**",
@@ -97,6 +109,14 @@ const BUSINESS_DELEGATES = [
   "employee",
   "employeeRate",
   "headcountSnapshot",
+  // E11 · ola A: las tres tablas de facturación por organización. Sin ellas, un
+  // `prisma.platformInvoice…` fuera de `tenantDb` devolvería VACÍO en silencio.
+  // `plan` y `platformInvoiceSeries` NO entran: son catálogo global con `SELECT`
+  // abierto, y `cronRun`, `rateLimitBucket` y `platformAuditLog` tampoco, porque
+  // no tienen `organization_id` (docs/design/E11-plataforma-saas.md §9.5).
+  "subscription",
+  "subscriptionEvent",
+  "platformInvoice",
 ];
 
 const NO_BARE_PRISMA_DELEGATE = {
@@ -136,6 +156,10 @@ const PURE_ENGINE_DIRS = [
   // los minutos agregados y el coste-hora. Ninguno toca reloj, IO, BD ni LLM.
   "lib/budget/**/*.ts",
   "lib/time/**/*.ts",
+  // E11 · T1 (docs/design/E11-plataforma-saas.md §3): el motor de plataforma
+  // también es PURO. El reloj entra por `refDate` y nunca por `Date.now()`, que
+  // es lo que hace inocuo el retraso de un `schedule` (O-13, R-6).
+  "lib/platform/**/*.ts",
 ];
 
 const PURE_ENGINE_MESSAGE =
