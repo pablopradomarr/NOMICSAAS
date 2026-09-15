@@ -227,12 +227,23 @@ export async function createAllocationRuleTx(
    */
   opts: { skipSetCheck?: boolean } = {}
 ): Promise<AllocationRuleListItem> {
-  if (input.driver === "HOURS" || input.driver === "HEADCOUNT") {
-    abortAllocation({
-      code: "DRIVER_UNAVAILABLE",
-      message: `el driver ${input.driver === "HOURS" ? "HORAS" : "PLANTILLA"} necesita partes de horas, que llegan en E10. Elige otro driver o deja el CECO sin liquidar`,
-    })
-  }
+  // **E10 · T14** — aquí vivía el rechazo en seco de `HOURS` y `HEADCOUNT`
+  // («llegan en E10»). E10 los ha traído: el `CHECK
+  // allocation_rules_driver_available` se retiró en la migración
+  // `20260924120000_e10_drivers_horas` y `lib/analytics/allocate.ts` sabe
+  // ponderar por minutos aprobados y por FTE·mes (ADR-0018 D1).
+  //
+  // La garantía de ADR-0013 D4 —«ninguna regla inerte»— NO desaparece con el
+  // rechazo: se traslada a los tres puntos de §3.6, cada uno con su test.
+  //  1. Al guardar, en `createAllocationRuleAction`: módulo de horas encendido y
+  //     al menos un dato de la clase que el driver consume en el ejercicio, con
+  //     un mensaje que dice qué falta y dónde darlo de alta.
+  //  2. Al sellar el run: una base 0 en todos los receptores deja el saldo
+  //     visible en «pendiente de liquidar» y emite su aviso.
+  //  3. Con base PARCIAL: `W-E10-UNAPPROVED-HOURS` y el motivo de sello
+  //     `HORAS_SIN_APROBAR`.
+  // Y el motor sigue rechazando aquí mismo lo que no tiene sentido: una regla
+  // `HEADCOUNT` que no reparte a centros de coste (D1).
 
   const created = await tx.allocationRule.create({
     data: {
@@ -429,7 +440,13 @@ async function assertRuleSetCoherent(
   // drivers calculados ponderan POR PROYECTO leyendo el diario.
   for (const rule of specs) {
     const needsTargets = rule.targetKind === "COST_CENTERS" || rule.targetKind === "BUSINESS_LINES"
-    if (needsTargets && rule.driver !== "FIXED_PERCENT" && rule.driver !== "MANUAL") {
+    // **E10 · T14 (ADR-0018 D1)** — la excepción acotada que `lib/analytics/
+    // allocate.ts` ya contempla: `HOURS` y `HEADCOUNT` SÍ saben ponderar un CECO
+    // o una línea de negocio, porque el parte lleva su receptor y su LN, y el
+    // snapshot su centro. Siguen exigiendo destinos declarados, y eso lo
+    // comprueba la comprobación siguiente.
+    const activityDriver = rule.driver === "HOURS" || rule.driver === "HEADCOUNT"
+    if (needsTargets && !activityDriver && rule.driver !== "FIXED_PERCENT" && rule.driver !== "MANUAL") {
       abortAllocation({
         code: "TARGETS_REQUIRED",
         message: `la regla ${rule.code} reparte a ${rule.targetKind === "COST_CENTERS" ? "centros de coste" : "líneas de negocio"} con el driver ${rule.driver}, que calcula sus pesos por proyecto desde el diario: declara los destinos con porcentaje fijo (FIXED_PERCENT) o con importes (MANUAL)`,

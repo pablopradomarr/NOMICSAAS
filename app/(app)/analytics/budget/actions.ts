@@ -546,7 +546,8 @@ function parseBudgetCsv(text: string, delimiter: string, config: AnalyticsConfig
     }
 
     const month = get("mes")
-    if (!/^\d{4}-\d{2}-01$/.test(month)) {
+    // El mes va de 01 a 12: `2026-13-01` cumple la forma y no existe.
+    if (!/^\d{4}-(0[1-9]|1[0-2])-01$/.test(month)) {
       out.rejected.push({ line: lineNo, reason: `el mes «${month}» no tiene el formato AAAA-MM-01` })
       continue
     }

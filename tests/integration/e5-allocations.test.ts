@@ -244,9 +244,16 @@ describe.skipIf(!TEST_DATABASE_URL)("E5 · liquidación de CECOs en base de dato
    * partes (T9): la garantía de «ninguna regla inerte» se mantiene en el mismo
    * sitio de siempre —una capa—, y pasa a las dos en cuanto T9 aterriza.
    */
-  it("criterio 12 · `HOURS`: la acción lo rechaza hasta T9, y la BD ya no lleva el CHECK (E10, deuda §0-bis #2)", async () => {
-    await expect(createRule({ code: "AL-HORAS", driver: "HOURS" })).rejects.toThrow(/HORAS/)
-
+  it("criterio 12 · `HOURS` ya está VIVO (E10 · T14) y `HEADCOUNT` sigue acotado a CECOs por el CHECK", async () => {
+    // Hasta E10, este criterio comprobaba que la acción rechazaba `HOURS` «hasta
+    // T9». T9 llegó y T14 encendió el driver: el rechazo en seco de
+    // `createAllocationRuleTx` desapareció, y la garantía de ADR-0013 D4
+    // —«ninguna regla inerte»— pasó a los tres puntos de §3.6: la validación de
+    // disponibilidad en `createAllocationRuleAction` (módulo de horas encendido
+    // y al menos un parte aprobado en el ejercicio), el aviso al sellar el run y
+    // el de base parcial. Los tres se ejercen en `e10-acciones.test.ts`, que es
+    // donde vive la acción; aquí se comprueba lo que sigue siendo del modelo y
+    // de la BD: que el CHECK viejo no está y que el de M4 sí.
     const bloqueo = await owner((client) =>
       client.query(`SELECT count(*)::int AS n FROM pg_constraint WHERE conname = 'allocation_rules_driver_available'`)
     )

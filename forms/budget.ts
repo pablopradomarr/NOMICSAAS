@@ -27,8 +27,8 @@ export const budgetReasonSchema = z
   .max(1000)
 
 /** Primer día del mes: la forma canónica de una celda de presupuesto. */
-export const monthStartSchema = localDateSchema.refine((v) => v.endsWith("-01"), {
-  message: "El mes de una celda de presupuesto es siempre el día 1 (AAAA-MM-01)",
+export const monthStartSchema = localDateSchema.refine((v) => /^\d{4}-(0[1-9]|1[0-2])-01$/.test(v), {
+  message: "El mes de una celda de presupuesto es siempre el día 1 de un mes real (AAAA-MM-01)",
 })
 
 export const budgetScenarioSchema = z.enum(["BASE", "REVISADO"])
