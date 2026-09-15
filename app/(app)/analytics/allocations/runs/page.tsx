@@ -47,6 +47,11 @@ export default tenantPage(async ({ db, org, role }) => {
     ledgerHash: run.ledgerHash,
     analyticsHash: run.analyticsHash,
     rulesHash: run.rulesHash,
+    // E10 · T18 — el cuarto sello y su ventana viajan a la tabla: sin la
+    // ventana, «los partes han cambiado» no dice de qué periodo.
+    timeHash: run.timeHash,
+    timeHashWindowStart: run.timeHashWindowStart,
+    timeHashWindowEnd: run.timeHashWindowEnd,
     gitSha: run.gitSha,
     runAt: run.runAt,
     supersededById: run.supersededById,

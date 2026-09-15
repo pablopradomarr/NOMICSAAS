@@ -54,6 +54,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Split,
+  Table2,
   Tags,
   Target,
   TrendingUp,
@@ -331,6 +332,9 @@ export function AppSidebar({
                   { title: "Proyectos", href: "/analytics/projects", icon: FolderKanban },
                   { title: "Centros de coste", href: "/analytics/cost-centers", icon: Target },
                   { title: "Líneas de negocio", href: "/analytics/business-lines", icon: Waypoints },
+                  // E10 · T15 — Presupuesto: la decisión con la que se mide el
+                  // real. Se LEE con cualquier rol; editar y sellar exigen rol.
+                  { title: "Presupuesto", href: "/analytics/budget", icon: Table2 },
                   // E5 · T11/T12 — Liquidaciones: la política (reglas) y su
                   // aplicación (runs). Ambas se LEEN con cualquier rol.
                   { title: "Reglas de liquidación", href: "/analytics/allocations", icon: Split },

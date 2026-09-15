@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { parseCents } from "@/lib/money"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState, useTransition } from "react"
 
@@ -299,12 +300,18 @@ export function AllocationRuleForm({
                           // negocio, la regla quedaría inerte. Se vuelve a
                           // «Proyectos» en el acto en vez de dejar que el
                           // usuario guarde algo que la acción va a rechazar.
+                          // E10 · T18 — `PLANTILLA` es la excepción simétrica:
+                          // reparte por FTE·mes ENTRE CENTROS DE COSTE, así que
+                          // con ella el destino se fija en «centros de coste»
+                          // (el CHECK de M4 rechaza `PROJECTS`).
                           const driver = event.target.value
                           const explicit = driver === "FIXED_PERCENT" || driver === "MANUAL"
+                          const forcedKind =
+                            driver === "HEADCOUNT" ? "COST_CENTERS" : explicit ? null : "PROJECTS"
                           patch(rule.key, {
                             driver,
                             targets: [],
-                            ...(explicit ? {} : { targetKind: "PROJECTS" }),
+                            ...(forcedKind ? { targetKind: forcedKind } : {}),
                           })
                         }}
                       >
@@ -315,6 +322,28 @@ export function AllocationRuleForm({
                         ))}
                       </select>
                       <span className="text-[11px] leading-snug text-muted-foreground">{DRIVER_HELP[rule.driver]}</span>
+                      {/* E10 · T18 — dónde se da de alta la base que el driver
+                          consume. Un «driver no disponible» mudo obliga al
+                          usuario a adivinar; la acción rechaza la regla si la
+                          base no existe, así que el enlace va por delante. */}
+                      {rule.driver === "HOURS" && (
+                        <span className="text-[11px] leading-snug" data-testid="driver-base-link">
+                          Base:{" "}
+                          <Link href="/time" className="underline underline-offset-2">
+                            partes de horas aprobados
+                          </Link>
+                          . Sin ninguno aprobado en el ejercicio, la regla no se guarda.
+                        </span>
+                      )}
+                      {rule.driver === "HEADCOUNT" && (
+                        <span className="text-[11px] leading-snug" data-testid="driver-base-link">
+                          Base:{" "}
+                          <Link href="/settings/headcount" className="underline underline-offset-2">
+                            snapshots de plantilla
+                          </Link>
+                          . Sin ninguno en el ejercicio, la regla no se guarda.
+                        </span>
+                      )}
                     </label>
 
                     <label className="flex flex-col gap-1 text-sm">
@@ -325,16 +354,29 @@ export function AllocationRuleForm({
                         value={rule.targetKind}
                         onChange={(event) => patch(rule.key, { targetKind: event.target.value, targets: [] })}
                       >
-                        {(showTargets ? ["PROJECTS", "BUSINESS_LINES", "COST_CENTERS"] : ["PROJECTS"]).map((kind) => (
+                        {(showTargets
+                          ? ["PROJECTS", "BUSINESS_LINES", "COST_CENTERS"]
+                          : rule.driver === "HEADCOUNT"
+                            ? ["COST_CENTERS"]
+                            : ["PROJECTS"]
+                        ).map((kind) => (
                           <option key={kind} value={kind}>
                             {TARGET_KIND_LABELS[kind]}
                           </option>
                         ))}
                       </select>
-                      {!showTargets && (
+                      {!showTargets && rule.driver !== "HEADCOUNT" && (
                         <span className="text-[11px] leading-snug text-muted-foreground">
-                          Este driver calcula los pesos por proyecto leyendo el diario. Para repartir a líneas de
-                          negocio o a otros centros de coste, elige porcentaje fijo o importes manuales.
+                          Este driver calcula los pesos por proyecto leyendo el diario o los partes de horas. Para
+                          repartir a líneas de negocio o a otros centros de coste, elige porcentaje fijo o importes
+                          manuales.
+                        </span>
+                      )}
+                      {rule.driver === "HEADCOUNT" && (
+                        <span className="text-[11px] leading-snug text-muted-foreground">
+                          La plantilla se mide por centro de coste, así que este driver sólo reparte{" "}
+                          <strong>a centros de coste</strong> (cascada). Con proyectos, la acción y el CHECK de la base
+                          la rechazan.
                         </span>
                       )}
                     </label>

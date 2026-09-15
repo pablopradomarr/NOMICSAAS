@@ -67,6 +67,11 @@ export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ org, rol
     ledgerHash: run.ledgerHash,
     analyticsHash: run.analyticsHash,
     rulesHash: run.rulesHash,
+    // E10 · T18 — el cuarto sello y su ventana los trae el listado (el detalle
+    // no los lleva): con `∅` el run no usó ningún driver de actividad.
+    timeHash: listed?.timeHash ?? "∅",
+    timeHashWindowStart: listed?.timeHashWindowStart ?? null,
+    timeHashWindowEnd: listed?.timeHashWindowEnd ?? null,
     gitSha: run.gitSha,
     runAt: run.runAt,
     supersededById: run.supersededById,

@@ -34,7 +34,7 @@ import { useState, useTransition } from "react"
  *   Deja de aportar y **sigue consultable**: nada se borra.
  * - `REVERSED` — apagada con motivo. **No genera ningún asiento**: el
  *   `ledgerHash` del periodo queda idéntico.
- * - **Caducada** — DERIVADO, nunca almacenado: los tres sellos del run ya no
+ * - **Caducada** — DERIVADO, nunca almacenado: los **cuatro** sellos del run ya no
  *   coinciden con los del periodo hoy (un asiento tardío, una reclasificación,
  *   una regla nueva). Se recalcula en cada lectura, así que no puede quedarse
  *   obsoleto.
@@ -93,7 +93,25 @@ export function AllocationRunsTable({
                 <td className="px-3 py-1 font-code text-[11px] text-muted-foreground">
                   <span title={run.ledgerHash}>L {shortHash(run.ledgerHash, 10)}</span>{" "}
                   <span title={run.analyticsHash}>A {shortHash(run.analyticsHash, 10)}</span>{" "}
-                  <span title={run.rulesHash}>R {shortHash(run.rulesHash, 10)}</span>
+                  <span title={run.rulesHash}>R {shortHash(run.rulesHash, 10)}</span>{" "}
+                  {/* E10 · O-E10-1 — el cuarto sello, con su VENTANA: es lo que
+                      hace que un parte tardío de enero caduque un run de marzo
+                      que reparte con base acumulada. */}
+                  <span
+                    title={
+                      run.timeHash === "∅"
+                        ? "Este run no usa ningún driver de actividad: no hay horas que sellar"
+                        : `${run.timeHash} · ventana ${run.timeHashWindowStart ?? "—"} … ${run.timeHashWindowEnd ?? "—"}`
+                    }
+                    data-time-hash={run.timeHash}
+                  >
+                    H {run.timeHash === "∅" ? "∅" : shortHash(run.timeHash, 10)}
+                  </span>
+                  {run.timeHashWindowStart && run.timeHashWindowEnd && (
+                    <span className="block text-[11px]" data-testid="time-window">
+                      ventana {run.timeHashWindowStart} … {run.timeHashWindowEnd}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-1 text-xs text-muted-foreground">{run.runAt.slice(0, 16).replace("T", " ")}</td>
                 <td className="px-3 py-1 text-right whitespace-nowrap">
@@ -109,8 +127,10 @@ export function AllocationRunsTable({
       </div>
       <p className="text-xs text-muted-foreground">
         Moneda base {currency}. Una liquidación revertida <strong>no genera ningún asiento</strong>: la imputación es
-        capa analítica paralela al libro diario. El estado «caducada» se deriva comparando los tres sellos del run con
-        los del periodo ahora mismo; no se almacena.
+        capa analítica paralela al libro diario. El estado «caducada» se deriva comparando los <strong>cuatro</strong>{" "}
+        sellos del run —libro, dimensiones, reglas y <span className="font-code">timeHash</span> sobre su ventana— con
+        los del periodo ahora mismo; no se almacena. Aprobar un parte tardío dentro de la ventana de un run lo caduca,
+        aunque el parte sea de otro mes.
       </p>
     </div>
   )

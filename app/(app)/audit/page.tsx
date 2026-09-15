@@ -18,6 +18,7 @@ import Link from "next/link"
 
 import {
   originRecordsOf,
+  readBudgetRevenueDrift,
   readDataQuality,
   sealReasonsOf,
   toAuditLogRows,
@@ -39,8 +40,10 @@ export const metadata: Metadata = { title: "Auditoría" }
  *
  * · el resumen enseña el sello con sus motivos y **los cinco hashes**, no una
  *   luz verde;
- * · las siete familias llevan el semáforo del motor puro, y una familia sin
- *   evaluar sale **`SIN_EVALUAR`**, jamás en verde (R3);
+ * · las familias llevan el semáforo del motor puro —con `PRESUPUESTO` desde
+ *   E10, que reúne I-E10-1…18: presupuesto sellado, partes de horas, coste-hora
+ *   y desviación contra el real—, y una familia sin evaluar sale
+ *   **`SIN_EVALUAR`**, jamás en verde (R3);
  * · el drill-down son **tres clics** —familia → check → registros de origen— y
  *   de ahí al asiento y a su documento;
  * · lo que el barrido no evaluó se declara, con el motivo, en el propio resumen.
@@ -66,6 +69,9 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
     const history = await listInvariantRuns(db, { take: 25 })
     const sweep = await latestSweep(db)
     const dataQuality = await readDataQuality(db)
+    // E10 · T18 — la columna deprecada de la ficha de proyecto, contrastada
+    // contra el presupuesto vigente. Va con el resto de avisos de calidad.
+    const budgetDrift = await readBudgetRevenueDrift(db)
     const allocationRuns = await listAllocationRunsWithLinesHash(db)
     const records = run ? await originRecordsOf(db, run.checks) : new Map()
 
@@ -165,7 +171,10 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
 
         <ClosingChecks blocks={closing} />
 
-        <DataQualityBlock warnings={dataQuality} staleAllocations={staleAllocations} />
+        <DataQualityBlock
+          warnings={budgetDrift ? [...dataQuality, budgetDrift] : dataQuality}
+          staleAllocations={staleAllocations}
+        />
 
         <StoreSweepPanel initial={sweepView} canSweep={isAdmin} />
 

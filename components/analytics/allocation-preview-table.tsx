@@ -9,7 +9,10 @@ import {
   FALLBACK_LABELS,
   MONTH_NAMES,
   PERIOD_LABELS,
+  SEAL_REASON_LABELS,
   WARNING_LABELS,
+  formatBaseShareBps,
+  formatMinutes,
   formatShareBps,
   periodLabelOf,
   periodRange,
@@ -382,14 +385,33 @@ export function AllocationPreviewPanel({
                     <span className="font-code text-xs">{w.ruleCode}</span> ({w.period}): {w.detail}
                     {"fallback" in w && w.fallback ? ` · se ha aplicado: ${FALLBACK_LABELS[w.fallback] ?? w.fallback}` : ""}
                     {"targets" in w && w.targets.length > 0 ? ` · receptores: ${w.targets.join(", ")}` : ""}
+                    {/* E10 · O-E10-2 — las horas sin aprobar con su recuento y
+                        su PESO sobre la base aprobada: en la ronda 0 el aviso
+                        sólo salía con base 0 y lo que dejaba de absorberse se
+                        publicaba en silencio. */}
+                    {"unapprovedMinutes" in w && (
+                      <span data-testid="unapproved-hours">
+                        {" "}
+                        · <strong>{formatMinutes(w.unapprovedMinutes)}</strong> h sin aprobar (
+                        <span data-unapproved-share-bps={w.shareOfBaseBps ?? ""}>
+                          {formatBaseShareBps(w.shareOfBaseBps)}
+                        </span>{" "}
+                        de la base aprobada)
+                      </span>
+                    )}
+                    {"sealReason" in w && w.sealReason && (
+                      <span className="ml-1 rounded-md border border-[#F5A623] px-1 py-0.5 text-[10px]" data-seal-reason={w.sealReason}>
+                        el run se sellará con motivo {SEAL_REASON_LABELS[w.sealReason] ?? w.sealReason}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
             <p className="mt-2 text-[11px] text-muted-foreground">
-              Los drivers de horas y plantilla se rechazan al guardar la regla: necesitan los partes de horas y las
-              asignaciones de personal, que llegan en E10. Ninguna regla puede quedar inerte repartiendo 0 € en
-              silencio.
+              Aviso de método: <strong>las horas no aprobadas no reparten dinero y no aparecen en ningún margen</strong>
+              . Un driver de actividad nunca queda mudo: sin base aprobada cae en su respaldo y lo dice, y con base
+              parcial reparte lo aprobado y declara cuánto se queda fuera.
             </p>
           </div>
         </>

@@ -13,11 +13,20 @@
  * verdad la hacen `forms/allocations.ts`, la acción y el trigger de la base.
  */
 
-/** Las cinco políticas de reparto vivas (`HOURS`/`HEADCOUNT` llegan en E10). */
+/**
+ * Las **siete** políticas de reparto vivas. `HOURS` y `HEADCOUNT` entran en E10
+ * (T18): los drivers de actividad ya tienen base —partes de horas aprobados y
+ * snapshots de plantilla— y dejan de rechazarse al guardar. Lo que sigue
+ * garantizado es que **ninguna regla nace muerta**: la acción comprueba que la
+ * base exista en el ejercicio de `validFrom` y, si no, dice qué falta y dónde
+ * darlo de alta.
+ */
 export const ALLOCATION_DRIVERS = [
   "FIXED_PERCENT",
   "REVENUE_SHARE",
   "DIRECT_COST_SHARE",
+  "HOURS",
+  "HEADCOUNT",
   "EQUAL",
   "MANUAL",
 ] as const
@@ -42,8 +51,10 @@ export const DRIVER_HELP: Record<string, string> = {
     "Reparte en proporción a los ingresos directos de cada receptor en el periodo, leídos del libro diario (se excluyen las subvenciones del 74). Un receptor con ingresos netos negativos pesa cero y queda fuera con un aviso: la estructura nunca se le devuelve como ingreso.",
   DIRECT_COST_SHARE:
     "Reparte en proporción al coste directo (MC1 + MC2) de cada receptor en el periodo, leído del libro diario. Es el criterio habitual para operaciones indirectas: quien más obra consume, más estructura absorbe.",
-  HOURS: "Necesita partes de horas (TimeEntry), que llegan en E10. Hoy se rechaza al guardar.",
-  HEADCOUNT: "Necesita las asignaciones de personal, que llegan en E10. Hoy se rechaza al guardar.",
+  HOURS:
+    "Reparte en proporción a los MINUTOS de los partes de horas APROBADOS del periodo (los pendientes no reparten dinero y no aparecen en ningún margen: se avisa con su recuento y su peso). Necesita el módulo de horas encendido y al menos un parte aprobado en el ejercicio.",
+  HEADCOUNT:
+    "Reparte en proporción a la plantilla en FTE·mes de cada centro de coste receptor, leída de los snapshots del periodo. Sólo con destino «centros de coste». Un receptor sin snapshot pesa cero y se declara (hueco); uno con 0 declarado pesa cero y no es un hueco.",
   EQUAL:
     "Reparte a partes iguales entre los receptores elegibles. Aviso de método: cobra lo mismo a un proyecto de 2 M€ que a uno de 20 k€. Es una elección de política, no un hecho.",
   MANUAL:
@@ -88,6 +99,32 @@ export const WARNING_LABELS: Record<string, string> = {
   "W-E5-ZERO-BASE": "Base del driver a cero",
   "W-E5-NEG-BASE": "Base negativa: receptor excluido",
   "W-E5-ARCHIVED-TARGET": "Receptor archivado",
+  // E10 · T18 — los cuatro avisos de los drivers de actividad (ADR-0018 D1).
+  // Dos de ellos mueven el sello del propio run y llevan escrito su motivo.
+  "W-E10-NO-HOURS": "Sin partes de horas aprobados en el periodo",
+  "W-E10-NO-HEADCOUNT": "Sin snapshot de plantilla: receptor a peso cero",
+  "W-E10-UNAPPROVED-HOURS": "Horas sin aprobar: la base es parcial",
+  "W-E10-HEADCOUNT-TRAPPED": "Saldo atrapado en un centro de coste sin regla propia",
+}
+
+/** Motivos de sello que un aviso de actividad arrastra al run (O-E10-17). */
+export const SEAL_REASON_LABELS: Record<string, string> = {
+  HORAS_SIN_APROBAR: "Horas sin aprobar",
+  PLANTILLA_AUSENTE: "Plantilla ausente",
+  TARIFA_AUSENTE: "Tarifa ausente",
+  PRESUPUESTO_AUSENTE: "Presupuesto ausente",
+  DESVIACION_PRESUPUESTO: "Desviación de presupuesto",
+}
+
+/** `1875` bps → `18,75 %`. Formato de un porcentaje ya calculado en servidor. */
+export const formatBaseShareBps = (bps: number | null | undefined): string =>
+  bps === null || bps === undefined ? "—" : formatShareBps(bps)
+
+/** `12 000` minutos → `200:00`. Presentación en horas:minutos (Q-2). */
+export function formatMinutes(minutes: number): string {
+  const sign = minutes < 0 ? "−" : ""
+  const absolute = Math.abs(minutes)
+  return `${sign}${Math.floor(absolute / 60)}:${String(absolute % 60).padStart(2, "0")}`
 }
 
 /** Nombre legible de un destino, ya resuelto en el servidor. */
@@ -172,6 +209,11 @@ export type AllocationWarningView = {
   targets?: string[]
   fallback?: string | null
   unallocatedCents?: number | null
+  /** E10 · O-E10-2: minutos sin aprobar y su peso sobre la base APROBADA. */
+  unapprovedMinutes?: number | null
+  shareOfBaseBps?: number | null
+  /** Motivo que el aviso arrastra al sello del run. */
+  sealReason?: string | null
 }
 
 /** Lo que devuelve una simulación, listo para pintar. */
@@ -200,6 +242,15 @@ export type AllocationRunView = {
   ledgerHash: string
   analyticsHash: string
   rulesHash: string
+  /**
+   * **E10 · cuarto sello** (O-E10-1). `"∅"` cuando el run no usa ningún driver
+   * de actividad; con valor, va siempre acompañado de la **ventana** sobre la
+   * que se selló, que es lo que hace que un parte tardío de enero caduque un run
+   * de marzo con `fallback = YTD`.
+   */
+  timeHash: string
+  timeHashWindowStart: string | null
+  timeHashWindowEnd: string | null
   gitSha: string
   runAt: string
   supersededById: string | null

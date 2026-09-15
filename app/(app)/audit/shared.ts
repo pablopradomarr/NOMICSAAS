@@ -400,6 +400,57 @@ export async function readDataQuality(db: AnyClient): Promise<DataQualityRow[]> 
   })
 }
 
+/**
+ * **E10 · T18 — el presupuesto de proyecto heredado de E4, contrastado.**
+ *
+ * `Project.budgetRevenueCents` y `Project.budgetCostCents` quedan **deprecados**
+ * en E10: la cifra buena es la de la versión vigente de `Budget`. Las columnas
+ * se conservan para no romper la ficha heredada, y precisamente por eso hay que
+ * decir cuándo divergen: dos verdades para la misma cifra, y la pantalla
+ * enseñando la vieja, es exactamente lo que la spec prohíbe.
+ *
+ * Se contrasta contra la versión **con vigencia abierta** de cada ejercicio
+ * (`validTo IS NULL`), que es la que rige hoy, y sólo para los proyectos que
+ * tienen la columna rellena: un `NULL` no es una divergencia, es un hueco.
+ */
+export async function readBudgetRevenueDrift(db: AnyClient): Promise<DataQualityRow | null> {
+  const projects = await db.project.findMany({
+    where: { budgetRevenueCents: { not: null } },
+    select: { id: true, code: true, budgetRevenueCents: true },
+    orderBy: { code: "asc" },
+  })
+  if (projects.length === 0) return null
+
+  const budgets = await db.budget.findMany({ where: { status: "VIGENTE", validTo: null }, select: { id: true } })
+  if (budgets.length === 0) return null
+
+  const sums = await db.budgetLine.groupBy({
+    by: ["projectId"],
+    where: {
+      budgetId: { in: budgets.map((b) => b.id) },
+      analyticType: "INGRESO_DIRECTO",
+      projectId: { in: projects.map((p) => p.id) },
+    },
+    _sum: { amountCents: true },
+  })
+  const budgetedByProject = new Map(sums.map((row) => [row.projectId, row._sum.amountCents ?? 0]))
+
+  const divergent = projects.filter((project) => (budgetedByProject.get(project.id) ?? 0) !== project.budgetRevenueCents)
+  if (divergent.length === 0) return null
+
+  const names = divergent.slice(0, 5).map((p) => p.code).join(", ")
+  return {
+    code: "PRESUPUESTO_PROYECTO_DIVERGENTE",
+    count: divergent.length,
+    message:
+      `El presupuesto de ingresos de la ficha del proyecto no coincide con el de la versión de presupuesto vigente ` +
+      `(${names}${divergent.length > 5 ? ", …" : ""}). La columna de la ficha quedó deprecada en E10: la cifra que ` +
+      `usan los informes es la del presupuesto sellado. Revísela y deje de mantener la de la ficha.`,
+    href: "/analytics/budget",
+    hrefLabel: "Presupuesto",
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // §Registro
 // ─────────────────────────────────────────────────────────────────────────────
