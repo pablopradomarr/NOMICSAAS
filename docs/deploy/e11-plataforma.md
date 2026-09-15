@@ -299,3 +299,17 @@ la cifra (P6/P7). Es el comportamiento correcto, pero conviene no provocarlo.
 > **Espejo en el runbook del preview.** `DESPLIEGUE-PREVIEW.md` (documento de
 > proyecto) lleva esto mismo en su §10. Si los dos divergen, manda **este**
 > fichero: está en el repositorio y se revisa con el código.
+
+## Endurecimiento frente a la API de Supabase (2026-09-15, aviso «rls_disabled_in_public»)
+
+Supabase concede por defecto ALL a `anon` y `authenticated` sobre toda tabla nueva de
+`public`, y expone `public` por PostgREST con la clave anon. Esta aplicación no usa esa
+API. La migración `20260929090000_supabase_api_hardening` (idempotente, sin SUPERUSER)
+revoca todo privilegio presente y futuro a esos dos roles en `public` y `app`, activa RLS
+en `sessions`, `account`, `verification` y `_prisma_migrations` con política sólo para
+`app_runtime`/`app_auth`/`app_maintenance`, y fija `search_path` en las funciones de
+`app`. Aplicada a mano en el preview el 2026-09-15 (registrada en `_prisma_migrations`
+con su checksum). Verificación: `select count(*) from information_schema.role_table_grants
+where grantee in ('anon','authenticated')` debe ser 0 y el linter de seguridad de
+Supabase no debe mostrar errores. Queda un WARN (`btree_gist` en `public`): moverla exige
+superusuario; deuda anotada en E12.
