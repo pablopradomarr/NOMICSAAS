@@ -165,3 +165,149 @@ export function maxDimensionVariance(
  * no tiene, y mejor no publicarlo que publicarlo mal.
  */
 export const VOLUME_PRICE_CONVENTION = "E11" as const
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P6 · §5.1 — provenance POR CELDA (auditoría ronda 1, hallazgo H-7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * **H-7.** La ronda 0 persistía un bloque de run con
+ * `generatedFrom: ["journal_lines", "allocation_lines", "budget_lines"]` y los
+ * tres sellos. Con eso una celda se reconstruye **a mano** —el propio auditor
+ * tuvo que escribir las consultas—, pero no es el drill-down que §5.1 promete:
+ * «**tres** consultas parametrizadas **por celda**, porque una celda de
+ * desviación no se reproduce con una sola».
+ *
+ * Aquí se compone esa provenance, celda a celda y en forma canónica. Es un
+ * módulo puro: las consultas son **texto parametrizado** que se copia y se
+ * ejecuta, nunca SQL que este módulo lance.
+ */
+export type BudgetProvenanceContext = {
+  runId: string
+  organizationId: string
+  fiscalYearId: string
+  budgetIdsByMonth: Readonly<Record<string, string>>
+  periodStart: string
+  periodEnd: string
+  ledgerHash: string
+  budgetHash: string
+  analyticsKey: string
+  gitSha: string
+  baseCurrency: string
+  /** Con imputaciones, la celda lleva además el reparto y su base de horas. */
+  withAllocations: boolean
+  /** `analyticTypes` por nivel de la configuración de márgenes vigente. */
+  levelTypes: Readonly<Record<string, readonly string[]>>
+}
+
+export type BudgetCellProvenance = {
+  valor: Cents | null
+  moneda: string
+  metrica: string
+  run_id: string
+  ledgerHash: string
+  budgetHash: string
+  analyticsKey: string
+  calculado_por: string
+  registros_origen: Readonly<Record<string, string>>
+  confianza: "calculado" | "no_comparable"
+}
+
+/**
+ * Los tipos analíticos que recoge un nivel de margen, como lista SQL. El nivel
+ * de una línea del diario **no está en la fila**: se deriva del tipo analítico
+ * efectivo y de la configuración de márgenes (`marginConfigHash`, que viaja en
+ * `analyticsKey`), así que la consulta filtra por tipo y nombra el nivel en un
+ * comentario, en vez de fingir una columna que no existe.
+ */
+const analyticTypesOf = (level: MarginLevel, ctx: BudgetProvenanceContext): string => {
+  const types = ctx.levelTypes[level] ?? []
+  // MC3 y EBITDA no recogen ningún tipo por sí mismos: les llega
+  // `INDIRECTO_CECO` encaminado por el `marginLevel` del CECO de la línea
+  // (E5-D1). La consulta lo dice en vez de devolver una lista vacía.
+  return types.length === 0
+    ? `'INDIRECTO_CECO' /* encaminado por el marginLevel del CECO */`
+    : types.map((t) => `'${t}'`).join(", ")
+}
+
+/** Ventana `[desde, hasta]` de la celda: su mes, o el periodo del informe. */
+const cellWindow = (cell: VarianceCell, ctx: BudgetProvenanceContext): { from: string; to: string } => {
+  if (cell.month === null) return { from: ctx.periodStart, to: ctx.periodEnd }
+  const [y, m] = cell.month.split("-").map(Number)
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  return { from: `${cell.month}-01`, to: `${cell.month}-${String(last).padStart(2, "0")}` }
+}
+
+/** Filtro por dimensión de la columna: `PROJ:`, `CECO:`, `BL:` o la compañía. */
+const dimensionFilter = (column: ColumnKey, table: string): string => {
+  if (column.startsWith("PROJ:")) return `${table}.project_id = (SELECT id FROM projects WHERE code = '${column.slice(5)}')`
+  if (column.startsWith("CECO:")) return `${table}.cost_center_id = (SELECT id FROM cost_centers WHERE code = '${column.slice(5)}')`
+  if (column.startsWith("BL:")) return `${table}.business_line_id = (SELECT id FROM business_lines WHERE code = '${column.slice(3)}')`
+  return "true /* columna de compañía: sin filtro de dimensión */"
+}
+
+export function budgetCellProvenance(cell: VarianceCell, ctx: BudgetProvenanceContext): BudgetCellProvenance {
+  const { from, to } = cellWindow(cell, ctx)
+  const month = cell.month ?? ctx.periodStart.slice(0, 7)
+  const budgetId = ctx.budgetIdsByMonth[month] ?? null
+
+  const registros: Record<string, string> = {
+    // (1) El REAL: las líneas del diario que la celda agrega, por su nivel.
+    real:
+      `SELECT jl.id FROM journal_lines jl JOIN journal_entries je ON je.id = jl.entry_id ` +
+      `AND je.organization_id = jl.organization_id WHERE jl.organization_id = '${ctx.organizationId}' ` +
+      `AND je.entry_date BETWEEN '${from}' AND '${to}' AND ${dimensionFilter(cell.column, "jl")} ` +
+      `AND jl.analytic_type IN (${analyticTypesOf(cell.level, ctx)}) /* nivel ${cell.level} */`,
+    // (2) El IMPUTADO: sólo con el toggle de imputaciones; sin él la celda no
+    //     lleva estructura repartida y una consulta vacía engañaría.
+    ...(ctx.withAllocations
+      ? {
+          imputado:
+            `SELECT al.id FROM allocation_lines al JOIN allocation_runs ar ON ar.id = al.run_id ` +
+            `AND ar.organization_id = al.organization_id WHERE al.organization_id = '${ctx.organizationId}' ` +
+            `AND ar.status = 'SEALED' AND ar.period_start >= '${from}' AND ar.period_end <= '${to}' ` +
+            `AND ${dimensionFilter(cell.column, "al").replace(/\b(project_id|cost_center_id|business_line_id)\b/, "target_$1")} ` +
+            `AND al.margin_level = '${cell.level}'`,
+        }
+      : {}),
+    // (3) El PRESUPUESTO: las líneas de la versión que gobierna ESE mes
+    //     (O-E10-9), no de una versión suelta.
+    presupuesto:
+      budgetId === null
+        ? `-- ${month} no tiene versión de presupuesto que lo cubra: la celda sale VACÍA con leyenda, nunca a cero`
+        : `SELECT bl.id FROM budget_lines bl WHERE bl.organization_id = '${ctx.organizationId}' ` +
+          `AND bl.budget_id = '${budgetId}' AND bl.month = '${month}-01' ` +
+          `AND ${dimensionFilter(cell.column, "bl")} AND bl.margin_level = '${cell.level}'`,
+    // (4) Las HORAS presupuestadas: la base con la que el dry-run de O-E10-4
+    //     repartió la estructura hasta esta celda. Desde la ronda 1 entran
+    //     además en el `budgetHash` (ADR-0018 D2), así que la consulta y el
+    //     sello hablan de lo mismo.
+    ...(ctx.withAllocations && budgetId !== null
+      ? {
+          horas:
+            `SELECT bhl.id FROM budget_hours_lines bhl WHERE bhl.organization_id = '${ctx.organizationId}' ` +
+            `AND bhl.budget_id = '${budgetId}' AND bhl.month = '${month}-01' ` +
+            `AND ${dimensionFilter(cell.column, "bhl")}`,
+        }
+      : {}),
+  }
+
+  return {
+    valor: cell.varianceCents,
+    moneda: ctx.baseCurrency,
+    metrica: `desviacion.${cell.level.toLowerCase()}.${cell.column}.${cell.month ?? "periodo"}`,
+    run_id: ctx.runId,
+    ledgerHash: `sha256:${ctx.ledgerHash}`,
+    budgetHash: `sha256:${ctx.budgetHash}`,
+    analyticsKey: ctx.analyticsKey,
+    calculado_por: `lib/budget/variance.ts@${ctx.gitSha}`,
+    registros_origen: registros,
+    confianza: cell.notComparable ? "no_comparable" : "calculado",
+  }
+}
+
+/** La provenance de TODAS las celdas del informe, en el orden de la matriz. */
+export const budgetProvenanceByCell = (
+  cells: readonly VarianceCell[],
+  ctx: BudgetProvenanceContext
+): BudgetCellProvenance[] => cells.map((cell) => budgetCellProvenance(cell, ctx))

@@ -102,7 +102,9 @@ Constraints SQL: `CHECK(debit>=0 AND credit>=0 AND (debit=0)<>(credit=0))`; FK c
 ## Analítica
 > Actualizado por **E4** (`docs/design/E4-analitica.md` ronda 2) tras la validación contable (`docs/design/E4-validacion-analitica.md`, **CONFORME CON OBSERVACIONES**). Se incorporan O-A1 (FK compuestas), O-A2 (CHECK de exclusividad y de «sin dimensión fuera de 6/7»), O-A3 (`analyticsHash`), O-A4 (`GRANT UPDATE` acotado), O-A5 (**`@@map`/`@map` en todo el bloque, que faltaba en los 14 modelos**), O-A7 (`MarginLevelConfig` versionada) y O-A8 (`closedAt`, `origin`, `isSystem`). Reglas de destino R-A1…R-A12 e invariantes I-E4-1…12: en el documento de validación.
 >
-> **Bloque de liquidación actualizado por E5** (`docs/design/E5-liquidacion.md`, **ADR-0013 APROBADO**) tras la validación contable (`docs/design/E5-validacion-liquidacion.md`, **CONFORME CON OBSERVACIONES**; cifras selladas en `docs/design/fixtures/liquidacion-esperada.json`, 25 checks). Se incorporan las diez observaciones: O-E5-1 (`AllocationLine.marginLevel` — **el nivel viaja con el importe**, E5-D1), O-E5-2 (`sourceShareBps`, E5-D2), O-E5-3 (**bps, no milésimas**, en las dos tablas), O-E5-4 (`zeroBaseFallback` + `fallbackApplied`), O-E5-5 (`amountCents` para `MANUAL`), O-E5-6 (`fiscalYearId`, `periodKind`, `status`, `lineCount`, `totalAllocatedCents`, run único vigente por periodo), O-E5-7 (**`allocationRunSetHash`** en lugar de `allocationRunId`), O-E5-8 (CHECK, triggers, RLS append-only), O-E5-9 (columnas `BL:<código>` en la matriz, E5-D3) y O-E5-10 (`code` único, `name` NOT NULL, índice de orden). **O-A6 NO queda cerrada en E5** (corrección fechada 2026-09-06, ronda 1 de revisión de E5): `Budget` no existe todavía, así que no hay tabla sobre la que crear los índices. Su épica de cierre es **E10**, en la misma migración que cree `budgets`; anotada en `docs/ESTADO.md` §E5.
+> **Bloque de liquidación actualizado por E5** (`docs/design/E5-liquidacion.md`, **ADR-0013 APROBADO**) tras la validación contable (`docs/design/E5-validacion-liquidacion.md`, **CONFORME CON OBSERVACIONES**; cifras selladas en `docs/design/fixtures/liquidacion-esperada.json`, 25 checks). Se incorporan las diez observaciones: O-E5-1 (`AllocationLine.marginLevel` — **el nivel viaja con el importe**, E5-D1), O-E5-2 (`sourceShareBps`, E5-D2), O-E5-3 (**bps, no milésimas**, en las dos tablas), O-E5-4 (`zeroBaseFallback` + `fallbackApplied`), O-E5-5 (`amountCents` para `MANUAL`), O-E5-6 (`fiscalYearId`, `periodKind`, `status`, `lineCount`, `totalAllocatedCents`, run único vigente por periodo), O-E5-7 (**`allocationRunSetHash`** en lugar de `allocationRunId`), O-E5-8 (CHECK, triggers, RLS append-only), O-E5-9 (columnas `BL:<código>` en la matriz, E5-D3) y O-E5-10 (`code` único, `name` NOT NULL, índice de orden). **O-A6 NO quedó cerrada en E5** (corrección fechada 2026-09-06): `Budget` no existía todavía. **CERRADA en E10 el 2026-09-15**, en la migración `20260924100000_e10_presupuesto` que crea `budgets` — CHECK de exclusividad y cuatro índices únicos parciales en `budget_lines`, y otros cuatro en `budget_hours_lines`. Ver el bloque de E10 más abajo y `docs/ESTADO.md` §E5.
+
+> **Bloque de presupuesto y horas añadido por E10** (`docs/design/E10-presupuesto-horas.md`, **ADR-0018 APROBADO** D1–D7): las siete tablas nuevas (`budgets`, `budget_lines`, `budget_hours_lines`, `time_entries`, `employees`, `employee_rates`, `headcount_snapshots`), los drivers de actividad `HOURS` y `HEADCOUNT`, el cuarto sello `timeHash` con su ventana en `AllocationRun` y `budget_hash` en la clave de caché de `ReportRun`.
 
 ```prisma
 model BusinessLine { id; organizationId @map("organization_id"); code; name; color; sortOrder @map("sort_order"); isActive @map("is_active"); archivedAt? @map("archived_at"); isSystem @map("is_system"); createdAt; updatedAt
@@ -138,15 +140,71 @@ enum AllocationRunStatus { DRAFT SEALED SUPERSEDED REVERSED }   @@map("allocatio
 model AllocationRun { id; organizationId; fiscalYearId @map("fiscal_year_id"); periodKind AllocPeriod @map("period_kind"); periodStart Date @map("period_start"); periodEnd Date @map("period_end"); status AllocationRunStatus SEALED; ledgerHash @map("ledger_hash"); analyticsHash @map("analytics_hash"); rulesHash @map("rules_hash"); linesHash? @map("lines_hash") /* sello de la SALIDA, E5 ronda 1 */; gitSha @map("git_sha"); lineCount Int 0 @map("line_count"); totalAllocatedCents BigInt 0 @map("total_allocated_cents"); warnings Json []; runById? @map("run_by_id"); runAt @map("run_at"); supersededById? @map("superseded_by_id"); reversedAt? @map("reversed_at"); reversedById? @map("reversed_by_id"); reversalReason? @map("reversal_reason"); lines AllocationLine[]
   @@unique([organizationId,id]) @@map("allocation_runs") }
 model AllocationLine { id; organizationId; runId @map("run_id"); ruleId @map("rule_id"); sourceCostCenterId @map("source_cost_center_id"); targetProjectId? @map("target_project_id"); targetBusinessLineId? @map("target_business_line_id"); targetCostCenterId? @map("target_cost_center_id"); marginLevel MarginLevel @map("margin_level"); amountCents BigInt @map("amount_cents"); driverBase BigInt @map("driver_base"); driverBaseTotal BigInt @map("driver_base_total"); driverShareBps Int @map("driver_share_bps"); fallbackApplied ZeroBaseFallback? @map("fallback_applied"); eligibilityReason? @map("eligibility_reason") @@map("allocation_lines") }
-model Budget { id; organizationId; year Int; month Int; projectId?; costCenterId?; accountCode?; amountCents Int; @@map("budgets") }
-// O-A6 **ABIERTA · cierre en E10** (corregido 2026-09-06: la migración de E5 no la cerró
-// porque la tabla `budgets` no existe todavía; la crea E10). El `@@unique` con TRES columnas
-// nullables NO impide duplicados (NULL <> NULL): al crear `budgets` hay que sustituirlo por
-// cuatro índices únicos PARCIALES por combinación (proyecto+cuenta, proyecto sin cuenta,
-// CECO+cuenta, CECO sin cuenta) —o `NULLS NOT DISTINCT`, PG 15+— más el
-// CHECK `(project_id IS NULL) <> (cost_center_id IS NULL)`.
-model TimeEntry { id; organizationId; userId; projectId; date Date; minutes Int; note? @@map("time_entries") }
-model EmployeeRate { id; organizationId; userId; hourlyCostCents Int; validFrom; validTo? @@map("employee_rates") }
+// ── Presupuesto, horas y drivers de actividad (E10, ADR-0018) ────────────────
+// Las SIETE tablas en su forma final. Todas con `organization_id`, `@@map`
+// snake_case, FK compuestas por tenant `(organization_id, <id>)`, RLS estricta
+// con FORCE y GRANT de columna en las dos semi-append-only (`budgets` y
+// `time_entries`). Migraciones `20260924090000_e10_enums` …
+// `20260924150000_e10_check_family_presupuesto` y
+// `20260925090000_e10_ronda1_signo_y_reset`.
+//
+// **O-A6 CERRADA (2026-09-15, E10)**: el `@@unique` de tres columnas nullables
+// del esbozo de E5 —que NO impedía duplicados, porque NULL <> NULL— se sustituye
+// en `budget_lines` por el CHECK `(project_id IS NULL) <> (cost_center_id IS NULL)`
+// y CUATRO índices únicos PARCIALES (proyecto+cuenta, proyecto sin cuenta,
+// CECO+cuenta, CECO sin cuenta), y otros cuatro equivalentes en
+// `budget_hours_lines`. Migración `20260924100000_e10_presupuesto`; lo vigila
+// I-E10-8 y lo comprueba `tests/integration/e10-esquema.test.ts`.
+enum BudgetScenario { BASE REVISADO }   @@map("budget_scenario")
+enum BudgetStatus { BORRADOR VIGENTE SUSTITUIDO }   @@map("budget_status")   // no existe ANULADO: se SUSTITUYE (ADR-0018 D3)
+enum BudgetLineSource { MANUAL IMPORT_CSV COPIED_FROM_VERSION DERIVED }   @@map("budget_line_source")
+enum TimeEntryStatus { BORRADOR APROBADO }   @@map("time_entry_status")
+enum TimeEntrySource { MANUAL IMPORT_CSV API }   @@map("time_entry_source")
+enum EmployeeRateBasis { BRUTO_SIN_SS COSTE_EMPRESA_CON_SS }   @@map("employee_rate_basis")   // Q-1: difieren ~31,9 %; la `basis` VIAJA con la cifra
+enum HeadcountSource { MANUAL DERIVED_FROM_EMPLOYEES }   @@map("headcount_source")
+// Una VERSIÓN de presupuesto. Semi-append-only: sellada sólo admite `status`,
+// `valid_to`, `superseded_by_id`, `name`, `note` y `updated_at`
+// (trigger `budgets_immutable_when_sealed`).
+// `budget_hash` (§3.8, ADR-0018 D2) = sha256( cabecera(escenario, revisión,
+// `valid_from`, `partial_from`, marginConfigHash) ‖ líneas de importe en forma
+// canónica CON su `marginLevel` ‖ líneas de HORAS en minutos ).
+// **`valid_to` NO entra** (auditoría ronda 1, H-2): es mutable por diseño —al
+// sellar la versión siguiente, `sealBudgetTx` cierra la anterior con
+// `validTo = validFrom − 1 día` (O-E10-8)—, y dentro del sello hacía
+// irreproducible el hash de toda versión relevada.
+model Budget { id; organizationId; fiscalYearId @map("fiscal_year_id"); scenario BudgetScenario; revision Int; name; note?; status BudgetStatus BORRADOR; validFrom Date @map("valid_from"); validTo? Date @map("valid_to"); partialFrom? Date @map("partial_from") /* O-E10-9 */; budgetHash? @map("budget_hash"); marginConfigHash? @map("margin_config_hash"); gitSha? @map("git_sha"); sealedAt? @map("sealed_at"); sealedById? @map("sealed_by_id"); supersededById? @map("superseded_by_id"); createdById?; createdAt; updatedAt; lines BudgetLine[]; hours BudgetHoursLine[]
+  @@unique([organizationId,fiscalYearId,scenario,revision]) @@unique([organizationId,id]) @@map("budgets") }
+  // + EXCLUDE USING gist (organization_id =, fiscal_year_id =, daterange(valid_from, valid_to,'[]') &&) WHERE status <> 'BORRADOR'
+  // + CHECK budgets_revision_base (BASE ⇒ revision = 0), budgets_sealed_marks (hash, git_sha y sealed_at van los tres o ninguno)
+model BudgetLine { id; organizationId; budgetId @map("budget_id"); month Date /* día 1 */; accountCode? @map("account_code") /* 6/7 */; projectId? @map("project_id"); costCenterId? @map("cost_center_id"); businessLineId? @map("business_line_id") /* denormalizada del proyecto, R-A9 */; analyticType AnalyticType @map("analytic_type") /* NOT NULL, O-E10-23 */; marginLevel MarginLevel @map("margin_level") /* CONGELADO, O-E10-7 */; amountCents Int @map("amount_cents") /* APORTE: ingreso +, gasto − */; signException Boolean false @map("sign_exception"); source BudgetLineSource MANUAL; note?
+  @@map("budget_lines") }
+  // + CHECK budget_lines_dimension (project XOR ceco), budget_lines_type_required, budget_lines_pnl_only,
+  //   budget_lines_month_is_first_day, budget_lines_margin_level,
+  //   budget_lines_sign_by_type (el signo lo fuerza el tipo; la excepción SÓLO en 61x/71x, 706/708/709,
+  //   79x/759 — auditoría ronda 1, H-4) + los CUATRO índices únicos parciales de O-A6
+model BudgetHoursLine { id; organizationId; budgetId @map("budget_id"); month Date; projectId? @map("project_id"); costCenterId? @map("cost_center_id"); employeeId? @map("employee_id"); minutes Int /* ENTEROS, Q-2 */; source BudgetLineSource MANUAL
+  @@map("budget_hours_lines") }
+  // + CHECK de exclusividad de dimensión y de día 1; cuatro índices únicos parciales;
+  //   trigger `budget_hours_lines_no_write_when_sealed`. Entran en el `budgetHash` (D2)
+model Employee { id; organizationId; code @db.VarChar(24); name; counterpartyId? @map("counterparty_id"); userId? @map("user_id"); defaultCostCenterId? @map("default_cost_center_id"); fteMilli Int 1000 @map("fte_milli"); hireDate? @db.Date; endDate? @db.Date; isActive; archivedAt?; createdAt; updatedAt
+  @@unique([organizationId,code]) @@unique([organizationId,id]) @@map("employees") }
+  // No se borra: se archiva (política `employees_no_delete` + REVOKE DELETE, revisión PUEDE 11)
+model EmployeeRate { id; organizationId; employeeId @map("employee_id"); hourlyCostCents Int @map("hourly_cost_cents") /* > 0 */; basis EmployeeRateBasis; validFrom Date @map("valid_from"); validTo? Date @map("valid_to"); note?; createdById?
+  @@map("employee_rates") }
+  // + EXCLUDE USING gist: una sola tarifa vigente por (empleado, fecha) — I-E10-5.
+  //   Sin tarifa el KPI sale NO EVALUABLE: nunca 0 ni la tarifa anterior
+model TimeEntry { id; organizationId; employeeId @map("employee_id"); date Date; projectId? @map("project_id"); costCenterId? @map("cost_center_id"); businessLineId? @map("business_line_id"); minutes Int /* ENTEROS; negativo SÓLO en contra-apunte */; productive Boolean true; note?; source TimeEntrySource MANUAL; status TimeEntryStatus BORRADOR; approvedAt? @map("approved_at"); approvedById? @map("approved_by_id"); correctsEntryId? @map("corrects_entry_id"); correctionReason? @map("correction_reason"); importKey? @map("import_key"); createdById?; createdAt
+  @@unique([organizationId,id]) @@map("time_entries") }
+  // + CHECK de exclusividad de receptor, `time_entries_approval_marks`, techo 1 440 por FILA
+  //   y **agregado por (empleado, día)** en trigger (O-E10-21);
+  //   APROBADO es INMUTABLE y no se borra: se contra-apunta (I-E10-4).
+  //   **Única salida (QA BUG-E10-2, ADR-0018 D7)**: el vaciado de operador con el GUC
+  //   `app.maintenance_reset_org` verificado contra la organización de la fila Y contra el
+  //   rol `app_maintenance`, con el que la aplicación nunca conecta
+model HeadcountSnapshot { id; organizationId; costCenterId @map("cost_center_id"); periodEnd Date @map("period_end") /* ÚLTIMO día del mes (CHECK) */; fteMilli Int @map("fte_milli") /* milésimas de FTE */; headcount Int?; source HeadcountSource MANUAL; note?
+  @@unique([organizationId,costCenterId,periodEnd]) @@map("headcount_snapshots") }
+  // Base del driver HEADCOUNT: `Σ fteMilli` de los snapshots del periodo («FTE·mes», Q-7).
+  // Sin snapshot NO es 0: es PLANTILLA_AUSENTE, con aviso y motivo de sello
 model Counterparty { id; organizationId; kind CounterpartyKind; name; taxId?; accountCode?; defaultTaxRateId?; email?; @@unique([organizationId,taxId]) @@map("counterparties") }  // clientes/proveedores
 // `Organization.nonAnalyticLevel MarginLevel EBITDA` (CHECK ∈ {EBITDA, EBIT, BAI}): R-A11 —
 // `630`/`633`/`638` van SIEMPRE a RESULTADO (fijo); el resto de NO_ANALITICO (73x/74x/75x,

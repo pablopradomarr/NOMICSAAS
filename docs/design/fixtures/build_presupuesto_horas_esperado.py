@@ -36,8 +36,15 @@ LOS MISMOS, que es lo que hace que la desviacion signifique algo. El
 presupuesto se **deriva** del real con factores enteros declarados, de modo que
 cada celda de desviacion es reproducible a mano.
 
-Escribe `docs/design/fixtures/presupuesto-horas-esperado.json`. Con `--check` no
-escribe: reconstruye, compara byte a byte y falla si difiere.
+Escribe `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`. Con `--check`
+no escribe: reconstruye, compara byte a byte y falla si difiere.
+
+Un fixture sellado no se reescribe: se versiona. `presupuesto-horas-esperado.json`
+(schema 1.0) queda CONGELADO como evidencia de lo que se firmo en la ronda 0. La
+ronda 1 corrige la forma canonica del `budgetHash` (auditor H-2/H-3, revisor
+BLOQUEA 3): fuera `validTo` —mutable por diseno al sellar la version siguiente— y
+dentro las lineas de horas presupuestadas. Los dos `budgetHash` cambian, asi que
+este generador escribe y comprueba `presupuesto-horas-esperado.v1.1.json`.
 
 NO TOCA `tests/fixtures/*`.
 
@@ -76,7 +83,7 @@ e4 = importlib.import_module("build_pyg_analitica_esperada")
 e5 = importlib.import_module("build_liquidacion_esperada")
 
 ROOT = e4.ROOT
-OUT = HERE / "presupuesto-horas-esperado.json"
+OUT = HERE / "presupuesto-horas-esperado.v1.1.json"
 
 FISCAL_YEAR = "2026"
 MONTHS = [f"2026-{m:02d}" for m in range(1, 13)]
@@ -482,31 +489,79 @@ MARGIN_CONFIG = {
 }
 MARGIN_CONFIG_HASH = sha256(json.dumps(MARGIN_CONFIG, sort_keys=True, ensure_ascii=False))
 
+def minutes_by_month_target(approved: bool) -> dict[tuple[str, str], int]:
+    out: dict[tuple[str, str], int] = defaultdict(int)
+    for row in TIME_ENTRIES:
+        if row["approved"] != approved or not row["productive"]:
+            continue
+        if row["targetKind"] != "PROJECT":
+            continue
+        out[(row["date"][:7], row["targetCode"])] += row["minutes"]
+    return dict(out)
+
+
+REAL_MINUTES = minutes_by_month_target(approved=True)
+UNAPPROVED_MINUTES = minutes_by_month_target(approved=False)
+
+# Horas PRESUPUESTADAS por (mes, proyecto): el plan preveia un 5 % menos de
+# minutos que los realmente aprobados. Son las que alimentan la liquidacion
+# presupuestaria de O-E10-4 — para eso existen `BudgetHoursLine`.
+BUDGET_HOURS = {k: v * 9_500 // 10_000 for k, v in REAL_MINUTES.items()}
+
+
+def build_budget_hours_lines(months: list[str]) -> list[dict[str, Any]]:
+    return [{"month": f"{m}-01", "dimensionKind": "PROJECT", "dimensionCode": p,
+             "businessLineCode": PROJECT_BL[p], "employeeCode": None, "minutes": v}
+            for (m, p), v in sorted(BUDGET_HOURS.items()) if m in months]
+
+
+BUDGET_HOURS_LINES = build_budget_hours_lines(MONTHS)
+
 BUDGETS: list[dict[str, Any]] = [
     {"code": "2026-BASE", "scenario": "BASE", "revision": 0, "status": "VIGENTE",
      "validFrom": "2026-01-01", "validTo": "2026-06-30", "partialFrom": None,
-     "lines": build_budget_lines(BASE_DELTA_BPS, MONTHS)},
+     "lines": build_budget_lines(BASE_DELTA_BPS, MONTHS),
+     "hoursLines": build_budget_hours_lines(MONTHS)},
     {"code": "2026-REV1", "scenario": "REVISADO", "revision": 1, "status": "VIGENTE",
      "validFrom": "2026-07-01", "validTo": None, "partialFrom": "2026-07-01",
-     "lines": build_budget_lines(REV1_DELTA_BPS, H2)},
+     "lines": build_budget_lines(REV1_DELTA_BPS, H2),
+     "hoursLines": build_budget_hours_lines(H2)},
 ]
+
+HOURS_SEPARATOR = "∅HORAS"
 
 
 def canonical_budget_form(version: dict[str, Any], margin_config_hash: str) -> str:
     """O-E10-7. Cabecera con la identidad de la version y el sello de la
-    configuracion de margenes, y una linea por celda con su `marginLevel`
-    CONGELADO: sin el, mover un CECO de MC3 a EBITDA leeria el mismo presupuesto
-    en otra fila sin cambiar el hash."""
+    configuracion de margenes, una linea por celda de importe con su
+    `marginLevel` CONGELADO —sin el, mover un CECO de MC3 a EBITDA leeria el
+    mismo presupuesto en otra fila sin cambiar el hash— y una linea por celda de
+    HORAS, en minutos enteros.
+
+    Ronda 1 (auditor H-2/H-3, revisor BLOQUEA 3):
+
+      · `validTo` NO entra. Es mutable POR DISENO: al sellar la siguiente
+        version, `sealBudgetTx` cierra la anterior con `validTo = validFrom - 1`
+        y el trigger de inmutabilidad lo admite expresamente. Con `validTo`
+        dentro, el hash de toda version relevada dejaba de ser reproducible e
+        I-E10-6 daba FAIL sobre datos integros.
+      · Las lineas de HORAS si entran (ADR-0018 D2, diseno 3.8): alimentan la
+        liquidacion presupuestaria en dry-run, o sea las celdas de MC3 por
+        dimension del informe. Sin ellas, el sello no atestiguaba la base del
+        reparto."""
     head = "\t".join([version["scenario"], str(version["revision"]), version["validFrom"],
-                      version["validTo"] or NULL, version["partialFrom"] or NULL,
-                      margin_config_hash])
+                      version["partialFrom"] or NULL, margin_config_hash])
     rows = sorted(
         "\t".join([l["month"], l["dimensionKind"], l["dimensionCode"],
                    l["accountCode"] or NULL, l["analyticType"] or NULL,
                    l["marginLevel"], str(l["amountCents"]),
                    "1" if l["signException"] else "0"])
         for l in version["lines"])
-    return "\n".join([head, *rows])
+    hours = sorted(
+        "\t".join([h["month"], h["dimensionKind"], h["dimensionCode"],
+                   h["employeeCode"] or NULL, str(h["minutes"])])
+        for h in version["hoursLines"])
+    return "\n".join([head, *rows, HOURS_SEPARATOR, *hours])
 
 
 for _b in BUDGETS:
@@ -682,6 +737,21 @@ class ActivityEngine(e5.Engine):
         weights = [(p, max(0, sum(self.minutes[(m, p)] for m in ms))) for p in targets]
         unapproved = {p: sum(self.unapproved[(m, p)] for m in ms) for p in targets}
         base_total = sum(w for _, w in weights)
+        # O-E10-2: se emite SIEMPRE que haya minutos sin firmar, ANTES de la rama
+        # de base cero (revision ronda 1, hallazgo 4). El 100 % sin aprobar es el
+        # caso extremo del parcial, no una excepcion: salir por el fallback sin
+        # emitir el aviso sellaba el run sin `HORAS_SIN_APROBAR`.
+        if any(v > 0 for v in unapproved.values()):
+            total_unapproved = sum(unapproved.values())
+            self.warnings.append({
+                "code": "W-E10-UNAPPROVED-HOURS", "rule": rule["code"], "period": period,
+                "unapprovedMinutes": total_unapproved,
+                # `null` con base 0: no hay porcentaje sobre una base vacia, y un
+                # 0 se leeria como «no hay nada pendiente».
+                "shareOfBaseBps": None if base_total == 0 else total_unapproved * 10_000 // base_total,
+                "targets": sorted(p for p, v in unapproved.items() if v > 0),
+                "sealReason": "HORAS_SIN_APROBAR",
+                "detail": "hay minutos sin aprobar de receptores elegibles en la ventana del driver"})
         if base_total == 0:
             fallback = rule["zeroBaseFallback"]
             self.warnings.append({
@@ -698,18 +768,6 @@ class ActivityEngine(e5.Engine):
                 upto = MONTHS[:MONTHS.index(ms[-1]) + 1]
                 return [(p, max(0, sum(self.minutes[(m, p)] for m in upto))) for p in targets]
             raise ValueError(fallback)
-        if any(v > 0 for v in unapproved.values()):
-            # O-E10-2: se emite SIEMPRE que haya minutos sin firmar, no solo con
-            # base cero. Es el caso peligroso: el reparto sale sobre una parte de
-            # la actividad y, sin el aviso, nadie se entera.
-            total_unapproved = sum(unapproved.values())
-            self.warnings.append({
-                "code": "W-E10-UNAPPROVED-HOURS", "rule": rule["code"], "period": period,
-                "unapprovedMinutes": total_unapproved,
-                "shareOfBaseBps": total_unapproved * 10_000 // base_total,
-                "targets": sorted(p for p, v in unapproved.items() if v > 0),
-                "sealReason": "HORAS_SIN_APROBAR",
-                "detail": "hay minutos sin aprobar de receptores elegibles en la ventana del driver"})
         return weights
 
     # -- HEADCOUNT --------------------------------------------------------
@@ -742,29 +800,6 @@ class ActivityEngine(e5.Engine):
         if rule["driver"] == "HEADCOUNT":
             return self.headcount_weights(rule, period)
         return super().driver_weights(rule, period, fallback_used)
-
-
-def minutes_by_month_target(approved: bool) -> dict[tuple[str, str], int]:
-    out: dict[tuple[str, str], int] = defaultdict(int)
-    for row in TIME_ENTRIES:
-        if row["approved"] != approved or not row["productive"]:
-            continue
-        if row["targetKind"] != "PROJECT":
-            continue
-        out[(row["date"][:7], row["targetCode"])] += row["minutes"]
-    return dict(out)
-
-
-REAL_MINUTES = minutes_by_month_target(approved=True)
-UNAPPROVED_MINUTES = minutes_by_month_target(approved=False)
-
-# Horas PRESUPUESTADAS por (mes, proyecto): el plan preveia un 5 % menos de
-# minutos que los realmente aprobados. Son las que alimentan la liquidacion
-# presupuestaria de O-E10-4 — para eso existen `BudgetHoursLine`.
-BUDGET_HOURS = {k: v * 9_500 // 10_000 for k, v in REAL_MINUTES.items()}
-BUDGET_HOURS_LINES = [{"month": f"{m}-01", "dimensionKind": "PROJECT", "dimensionCode": p,
-                       "businessLineCode": PROJECT_BL[p], "employeeCode": None, "minutes": v}
-                      for (m, p), v in sorted(BUDGET_HOURS.items())]
 
 
 def ledger_like_from_budget() -> dict[str, Any]:
@@ -1499,7 +1534,7 @@ def build() -> dict[str, Any]:
     checks = build_checks(variance_settled)
 
     return {
-        "schemaVersion": "1.0",
+        "schemaVersion": "1.1",
         "generatedBy": "docs/design/fixtures/build_presupuesto_horas_esperado.py",
         "note": (
             "Presupuesto, horas, liquidacion presupuestaria, desviacion, forecast y KPI esperados "
@@ -1565,9 +1600,11 @@ def build() -> dict[str, Any]:
             },
         },
 
-        "budgets": [{k: v for k, v in b.items() if k != "lines"} | {"lineCount": len(b["lines"])}
+        "budgets": [{k: v for k, v in b.items() if k not in ("lines", "hoursLines")}
+                    | {"lineCount": len(b["lines"]), "hoursLineCount": len(b["hoursLines"])}
                     for b in BUDGETS],
         "budgetLines": {b["code"]: b["lines"] for b in BUDGETS},
+        "budgetHoursLinesByVersion": {b["code"]: b["hoursLines"] for b in BUDGETS},
         "budgetComposition": {"provenanceByMonth": PROVENANCE, "effectiveLineCount": len(EFFECTIVE_LINES)},
         "budgetHoursLines": BUDGET_HOURS_LINES,
         "budgetDerivation": {"baseDeltaBps": BASE_DELTA_BPS, "rev1DeltaBps": REV1_DELTA_BPS,
@@ -1664,7 +1701,7 @@ def main() -> int:
         if OUT.read_text(encoding="utf-8") != text:
             print(f"{OUT} difiere de la reconstruccion", file=sys.stderr)
             return 1
-        print("OK: presupuesto-horas-esperado.json reproducible byte a byte")
+        print("OK: presupuesto-horas-esperado.v1.1.json reproducible byte a byte")
         return 0
 
     OUT.write_text(text, encoding="utf-8")

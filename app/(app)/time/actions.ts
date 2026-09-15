@@ -33,6 +33,7 @@ import {
 import { formatE10Errors } from "@/forms/e10-errors"
 import { parseCsvRows } from "@/lib/accounts/csv"
 import { ActionState } from "@/lib/actions"
+import { readTimeCalendar, readTimeList } from "@/app/(app)/time/shared"
 import { withOrg } from "@/lib/authz"
 import { tenantTransaction } from "@/lib/db"
 import { listEmployees } from "@/models/employees"
@@ -43,8 +44,6 @@ import {
   correctTimeEntryTx,
   createTimeEntriesTx,
   importTimeCsvTx,
-  listTimeEntries,
-  minutesByTargetMonthSql,
   type CreateTimeEntriesResult,
   type ImportReport,
   type TargetMonthMinutes,
@@ -125,48 +124,14 @@ export const listTimeEntriesAction = withOrg(
     const parsed = listTimeEntriesSchema.safeParse(input ?? {})
     if (!parsed.success) return invalid(parsed.error)
     const { skip, take, ...filter } = parsed.data
-
-    const payload = await tenantTransaction(org.id, user.id, async (tx) => {
-      // En SERIE: dentro de una transacción hay UNA conexión (regla de E6-perf).
-      const page = await listTimeEntries(tx, filter, { skip, take })
-      const aggregate =
-        filter.from && filter.to
-          ? await minutesByTargetMonthSql(tx, { from: filter.from, to: filter.to }, { approvedOnly: true })
-          : []
-      const mine = await listEmployees(tx, { includeArchived: true })
-      return { page, aggregate, myEmployeeIds: mine.filter((e) => e.userId === user.id).map((e) => e.id) }
-    })
-
-    const nominal = role === Role.EDITOR || role === Role.ADMIN
-    const own = new Set(payload.myEmployeeIds)
-    const entries = payload.page.entries.map((e) =>
-      nominal || own.has(e.employeeId)
-        ? e
-        : { ...e, employeeCode: "—", employeeName: "—", note: null }
+    // **DEBE 7**: la lectura vive en `shared.ts` y acepta el cliente, para que la
+    // página la haga dentro del `db` de `tenantPage` (una transacción por
+    // petición). Aquí la acción abre la suya porque la llama el cliente, que no
+    // tiene ninguna abierta.
+    const data = await tenantTransaction(org.id, user.id, async (tx) =>
+      readTimeList(tx, { filter, page: { skip, take }, userId: user.id, role })
     )
-
-    const approvedMinutes = payload.page.entries
-      .filter((e) => e.status === "APROBADO")
-      .reduce((a, e) => a + e.minutes, 0)
-    const unapprovedMinutes = payload.page.entries
-      .filter((e) => e.status !== "APROBADO")
-      .reduce((a, e) => a + e.minutes, 0)
-    const base = approvedMinutes + unapprovedMinutes
-
-    return {
-      success: true,
-      data: {
-        entries,
-        total: payload.page.total,
-        approvedMinutes,
-        unapprovedMinutes,
-        // El % de las pendientes SOBRE LA BASE: es el aviso (c) de §7 y el que
-        // explica por qué una regla `HOURS` reparte menos de lo que parece.
-        unapprovedShareBps: base === 0 ? null : Math.round((unapprovedMinutes * 10000) / base),
-        aggregate: payload.aggregate,
-        redacted: !nominal,
-      },
-    }
+    return { success: true, data }
   }
 )
 
@@ -180,50 +145,14 @@ export const timeCalendarAction = withOrg(
   async ({ org, user, role }, input: unknown): Promise<ActionState<TimeCalendarPayload>> => {
     const parsed = timeCalendarSchema.safeParse(input)
     if (!parsed.success) return invalid(parsed.error)
-    const month = parsed.data.month
-    const from = `${month}-01`
-    const to = lastDayOf(month)
-
-    const page = await tenantTransaction(org.id, user.id, async (tx) =>
-      listTimeEntries(
-        tx,
-        { from, to, ...(parsed.data.employeeId ? { employeeId: parsed.data.employeeId } : {}) },
-        // 40 empleados × 31 días × varios partes: el techo de §9 es un mes.
-        { take: 5000 }
-      )
+    const data = await tenantTransaction(org.id, user.id, async (tx) =>
+      readTimeCalendar(tx, {
+        month: parsed.data.month,
+        ...(parsed.data.employeeId ? { employeeId: parsed.data.employeeId } : {}),
+        role,
+      })
     )
-
-    const nominal = role === Role.EDITOR || role === Role.ADMIN
-    const byCell = new Map<string, TimeCalendarCell>()
-    for (const e of page.entries) {
-      const key = `${e.employeeId}|${e.date}`
-      const cell = byCell.get(key) ?? {
-        employeeId: e.employeeId,
-        employeeCode: nominal ? e.employeeCode : "—",
-        employeeName: nominal ? e.employeeName : "—",
-        date: e.date,
-        minutes: 0,
-        approvedMinutes: 0,
-        targets: [],
-      }
-      cell.minutes += e.minutes
-      if (e.status === "APROBADO") cell.approvedMinutes += e.minutes
-      const target = e.projectCode ?? e.costCenterCode
-      if (target && !cell.targets.includes(target)) cell.targets = [...cell.targets, target]
-      byCell.set(key, cell)
-    }
-    const cells = [...byCell.values()].sort((a, b) => a.date.localeCompare(b.date) || a.employeeCode.localeCompare(b.employeeCode))
-    return {
-      success: true,
-      data: {
-        month,
-        cells,
-        totalMinutes: cells.reduce((a, c) => a + c.minutes, 0),
-        overCeiling: cells
-          .filter((c) => c.minutes > 1440)
-          .map((c) => ({ employeeCode: c.employeeCode, date: c.date, minutes: c.minutes })),
-      },
-    }
+    return { success: true, data }
   }
 )
 
@@ -374,11 +303,6 @@ function distinctMonths(dates: readonly string[]): string[] {
   return [...seen.values()]
 }
 
-const lastDayOf = (month: string): string => {
-  const [y, m] = month.split("-").map(Number)
-  const days = m === 2 ? ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 29 : 28) : [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
-  return `${month}-${String(days).padStart(2, "0")}`
-}
 
 /**
  * La configuración analítica se resuelve a la fecha MÁS TARDÍA del fichero: el

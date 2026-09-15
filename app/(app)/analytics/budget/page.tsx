@@ -1,5 +1,5 @@
-import { getBudgetAction, listBudgetsAction } from "@/app/(app)/analytics/budget/actions"
-import { getAnalyticsConfigAction } from "@/app/(app)/analytics/actions"
+import { getAnalyticsConfig } from "@/models/analytics"
+import { budgetSheetSummary, getBudgetVersion, listBudgets } from "@/models/budget"
 import { buildBudgetSheet, toVersionView } from "@/app/(app)/analytics/budget/shared"
 import { DepreciationProposalDialog } from "@/components/budget/budget-depreciation"
 import { BudgetImportPanel } from "@/components/budget/budget-import"
@@ -14,6 +14,12 @@ import type { Metadata } from "next"
 import Link from "next/link"
 
 export const metadata: Metadata = { title: "Presupuesto" }
+
+/**
+ * Filas de la hoja por página. Una fila son sus doce meses: partirla por la
+ * mitad daría una hoja con meses en blanco que no están en blanco.
+ */
+const BUDGET_SHEET_PAGE_SIZE = 200
 
 /**
  * E10 · T15 — **Editor de presupuesto** (`E10-presupuesto-horas.md` §7).
@@ -53,10 +59,15 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
     }))
     const codeByFiscalYear = new Map(fiscalYears.map((year) => [year.id, year.code]))
 
-    const listState = await listBudgetsAction({})
-    const versions = (listState.data ?? []).map((item) =>
-      toVersionView(item, codeByFiscalYear.get(item.fiscalYearId) ?? "—")
-    )
+    // **DEBE 7 de la revisión de la ronda 1.** §9 exige «una transacción por
+    // petición (`tenantPage`)» y ≤ 2 conexiones en esta pantalla. La ronda 0
+    // abría la de `tenantPage` **y además una por cada server action**
+    // (`listBudgetsAction`, `getBudgetAction`, `getAnalyticsConfigAction`):
+    // cuatro transacciones por render. Las funciones de `models/` ya aceptan el
+    // cliente, así que se leen dentro del `db` y las acciones quedan para las
+    // mutaciones — como hace `/analytics/pyg` con una sola.
+    const budgetRows = await listBudgets(db, {})
+    const versions = budgetRows.map((item) => toVersionView(item, codeByFiscalYear.get(item.fiscalYearId) ?? "—"))
 
     const requested = first("budgetId")
     const selected =
@@ -66,10 +77,19 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
       versions[0] ??
       null
 
-    const versionState = selected ? await getBudgetAction({ budgetId: selected.id }) : null
-    const configState = selected ? await getAnalyticsConfigAction(selected.validFrom) : null
-    const config = configState?.data ?? null
-    const version = versionState?.data ?? null
+    // Paginación por **fila de la hoja** (deuda C2 del registro, y el techo 1 de
+    // §9): con 28 800 celdas, traerlas todas para pintar cien costaba ~2 300 ms
+    // contra un techo de 900 ms. Los totales del ejercicio salen por agregado
+    // SQL (`budgetSheetSummary`), así que el pie de la tabla es del ejercicio
+    // entero aunque en pantalla haya una página.
+    const pageSize = BUDGET_SHEET_PAGE_SIZE
+    const pageIndex = Math.max(0, Number.parseInt(first("pagina") ?? "1", 10) - 1 || 0)
+    const summary = selected ? await budgetSheetSummary(db, selected.id) : null
+    const version = selected
+      ? await getBudgetVersion(db, selected.id, { rows: { limit: pageSize, offset: pageIndex * pageSize } })
+      : null
+    const config = selected ? await getAnalyticsConfig(db, { periodEnd: selected.validFrom }) : null
+    const pageCount = summary ? Math.max(1, Math.ceil(summary.rowCount / pageSize)) : 1
 
     const sheet = version && config ? buildBudgetSheet(version, config) : null
     const dimensions: readonly BudgetDimensionOption[] = config
@@ -79,13 +99,30 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
         ]
       : []
 
-    const readError = !listState.success
-      ? (listState.error ?? "error desconocido")
-      : versionState && !versionState.success
-        ? (versionState.error ?? "error desconocido")
-        : configState && !configState.success
-          ? (configState.error ?? "error desconocido")
-          : null
+    const readError = selected !== null && version === null ? "La versión de presupuesto no existe en esta organización" : null
+
+    /**
+     * El paginador. Los **totales del pie** los da `budgetSheetSummary` por
+     * agregado SQL, así que cambiar de página no cambia ni una cifra de total:
+     * lo que cambia es qué filas se pintan.
+     */
+    const pager =
+      selected && pageCount > 1 ? (
+        <div className="flex items-center gap-2 text-xs" data-testid="budget-pager">
+          <Button asChild variant="outline" size="sm" disabled={pageIndex === 0}>
+            <Link href={`/analytics/budget?budgetId=${selected.id}&pagina=${Math.max(1, pageIndex)}`}>← Anterior</Link>
+          </Button>
+          <span className="text-muted-foreground">
+            Filas {pageIndex * pageSize + 1}–{Math.min((pageIndex + 1) * pageSize, summary?.rowCount ?? 0)} de{" "}
+            {summary?.rowCount ?? 0}
+          </span>
+          <Button asChild variant="outline" size="sm" disabled={pageIndex + 1 >= pageCount}>
+            <Link href={`/analytics/budget?budgetId=${selected.id}&pagina=${Math.min(pageCount, pageIndex + 2)}`}>
+              Siguiente →
+            </Link>
+          </Button>
+        </div>
+      ) : null
 
     return (
       <div className="space-y-6">
@@ -156,6 +193,12 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
                   Vigencia {selected.validFrom} … {selected.validTo ?? "abierta"}
                   {selected.partialFrom ? ` · parcial desde ${selected.partialFrom}` : ""}
                 </span>
+                {summary && (
+                  <span data-testid="budget-page-info">
+                    {summary.rowCount} fila(s) · {summary.cellCount} celda(s) en el ejercicio
+                    {pageCount > 1 ? ` · página ${pageIndex + 1} de ${pageCount}` : ""}
+                  </span>
+                )}
                 {canWrite && selected.status === "BORRADOR" && (
                   <DepreciationProposalDialog
                     budgetId={selected.id}
@@ -174,6 +217,8 @@ export default tenantPage<{ searchParams: Promise<Record<string, string | string
               sealed={selected.status !== "BORRADOR"}
               currency={org.baseCurrency}
             />
+
+            {pager}
 
             {selected.status === "BORRADOR" && (
               <BudgetImportPanel budgetId={selected.id} canEdit={canWrite} />

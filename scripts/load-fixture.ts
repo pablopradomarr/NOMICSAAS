@@ -373,10 +373,29 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
         "(ADR-0009 §6), no algo que la aplicación pueda hacer"
     )
   }
+  // `SET LOCAL` no admite parámetros, así que el uuid se interpola: se valida
+  // ANTES, y con la forma exacta, para que no haya nada que interpolar salvo un
+  // uuid. (`set_config` sí acepta parámetros, pero entonces el valor no sería
+  // legible en el log del operador, que es media utilidad de este GUC.)
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(organizationId)) {
+    throw new Error(`--reset-org espera el uuid de una organización, recibido ${JSON.stringify(organizationId)}`)
+  }
   const client = new Client({ connectionString: url })
   await client.connect()
   try {
     await client.query("BEGIN")
+    // **QA BUG-E10-2** — un parte APROBADO es inmutable y no se borra: se
+    // contra-apunta (I-E10-4, R-H-1). El trigger lo impedía **también** a
+    // `app_maintenance`, así que el vaciado moría en `time_entries` y las
+    // suites e2e se contaminaban de un fichero al siguiente.
+    //
+    // La salida es la misma que E9 abrió para la reapertura registrada: un GUC
+    // de transacción que el trigger VERIFICA —tiene que nombrar esta misma
+    // organización **y** venir de un rol de mantenimiento—, no una bandera que
+    // baste con fijar. La aplicación no conecta nunca con ese rol
+    // (`DATABASE_URL` → `app_runtime`), así que el camino de producto sigue
+    // siendo el contra-apunte y nada más. `SET LOCAL`: muere con la transacción.
+    await client.query(`SET LOCAL app.maintenance_reset_org = '${organizationId}'`)
     // E5 — la liquidación PRIMERO y en orden de FK: `allocation_lines` apunta a
     // runs, reglas y dimensiones; los targets, a las reglas. Borrar los CECOs
     // antes dejaría un `RESTRICT` colgando y el reset fallaría a medias. Va en
@@ -486,6 +505,41 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
     // evidencia documental cae DESPUÉS del diario que la referenciaba.
     await client.query(`DELETE FROM extraction_runs WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM files WHERE organization_id = $1::uuid`, [organizationId])
+    // E10 (QA BUG-E10-1) — presupuesto y horas, ANTES de `fiscal_years`,
+    // `cost_centers`, `projects` y `employees`, que todas ellas referencian:
+    //
+    //  · `budgets.fiscal_year_id` es `RESTRICT` → sin esto, borrar
+    //    `fiscal_years` con un `Budget` vivo revienta con
+    //    `budgets_fiscal_year_fkey` (visto en `cierre.spec.ts` y
+    //    `recurrentes-iva.spec.ts`, que corren después de `presupuesto.spec.ts`
+    //    y `horas-presupuesto-real.spec.ts` en el orden alfabético de la suite).
+    //  · `budgets` cae ANTES que sus líneas, no después: el trigger de
+    //    inmutabilidad de una versión sellada (I-E10-6) protege también el
+    //    `DELETE` de `budget_lines`/`budget_hours_lines`, y sólo deja de
+    //    proteger cuando su `budgets` ya no existe (`v_status IS NULL`). Con
+    //    `ON DELETE CASCADE` desde `budgets`, para cuando el cascade borra la
+    //    línea su padre ya se ha ido y el trigger no encuentra fila que
+    //    proteger; borrando las líneas primero, en cambio, el `status` de una
+    //    versión `VIGENTE`/sellada sigue siendo el que es y el `DELETE`
+    //    revienta con «sus líneas son inmutables». Las dos sentencias
+    //    siguientes quedan como red de seguridad (no deberían borrar nada: el
+    //    cascade ya lo hizo).
+    //  · `time_entries`/`employee_rates`/`headcount_snapshots`/`employees`
+    //    referencian `cost_centers`/`projects` con `onDelete: Restrict`: caen
+    //    ANTES que esos padres. `employee_rates` y `headcount_snapshots` no
+    //    atan a nada del diario, pero son estado de la organización: dejarlos
+    //    vivos filtra tarifas y plantillas de una prueba a la siguiente.
+    for (const table of [
+      "budgets",
+      "budget_hours_lines",
+      "budget_lines",
+      "time_entries",
+      "employee_rates",
+      "headcount_snapshots",
+      "employees",
+    ]) {
+      await client.query(`DELETE FROM ${table} WHERE organization_id = $1::uuid`, [organizationId])
+    }
     await client.query(`DELETE FROM period_locks WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM fiscal_years WHERE organization_id = $1::uuid`, [organizationId])
     await client.query(`DELETE FROM margin_level_configs WHERE organization_id = $1::uuid`, [organizationId])

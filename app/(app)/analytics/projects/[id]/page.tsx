@@ -4,6 +4,7 @@ import { ProfitabilityBlock } from "@/app/(app)/analytics/projects/[id]/profitab
 import { dimensionOptions, projectExtras } from "@/app/(app)/analytics/shared"
 import { accountNames, defaultPeriod } from "@/app/(app)/ledger/shared"
 import { ProjectDialog, ProjectStateButtons } from "@/components/analytics/dimension-forms"
+import { PayrollReclassDialog } from "@/components/analytics/payroll-reclass-dialog"
 import { ReclassifyDialog, type ReclassifyLine } from "@/components/analytics/reclassify-dialog"
 import { MARGIN_LEVEL_LABELS, PROJECT_STATUS_LABELS, formatBps } from "@/components/analytics/types"
 import { AmountPlain, formatLocalDate } from "@/components/ledger/amount"
@@ -149,6 +150,14 @@ export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ db, org,
             options={dimensionOptions(listing.data?.projects ?? [], costCenters)}
             canReclassify={canEdit}
             role={role}
+          />
+          {/* §3.7 camino (b) · DEBE 6: la salida del motor de propuesta, que
+              hasta la ronda 1 no tenía ninguna. Filtrada por ESTE proyecto. */}
+          <PayrollReclassDialog
+            from={period.from}
+            to={period.to}
+            isAdmin={isAdmin}
+            projectCode={project.code}
           />
         </div>
       </div>

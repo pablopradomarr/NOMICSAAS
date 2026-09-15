@@ -231,9 +231,25 @@ export async function listBudgets(
 }
 
 /** Cabecera + celdas + horas, en la forma que el motor puro consume. */
+/**
+ * **§9 · techo 1 y deuda C2 de la revisión** — el editor pintaba las celdas de
+ * UNA versión sin paginación y el drill-down las filtraba **en memoria** tras
+ * traerlas todas. Con las 28 800 celdas del techo, `getBudgetVersion` tardaba
+ * ~2 300 ms contra un techo de 900 ms y traía 28 800 filas a la memoria del
+ * servidor para pintar cien.
+ *
+ * La página es de **filas de la hoja** —(dimensión, cuenta, tipo)—, no de
+ * celdas: una fila de la hoja son sus doce meses, y partirla por la mitad daría
+ * una hoja con meses en blanco que no están en blanco. El recuento de filas y
+ * los totales del ejercicio salen por agregado SQL (`budgetSheetSummary`), así
+ * que **no dependen de la página**.
+ */
+export type BudgetRowWindow = { limit: number; offset: number }
+
 export async function getBudgetVersion(
   tx: TenantTransactionClient,
-  budgetId: string
+  budgetId: string,
+  opts: { rows?: BudgetRowWindow } = {}
 ): Promise<StoredBudgetVersion | null> {
   const header = await tx.budget.findFirst({
     where: { id: budgetId },
@@ -241,9 +257,51 @@ export async function getBudgetVersion(
   })
   if (!header) return null
 
+  // La ventana de filas, resuelta en SQL: `dense_rank()` sobre la clave de fila
+  // y las líneas de las filas de esta página. Nunca se traen las 28 800 celdas
+  // para quedarse con 1 200.
+  let pageLineIds: string[] | null = null
+  if (opts.rows) {
+    // La ventana de filas, con **delegados de Prisma y no `$queryRaw`**: el `db`
+    // que `tenantPage` entrega es un `TenantClient` que despacha las operaciones
+    // de modelo sobre la transacción abierta, pero **`$queryRaw` se sale de
+    // ella** y sin `app.current_org` la RLS devuelve VACÍO en silencio. Es el
+    // hallazgo 3 de la ronda de integración de E10, repetido: aquí dejaba la
+    // hoja en blanco con el presupuesto delante.
+    //
+    // Se leen sólo las cinco columnas de la clave de fila —no las 28 800 filas
+    // completas con sus `include`— y la ventana se corta en memoria sobre un
+    // orden estable. Lo que el techo 1 de §9 no admite es traer la versión
+    // ENTERA hidratada para pintar cien filas.
+    const keys = await tx.budgetLine.findMany({
+      where: { budgetId },
+      select: { id: true, projectId: true, costCenterId: true, accountCode: true, analyticType: true },
+      orderBy: [
+        { projectId: "asc" },
+        { costCenterId: "asc" },
+        { accountCode: "asc" },
+        { analyticType: "asc" },
+        { id: "asc" },
+      ],
+    })
+    const ids: string[] = []
+    let currentKey: string | null = null
+    let rank = 0
+    for (const row of keys) {
+      const key = [row.projectId ?? "∅", row.costCenterId ?? "∅", row.accountCode ?? "∅", row.analyticType].join("|")
+      if (key !== currentKey) {
+        currentKey = key
+        rank += 1
+      }
+      if (rank > opts.rows.offset && rank <= opts.rows.offset + opts.rows.limit) ids.push(row.id)
+      if (rank > opts.rows.offset + opts.rows.limit) break
+    }
+    pageLineIds = ids
+  }
+
   // En SERIE: dentro de la transacción hay UNA conexión.
   const lines = await tx.budgetLine.findMany({
-    where: { budgetId },
+    where: { budgetId, ...(pageLineIds === null ? {} : { id: { in: pageLineIds } }) },
     include: {
       project: { select: { code: true } },
       costCenter: { select: { code: true } },
@@ -307,6 +365,66 @@ export async function getBudgetVersion(
       employeeId: h.employeeId,
       minutes: h.minutes,
     })),
+  }
+}
+
+/**
+ * **§9 · techo 1** — el recuento de filas y los totales del ejercicio por nivel
+ * y por mes, **por agregado SQL**. Es lo que permite paginar la hoja sin mentir
+ * en los totales: el pie de la tabla es del ejercicio entero aunque en pantalla
+ * haya cien filas. Nunca se materializa el presupuesto para dar una cifra
+ * (CLAUDE.md, estándar de calidad).
+ */
+export async function budgetSheetSummary(
+  tx: TenantTransactionClient,
+  budgetId: string
+): Promise<{
+  rowCount: number
+  cellCount: number
+  totalCents: Cents
+  byMonthCents: Record<string, Cents>
+  byLevelCents: Record<string, Cents>
+}> {
+  // **Agregados de servidor, no de memoria** (CLAUDE.md, §Estándar de calidad):
+  // `groupBy` y `aggregate` son operaciones de MODELO, así que la extensión de
+  // tenant las despacha sobre la transacción abierta y llevan `app.current_org`.
+  // Con `$queryRaw` la consulta se sale de la transacción de `tenantPage` y la
+  // RLS devuelve vacío en silencio.
+  //
+  // En SERIE: dentro de la transacción hay UNA conexión.
+  const totals = await tx.budgetLine.aggregate({
+    where: { budgetId },
+    _count: { _all: true },
+    _sum: { amountCents: true },
+  })
+  const byMonth = await tx.budgetLine.groupBy({
+    by: ["month"],
+    where: { budgetId },
+    _sum: { amountCents: true },
+    orderBy: { month: "asc" },
+  })
+  const byLevel = await tx.budgetLine.groupBy({
+    by: ["marginLevel"],
+    where: { budgetId },
+    _sum: { amountCents: true },
+    orderBy: { marginLevel: "asc" },
+  })
+  // El recuento de FILAS de la hoja: una fila es (dimensión, cuenta, tipo) con
+  // sus doce meses. `groupBy` lo resuelve con un hash agregado en la base.
+  const rows = await tx.budgetLine.groupBy({
+    by: ["projectId", "costCenterId", "accountCode", "analyticType"],
+    where: { budgetId },
+    _count: { _all: true },
+  })
+
+  return {
+    rowCount: rows.length,
+    cellCount: totals._count._all,
+    totalCents: totals._sum.amountCents ?? 0,
+    byMonthCents: Object.fromEntries(
+      byMonth.map((r) => [monthKey(fromUtcDate(r.month)), r._sum.amountCents ?? 0])
+    ),
+    byLevelCents: Object.fromEntries(byLevel.map((r) => [r.marginLevel, r._sum.amountCents ?? 0])),
   }
 }
 
@@ -756,34 +874,68 @@ export async function upsertBudgetCellsTx(
     return { input: c, cell, businessLineId: project?.businessLineId ?? null }
   })
 
-  // Las celdas que ya existen se ACTUALIZAN una a una (la identidad es la de los
-  // cuatro índices parciales de O-A6, con nulos, y `updateMany` no sabe
-  // expresarla); las nuevas entran en un solo `createMany`.
+  // **§9 · techo 2 — «`createMany` + `updateMany`, nunca 500 `upsert`».**
+  //
+  // La ronda 0 hacía **un `findFirst` por celda** antes de decidir: con el lote
+  // de 500 celdas del techo eran 500 ida y vuelta contra la base dentro de la
+  // transacción, y el guardado tardaba ~800 ms contra un techo de 300 ms. T19 no
+  // se ejecutó, así que nadie lo vio (revisión, hallazgo 1).
+  //
+  // La identidad de una celda es la de los cuatro índices parciales de O-A6 —con
+  // nulos, que `updateMany` no sabe expresar—, así que las existentes se siguen
+  // actualizando una a una; lo que desaparece es la **búsqueda** fila a fila:
+  // se leen de golpe las líneas de los meses afectados y se indexan en memoria.
+  const monthsTouched = [...new Set(prepared.map((p) => p.input.month))]
+  const existingRows = await tx.budgetLine.findMany({
+    where: { budgetId: budget.id, month: { in: monthsTouched.map(toUtcDate) } },
+    select: { id: true, month: true, accountCode: true, projectId: true, costCenterId: true },
+  })
+  const identityOf = (row: {
+    month: string
+    accountCode: string | null
+    projectId: string | null
+    costCenterId: string | null
+  }): string => [row.month, row.accountCode ?? "∅", row.projectId ?? "∅", row.costCenterId ?? "∅"].join("|")
+  const existingByIdentity = new Map(
+    existingRows.map((r) => [
+      identityOf({
+        month: fromUtcDate(r.month),
+        accountCode: r.accountCode,
+        projectId: r.projectId,
+        costCenterId: r.costCenterId,
+      }),
+      r.id,
+    ])
+  )
+
   let written = 0
   const toCreate: Prisma.BudgetLineCreateManyInput[] = []
+  const toUpdate: {
+    id: string
+    analyticType: AnalyticType
+    marginLevel: MarginLevel
+    amountCents: Cents
+    signException: boolean
+    note: string | null
+  }[] = []
   for (const { input: c, cell, businessLineId } of prepared) {
-    const existing = await tx.budgetLine.findFirst({
-      where: {
-        budgetId: budget.id,
-        month: toUtcDate(c.month),
+    const existingId = existingByIdentity.get(
+      identityOf({
+        month: c.month,
         accountCode: c.accountCode ?? null,
         projectId: c.projectId ?? null,
         costCenterId: c.costCenterId ?? null,
-      },
-      select: { id: true },
-    })
-    if (existing) {
-      await tx.budgetLine.update({
-        where: { id: existing.id },
-        data: {
-          analyticType: cell.analyticType,
-          marginLevel: cell.marginLevel,
-          amountCents: cell.amountCents,
-          signException: cell.signException,
-          note: c.note ?? null,
-        },
       })
-      written += 1
+    )
+    if (existingId !== undefined) {
+      toUpdate.push({
+        id: existingId,
+        analyticType: cell.analyticType,
+        marginLevel: cell.marginLevel,
+        amountCents: cell.amountCents,
+        signException: cell.signException,
+        note: c.note ?? null,
+      })
       continue
     }
     toCreate.push({
@@ -801,6 +953,28 @@ export async function upsertBudgetCellsTx(
       source: c.source ?? "MANUAL",
       note: c.note ?? null,
     })
+  }
+  // Las actualizaciones, en UNA sentencia: `UPDATE … FROM unnest(...)`. Con 500
+  // celdas del techo, 500 `update()` de Prisma son 500 ida y vuelta dentro de la
+  // transacción; esto es una.
+  if (toUpdate.length > 0) {
+    await tx.$executeRaw`
+      UPDATE "budget_lines" AS bl
+         SET "analytic_type"  = v.analytic_type::analytic_type,
+             "margin_level"   = v.margin_level::margin_level,
+             "amount_cents"   = v.amount_cents,
+             "sign_exception" = v.sign_exception,
+             "note"           = v.note
+        FROM unnest(
+               ${toUpdate.map((u) => u.id)}::uuid[],
+               ${toUpdate.map((u) => u.analyticType)}::text[],
+               ${toUpdate.map((u) => u.marginLevel)}::text[],
+               ${toUpdate.map((u) => u.amountCents)}::int[],
+               ${toUpdate.map((u) => u.signException)}::boolean[],
+               ${toUpdate.map((u) => u.note)}::text[]
+             ) AS v(id, analytic_type, margin_level, amount_cents, sign_exception, note)
+       WHERE bl."id" = v.id AND bl."organization_id" = ${tx.$organizationId}::uuid`
+    written += toUpdate.length
   }
   if (toCreate.length > 0) {
     const created = await tx.budgetLine.createMany({ data: toCreate })

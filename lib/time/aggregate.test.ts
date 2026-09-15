@@ -271,7 +271,9 @@ describe("canonicalTimeForm / timeHash (O-E10-3)", () => {
 })
 
 describe("techo diario (O-E10-21)", () => {
-  it("un parte por encima de ±1 440 se RECHAZA en todos los agregados", () => {
+  // **criterio 29** (Q-2): minutos ENTEROS, nunca centésimas de hora. 7 h 20 min
+  // son `440` exactos; en centésimas serían 733,33 y habría que redondear.
+  it("criterio 29 · un parte por encima de ±1 440 se RECHAZA en todos los agregados", () => {
     const malo = [entry({ minutes: DAILY_MINUTES_CEILING + 60 })]
     expect(() => minutesByTarget(malo, MARCH, APPROVED)).toThrow(TimeAggregateError)
     expect(() => minutesByTarget(malo, MARCH, APPROVED)).toThrow(/techo diario/)

@@ -224,14 +224,19 @@ export function priorPeriodStart(kind: AllocPeriodKind, label: string): LocalDat
  * marzo**: el run no aparecía `STALE` y lucía vigente con un reparto que ya no se
  * reproduce — literalmente el fallo que D1 dice cerrar. Lo comprueba I-E10-17.
  *
- * *Y el ensanche lo dispara CUALQUIER regla del run*, no sólo la de actividad
- * (§3.5 y D1 dicen «alguna regla con `YTD`»). Sellar de más nunca rompe
- * I-E10-17 —la ventana sellada **contiene** la usada—; sellar de menos sí.
+ * *Y el ensanche lo dispara sólo una regla de DRIVER DE ACTIVIDAD* (revisión de
+ * la ronda 1, PUEDE 12). Antes lo disparaba cualquier regla del run —también una
+ * `REVENUE_SHARE` con `zeroBaseFallback = YTD`—, y aunque eso nunca rompía
+ * I-E10-17 —la ventana sellada **contiene** la usada, y sellar de más es seguro—
+ * sí declaraba `STALE` un run por un parte de enero que **ninguna regla del run
+ * habría consumido**. Un run que caduca sin motivo se vuelve ruido, y el ruido
+ * es lo que hace que nadie mire el cuarto sello.
  */
 export function timeWindowOf(rules: readonly TimeRuleSpec[], period: TimePeriodRef): DateWindow | null {
   if (!rules.some((r) => isActivityDriver(r.driver))) return null
   let from = period.start
   for (const rule of rules) {
+    if (!isActivityDriver(rule.driver)) continue
     if (rule.zeroBaseFallback === "YTD" && period.fiscalYearStart < from) from = period.fiscalYearStart
     if (rule.zeroBaseFallback === "PRIOR_PERIOD") {
       const prior = priorPeriodStart(period.kind, period.label)

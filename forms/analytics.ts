@@ -228,3 +228,13 @@ export const cellDetailSchema = z
     fiscalYearId: uuidSchema.optional(),
   })
   .refine((p) => p.to >= p.from, { message: "El periodo termina antes de empezar", path: ["to"] })
+
+/**
+ * **§3.7 camino (b)** — ventana de la propuesta de reclasificación de nómina por
+ * horas. Sin importes ni umbral: la concentración exigida es **10 000 bps fija**
+ * (O-E10-22), no un parámetro que alguien pueda aflojar hasta el 80 %.
+ */
+export const payrollReclassSchema = z
+  .object({ from: localDateSchema, to: localDateSchema })
+  .strict()
+  .refine((v) => v.from <= v.to, { message: "La ventana empieza antes de terminar", path: ["to"] })

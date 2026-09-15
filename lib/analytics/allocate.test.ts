@@ -890,13 +890,13 @@ describe("liquidación del fixture completo (2026)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // E10 · T9 — los dos drivers de actividad, contra el fixture sellado de T10
 //
-// `docs/design/fixtures/presupuesto-horas-esperado.json` es el contrato de
+// `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json` es el contrato de
 // cifras congelado (ADR-0018 D6): estos tests reproducen su bloque
 // `allocation.real` —runs, líneas y avisos— **byte a byte** desde el motor. Si
 // una coma se mueve, el test cae, que es exactamente lo que debe pasar.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const E10_PATH = path.join(process.cwd(), "docs", "design", "fixtures", "presupuesto-horas-esperado.json")
+const E10_PATH = path.join(process.cwd(), "docs", "design", "fixtures", "presupuesto-horas-esperado.v1.1.json")
 
 type E10Fixture = {
   timeEntries: {
@@ -1118,7 +1118,11 @@ describe("E10 · drivers HOURS y HEADCOUNT (fixture sellado de T10)", () => {
     expect(new Set(anual.map((l) => l.marginLevel))).toEqual(new Set(["EBITDA"]))
   })
 
-  it("criterio 16 · `HEADCOUNT` reparte FTE·mes y sólo a CECOs, en el orden declarado", () => {
+  // **criterio 16-bis** (Q-7): la base ANUAL es `Σ fteMilli` de los snapshots
+  // del periodo, no el stock a 31-12. Un CECO que vive diez meses pesa diez
+  // meses; con el stock a fin de año pesaba 0 y no absorbía nada de su
+  // presencia real, trasladando esa estructura a los demás.
+  it("criterio 16 y 16-bis · `HEADCOUNT` reparte FTE·mes y sólo a CECOs, en el orden declarado", () => {
     const ga = e10.lines.filter((l) => l.ruleCode === "AL-GA-CC-Y")
     expect(ga.map((l) => [l.target.code, l.driverBase])).toEqual([
       ["CC-OPS", 48000],
@@ -1276,6 +1280,98 @@ describe("E10 · drivers HOURS y HEADCOUNT (fixture sellado de T10)", () => {
       expect(ytd.value.warnings.map((w) => w.code)).toContain("W-E10-NO-HOURS")
       expect(ytd.value.lines).toHaveLength(0)
     }
+  })
+
+  it("criterio 32 · el proyecto CONTENEDOR (`PLANNED`) admite presupuesto y NO recibe estructura", () => {
+    // Q-5: `P-<LN>-NUEVOS` se siembra en `PLANNED` para poder presupuestar lo
+    // que todavía no tiene proyecto. Cargarle estructura crearía un margen
+    // negativo antes del primer ingreso, así que queda fuera del reparto tenga o
+    // no base — y el `targetFilter` por defecto (`projectStatus: [ACTIVE]`) lo
+    // dice. El traspaso posterior a los proyectos reales es una `REVISADO n`.
+    const contenedor = { ...config.projects[0], id: "p-nuevos", code: "P-BL-CONS-NUEVOS", status: "PLANNED" as const }
+    const conContenedor: typeof config = { ...config, projects: [...config.projects, contenedor] }
+    const partes: TimeEntryRow[] = [
+      ...timeEntries,
+      {
+        id: "t-nuevos",
+        employeeId: "E-01",
+        employeeCode: "E-01",
+        date: "2026-11-03",
+        target: { kind: "PROJECT", id: contenedor.id, code: contenedor.code },
+        businessLineCode: null,
+        minutes: 600,
+        productive: true,
+        approved: true,
+      },
+    ]
+    const result = allocate({
+      lines,
+      config: conContenedor,
+      rules: rules.filter((r) => r.code === "AL-OPS-M"),
+      period: periodRef("MONTH", "2026-11"),
+      priorAllocations: [],
+      timeEntries: partes,
+      headcount,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Ni una línea al contenedor, aunque tenga 600 minutos aprobados.
+    expect(result.value.lines.map((l) => l.target.code)).not.toContain(contenedor.code)
+  })
+
+  it("revisión ronda 1 · #4 · con base aprobada 0 y minutos sin firmar sale `HORAS_SIN_APROBAR`", () => {
+    // El caso extremo del parcial, y el más grave: 0 minutos aprobados y 12 000
+    // sin firmar. La ronda 0 salía por el `return` del `zeroBaseFallback` antes
+    // de mirarlos y el run se sellaba **sin el motivo**, con el saldo del CECO
+    // repartido por el fallback o parado en «pendiente», pero sin decir que la
+    // base estaba entera sin aprobar.
+    const sinFirmar: TimeEntryRow[] = []
+    let left = 12000
+    let day = 2
+    while (left > 0) {
+      const minutes = Math.min(1200, left)
+      sinFirmar.push({
+        id: `t-pdte-${day}`,
+        employeeId: "E-94",
+        employeeCode: "E-94",
+        date: `2026-11-${String(day).padStart(2, "0")}`,
+        target: { kind: "PROJECT", id: idOf.project("P-03"), code: "P-03" },
+        businessLineCode: null,
+        minutes,
+        productive: true,
+        approved: false,
+      })
+      left -= minutes
+      day += 1
+    }
+
+    const result = allocate({
+      lines,
+      config,
+      rules: rules.filter((r) => r.code === "AL-OPS-M"),
+      period: periodRef("MONTH", "2026-11"),
+      priorAllocations: [],
+      timeEntries: sinFirmar,
+      headcount,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const codes = result.value.warnings.map((w) => w.code)
+    // Los DOS avisos: la base es cero **y** hay minutos sin firmar. Sólo el
+    // primero se emitía antes.
+    expect(codes).toContain("W-E10-NO-HOURS")
+    expect(result.value.warnings.find((w) => w.code === "W-E10-UNAPPROVED-HOURS")).toEqual({
+      code: "W-E10-UNAPPROVED-HOURS",
+      ruleCode: "AL-OPS-M",
+      period: "2026-11",
+      unapprovedMinutes: 12000,
+      // `shareOfBaseBps: null` deja de ser una rama inalcanzable del tipo: no
+      // hay porcentaje sobre una base de 0, y un 0 se leería al revés.
+      shareOfBaseBps: null,
+      targets: ["P-03"],
+      sealReason: "HORAS_SIN_APROBAR",
+      detail: "hay minutos sin aprobar de receptores elegibles en la ventana del driver",
+    })
   })
 
   it("criterio 13 · base parcial: el aviso sale SIEMPRE, no sólo con base cero", () => {

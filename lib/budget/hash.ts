@@ -43,35 +43,53 @@ const canonicalRow = (cell: BudgetCell): string =>
 export const canonicalHoursRow = (cell: BudgetHoursCell): string =>
   [cell.month, cell.dimension.kind, cell.dimension.code, nullable(cell.employeeCode), String(cell.minutes)].join("\t")
 
+/** Separa el bloque de importes del bloque de horas dentro de la forma canónica. */
+const HOURS_SEPARATOR = "∅HORAS"
+
 /**
  * Forma canónica de una versión: cabecera con su identidad y el sello de la
- * configuración de márgenes, y una fila por celda **con su `marginLevel`
- * congelado** (O-E10-7). Sin él, mover un CECO de MC3 a EBITDA leería el mismo
- * presupuesto sellado en otra fila **sin cambiar el hash**.
+ * configuración de márgenes, una fila por celda de importe **con su
+ * `marginLevel` congelado** (O-E10-7) y una fila por celda de horas **en
+ * minutos enteros**. Sin el `marginLevel`, mover un CECO de MC3 a EBITDA leería
+ * el mismo presupuesto sellado en otra fila **sin cambiar el hash**.
  *
  * El orden NO depende de la base de datos: las filas se ordenan por su propio
  * texto, que empieza por el mes y sigue por la dimensión y la cuenta.
+ *
+ * ── Ronda 1 · auditor H-2 y H-3, revisor BLOQUEA 3 ───────────────────────────
+ *
+ * **`valid_to` NO entra en la cabecera.** La vigencia no es contenido del
+ * presupuesto: es **mutable por diseño** —`sealBudgetTx` cierra la versión
+ * anterior con `validTo = validFrom − 1 día` en la misma transacción (O-E10-8) y
+ * `app.assert_budget_immutable_when_sealed` lo permite expresamente—, así que
+ * meterla en el sello hacía **irreproducible** el hash de toda versión relevada:
+ * sellada la BASE con `validTo = NULL` y sellada después la REV1, el hash
+ * recomputado de la BASE ya no era el sellado e **I-E10-6 daba FAIL sobre datos
+ * íntegros**, indistinguible de una manipulación real. El resto de la cabecera
+ * (`scenario`, `revision`, `validFrom`, `partialFrom`) sí es inmutable en el
+ * trigger, así que el sello y la base dicen ahora lo mismo.
+ *
+ * **Las líneas de horas SÍ entran** (ADR-0018 D2 y §3.8, al pie de la letra):
+ * alimentan `settleBudgetMatrix`, es decir la columna de presupuesto de MC3 por
+ * dimensión. Sin ellas el sello no atestiguaba la base con la que se repartió y
+ * un cambio de horas en una versión sellada era invisible para I-E10-6.
  */
 export function canonicalBudgetForm(version: BudgetVersion, marginConfigHash: string): string {
   const head = [
     version.scenario,
     String(version.revision),
     version.validFrom,
-    nullable(version.validTo),
     nullable(version.partialFrom),
     marginConfigHash,
   ].join("\t")
   const rows = version.cells.map(canonicalRow).sort()
-  return [head, ...rows].join("\n")
+  const hours = version.hours.map(canonicalHoursRow).sort()
+  return [head, ...rows, HOURS_SEPARATOR, ...hours].join("\n")
 }
 
 /** `budgetHash` (§3.8): sha256 de la forma canónica, en hexadecimal. */
 export const budgetHash = (version: BudgetVersion, marginConfigHash: string): string =>
   sha256(canonicalBudgetForm(version, marginConfigHash))
-
-/** Sello independiente de las horas presupuestadas, para diffs y trazas. */
-export const budgetHoursHash = (hours: readonly BudgetHoursCell[]): string =>
-  sha256(hours.map(canonicalHoursRow).sort().join("\n"))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // O-E10-9 — composición de versiones

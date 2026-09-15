@@ -894,6 +894,36 @@ function hoursWeights(
   const rows: WeightRow[] = refs.map((r) => ({ ...r, weight: Math.max(0, base.get(targetKeyOf(r.target)) ?? 0) }))
   const baseTotal = rows.reduce((a, r) => a + r.weight, 0)
 
+  // **O-E10-2 · revisión ronda 1, hallazgo 4.** Los minutos sin aprobar se
+  // calculan ANTES de la rama de base cero. La versión anterior salía por el
+  // `return` del fallback sin mirarlos, así que con **0 minutos aprobados y
+  // 12 000 sin firmar** sólo se emitía `W-E10-NO-HOURS`: el run se caía en el
+  // `zeroBaseFallback` y **se sellaba sin `HORAS_SIN_APROBAR`**. ADR-0018 D1
+  // punto 3 y EV-15 dicen «SIEMPRE que existan minutos sin aprobar de
+  // receptores elegibles en la ventana», y el 100 % sin aprobar es el caso
+  // extremo del parcial que O-E10-2 existe para cerrar — el más grave, no el
+  // menos. Lo delataba el propio tipo: `shareOfBaseBps: number | null` con el
+  // comentario «`null` con base 0» describía una rama inalcanzable.
+  const unapproved = minutesIn(window, false)
+  const pending = rows
+    .map((r) => ({ code: r.target.code, minutes: unapproved.get(targetKeyOf(r.target)) ?? 0 }))
+    .filter((p) => p.minutes > 0)
+  if (pending.length > 0) {
+    const unapprovedMinutes = pending.reduce((a, p) => a + p.minutes, 0)
+    ctx.warnings.push({
+      code: "W-E10-UNAPPROVED-HOURS",
+      ruleCode: rule.code,
+      period: label,
+      unapprovedMinutes,
+      // `null` cuando la base aprobada es 0: no hay porcentaje que dar, y un 0
+      // ahí se leería como «no hay nada pendiente», que es justo lo contrario.
+      shareOfBaseBps: baseTotal === 0 ? null : Math.floor((unapprovedMinutes * 10000) / baseTotal),
+      targets: pending.map((p) => p.code).sort(),
+      sealReason: "HORAS_SIN_APROBAR",
+      detail: UNAPPROVED_HOURS_DETAIL,
+    })
+  }
+
   if (baseTotal === 0) {
     // ADR-0013 D4, punto 2: con base cero la regla **nunca queda muda**. El
     // fallback es configuración declarada, y el aplicado se escribe en cada línea.
@@ -911,24 +941,6 @@ function hoursWeights(
     return { rows: widenedRows, fallbackApplied: fallback }
   }
 
-  // **O-E10-2** — el caso peligroso es el PARCIAL, no el cero.
-  const unapproved = minutesIn(window, false)
-  const pending = rows
-    .map((r) => ({ code: r.target.code, minutes: unapproved.get(targetKeyOf(r.target)) ?? 0 }))
-    .filter((p) => p.minutes > 0)
-  if (pending.length > 0) {
-    const unapprovedMinutes = pending.reduce((a, p) => a + p.minutes, 0)
-    ctx.warnings.push({
-      code: "W-E10-UNAPPROVED-HOURS",
-      ruleCode: rule.code,
-      period: label,
-      unapprovedMinutes,
-      shareOfBaseBps: Math.floor((unapprovedMinutes * 10000) / baseTotal),
-      targets: pending.map((p) => p.code).sort(),
-      sealReason: "HORAS_SIN_APROBAR",
-      detail: UNAPPROVED_HOURS_DETAIL,
-    })
-  }
   return { rows, fallbackApplied: null }
 }
 

@@ -4,7 +4,7 @@
  * Casos obligatorios de todo módulo puro (CLAUDE.md): vacío, un registro,
  * importes negativos, fechas límite y redondeo. Y el que sella la tarea: los
  * dos `budgetHash` del fixture, **byte a byte** contra
- * `docs/design/fixtures/presupuesto-horas-esperado.json`.
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`.
  */
 
 import { createHash } from "node:crypto"
@@ -21,7 +21,7 @@ import {
   detectInvertedSignConvention,
   monthsWithoutBudget,
 } from "@/lib/budget/hash"
-import type { BudgetCell, BudgetVersion } from "@/lib/budget/types"
+import type { BudgetCell, BudgetHoursCell, BudgetVersion } from "@/lib/budget/types"
 import { fiscalYearMonths } from "@/lib/budget/types"
 import { FY_END, FY_MONTHS, FY_START, expected, versionsFromFixture } from "@/lib/budget/fixture.test-support"
 
@@ -61,7 +61,7 @@ const sha256 = (t: string) => createHash("sha256").update(t, "utf8").digest("hex
 describe("forma canónica y budgetHash", () => {
   it("caso vacío: sólo la cabecera, y el hash es el de esa cabecera", () => {
     const form = canonicalBudgetForm(version(), "mch")
-    expect(form).toBe("BASE\t0\t2026-01-01\t∅\t∅\tmch")
+    expect(form).toBe("BASE\t0\t2026-01-01\t∅\tmch\n∅HORAS")
     expect(budgetHash(version(), "mch")).toBe(sha256(form))
   })
 
@@ -96,10 +96,49 @@ describe("forma canónica y budgetHash", () => {
     expect(budgetHash(version({ cells: [cell()] }), "a")).not.toBe(budgetHash(version({ cells: [cell()] }), "b"))
   })
 
-  it("la vigencia y el partialFrom forman parte del sello", () => {
+  it("`partialFrom` forma parte del sello; `validTo` NO (auditor H-2)", () => {
     const base = version({ cells: [cell()] })
-    expect(budgetHash(base, "mch")).not.toBe(budgetHash({ ...base, validTo: "2026-06-30" }, "mch"))
     expect(budgetHash(base, "mch")).not.toBe(budgetHash({ ...base, partialFrom: "2026-07-01" }, "mch"))
+    // `validTo` es MUTABLE POR DISEÑO: `sealBudgetTx` cierra la versión anterior
+    // con `validTo = validFrom − 1 día` al sellar la siguiente (O-E10-8) y el
+    // trigger `assert_budget_immutable_when_sealed` lo admite expresamente. Si
+    // entrase en el sello, el hash de toda versión relevada dejaría de ser
+    // reproducible e I-E10-6 daría FAIL sobre datos íntegros.
+    expect(budgetHash(base, "mch")).toBe(budgetHash({ ...base, validTo: "2026-06-30" }, "mch"))
+    expect(budgetHash(base, "mch")).toBe(budgetHash({ ...base, validTo: null }, "mch"))
+  })
+
+  it("H-3 · las líneas de HORAS entran en el sello (ADR-0018 D2, §3.8)", () => {
+    const hours: BudgetHoursCell = {
+      month: "2026-03-01",
+      dimension: PROJECT,
+      employeeCode: null,
+      minutes: 1_200,
+    }
+    const sinHoras = version({ cells: [cell()] })
+    const conHoras = version({ cells: [cell()], hours: [hours] })
+    expect(budgetHash(conHoras, "mch")).not.toBe(budgetHash(sinHoras, "mch"))
+    // Y cambiar los minutos de una versión sellada NO pasa desapercibido.
+    const otrasHoras = version({ cells: [cell()], hours: [{ ...hours, minutes: 1_201 }] })
+    expect(budgetHash(otrasHoras, "mch")).not.toBe(budgetHash(conHoras, "mch"))
+    expect(canonicalBudgetForm(conHoras, "mch").split("\n")).toEqual([
+      "BASE\t0\t2026-01-01\t∅\tmch",
+      "2026-03-01\tPROJECT\tP-01\t705\tINGRESO_DIRECTO\tINGRESOS\t100000\t0",
+      "∅HORAS",
+      "2026-03-01\tPROJECT\tP-01\t∅\t1200",
+    ])
+  })
+
+  it("el orden de entrada de las horas tampoco altera el sello", () => {
+    const h = (month: string): BudgetHoursCell => ({
+      month,
+      dimension: PROJECT,
+      employeeCode: null,
+      minutes: 60,
+    })
+    const a = version({ hours: [h("2026-01-01"), h("2026-02-01")] })
+    const b = version({ hours: [h("2026-02-01"), h("2026-01-01")] })
+    expect(budgetHash(a, "mch")).toBe(budgetHash(b, "mch"))
   })
 
   it("29-feb de un bisiesto se sella como cualquier otro mes", () => {
@@ -112,6 +151,7 @@ describe("forma canónica y budgetHash", () => {
     for (const [index, header] of expected.budgets.entries()) {
       expect(budgetHash(versions[index], expected.marginConfigHash)).toBe(header.budgetHash)
       expect(versions[index].cells).toHaveLength(header.lineCount)
+      expect(versions[index].hours).toHaveLength(header.hoursLineCount)
     }
   })
 })

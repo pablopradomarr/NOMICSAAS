@@ -3,7 +3,7 @@
  * `settleBudgetMatrix` (O-E10-4).
  *
  * Criterios 3, 27 y 27-bis de §12, byte a byte contra
- * `docs/design/fixtures/presupuesto-horas-esperado.json`.
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`.
  */
 
 import { describe, expect, it } from "vitest"
@@ -13,6 +13,7 @@ import { MARGIN_LEVELS } from "@/lib/analytics/types"
 import { composeBudget } from "@/lib/budget/hash"
 import { buildBudgetMatrix, settleBudgetMatrix, settlementLadder } from "@/lib/budget/matrix"
 import {
+  budgetCellProvenance,
   buildVariance,
   isDimensionColumn,
   maxDimensionVariance,
@@ -349,5 +350,77 @@ describe("O-E10-20 · la absorción que acompaña a la desviación", () => {
     expect(report.byCostCenter.map((r) => [r.code, r.absorptionCents])).toEqual(
       sealed.byCostCenter.map((r) => [r.costCenterCode, r.absorptionCents])
     )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H-7 — provenance POR CELDA (auditoría de la ronda 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("H-7 · provenance por celda del PRESUPUESTO_REAL (§5.1)", () => {
+  const ctx = {
+    runId: "run-1",
+    organizationId: "org-1",
+    fiscalYearId: "fy-2026",
+    budgetIdsByMonth: { "2026-03": "budget-base", "2026-07": "budget-rev1" },
+    periodStart: "2026-01-01",
+    periodEnd: "2026-12-31",
+    ledgerHash: "abc",
+    budgetHash: "def",
+    analyticsKey: "ghi",
+    gitSha: "sha",
+    baseCurrency: "EUR",
+    withAllocations: true,
+    levelTypes: { MC3: [], INGRESOS: ["INGRESO_DIRECTO"] },
+  }
+  const cell = {
+    level: "MC3" as const,
+    column: "PROJ:P-01",
+    month: "2026-03",
+    actualCents: 316_000,
+    budgetCents: 186_420,
+    varianceCents: 129_580,
+    varianceBps: 6951,
+    forecastCents: null,
+    notComparable: false,
+  }
+
+  it("emite las CUATRO consultas parametrizadas: real, imputado, presupuesto y horas", () => {
+    const p = budgetCellProvenance(cell, ctx)
+    expect(Object.keys(p.registros_origen).sort()).toEqual(["horas", "imputado", "presupuesto", "real"])
+    // Cada consulta acota su tabla, su ventana (el MES de la celda, no el
+    // periodo) y su dimensión: es lo que hace que la celda se reproduzca sin
+    // escribir SQL a mano, que es lo que el auditor tuvo que hacer.
+    expect(p.registros_origen.real).toContain("FROM journal_lines")
+    expect(p.registros_origen.real).toContain("'2026-03-01' AND '2026-03-31'")
+    expect(p.registros_origen.real).toContain("projects WHERE code = 'P-01'")
+    expect(p.registros_origen.imputado).toContain("FROM allocation_lines")
+    expect(p.registros_origen.imputado).toContain("target_project_id")
+    // El presupuesto sale de la versión que gobierna ESE mes (O-E10-9).
+    expect(p.registros_origen.presupuesto).toContain("budget_id = 'budget-base'")
+    expect(p.registros_origen.horas).toContain("FROM budget_hours_lines")
+    expect(p.metrica).toBe("desviacion.mc3.PROJ:P-01.2026-03")
+    expect(p.valor).toBe(129_580)
+    expect(p.calculado_por).toBe("lib/budget/variance.ts@sha")
+    expect(p.confianza).toBe("calculado")
+  })
+
+  it("sin imputaciones no inventa una consulta de reparto vacía", () => {
+    const p = budgetCellProvenance(cell, { ...ctx, withAllocations: false })
+    expect(Object.keys(p.registros_origen).sort()).toEqual(["presupuesto", "real"])
+  })
+
+  it("un mes sin versión que lo cubra lo DICE, en vez de apuntar a ninguna parte", () => {
+    const p = budgetCellProvenance({ ...cell, month: "2026-09" }, ctx)
+    expect(p.registros_origen.presupuesto).toContain("no tiene versión de presupuesto")
+  })
+
+  it("una celda no comparable viaja con `confianza: no_comparable` (I-E10-18)", () => {
+    const p = budgetCellProvenance(
+      { ...cell, notComparable: true, budgetCents: null, varianceCents: null, varianceBps: null },
+      ctx
+    )
+    expect(p.confianza).toBe("no_comparable")
+    expect(p.valor).toBeNull()
   })
 })

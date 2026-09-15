@@ -278,6 +278,13 @@ export type AllocationRunAudit = {
   timeHash: string
   timeHashWindowStart: LocalDate | null
   timeHashWindowEnd: LocalDate | null
+  /**
+   * Códigos de los avisos con los que el run se selló (`W-E5-*`, `W-E10-*`).
+   * No los mira ningún invariante: son la fuente de `HORAS_SIN_APROBAR` y
+   * `PLANTILLA_AUSENTE` en `budgetSealReasons()` (EV-15 / EV-16), que se
+   * componen **de los datos** y no de los checks.
+   */
+  warningCodes?: readonly string[]
 }
 
 export type PayrollAbsorptionRef = {
@@ -643,12 +650,20 @@ export function checkIE109(budget: BudgetBlock | undefined): CheckResult {
   const versions = budget.versions.filter((v) => v.status !== "BORRADOR")
   if (versions.length === 0) return info("I-E10-9", "ninguna versión sellada todavía")
   const problems: string[] = []
-  const byScenario = new Map<string, BudgetVersionRef[]>()
+  // **Ronda 1.** Se agrupa por EJERCICIO, no por (ejercicio, escenario). La
+  // numeración de `createBudgetVersionTx` es una sola serie por ejercicio —la
+  // `BASE` es la revisión 0 y hay exactamente una (CHECK `budgets_revision_base`),
+  // y cada `REVISADO` toma la siguiente— y el `EXCLUDE USING gist`
+  // `budgets_no_overlap` también acota por `(organization_id, fiscal_year_id)`,
+  // sin mirar el escenario. Agrupando por escenario, el caso NORMAL —una BASE
+  // rev 0 y una REVISADO rev 1, literalmente el del fixture sellado— salía
+  // «la revisión 1 rompe la correlatividad (esperada 0)»: un FAIL permanente
+  // sobre datos perfectos. No se veía porque el bloque era código muerto (H-1).
+  const byFiscalYear = new Map<string, BudgetVersionRef[]>()
   for (const v of versions) {
-    const key = `${v.fiscalYearCode}|${v.scenario}`
-    byScenario.set(key, [...(byScenario.get(key) ?? []), v])
+    byFiscalYear.set(v.fiscalYearCode, [...(byFiscalYear.get(v.fiscalYearCode) ?? []), v])
   }
-  for (const [key, list] of [...byScenario.entries()].sort()) {
+  for (const [key, list] of [...byFiscalYear.entries()].sort()) {
     const sorted = [...list].sort((a, b) => cmp(a.validFrom, b.validFrom) || a.revision - b.revision)
     for (let i = 1; i < sorted.length; i++) {
       const previo = sorted[i - 1]
@@ -668,7 +683,11 @@ export function checkIE109(budget: BudgetBlock | undefined): CheckResult {
     }
   }
   return problems.length === 0
-    ? pass("I-E10-9", `${versions.length} versión(es) con vigencias sin solape y revisión correlativa sin huecos`)
+    ? pass(
+        "I-E10-9",
+        `${versions.length} versión(es): una sola vigente por ejercicio y fecha (vigencias sin solape) y una serie ` +
+          "de revisiones correlativa y sin huecos por ejercicio (BASE = 0, cada REVISADO la siguiente)"
+      )
     : failed("I-E10-9", cut(problems))
 }
 

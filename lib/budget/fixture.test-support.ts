@@ -2,7 +2,7 @@
  * E10 · T7/T8 — soporte COMPARTIDO de los tests de `lib/budget/**`.
  *
  * Reconstruye, desde el fixture sellado
- * `docs/design/fixtures/presupuesto-horas-esperado.json`, las dos versiones de
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.1.json`, las dos versiones de
  * presupuesto y la `AnalyticsConfig` del ejercicio 2026, para que los tests
  * comparen **byte a byte** contra el contrato congelado por D6.
  *
@@ -25,7 +25,7 @@ export const EXPECTED_PATH = path.join(
   "docs",
   "design",
   "fixtures",
-  "presupuesto-horas-esperado.json"
+  "presupuesto-horas-esperado.v1.1.json"
 )
 
 export type ExpectedLine = {
@@ -60,6 +60,7 @@ export type ExpectedBudgetHeader = {
   budgetHash: string
   marginConfigHash: string
   lineCount: number
+  hoursLineCount: number
 }
 
 export type Expected = {
@@ -69,6 +70,7 @@ export type Expected = {
   budgets: ExpectedBudgetHeader[]
   budgetLines: Record<string, ExpectedLine[]>
   budgetHoursLines: ExpectedHoursLine[]
+  budgetHoursLinesByVersion: Record<string, ExpectedHoursLine[]>
   budgetComposition: { provenanceByMonth: Record<string, string>; effectiveLineCount: number }
   budgetMatrixCents: Record<string, Record<string, number>>
   budgetMatrixByMonthCents: Record<string, Record<string, Record<string, number>>>
@@ -197,13 +199,12 @@ export function versionsFromFixture(): BudgetVersion[] {
     validTo: header.validTo,
     partialFrom: header.partialFrom,
     cells: expected.budgetLines[header.code].map(cellOf),
-    // El fixture publica UNA lista de horas presupuestadas, la de la versión
-    // efectiva. Cada versión lleva las de los meses que cubre: la BASE, los
-    // doce; la REV1 parcial, los suyos desde `partialFrom`. Así la composición
-    // de O-E10-9 devuelve las 36 líneas, vengan del mes que vengan.
-    hours: expected.budgetHoursLines
-      .filter((h) => header.partialFrom === null || h.month >= header.partialFrom)
-      .map(hoursCellOf),
+    // Cada versión lleva las horas de los meses que cubre: la BASE, los doce;
+    // la REV1 parcial, los suyos desde `partialFrom`. Así la composición de
+    // O-E10-9 devuelve las 36 líneas, vengan del mes que vengan. Desde la
+    // ronda 1 las horas entran en el `budgetHash` (ADR-0018 D2), así que el
+    // reparto por versión lo publica el propio fixture y no se re-deriva aquí.
+    hours: expected.budgetHoursLinesByVersion[header.code].map(hoursCellOf),
   }))
 }
 

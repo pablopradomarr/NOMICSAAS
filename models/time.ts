@@ -36,6 +36,11 @@ import {
   type DateWindow,
   type TimeEntryRow,
 } from "@/lib/time/aggregate"
+import {
+  proposePayrollReclass,
+  type PayrollLineRef,
+  type ProposePayrollReclassResult,
+} from "@/lib/time/payroll-reclass"
 import type { LocalDate } from "@/lib/analytics/types"
 import type { TenantClient, TenantTransactionClient } from "@/lib/db"
 import { fromUtcDate, toUtcDate } from "@/lib/ledger/dates"
@@ -632,4 +637,100 @@ export async function assertMonthOpenForTime(tx: TenantTransactionClient, date: 
         "Un administrador puede desbloquearlo con motivo"
     )
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §3.7 camino (b) — la PROPUESTA de reclasificación de nómina por horas
+//
+// **DEBE 6 de la revisión de la ronda 1.** `lib/time/payroll-reclass.ts` —250
+// líneas de motor y 248 de test— no tenía **ni un consumidor**: el camino (b)
+// era inalcanzable desde el producto, es decir código muerto en una épica que
+// presume de no dejarlo. Este lector es su borde: lee las 64x del periodo con su
+// CECO y las horas aprobadas, y **delega en la función pura**. No calcula nada, y
+// sobre todo **no escribe nada**: aplicar la propuesta es `reclassifyLines`
+// (ADR-0010), con su motivo, su `AuditLog` y su ventana temporal intactos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Las líneas de nómina del periodo, en la forma que `proposePayrollReclass`
+ * consume. El **APORTE** (`haber − debe`) es negativo en un gasto, como en todo
+ * el resto del sistema.
+ */
+export async function getPayrollLinesForWindow(
+  tx: TenantTransactionClient,
+  window: DateWindow
+): Promise<PayrollLineRef[]> {
+  const rows = await tx.$queryRaw<
+    {
+      line_id: string
+      entry_id: string
+      entry_number: number
+      line_no: number
+      entry_date: Date
+      account_code: string
+      amount_cents: bigint
+      cost_center_id: string | null
+      cost_center_code: string | null
+      project_id: string | null
+      employee_id: string | null
+      employee_code: string | null
+    }[]
+  >`
+    SELECT jl.id                                   AS line_id,
+           jl.entry_id                             AS entry_id,
+           je.entry_number                         AS entry_number,
+           jl.line_no                              AS line_no,
+           jl.entry_date                           AS entry_date,
+           jl.account_code                         AS account_code,
+           (jl.credit_cents - jl.debit_cents)      AS amount_cents,
+           jl.cost_center_id                       AS cost_center_id,
+           cc.code                                 AS cost_center_code,
+           jl.project_id                           AS project_id,
+           e.id                                    AS employee_id,
+           e.code                                  AS employee_code
+      FROM journal_lines jl
+      JOIN journal_entries je
+        ON je.id = jl.entry_id AND je.organization_id = jl.organization_id
+      LEFT JOIN cost_centers cc
+        ON cc.id = jl.cost_center_id AND cc.organization_id = jl.organization_id
+      -- La nomina se puede contabilizar por persona (counterparty_id); el
+      -- empleado se enlaza por ahi, que es el unico puente que E10 declaro.
+      LEFT JOIN employees e
+        ON e.counterparty_id = jl.counterparty_id AND e.organization_id = jl.organization_id
+     WHERE jl.organization_id = ${tx.$organizationId}::uuid
+       AND jl.entry_date BETWEEN ${toUtcDate(window.from)}::date AND ${toUtcDate(window.to)}::date
+       AND je.voided_at IS NULL
+       AND (jl.account_code LIKE '640%' OR jl.account_code LIKE '642%'
+            OR jl.account_code LIKE '645%' OR jl.account_code LIKE '649%')
+     ORDER BY jl.entry_date, je.entry_number, jl.line_no`
+
+  return rows.map((r) => ({
+    lineId: r.line_id,
+    entryId: r.entry_id,
+    entryNumber: r.entry_number,
+    lineNo: r.line_no,
+    entryDate: fromUtcDate(r.entry_date),
+    accountCode: r.account_code,
+    amountCents: Number(r.amount_cents),
+    costCenterId: r.cost_center_id,
+    costCenterCode: r.cost_center_code,
+    projectId: r.project_id,
+    employeeId: r.employee_id,
+    employeeCode: r.employee_code,
+  }))
+}
+
+/**
+ * La propuesta completa del camino (b): lee y delega. **Nunca escribe.**
+ * `concentrationBps` es 10 000 fijo (O-E10-22): una línea repartida entre varios
+ * proyectos NO se reclasifica —partir una `JournalLine` está prohibido—, y ese
+ * caso es el camino (a), el driver `HOURS`.
+ */
+export async function payrollReclassProposal(
+  tx: TenantTransactionClient,
+  window: DateWindow
+): Promise<ProposePayrollReclassResult> {
+  const payrollLines = await getPayrollLinesForWindow(tx, window)
+  const hours = await getTimeRowsForWindow(tx, window, { productiveOnly: true })
+  return proposePayrollReclass({ payrollLines, hours, window })
 }

@@ -222,9 +222,16 @@ export const applyHourlyCostAction = withOrg(
         basis: v.basis,
         minCoverageBps: v.minCoverageBps,
       })
-      if (!proposal.ok) {
-        return { applied: 0, hourlyCostCents: 0, basis: v.basis ?? "", skipped: [{ employeeId: "*", reason: proposal.message }] }
-      }
+      // **PUEDE 13 de la revisión de la ronda 1.** Una propuesta NO EVALUABLE no
+      // es una operación correcta que no escribe nada: es un error. Devolverla
+      // como `success` con `applied: 0` y el motivo enterrado en `skipped[0]`
+      // dejaba a un ADMIN pulsando «aplicar» y viendo que todo había ido bien.
+      // **PUEDE 13 de la revisión de la ronda 1.** Una propuesta NO EVALUABLE no
+      // es una operación correcta que no escribe nada: es un error. Devolverla
+      // como `success` con `applied: 0` y el motivo enterrado en `skipped[0]`
+      // dejaba a un ADMIN pulsando «aplicar» y viendo una operación correcta que
+      // no había escrito nada.
+      if (!proposal.ok) return { notEvaluable: proposal.message as string }
       const skipped: { employeeId: string; reason: string }[] = []
       let applied = 0
       // En SERIE: dentro de una transacción hay UNA conexión (regla de E6-perf).
@@ -246,11 +253,14 @@ export const applyHourlyCostAction = withOrg(
       }
       return { applied, hourlyCostCents: proposal.hourlyCostCents, basis: proposal.derivation.basis, skipped }
     })
+    if (result.ok && "notEvaluable" in result.value) {
+      return { success: false, error: result.value.notEvaluable as string }
+    }
     if (result.ok) {
       revalidatePath(EMPLOYEES_PATH)
       revalidatePath(PYG_PATH)
     }
-    return toActionState(result)
+    return toActionState(result as LedgerResult<ApplyHourlyCostPayload>)
   }
 )
 

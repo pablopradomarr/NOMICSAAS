@@ -67,7 +67,13 @@ import { getTimeRowsForWindow } from "@/models/time"
 import { budgetHash as computeBudgetHash, type ComposedBudget } from "@/lib/budget/hash"
 import { fiscalYearMonths, monthKey } from "@/lib/budget/types"
 import { buildBudgetMatrix, settleBudgetMatrix } from "@/lib/budget/matrix"
-import { buildVariance, maxDimensionVariance, type VarianceCell } from "@/lib/budget/variance"
+import {
+  budgetProvenanceByCell,
+  buildVariance,
+  maxDimensionVariance,
+  type BudgetProvenanceContext,
+  type VarianceCell,
+} from "@/lib/budget/variance"
 import { buildForecast } from "@/lib/budget/forecast"
 import { minutesByTarget, unapprovedMinutesByTarget, type HeadcountRow, type TimeEntryRow } from "@/lib/time/aggregate"
 import {
@@ -2026,6 +2032,18 @@ export async function budgetVsActual(
     }))
     const timeRows = await getTimeRowsForWindow(tx, { from: request.periodStart, to: request.periodEnd })
     const rates = await getEmployeeRateRows(tx, { from: request.periodStart, to: request.periodEnd })
+    // **Auditoría H-5** — el desglose de absorción por CECO necesita saber de
+    // qué CECO es cada empleado: el coste valorado se agrupa por el CECO que
+    // paga la nómina (`Employee.defaultCostCenter`), no por el receptor del
+    // parte. Agrupando por receptor salían filas `PROJ:P-01` en un campo
+    // llamado `costCenterCode` y las tres filas de CECO con `valuedCents: 0`,
+    // es decir **infraabsorción del 100 % en todas las unidades** con el total
+    // correcto: el desglose que O-E10-20 pide para el comité no informaba.
+    const employeeCostCenters = (
+      await tx.employee.findMany({
+        select: { code: true, defaultCostCenter: { select: { code: true } } },
+      })
+    ).map((e) => ({ employeeCode: e.code, costCenterCode: e.defaultCostCenter?.code ?? null }))
 
     const composition: Record<string, string> = {}
     for (const [month, prov] of Object.entries(composed.provenanceByMonth)) composition[month] = prov.label
@@ -2090,6 +2108,7 @@ export async function budgetVsActual(
       headcount,
       timeRows,
       rates,
+      employeeCostCenters,
       hashed,
       paramsHash,
       cached,
@@ -2146,6 +2165,7 @@ export async function budgetVsActual(
     headcount: key.headcount,
     timeRows: key.timeRows,
     rates: key.rates,
+    employeeCostCenters: key.employeeCostCenters,
   })
 
   const thresholds = parseReviewThresholds(key.organization.reviewThresholds)
@@ -2196,6 +2216,29 @@ export async function budgetVsActual(
   // ── FASE 3 — persistencia, en una transacción corta ───────────────────────
   const durationMs = Math.max(0, Date.now() - startedAt)
   const storedParams = { ...key.hashed, budgetRulesHash: built.budgetRulesHash }
+  // **Auditoría H-7** — la provenance deja de ser un bloque de run y pasa a ser
+  // **por celda**, con sus consultas parametrizadas (§5.1): el real, el
+  // imputado, el presupuesto de la versión que gobierna ESE mes (O-E10-9) y las
+  // horas presupuestadas que alimentaron el dry-run. Con el bloque de run, el
+  // drill-down prometido exigía escribir las consultas a mano — es literalmente
+  // lo que el auditor tuvo que hacer para trazar la celda de MC3 de P-01.
+  const provenanceCtx: BudgetProvenanceContext = {
+    runId,
+    organizationId,
+    fiscalYearId: key.fiscalYear.id,
+    budgetIdsByMonth: Object.fromEntries(
+      Object.entries(key.composed.provenanceByMonth).map(([month, p]) => [month, p.budgetId])
+    ),
+    periodStart: request.periodStart,
+    periodEnd: request.periodEnd,
+    ledgerHash: key.ledgerHash,
+    budgetHash: key.budgetHash,
+    analyticsKey: key.analyticsKey,
+    gitSha,
+    baseCurrency: key.organization.baseCurrency,
+    withAllocations,
+    levelTypes: Object.fromEntries(key.config.levels.map((l) => [l.level, l.analyticTypes])),
+  }
   const provenance = {
     runId,
     ledgerHash: `sha256:${key.ledgerHash}`,
@@ -2204,7 +2247,8 @@ export async function budgetVsActual(
     gitSha,
     module: "lib/budget/variance.ts",
     // P6 — una celda de desviación NO se reproduce con una sola consulta (§5.1).
-    generatedFrom: ["journal_lines", "allocation_lines", "budget_lines"],
+    generatedFrom: ["journal_lines", "allocation_lines", "budget_lines", "budget_hours_lines"],
+    byCell: budgetProvenanceByCell(built.result.variance, provenanceCtx),
   }
 
   return await tenantTransaction(organizationId, userId, async (tx) => {
@@ -2287,6 +2331,8 @@ type BuildBudgetInput = {
   headcount: readonly HeadcountRow[]
   timeRows: readonly TimeEntryRow[]
   rates: readonly EmployeeRateRow[]
+  /** **H-5**: CECO que paga la nómina de cada empleado (`defaultCostCenter`). */
+  employeeCostCenters: readonly { employeeCode: string; costCenterCode: string | null }[]
 }
 
 /**
@@ -2450,15 +2496,49 @@ function buildBudgetVsActual(input: BuildBudgetInput) {
   // **O-E10-20** — la desviación de absorción. I-E10-12 sólo comprueba que no se
   // pase (`≤`), así que una INFRAABSORCIÓN del 20 % pasaba el invariante en
   // silencio. Es información de gestión, no un FAIL.
-  const payrollCents = periodLines
-    .filter((l) => DEFAULT_PAYROLL_ACCOUNT_PREFIXES.some((p) => l.accountCode.startsWith(p)))
-    .reduce((acc, l) => acc + (l.debitCents - l.creditCents), 0)
+  const payrollLines = periodLines.filter((l) =>
+    DEFAULT_PAYROLL_ACCOUNT_PREFIXES.some((p) => l.accountCode.startsWith(p))
+  )
+  const payrollCents = payrollLines.reduce((acc, l) => acc + (l.debitCents - l.creditCents), 0)
+
+  // **Auditoría H-5** — el desglose por CECO, con las dos magnitudes REALES y
+  // comparables:
+  //
+  //  · `payrollCents`: Σ (debe − haber) de las 64x **cuyo CECO es ése**. Una 64x
+  //    imputada directamente a un proyecto (camino (b) de §3.7) no pertenece a
+  //    ningún CECO y sale en la fila `SIN_CECO`, no disfrazada de centro de
+  //    coste con un código `PROJ:…`.
+  //  · `valuedCents`: Σ del coste de los partes de los empleados **de ese
+  //    CECO**, sea cual sea el receptor. Es lo que la unidad ha conseguido
+  //    absorber con las horas de su gente, que es justo lo que la absorción
+  //    mide. Agrupar por RECEPTOR —lo que hacía la ronda 0— dejaba los CECOs a
+  //    cero, porque casi todas las horas van a proyectos.
+  const cecoCodeById = new Map(input.config.costCenters.map((c) => [c.id, c.code]))
+  const cecoOfEmployee = new Map(input.employeeCostCenters.map((e) => [e.employeeCode, e.costCenterCode]))
+  const SIN_CECO = "SIN_CECO"
+  const payrollByCeco = new Map<string, Cents>()
+  for (const line of payrollLines) {
+    const code = (line.costCenterId ? cecoCodeById.get(line.costCenterId) : null) ?? SIN_CECO
+    payrollByCeco.set(code, (payrollByCeco.get(code) ?? 0) + (line.debitCents - line.creditCents))
+  }
+  const valuedByCeco = new Map<string, Cents>()
+  for (const target of costs.byTarget) {
+    // Un receptor NO EVALUABLE (`costCents === null`) no aporta: valorarlo a 0
+    // sería exactamente el error que I-E10-5 prohíbe.
+    if (target.costCents === null) continue
+    for (const entry of target.entries) {
+      const code = cecoOfEmployee.get(entry.employeeCode) ?? SIN_CECO
+      valuedByCeco.set(code, (valuedByCeco.get(code) ?? 0) + entry.costCents)
+    }
+  }
   const absorption = absorptionVariance({
     valuedCents: costs.totals.valuedCents,
     payrollCents,
-    byCostCenter: costs.byTarget
-      .filter((t) => t.kind === "COST_CENTER")
-      .map((t) => ({ code: t.code, valuedCents: t.costCents ?? 0, payrollCents: 0 })),
+    byCostCenter: [...new Set([...payrollByCeco.keys(), ...valuedByCeco.keys()])].map((code) => ({
+      code,
+      valuedCents: valuedByCeco.get(code) ?? 0,
+      payrollCents: payrollByCeco.get(code) ?? 0,
+    })),
   })
 
   // ── EV-15 / EV-16 / EV-17 — lo que mueve el sello ─────────────────────────

@@ -3535,6 +3535,12 @@ model TimeEntry {
   @@index([organizationId, employeeId, date])
   @@index([organizationId, projectId, date])
   @@index([organizationId, costCenterId, date])
+  /// La FK a la propia tabla necesita índice: sin él, «¿qué contra-apuntes
+  /// corrigen este parte?» es un recorrido secuencial y el `ON DELETE` de la FK
+  /// se verifica con un SEQ SCAN por fila. En la base es PARCIAL
+  /// (`WHERE corrects_entry_id IS NOT NULL`): migración
+  /// `20260925100000_e10_indice_contra_apunte`.
+  @@index([correctsEntryId])
   @@map("time_entries")
 }
 

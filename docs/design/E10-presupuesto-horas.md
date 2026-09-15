@@ -702,7 +702,11 @@ sentencia que exija `SUPERUSER`. Las tablas nacen vacías, así que **sólo M5 y
 necesitan el baile `NO FORCE` → backfill → `FORCE`**, con la marca de conversión
 escrita **antes** del backfill (runbook de E3, `20260907120000`).
 
-**M1 · `20260924090000_e10_enums`** — los siete enums nuevos, solos. Un enum
+**M1 · `20260924090000_e10_enums`** — los **ocho** enums nuevos, solos
+(`budget_scenario`, `budget_status`, `budget_line_source`, `time_entry_status`,
+`time_entry_source`, `employee_rate_basis`, `headcount_source` y la ampliación
+de `allocation_driver` con `HOURS`/`HEADCOUNT`; la ronda 0 decía «siete», un
+recuento corto del propio documento — PUEDE 9 de la revisión). Un enum
 creado en la misma transacción que su primer uso no se puede referenciar en
 PostgreSQL; ésa es la razón por la que E9 ya los separó.
 
@@ -1499,7 +1503,7 @@ Bases, en la tabla de `driverWeights`:
 
 | Driver | Peso `wᵢ` | Notas |
 |---|---|---|
-| **`HOURS`** | `Σ minutes` de `TimeEntry` **`APROBADO` y `productive`** con receptor `i` y `date` dentro de la **ventana efectiva del run** (§3.5 `timeWindowOf`, no necesariamente el periodo), contra-apuntes incluidos con su signo; `max(0, ·)` | Receptores: proyectos (`PROJECTS`), CECOs (`COST_CENTERS`) o la LN del proyecto (`BUSINESS_LINES`). Cumple el contrato del experto de E5: **minutos enteros** (Q-2), **sólo aprobadas**, y las horas de personal ya imputado directamente a MC2 **cuentan igual** —el driver mide consumo de estructura, no coste— |
+| **`HOURS`** | `Σ minutes` de `TimeEntry` **`APROBADO` y `productive`** con receptor `i` y `date` dentro de la **ventana del PERIODO del run**, ensanchada **sólo si el `zeroBaseFallback` se aplicó de hecho** (`YTD` ⇒ desde el inicio del ejercicio; `PRIOR_PERIOD` ⇒ el periodo anterior); contra-apuntes incluidos con su signo; `max(0, ·)` | Receptores: proyectos (`PROJECTS`), CECOs (`COST_CENTERS`) o la LN del proyecto (`BUSINESS_LINES`). Cumple el contrato del experto de E5: **minutos enteros** (Q-2), **sólo aprobadas**, y las horas de personal ya imputado directamente a MC2 **cuentan igual** —el driver mide consumo de estructura, no coste— |
 | **`HEADCOUNT`** | **`Σ fteMilli` de los `HeadcountSnapshot` cuyo fin de mes cae dentro del periodo del run** («FTE·mes», Q-7) | **Sólo `targetKind = COST_CENTERS`** (CHECK en M4 y validación en la acción): con proyectos no hay plantilla declarada y derivarla de las horas sería `HOURS` con otro nombre. Para un run `MONTH` hay **un solo snapshot** ⇒ es exactamente el stock a fin de periodo de la ronda 0, y el fixture no se mueve; para `QUARTER` y `YEAR` deja de ser falso: un CECO que vive de febrero a noviembre tenía **peso 0** en el run anual (stock a 31-12) y no absorbía nada de sus diez meses vivos, trasladando esa estructura a los demás. **Sin división y sin redondeo** |
 
 Avisos nuevos, del mismo vocabulario cerrado que los `W-E5-*`:
@@ -1515,9 +1519,25 @@ export type AllocationWarning =
   | { code: "W-E10-HEADCOUNT-TRAPPED"; ruleCode: string; period: string; targets: readonly string[]; detail: string }
 ```
 
+> **Corrección de la ronda 1 (auditoría H-6, documental).** La ronda 0 escribía
+> aquí «dentro de la ventana efectiva del run (§3.5 `timeWindowOf`)», y eso **no
+> es lo que hace el motor ni lo que dice el fixture**: `timeWindowOf` es la
+> ventana que el **`timeHash`** sella —deliberadamente ancha, para que aprobar en
+> mayo un parte de enero caduque el run de marzo (O-E10-1)—, mientras que la
+> **base del driver** es la del periodo y sólo se ensancha cuando el fallback se
+> aplicó. Con la letra de la ronda 0, el run de 2026-11 tendría base 52 204 min
+> en vez de 4 532. La implementación (`driverWindowOf`, `hoursWeights`) era la
+> correcta; el texto —y la redacción de **I-E10-3**, que ahora dice «ventana
+> efectiva del run» en el mismo sentido: periodo, o periodo ensanchado por el
+> fallback REALMENTE aplicado— se alinean con ella.
+
 **`W-E10-UNAPPROVED-HOURS` se emite SIEMPRE que haya minutos sin aprobar** de
 receptores elegibles en la ventana del driver, **no sólo cuando la base es cero**
-(O-E10-2). El caso peligroso es justamente el parcial: con `CC-OPS` repartiendo
+(O-E10-2) **y tampoco sólo cuando la base es mayor que cero** (revisión de la
+ronda 1, hallazgo 4): con 0 minutos aprobados y 12 000 sin firmar, el aviso sale
+igual, con `shareOfBaseBps: null` —no hay porcentaje sobre una base vacía—, y el
+run se sella con `HORAS_SIN_APROBAR` además de caer en su `zeroBaseFallback`. El
+100 % sin aprobar es el caso extremo del parcial, no una excepción. El caso peligroso es justamente el parcial: con `CC-OPS` repartiendo
 900 000 c, base aprobada 36 000 min y 12 000 min de P-03 sin firmar, el reparto
 sale P-01 480 000 / P-02 270 000 / P-03 150 000 y con la base completa habría sido
 360 000 / 202 500 / 337 500 — **187 500 c de diferencia en P-03** y nadie
@@ -1762,7 +1782,10 @@ nunca dentro de `lib/budget/` ni de `lib/time/`.
 | `listBudgetsAction`, `getBudgetAction`, `budgetVsActualAction`, `projectProfitabilityAction`, `budgetDiffAction` | `VIEWER` | Sólo lectura. Emiten `ReportRun`, que es un hecho, no una mutación (precedente de E6). **`budgetVsActualAction` rechaza con `BUDGET_NOT_SEALED`** si la versión es `BORRADOR` (O-E10-5): un borrador no firma un informe |
 | `previewBudgetVsActualAction` | `VIEWER` | **Previsualización no sellada** contra un `BORRADOR`: dry-run puro, **sin fila en `report_runs`**, con banda «borrador, no firmable». Es el patrón de `previewAllocation` en E5 |
 | `upsertBudgetCellsAction`, `deleteBudgetCellsAction`, `importBudgetCsvAction` | `EDITOR` | Sólo sobre `BORRADOR`. Un `EDITOR` teclea el presupuesto. Validan el **signo por tipo analítico** (O-E10-6) y el importador **rechaza el fichero entero** con la convención invertida (R-B-6) |
+| `upsertBudgetHoursAction` | `EDITOR` | Horas presupuestadas por (mes, dimensión, empleado). Sólo sobre `BORRADOR`, como sus hermanas de celdas (PUEDE 15 de la revisión de la ronda 1: la acción existía y no figuraba aquí). **Entran en el `budgetHash`** (ADR-0018 D2), así que tocarlas después de sellar es imposible por trigger |
 | `proposeDepreciationBudgetAction` | `EDITOR` | Devuelve la propuesta de `68x` con sus términos; no escribe (Q-4) |
+| `proposePayrollReclassAction` | `VIEWER` | **Propone**, no escribe: qué líneas 64x de un CECO son atribuibles al 100 % a un proyecto según las horas aprobadas (§3.7 camino (b)) |
+| `applyPayrollReclassAction` | **`ADMIN`** | Aplica la propuesta confirmada delegando en `models/analytics.reclassifyLines` (ADR-0010), con motivo obligatorio y la ventana temporal de ADR-0010 intacta: mes bloqueado del ejercicio abierto ⇒ sólo `ADMIN`; ejercicio `CLOSED` ⇒ **nunca** |
 | `createBudgetVersionAction`, `sealBudgetAction`, `supersedeBudgetAction` | **`ADMIN`** | Sellar un presupuesto fija el patrón de medida de toda la compañía: es política, no operación. Mismo criterio que `createAllocationRuleAction` |
 | `listTimeEntriesAction` | `VIEWER` | Un `VIEWER` ve todos los partes; **un usuario sin `Employee` enlazado ve sólo lo agregado** |
 | `createTimeEntriesAction`, `correctTimeEntryAction`, `importTimeCsvAction` | `EDITOR` | `correctTimeEntryAction` exige motivo ≥ 10 caracteres |
@@ -2054,7 +2077,7 @@ imputación*, y cuando no puede ser, la celda se deja en blanco.
 
 ## 9. Rendimiento
 
-Ocho techos, medidos en `tests/integration/perf-budget.test.ts` sobre el fixture
+**Nueve** techos, medidos en `tests/integration/perf-budget.test.ts` sobre el fixture
 `ejercicio-completo-v2` reversionado (dos ejercicios, 40 empleados, un año de
 partes, presupuesto completo), con las dos métricas de E6-perf: **ms** y
 **conexiones simultáneas por petición**.
@@ -2382,7 +2405,7 @@ la ronda 1. Las tareas de Nivel 2 quedan **desbloqueadas**.
 |---|---|---|---|---|---:|
 | **T1** | ~~Validación de control de gestión~~ · **HECHA**: `docs/design/E10-validacion-controlling.md`, **CONFORME CON OBSERVACIONES** con cinco bloqueantes, O-E10-0…22, Q-1…Q-7 resueltas, I-E10-14…18 y el contrato de cifras de su §6 | — | experto-contable | 2 | 16 |
 | **T2** | ~~ADR-0018 a firma humana~~ · **HECHA**: **APROBADO** el 2026-09-14 (permiso delegado de 2026-09-04), **D1–D6**, con las veintitrés observaciones incorporadas y **D6** (contrato de cifras congelado) nueva. Desbloquea T4, T7, T8, T9, T10, T11 y T13 | T1 | arquitecto | 2 | 10 |
-| **T3** ▶ | Prisma: siete modelos, siete enums, `BudgetLine.marginLevel`/`signException`, `Budget.partialFrom`, `AllocationRun.timeHash` **+ ventana**, `ReportRun.budgetHash`, las **cinco** columnas de `Organization`, relaciones inversas (incluidas las tres de `BudgetHoursLine`); `TENANT_MODELS`; **`lib/budget/**` y `lib/time/**` en el guard de pureza, ESLint y CI** | — | dev-backend | 2 | 12 |
+| **T3** ▶ | Prisma: siete modelos, **ocho** enums, `BudgetLine.marginLevel`/`signException`, `Budget.partialFrom`, `AllocationRun.timeHash` **+ ventana**, `ReportRun.budgetHash`, las **cinco** columnas de `Organization`, relaciones inversas (incluidas las tres de `BudgetHoursLine`); `TENANT_MODELS`; **`lib/budget/**` y `lib/time/**` en el guard de pureza, ESLint y CI** | — | dev-backend | 2 | 12 |
 | **T4** | Migraciones **M1…M6** de §2.3: enums solos; tablas con FK compuesta y `enforce_tenant_rls`; **los cuatro índices parciales y el CHECK de O-A6**; el **CHECK de signo por tipo analítico** (O-E10-6); `budget_hours_lines` con sus tres FK, su CHECK de día 1 y sus **cuatro** índices parciales (O-E10-10); `EXCLUDE` de vigencias (presupuesto y tarifas); los **once** triggers, incluido el de `marginLevel` (O-E10-7); append-only y `GRANT` de columna; `time_hash` **+ ventana**; `headcount` en FTE·mes; clave de caché de `report_runs`; retirada de `MIXED`/`DRAFT` con guardia; siembra de `P-<LN>-NUEVOS` (Q-5). Tests de integración del SQL | T2, T3 | dev-backend | 2 | 40 |
 | **T5** ▶ | `lib/time/aggregate.ts` (`minutesByTarget`, `minutesByEmployee`, **`unapprovedMinutesByTarget`**, `canonicalTimeForm` **sin `id`**, `timeHash`, **`timeWindowOf`**) + tests de determinismo, contra-apuntes y ventana efectiva | T3 | dev-backend | 2 | 16 |
 | **T6** ▶ | `lib/time/cost.ts`: `costOfTime` con el **Hamilton definido** (O-E10-13), `deriveHourlyCost` con **ámbito CECO/empleado y cobertura** (O-E10-12), `absorptionVariance` (O-E10-20) + tests, incluidos los cuatro casos no evaluables y el conflicto de `basis` | T3 | dev-backend | 2 | 18 |

@@ -47,6 +47,7 @@ import {
   type Validacion,
   E8_SEAL_REASONS,
   type E8SealReason,
+  type E10SealReason,
 } from "@/lib/ledger/invariants"
 import {
   contrastOf,
@@ -2040,6 +2041,8 @@ export async function runLedgerInvariants(
      * dirá en vez de fingir que no cambió nada.
      */
     let analyticsKeyForRun = analyticsKeyOf({})
+    /** E10 · ADR-0018 D5: los cinco motivos de sello de la familia PRESUPUESTO. */
+    let budgetSealReasonCodes: readonly E10SealReason[] = []
 
     if (total > MAX_MATERIALIZED_ENTRIES) {
       origen = "sql"
@@ -2188,6 +2191,32 @@ export async function runLedgerInvariants(
         })
       }
 
+      // ── E10 · ronda 1 · auditor H-1 · los bloques `budget` y `time` ───────
+      //
+      // Mismo error que el de arriba, una épica después: `runInvariantsPure`
+      // ejecuta los dieciocho `I-E10-*` `if (input.budget || input.time)` y
+      // **este montaje no rellenaba ninguno de los dos**. La familia
+      // `PRESUPUESTO` de `/audit` salía siempre `SIN_EVALUAR`, los cinco
+      // motivos de sello de E10 no llegaban al sello del periodo y
+      // `runBudgetInvariants`/`budgetSealReasons` eran código muerto en
+      // producción: un céntimo alterado en una versión sellada, un parte
+      // aprobado retocado por SQL o una `driverBase` manipulada **no los podía
+      // detectar el producto**, sólo una recomputación externa.
+      //
+      // Se lee con las mismas dos condiciones que el bloque de cierre —barrido
+      // de auditoría **y** ejercicio en el alcance—: son invariantes de UN
+      // ejercicio y su lectura cuesta lo que el checklist (§9).
+      let budgetBlock: Awaited<
+        ReturnType<typeof import("@/models/budget-invariants").readBudgetInvariantInput>
+      > = { sealReasons: [] }
+      if (withAudit && opts.fiscalYearId) {
+        const { readBudgetInvariantInput } = await import("@/models/budget-invariants")
+        budgetBlock = await readBudgetInvariantInput(tx, {
+          fiscalYearId: opts.fiscalYearId,
+          config: analyticsConfig,
+        })
+      }
+
       const input: InvariantInput = {
         runId: opts.runId ?? randomUUID(),
         gitSha,
@@ -2220,7 +2249,14 @@ export async function runLedgerInvariants(
         // E9 · §6.3: la familia `CIERRE`. Los bloques que no se pueden componer
         // salen `INFO` diciendo qué falta, nunca PASS por vacuidad.
         ...(closingBlock ? { closing: { ...closingBlock, closing: { ...closingBlock.closing, entries } } } : {}),
+        // E10 · §6: la familia `PRESUPUESTO`. Los bloques ausentes no se
+        // inventan: sin presupuesto ni partes no se evalúa ninguno de los
+        // dieciocho, y con uno solo de los dos el otro sale INFO diciendo qué
+        // falta (contrato de `runBudgetInvariants`).
+        ...(budgetBlock.budget ? { budget: budgetBlock.budget } : {}),
+        ...(budgetBlock.time ? { time: budgetBlock.time } : {}),
       }
+      budgetSealReasonCodes = budgetBlock.sealReasons
       validacion = runInvariantsPure(input, opts.refDate)
 
       // I1 e I7 los manda el agregado SQL: ve las MISMAS filas que la BD, no una
@@ -2275,6 +2311,11 @@ export async function runLedgerInvariants(
       ...(opts.lastGitSha !== undefined ? { lastGitSha: opts.lastGitSha } : {}),
       ...(documentReasons.length > 0 ? { documentReasons } : {}),
       ...(auditSealReasons.length > 0 ? { auditReasons: auditSealReasons } : {}),
+      // E10 · ronda 1 · H-1: los cinco motivos de E10 llegan al sello del
+      // periodo, igual que los seis de E8 y los diez de E9. Sin esto, un
+      // ejercicio sin versión vigente o con horas sin aprobar se firmaba
+      // «VALIDADO AUTOMÁTICAMENTE».
+      ...(budgetSealReasonCodes.length > 0 ? { budgetReasons: budgetSealReasonCodes } : {}),
     })
 
     let persistedRunId: string | undefined

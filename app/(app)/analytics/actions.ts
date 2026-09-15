@@ -33,6 +33,7 @@ import {
   costCenterUpdateSchema,
   dimensionListSchema,
   marginLevelConfigSchema,
+  payrollReclassSchema,
   projectCloseSchema,
   projectCreateSchema,
   projectReopenSchema,
@@ -69,6 +70,8 @@ import {
   type ReclassifyResult,
 } from "@/models/analytics"
 import { formatLedgerErrors, runLedgerTransaction, todayLocalDate, type LedgerResult } from "@/models/ledger"
+import { payrollReclassProposal } from "@/models/time"
+import type { ProposePayrollReclassResult } from "@/lib/time/payroll-reclass"
 import {
   getAllocationCellDetail,
   getAnalyticPnl,
@@ -435,6 +438,34 @@ export const updateAccountAnalyticTypeAction = withOrg(
  * `checkReclassify` (puro) con el rol que se le pasa desde aquí, y el trigger
  * `journal_lines_reclassify_window` la repite en la base.
  */
+/**
+ * **§3.7 camino (b) · DEBE 6 de la revisión de la ronda 1** — «Proponer
+ * reclasificación de nómina por horas».
+ *
+ * `proposePayrollReclass` no tenía consumidor: el camino (b) era inalcanzable
+ * desde el producto. Esta acción **propone y no escribe**; aplicarla es
+ * `reclassifyLinesAction`, es decir `models/analytics.reclassifyLines`
+ * (ADR-0010) **sin un solo cambio**: mismo motivo obligatorio, mismo `AuditLog`,
+ * mismo recálculo de `entryHash` y misma ventana temporal —mes bloqueado del
+ * ejercicio abierto ⇒ sólo `ADMIN`; ejercicio `CLOSED` ⇒ nunca—.
+ *
+ * Es `VIEWER` porque proponer es leer. La confirmación es de un **`ADMIN`** y la
+ * hace la acción de aplicar, que es la que mueve MC2 y MC3 de periodos ya
+ * informados (el matiz que §3.7 exige escribir y no dar por sabido).
+ */
+export const proposePayrollReclassAction = withOrg(
+  Role.VIEWER,
+  async ({ org }, input: unknown): Promise<ActionState<ProposePayrollReclassResult>> => {
+    const parsed = payrollReclassSchema.safeParse(input)
+    if (!parsed.success) return invalid(parsed.error)
+    const { from, to } = parsed.data
+    const data = await tenantTransaction(org.id, undefined, async (tx) =>
+      payrollReclassProposal(tx, { from, to })
+    )
+    return { success: true, data }
+  }
+)
+
 export const reclassifyLinesAction = withOrg(
   Role.EDITOR,
   async ({ org, user, role }, input: unknown): Promise<ActionState<ReclassifyResult>> => {

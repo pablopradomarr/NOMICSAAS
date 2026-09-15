@@ -1,6 +1,6 @@
 # ADR-0018 — Presupuesto versionado y sellado, horas como unidad entera aprobada, drivers de actividad con su cuarto sello, forecast derivado y umbrales de desviación
 
-**Estado:** **APROBADO por Pablo el 2026-09-14** (permiso general delegado de 2026-09-04), **D1–D6** · **Nivel:** 2 · **Fecha:** 2026-09-14 · **Ronda 1** (validación de control de gestión incorporada) · **Épica:** E10 ·
+**Estado:** **APROBADO por Pablo el 2026-09-14** (permiso general delegado de 2026-09-04), **D1–D6**, más **D7 aprobado el 2026-09-15** (ronda 1) · **Nivel:** 2 · **Fecha:** 2026-09-14 · **Ronda 1** (validación de control de gestión incorporada) · **Épica:** E10 ·
 **Complementa:** ADR-0003 (informes derivados, `ReportRun`, sello), ADR-0004 (capa analítica paralela), ADR-0006 (dinero en céntimos), ADR-0010 (reclasificación analítica), ADR-0012 (umbrales y motivos de sello), **ADR-0013 (liquidación de CECOs; este ADR cumple su D4)** · **No enmienda ninguno** ·
 **Diseño:** `docs/design/E10-presupuesto-horas.md` ·
 **Validación de control de gestión:** `docs/design/E10-validacion-controlling.md` (**CONFORME CON OBSERVACIONES**; cinco bloqueantes O-E10-1/2/4/5/6, veintidós observaciones O-E10-0…22, respuestas a Q-1…Q-7, cinco invariantes nuevos I-E10-14…18 y el contrato de cifras de su §6). **Las veintidós están incorporadas** y este ADR pasa de cinco decisiones a **seis**: **D6** congela ese contrato.
@@ -446,6 +446,66 @@ de §6 de la validación: un mes con horas aprobadas y sin aprobar mezcladas, un
 empleado sin tarifa vigente durante dos semanas, un CECO que nace en febrero y
 muere en noviembre, una `REVISADO` que sólo cubre el segundo semestre, y una línea
 de presupuesto de gasto en positivo que el importador rechaza.
+
+---
+
+### D7 ✚ — El borrado de operador de un parte APROBADO, por GUC registrado y verificado
+
+> **Nota fechada de la ronda 1 — aprobada por Pablo el 2026-09-15** (permiso
+> general delegado de 2026-09-04). **Nivel 2**: toca una regla de inmutabilidad.
+> Este ADR pasa de seis decisiones a **siete**. No enmienda D1–D6.
+
+**El problema (QA, BUG-E10-2).** D1 y R-H-1 hacen INMUTABLE un `TimeEntry`
+`APROBADO`: no se edita y no se borra, se **contra-apunta** (I-E10-4). El trigger
+`assert_time_entry_not_deleted_when_approved` lo aplicaba **sin excepción, ni
+siquiera a `app_maintenance`**, y eso rompió una operación legítima que no es de
+la aplicación: `scripts/load-fixture.ts --reset-org`, el vaciado de operador que
+las suites e2e ejecutan entre ficheros. El resultado no era «más seguridad»: era
+una organización de pruebas que no se podía vaciar y partes de un `.spec` que
+contaminaban al siguiente.
+
+**La decisión.** Se abre **una sola** salida, con la forma que E9 ya fijó para la
+reapertura registrada (`app.reopening_run_id`, migración
+`20260923090000_e9_reapertura_guc_verificado`): un **GUC de transacción
+verificado**, no una bandera que baste con fijar.
+
+```
+app.maintenance_reset_org  →  uuid de la organización que se está vaciando
+```
+
+El trigger sólo deja pasar el `DELETE` de un parte `APROBADO` cuando se cumplen
+**las dos** condiciones a la vez:
+
+1. `app.maintenance_reset_org()` es **exactamente la `organization_id` de la
+   fila** —el GUC de otro tenant no abre nada—, y
+2. `app.is_maintenance_operator()`, es decir el rol de la sesión es miembro de
+   `app_maintenance`.
+
+La segunda es la que hace que esto **no sea un agujero en el producto**: por
+ADR-0009 §6 y `CLAUDE.md`, `DATABASE_URL` conecta con `app_runtime` y **la
+aplicación nunca conecta con `app_maintenance`**. Un GUC inventado desde una
+server action —o desde SQL con el rol de la aplicación— sigue chocando con el
+trigger. Y `SET LOCAL` muere con la transacción, así que la excepción dura lo que
+dura el vaciado.
+
+**Por qué no las alternativas.** *Quitar el trigger y confiar en la política RLS*:
+`app_maintenance` tiene `BYPASSRLS`, así que no quedaría barrera ninguna.
+*Permitirlo a `app_maintenance` sin GUC*: el rol existe para todos los scripts de
+operador, no sólo para el vaciado, y un borrado accidental de partes aprobados en
+una organización viva no dejaría rastro de intención. *No borrar y truncar la
+base entre ficheros e2e*: el vaciado es **por organización** y la base la
+comparten varias.
+
+**Lo que NO cambia.** El camino del producto sigue siendo el contra-apunte, con
+su motivo de ≥ 10 caracteres y su trigger espejo (§3.5). `UPDATE` de un parte
+aprobado sigue prohibido **sin excepción alguna**, también para
+`app_maintenance`: corregir no es vaciar. I-E10-4 sigue vigilando la inmutabilidad
+sobre los datos.
+
+Migración: `20260925090000_e10_ronda1_signo_y_reset`. Tests:
+`tests/integration/e10-ronda1.test.ts` (sin GUC ni `app_maintenance` puede; con
+el GUC de otra organización, tampoco; con el de la suya y desde el rol de
+operador, sí; y fuera de la transacción el GUC vuelve a ser `NULL`).
 
 ---
 

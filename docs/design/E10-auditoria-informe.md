@@ -1,0 +1,168 @@
+# E10 — Auditoría adversarial de fiabilidad (presupuesto, horas y drivers de actividad)
+
+Auditor `auditor-fiabilidad`, contexto limpio. Diff auditado `fc4a863…HEAD`. Se
+recibieron **sólo** entradas y entregables (diseño §3/§5, ADR-0018 D1–D6,
+validación de controlling, fixture sellado y fixture v2, tests de integración
+como guía). No se ha leído ni usado razonamiento del productor.
+
+## Método
+
+Reconstrucción **por otro camino**, tolerancia 0 céntimos:
+
+- **Python propio** (`sha256`/entero, sin `float`) para la forma canónica y el
+  `budgetHash`, la composición de versiones, la matriz de presupuesto, los
+  agregados de horas, el `timeHash`, el Hamilton del coste-hora, la absorción,
+  las bases `HOURS`/`HEADCOUNT`, la cascada de liquidación real y en dry-run, la
+  desviación, el `varianceBps` y el forecast. **No** se importó ni ejecutó
+  `lib/budget/**`, `lib/time/**` ni `lib/analytics/allocate.ts`.
+- **SQL directo** sobre una base aislada clonada de `erp_test`, con el fixture
+  `ejercicio-completo.json` cargado por el camino de la aplicación, para la PyG
+  analítica real de E4/E5, la nómina 64x, los CHECK, los triggers, los GRANT de
+  columna y la RLS. La base clonada se ha **eliminado** al terminar; el producto
+  y los fixtures no se han modificado.
+
+## Cifras reconstruidas (todas cuadran al céntimo)
+
+| Métrica | Motor / sellado | Reconstrucción | Δ | Método |
+|---|---:|---:|---:|---|
+| `marginConfigHash` | `c758026c…` | `c758026c…` | — | Python sha256 |
+| `budgetHash` 2026-BASE | `2b6e0cee…` | `2b6e0cee…` | — | Python, forma canónica del diseño sobre `budgetLines` |
+| `budgetHash` 2026-REV1 | `a8daf55c…` | `a8daf55c…` | — | ídem |
+| Totales presupuesto por nivel (8) | INGRESOS 6 326 400 … RESULTADO 1 767 633 | idénticos | 0 | Σ líneas compuestas por `marginLevel` |
+| Matriz presupuesto (8×17 acumulada) | 136 celdas | idénticas | 0 | Σ contribuciones por nivel |
+| Composición BASE+REV1 | ene–jun BASE / jul–dic REV1, 80 líneas | idéntica | 0 | última no parcial + `partialFrom` |
+| Totales reales por nivel (8) | INGRESOS 6 250 000 … RESULTADO 1 497 322 | idénticos | 0 | **SQL** sobre `journal_lines` con R-A2…R-A11 reimplementadas |
+| Desviación INGRESOS | −76 400 | −76 400 | 0 | real − presupuesto |
+| Desviación MC3 | +63 350 | +63 350 | 0 | ídem |
+| Desviación EBITDA | +228 797 | +228 797 | 0 | ídem |
+| `varianceCents` / `varianceBps` de las 40+ celdas | — | idénticos | 0 | resta entera y `⌊·⌋` con signo |
+| Minutos aprobados y productivos por proyecto | 16 588 / 14 932 / 20 684 | idénticos | 0 | Σ con contra-apuntes |
+| Minutos sin aprobar | P-01 276, P-03 700 | idénticos | 0 | ídem |
+| `timeHash` (3 ventanas) | `6b67f1e5…`, `530d4525…`, `29b910f3…` | idénticos | — | `fecha\|empleado\|receptor\|minutos\|productiva` |
+| Coste-hora por receptor | 834 500 / 694 910 / 1 087 803 | idénticos | 0 | `T=⌊Σmᵢrᵢ/60⌋` + mayor resto |
+| Reparto Hamilton por parte (muestra 12) | — | idénticos | 0 | pesos `mᵢ·rᵢ`, desempate (fecha, empleado, id) |
+| Partes sin tarifa | 2 (E-05, 13 y 20-06) | idénticos | — | vigencias sin solape; **nunca 0** |
+| Absorción | −22 787 c / −86 bps | −22 787 c / −86 bps | 0 | Σ valorado − Σ 64x (2 640 000) |
+| Base `HEADCOUNT` FTE·mes | CC-OPS 48 000, CC-DEV 30 000 | idénticas | 0 | Σ `fteMilli` de snapshots del periodo |
+| `allocation_lines` reales (17) | — | idénticas | 0 | cascada MONTH→QUARTER→YEAR, Hamilton, nivel viaja con el importe |
+| `allocation_lines` dry-run presupuesto (18) | — | idénticas | 0 | ídem con horas y CECOs presupuestados |
+| Forecast (12 meses) | corte 2026-06 | idéntico | 0 | 6 reales + 6 presupuesto, sin solape ni hueco |
+| Margen/hora MC2 y MC3 y tarifa media (3 proyectos) | — | idénticos | 0 | `⌊x·60/min⌋` |
+
+Comprobaciones de comportamiento verificadas contra la base:
+
+- Línea de gasto **positiva sin excepción** → `budget_lines_sign_by_type`
+  rechaza; `INGRESO_DIRECTO` negativo también; `margin_level` incoherente con el
+  tipo → trigger `assert_budget_line_margin_level` (O-E10-7).
+- Parte de **1 441 min** y **dos partes de 1 440 el mismo día** → rechazados por
+  `assert_time_entry_daily_ceiling` (O-E10-21, techo agregado, no por fila).
+- `UPDATE`/`DELETE` de un parte **APROBADO** → rechazados por trigger; el
+  contra-apunte positivo y el que excede al original, también.
+- Regla **`HEADCOUNT` a `PROJECTS`** → `allocation_rules_headcount_targets`.
+- `UPDATE` de `budget_lines` de una versión **sellada** → trigger
+  `assert_budget_lines_not_sealed`. Forzado desactivando el trigger, la
+  recomputación del `budgetHash` delata **un céntimo** de diferencia.
+- Alterar un parte aprobado, o **aprobar un parte tardío** dentro de la ventana,
+  cambia el `timeHash` recomputado ⇒ el run queda `STALE` por la rama (d) de
+  `allocationRunStalenessBatch`, que usa la ventana que el propio run persiste.
+- Siete tablas nuevas en `FORCE ROW LEVEL SECURITY`, `tenant_isolation`, 0 filas
+  sin GUC y **42501** como `app_runtime` sobre las columnas no concedidas
+  (`budgets` y `time_entries` tienen GRANT **de columna**: sólo `status`,
+  `valid_to`, sellos y `approved_*`).
+- `budget_hash` está en el índice único de caché de `report_runs` y el CHECK
+  `report_runs_budget_hash_required` impide un `PRESUPUESTO_REAL` con `'∅'`:
+  sellar otra versión produce **run nuevo**, no caché.
+- E10 **no escribe ni un asiento**: ningún `journalEntry.create`/`postEntry` en
+  `models/budget.ts`, `models/time.ts`, `models/employees.ts`, `lib/budget/**`,
+  `lib/time/**`. `lib/time/payroll-reclass.ts` es puro y sólo **propone**;
+  `reclassifyLines` no se ha tocado en este diff.
+- `liquidacion-esperada.json` y `pyg-analitica-esperada.json` **byte a byte
+  intactos** respecto de `fc4a863`, y ninguna de las seis reglas de E5 usa un
+  driver de actividad.
+
+## Hallazgos
+
+**H-1 · GRAVE — los dieciocho invariantes I-E10-1…18 son código muerto en
+producción.** `runInvariants` los ejecuta `if (input.budget || input.time)`
+(`lib/ledger/invariants.ts:577`), pero `models/ledger.runLedgerInvariants`
+compone `analytics`, `documents`, `allocations` y `closing` y **nunca** los
+bloques `budget` / `time` (`models/ledger.ts` ≈2192-2223). `runBudgetInvariants`
+y `budgetSealReasons` no tienen ni un llamante fuera de `lib/` y sus tests. La
+familia `PRESUPUESTO` de `/audit` saldrá siempre `SIN_EVALUAR` y los cinco
+motivos de sello de E10 no llegan al sello del periodo. Es literalmente el
+hallazgo **H-2 de E9** («el bloque `closing`, que nadie rellenaba») repetido, y
+documentado como tal en el propio comentario del fichero. Consecuencia directa
+para esta auditoría: los errores inyectados (a), (b) y (c) **no pueden ser
+detectados por el producto**, sólo por recomputación externa.
+
+**H-2 · GRAVE — el `budgetHash` de toda versión relevada deja de ser
+reproducible.** `valid_to` entra en la cabecera de la forma canónica (§3.1, §3.8,
+ADR-0018 D2), pero el trigger `app.assert_budget_immutable_when_sealed` lo deja
+**mutable tras sellar** y `sealBudgetTx` (`models/budget.ts:528-545`) cierra la
+versión anterior con `validTo = validFrom − 1 día` en la misma transacción
+(O-E10-8). Reproducido por el camino del producto sobre base real: sellada la
+BASE con `validTo = NULL` su hash es `8d2bf1ba…`; sellada después la REV1
+parcial, la BASE queda con `validTo = 2026-06-30` y su hash recomputado sobre lo
+que la fila tiene hoy es `9cc18b3d…`. **I-E10-6 daría FAIL sobre datos
+íntegros**, y una manipulación real sería indistinguible del caso rutinario. El
+fixture sellado lo oculta porque calcula el hash de la BASE con `validTo` ya a
+`2026-06-30`, un estado que `sealBudget` nunca produce en el instante del sello.
+Arreglo: sacar `valid_to` de la forma canónica (la vigencia no es contenido del
+presupuesto), o congelarla y no reescribirla.
+
+**H-3 · MEDIO — el `budgetHash` no cubre las horas presupuestadas.** §3.8 y
+ADR-0018 D2 dicen «‖ líneas de horas en forma canónica, en minutos»; ni
+`canonicalBudgetForm` (`lib/budget/hash.ts:56-66`) ni el generador las incluyen,
+y la reconstrucción confirma que el hash sellado sale **sólo** de las líneas de
+importe. `budgetHoursHash` existe pero no se persiste ni entra en la clave de
+caché. Las horas presupuestadas alimentan `settleBudgetMatrix`, es decir la
+columna de presupuesto de MC3 **por dimensión**: el sello no atestigua la base
+con la que se repartió. El trigger `budget_hours_lines_no_write_when_sealed`
+protege el camino SQL, pero eso es defensa, no sello.
+
+**H-4 · MENOR — el CHECK de signo es más débil que el código que refuerza.**
+`budget_lines_sign_by_type` empieza por `sign_exception OR …`, sin comprobar que
+la cuenta pertenezca a las familias declaradas (`61x`/`71x`, `706`/`708`/`709`,
+`79x`/`759`). Insertada por SQL una línea `640` de **+123 456 c** con
+`sign_exception = true`: entra. El camino de la aplicación la rechaza
+(`models/budget.ts:754`, `WRONG_SIGN` aborta con independencia de la bandera),
+así que el riesgo es de carga directa o de importador futuro.
+
+**H-5 · MENOR — el desglose de absorción por CECO no informa.**
+`absorption.byCostCenter` trae `valuedCents: 0` en las tres filas mientras
+`payrollCents` va desglosado por la dimensión de la línea 64x (y dos filas
+llevan `PROJ:P-01` / `PROJ:P-02` en un campo llamado `costCenterCode`). El total
+es correcto (−22 787 c / −86 bps), pero el desglose que O-E10-20 pide para el
+comité muestra **infraabsorción del 100 % en todas las unidades**.
+
+**H-6 · MENOR (documental) — §3.6 define mal la base del driver `HOURS`.** La
+tabla dice que el peso son los minutos «dentro de la ventana efectiva del run
+(§3.5 `timeWindowOf`)»; el fixture y `checkIE103`/`driverWindowOf` usan la
+ventana del **periodo** y sólo la ensanchan cuando el fallback se aplicó de
+hecho. Con la letra del diseño, el run de 2026-11 tendría base 52 204 min y no
+4 532. La implementación es la correcta; el texto (y la redacción de I-E10-3)
+debe alinearse.
+
+**H-7 · MENOR — la provenance de `PRESUPUESTO_REAL` no es por celda.** §5.1 exige
+tres consultas parametrizadas por celda de desviación; lo que se persiste es un
+bloque de run con `generatedFrom: ["journal_lines","allocation_lines",
+"budget_lines"]` y los tres sellos (`models/reports.ts` ≈2199-2208). Es
+suficiente para reconstruir a mano, no para el drill-down prometido.
+
+## Trazabilidad
+
+**OK.** Celda elegida: desviación MC3 de `PROJ:P-01`, +129 580 c. Real 316 000 c
+reconstruido desde `journal_lines` (ingreso 2 050 000, MC1 −150 000, MC2
+−1 584 000) en una consulta; presupuesto 186 420 c desde las líneas de
+`2026-BASE`/`2026-REV1` del mes correspondiente; ambos en menos de dos minutos.
+La ruta no viene dada por la provenance del run (H-7): hubo que escribir las
+consultas.
+
+## Recomendación
+
+1. Cablear `budget`/`time` en `runLedgerInvariants` (H-1) antes de dar E10 por
+   cerrada: sin eso la familia `PRESUPUESTO` no vigila nada.
+2. Sacar `valid_to` de la forma canónica del `budgetHash` y regenerar el fixture
+   (H-2); añadir las líneas de horas al sello o corregir §3.8/D2 (H-3).
+3. Cerrar H-4 (CHECK) y H-5 (desglose de absorción) antes de publicar la
+   pantalla; H-6 y H-7 son deuda documentada.
