@@ -18,23 +18,32 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
  * Patrón de `perf-budget.test.ts` (E10 · T19): `ConnectionWatcher` mide ms y
  * conexiones simultáneas por `application_name` en `pg_stat_activity`.
  *
- * ## Ronda 1: **no queda ningún `it.skip`**
+ * ## E12 · T17 — se acabó la extrapolación (deuda 6 de §6)
  *
- * Los cuatro techos que exigían volumen masivo (3, 5, 6 y 8) se miden ahora con
- * **volumen reducido sembrado en el propio test** y se **extrapolan**, que es lo
- * único honesto que cabe en un sandbox compartido. Dos reglas para que la
- * extrapolación no sea un adorno:
+ * E11 midió los techos 3, 5, 6 y 8 con volumen reducido y **extrapolando**: se
+ * separaba el coste fijo del marginal, se derivaba el coste por asiento y se
+ * proyectaba a 50 000. Era lo honesto que cabía entonces, y no ve lo que sólo
+ * aparece con volumen real —un plan que cambia cuando la tabla crece, un índice
+ * que deja de usarse, un heap que no da más de sí—.
  *
- *  1. **Se separa el coste fijo del marginal.** El techo 3 mide a `N` y a `2N`,
- *     deriva el coste por asiento y extrapola `fijo + 50 000 × marginal`. Un
- *     único punto no distingue «500 ms de arranque» de «500 ms por cada mil
- *     filas», y es esa diferencia la que decide si el techo aguanta.
- *  2. **Lo que NO depende del volumen se mide exacto.** El número de consultas
- *     de `computeUsage` y de `assertWithinLimit` es el mismo con 84 asientos que
- *     con 50 000, y se cuenta con un proxy, no se estima.
+ * Ahora el volumen es el declarado, y sale del fixture sellado
+ * `tests/fixtures/gran-volumen/` (**50 000 asientos · 150 000 líneas · 2 000
+ * documentos / 1,5 GB · 50 organizaciones**), que no es un fichero de datos sino
+ * una especificación con semilla y **digests de todo lo que produce**: el
+ * generador de Python sella y el de TypeScript siembra, y los dos tienen que dar
+ * lo mismo (`verificarContra`).
  *
- * Cada aserción imprime la cifra medida **y** la extrapolada: quien lea el
- * informe ve de dónde sale el veredicto.
+ * **Lo que se mide y lo que no, dicho aquí y no en una nota al pie:**
+ *
+ * | Techo | Volumen con el que se mide | Extrapolado |
+ * |---|---|---|
+ * | 3 · `computeUsage` recalculando | 50 000 asientos / 150 000 líneas reales | **no** |
+ * | 5 · backup completo | ídem + 2 000 documentos / 1,5 GB reales | **no** |
+ * | 6 · restauración + las seis | ídem, **sin los 1,5 GB de documentos** | **no**, pero parcial: ver §techo 6 |
+ * | 8 · barrido por organización | 50 organizaciones reales | **no** |
+ *
+ * El sembrado es caro (minutos) y por eso esta suite no corre en cada PR: el job
+ * `perf` de CI la lanza sólo en `push` a `main` (§8 del diseño de E12).
  */
 
 const TEST_DATABASE_URL = process.env.DATABASE_URL_TEST
@@ -62,11 +71,19 @@ process.env.STORAGE_PREFIX = "erp-test"
 
 const { tenantTransaction } = await import("@/lib/db")
 const { getUsage, readUsageInTransaction } = await import("@/models/usage")
-const { buildBackupArchive, restoreBackupIntoOrganization } = await import("@/models/backups")
+const { buildBackupArchive, planBackupArchive, restoreBackupIntoOrganization } = await import("@/models/backups")
 const { assertWithinLimit } = await import("@/models/platform-limits")
 const { issuePlatformInvoice } = await import("@/models/platform-invoices")
 const { calendarByEmployeeDaySql } = await import("@/models/time")
 const { healthReport } = await import("@/models/platform")
+const {
+  leerSpec,
+  asientos: asientosDelFixture,
+  documentos: documentosDelFixture,
+  bytesDeDocumento,
+  organizaciones: organizacionesDelFixture,
+  verificarContra,
+} = await import("@/tests/fixtures/gran-volumen/generate")
 const { POST: webhookPOST } = await import("@/app/api/stripe/webhook/route")
 const StripeSdk = (await import("stripe")).default
 
@@ -77,14 +94,13 @@ const USER = "e11ffff0-0000-4000-8000-0000000000a1"
 const PLAN_ILIMITADO = "0e11a1a0-0000-4000-8000-000000000009"
 const FY = "e11ffff0-0000-4000-8000-0000000000f1"
 const CUENTA_DEBE = "6290"
+/** Tercera cuenta del asiento de tres líneas del fixture de gran volumen. */
+const CUENTA_DEBE_2 = "6210"
 const CUENTA_HABER = "5720"
 const SIGNING_KEY = Buffer.from("clave-de-firma-perf-e11")
 const KEY_ID = "k1"
 /** El ejercicio sembrado es 2027: la referencia lo cubre entero (I8). */
 const REF = new Date("2027-12-31T12:00:00.000Z")
-
-/** El ZIP que produce el techo 5 y consume el 6. */
-let archivo: Buffer | null = null
 
 let client: Client
 async function q<T extends Record<string, unknown> = Record<string, unknown>>(
@@ -135,79 +151,159 @@ class ConnectionWatcher {
 
 let watcher: ConnectionWatcher
 
-async function limpiar() {
-  for (const org of [DEST, ORG]) {
-    // Líneas y asientos en la MISMA transacción: el constraint trigger diferido
-    // de «un asiento tiene al menos dos líneas» se evalúa al COMMIT.
-    await q("BEGIN")
-    await q(`DELETE FROM journal_lines WHERE organization_id = $1::uuid`, [org])
-    await q(`DELETE FROM journal_entries WHERE organization_id = $1::uuid`, [org])
-    await q("COMMIT")
-    await q(`DELETE FROM stored_objects WHERE organization_id = $1::uuid`, [org])
-    await q(`DELETE FROM extraction_runs WHERE organization_id = $1::uuid`, [org]).catch(() => undefined)
-    await q(`DELETE FROM accounts WHERE organization_id = $1::uuid`, [org])
+/**
+ * Vacía las organizaciones del arnés, **con la lista DERIVADA del esquema**.
+ *
+ * **E12 · T17.** La lista a mano se quedó corta en cuanto el volumen real trajo
+ * `files`, `backup_jobs` y `stored_objects` de verdad: el `DELETE FROM
+ * organizations` chocaba contra una FK, el error dejaba la sesión a medias y el
+ * `beforeAll` siguiente sembraba sobre una base sucia. Es la cuarta vez que la
+ * lista a mano falla (BUG-E7-1, BUG-E9-5, BUG-E10-1, BUG-E11-2) y la enmienda
+ * **E-4** dice exactamente esto: **todo inventario es derivado**.
+ *
+ * Se recorren TODAS las tablas con `organization_id`, en orden inverso de
+ * dependencia, con los disparadores de usuario y el `FORCE ROW LEVEL SECURITY`
+ * levantados —es una base de test y este cliente es el propietario—. Una tabla
+ * nueva de la épica 68 entra sola.
+ */
+async function purgarOrganizaciones(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return
+  const tablas = await q<{ tabla: string }>(
+    `SELECT c.relname AS tabla
+       FROM pg_class c
+       JOIN pg_attribute a ON a.attrelid = c.oid
+      WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+        AND a.attname = 'organization_id' AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY c.relname`
+  )
+
+  await q(`SET session_replication_role = 'replica'`)
+  try {
+    for (const { tabla } of tablas) {
+      await q(`ALTER TABLE "${tabla}" NO FORCE ROW LEVEL SECURITY`).catch(() => undefined)
+    }
+    // **Una sola pasada, y basta**: con `session_replication_role = 'replica'`
+    // los disparadores de FK no se evalúan, así que el orden alfabético da
+    // igual. Es lo que convierte una purga en cuadrática —tres pasadas sobre
+    // sesenta tablas— en una lineal.
+    for (const { tabla } of tablas) {
+      await q(`DELETE FROM "${tabla}" WHERE organization_id = ANY($1::uuid[])`, [ids]).catch(() => undefined)
+    }
+    for (const { tabla } of tablas) {
+      await q(`ALTER TABLE "${tabla}" FORCE ROW LEVEL SECURITY`).catch(() => undefined)
+    }
+  } finally {
+    await q(`SET session_replication_role = 'origin'`)
   }
-  await q(`DELETE FROM restore_jobs WHERE organization_id = $1::uuid`, [DEST])
-  await q(`DELETE FROM usage_runs WHERE organization_id = $1::uuid`, [DEST])
-  await q(`DELETE FROM subscriptions WHERE organization_id = $1::uuid`, [DEST])
-  await q(`DELETE FROM fiscal_years WHERE organization_id = $1::uuid`, [DEST])
-  await q(`DELETE FROM memberships WHERE organization_id = $1::uuid`, [DEST])
-  await q(`DELETE FROM organizations WHERE id = $1::uuid`, [DEST])
-  // `time_entries` es append-only para partes APROBADOS (I-E10-4): sin
-  // desactivar los triggers de usuario, el DELETE del arnés lo rechaza.
-  await q(`ALTER TABLE time_entries DISABLE TRIGGER USER`).catch(() => undefined)
-  await q(`DELETE FROM time_entries WHERE organization_id = $1::uuid`, [ORG])
-  await q(`ALTER TABLE time_entries ENABLE TRIGGER USER`).catch(() => undefined)
-  await q(`DELETE FROM employees WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM cost_centers WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM fiscal_years WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM platform_invoices WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM subscription_events WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM usage_runs WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM subscriptions WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM memberships WHERE organization_id = $1::uuid`, [ORG])
-  await q(`DELETE FROM organizations WHERE id = $1::uuid`, [ORG])
-  await q(`DELETE FROM users WHERE id = $1::uuid`, [USER])
+  await q(`DELETE FROM organizations WHERE id = ANY($1::uuid[])`, [ids])
+}
+
+async function limpiar() {
+  const gv = organizacionesDelFixture(GRAN_VOLUMEN).map((o) => o.id)
+  await purgarOrganizaciones([DEST, ORG, ...gv])
+  await q(`DELETE FROM users WHERE id = $1::uuid`, [USER]).catch(() => undefined)
+}
+
+/** El fixture sellado de gran volumen (E12 · T17). */
+const GRAN_VOLUMEN = leerSpec()
+
+/**
+ * Siembra el diario del fixture de gran volumen: **50 000 asientos y 150 000
+ * líneas reales**, por `COPY`-como-INSERT en lotes.
+ *
+ * Por SQL directo y no por el motor, igual que la siembra reducida que había
+ * antes: el techo mide la LECTURA. La diferencia con E11 es que las cifras no se
+ * inventan aquí — vienen del fixture, que las tiene selladas y cuadradas
+ * (Σdebe = Σhaber, tolerancia 0).
+ */
+async function sembrarGranVolumen(): Promise<void> {
+  const LOTE = 2_000
+  const entradas = [...asientosDelFixture(GRAN_VOLUMEN)]
+
+  for (let i = 0; i < entradas.length; i += LOTE) {
+    const lote = entradas.slice(i, i + LOTE)
+    await q("BEGIN")
+    // Los asientos y sus líneas en la MISMA transacción: el constraint trigger
+    // diferido de «un asiento tiene al menos dos líneas» se evalúa al COMMIT.
+    await q(
+      `INSERT INTO journal_entries
+         (id, organization_id, fiscal_year_id, entry_number, entry_date, description,
+          posted_by_id, entry_hash, hash_version, kind)
+       SELECT gen_random_uuid(), $1::uuid, $2::uuid, n::int, d::date, 'gv ' || n,
+              $3::uuid, repeat('0', 64), 3, 'NORMAL'
+         FROM unnest($4::int[], $5::text[]) AS t(n, d)`,
+      [ORG, FY, USER, lote.map((e) => e.entryNumber), lote.map((e) => e.date)]
+    )
+    await q(
+      `INSERT INTO journal_lines
+         (id, organization_id, entry_id, line_no, account_code, debit_cents, credit_cents,
+          entry_date, fiscal_year_id, entry_kind)
+       SELECT gen_random_uuid(), e.organization_id, e.id, v.line_no, v.code,
+              v.debit, v.credit, e.entry_date, e.fiscal_year_id, 'NORMAL'
+         FROM journal_entries e
+         JOIN unnest($2::int[], $3::int[], $4::int[]) AS t(n, d1, d2) ON t.n = e.entry_number
+         CROSS JOIN LATERAL (VALUES
+             (1, $5::text, t.d1, 0),
+             (2, $6::text, t.d2, 0),
+             (3, $7::text, 0, t.d1 + t.d2)
+           ) AS v(line_no, code, debit, credit)
+        WHERE e.organization_id = $1::uuid
+          AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = e.id)`,
+      [
+        ORG,
+        lote.map((e) => e.entryNumber),
+        lote.map((e) => e.debit1),
+        lote.map((e) => e.debit2),
+        CUENTA_DEBE,
+        CUENTA_DEBE_2,
+        CUENTA_HABER,
+      ]
+    )
+    await q("COMMIT")
+  }
 }
 
 /**
- * Siembra `n` asientos CUADRADOS por SQL directo (dos líneas, 1 000 c/u). Se
- * salta el motor a propósito —el techo mide la LECTURA, no el posteo— igual que
- * `perf-budget.test.ts`, y deja el `entry_hash` a ceros: ninguno de los techos
- * que se miden aquí lo recomputa.
+ * Los **2 000 documentos / 1,5 GB reales** del fixture, escritos en el almacén y
+ * registrados como `File` + `StoredObject`.
+ *
+ * Los bytes se derivan de la semilla **en bloques de 64 KB**: 1,5 GB no caben en
+ * un `Buffer` y no tienen por qué. Es, además, el mismo camino que el backup
+ * usará para leerlos, así que lo que se mide después es el coste de verdad.
  */
-async function sembrarAsientos(n: number, desde: number): Promise<void> {
-  // Asientos y líneas en la MISMA transacción: el constraint trigger diferido
-  // de «asiento sin líneas» se evalúa al COMMIT, y con dos transacciones la
-  // primera aborta antes de que existan las líneas.
-  await q("BEGIN")
-  await q(
-    `INSERT INTO journal_entries
-       (id, organization_id, fiscal_year_id, entry_number, entry_date, description,
-        posted_by_id, entry_hash, hash_version, kind)
-     SELECT gen_random_uuid(), $1::uuid, $2::uuid, $3 + g,
-            (DATE '2027-01-01' + ((g % 360) || ' days')::interval)::date,
-            'perf ' || g, $4::uuid, repeat('0', 64), 3, 'NORMAL'
-       FROM generate_series(0, $5 - 1) AS g`,
-    [ORG, FY, desde, USER, n]
-  )
-  await q(
-    `INSERT INTO journal_lines
-       (id, organization_id, entry_id, line_no, account_code, debit_cents, credit_cents,
-        entry_date, fiscal_year_id, entry_kind)
-     SELECT gen_random_uuid(), e.organization_id, e.id, l.line_no,
-            CASE WHEN l.line_no = 1 THEN $2 ELSE $3 END,
-            CASE WHEN l.line_no = 1 THEN 1000 ELSE 0 END,
-            CASE WHEN l.line_no = 1 THEN 0 ELSE 1000 END,
-            e.entry_date, e.fiscal_year_id, 'NORMAL'
-       FROM journal_entries e
-       CROSS JOIN (VALUES (1), (2)) AS l(line_no)
-      WHERE e.organization_id = $1::uuid
-        AND e.entry_number BETWEEN $4 AND $5
-        AND NOT EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = e.id)`,
-    [ORG, CUENTA_DEBE, CUENTA_HABER, desde, desde + n - 1]
-  )
-  await q("COMMIT")
+async function sembrarDocumentosReales(log?: (m: string) => void): Promise<{ files: number; bytes: number }> {
+  const { storage, objectKey } = await import("@/lib/storage")
+  const { driver, prefix } = storage()
+  const docs = documentosDelFixture(GRAN_VOLUMEN)
+  let bytes = 0
+
+  for (const doc of docs) {
+    const sha256 = await (async () => {
+      const { createHash } = await import("node:crypto")
+      const h = createHash("sha256")
+      for await (const chunk of bytesDeDocumento(doc)) h.update(chunk)
+      return h.digest("hex")
+    })()
+    const key = objectKey({ prefix, organizationId: ORG, kind: "DOCUMENT", sha256 })
+    await driver.putStreaming(key, bytesDeDocumento(doc), { mimeType: "application/pdf" })
+    bytes += doc.sizeBytes
+
+    await q(
+      `INSERT INTO stored_objects (id, organization_id, object_key, backend, sha256, size_bytes, mime_type, kind, created_at)
+       VALUES (gen_random_uuid(), $1::uuid, $2, 'LOCAL', $3, $4, 'application/pdf', 'DOCUMENT', now())
+       ON CONFLICT DO NOTHING`,
+      [ORG, key, sha256, doc.sizeBytes]
+    )
+    await q(
+      `INSERT INTO files (id, organization_id, uploaded_by_id, filename, path, mimetype, sha256, size_bytes, created_at)
+       VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 'application/pdf', $5, $6, now())
+       ON CONFLICT DO NOTHING`,
+      [ORG, USER, `gv-${doc.index}.pdf`, `gv/${doc.index}.pdf`, sha256, doc.sizeBytes]
+    )
+    if (log && doc.index % 500 === 0) log(`  · ${doc.index}/${docs.length} documentos`)
+  }
+
+  return { files: docs.length, bytes }
 }
 
 async function sembrarObjetos(n: number, desde: number): Promise<void> {
@@ -367,22 +463,23 @@ beforeAll(async () => {
   await q(
     `INSERT INTO accounts (id, organization_id, code, name, level, nature, is_postable, is_active, created_at, updated_at)
      VALUES (gen_random_uuid(), $1::uuid, $2, 'Otros servicios', 4, 'DEUDORA', true, true, now(), now()),
-            (gen_random_uuid(), $1::uuid, $3, 'Bancos', 4, 'DEUDORA', true, true, now(), now())`,
-    [ORG, CUENTA_DEBE, CUENTA_HABER]
+            (gen_random_uuid(), $1::uuid, $3, 'Bancos', 4, 'DEUDORA', true, true, now(), now()),
+            (gen_random_uuid(), $1::uuid, $4, 'Arrendamientos', 4, 'DEUDORA', true, true, now(), now())`,
+    [ORG, CUENTA_DEBE, CUENTA_HABER, CUENTA_DEBE_2]
   )
   await q(
     `INSERT INTO fiscal_years (id, organization_id, code, start_date, end_date, status, created_at, updated_at)
      VALUES ($1::uuid, $2::uuid, '2027', '2027-01-01', '2027-12-31', 'OPEN', now(), now())`,
     [FY, ORG]
   )
-}, 120_000)
+}, 600_000)
 
 afterAll(async () => {
   await limpiar()
   await client.end()
   await watcher.stop()
   await rm(storeRoot, { recursive: true, force: true })
-}, 120_000)
+}, 600_000)
 
 describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
   it("1/10 · `/settings/subscription` en frío con 12 facturas y 24 eventos: < 400 ms, 1 transacción", async () => {
@@ -437,58 +534,54 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
   }, 30_000)
 
   it(
-    "3/10 · `computeUsage` recalculando con las TRES dimensiones (asientos, documentos y objetos): " +
-      "≤ 8 consultas (exacto) y, extrapolado a 50 000 / 5 000 / 20 000 desde dos puntos reales, < 1 200 ms",
+    "3/10 · `computeUsage` recalculando con VOLUMEN REAL del fixture sellado " +
+      "(50 000 asientos · 150 000 líneas · 20 000 objetos · 5 000 documentos): ≤ 8 consultas y < 1 200 ms",
     async () => {
-      // Dos puntos: N y 2N. Con uno solo no se puede separar el coste de
-      // arranque del coste por fila, que es justo lo que decide el techo.
-      const N = 5_000
-      await sembrarAsientos(N, 1)
-      await sembrarObjetos(10_000, 0)
-      await sembrarExtracciones(2_500, 0)
-      // **Las tres dimensiones, comprobadas.** R2-3: si la siembra no ha
-      // entrado, el techo no se mide «a medias», falla.
-      await comprobarVolumen({ asientos: N, objetos: 10_000, extracciones: 2_500 })
-      const punto1 = await medirUso()
+      /**
+       * **E12 · T17 — ni una extrapolación.** El volumen es el que §12 declara,
+       * sembrado desde `tests/fixtures/gran-volumen/`, y antes de sembrarlo se
+       * comprueba que el generador de TypeScript reproduce los digests que selló
+       * el de Python: si los dos caminos divergieran, el fixture dejaría de
+       * significar nada y el techo se estaría midiendo sobre datos inventados.
+       */
+      const cruce = await verificarContra(GRAN_VOLUMEN, { incluirFicheros: false })
+      expect(cruce.discrepancias, "el fixture no se reproduce desde TypeScript").toEqual([])
 
-      await sembrarAsientos(N, N + 1)
-      await sembrarObjetos(10_000, 10_000)
-      await sembrarExtracciones(2_500, 2_500)
-      await comprobarVolumen({ asientos: 2 * N, objetos: 20_000, extracciones: 5_000 })
+      await sembrarGranVolumen()
+      await sembrarObjetos(20_000, 0)
+      await sembrarExtracciones(5_000, 0)
+      await comprobarVolumen({ asientos: GRAN_VOLUMEN.totals.entries, objetos: 20_000, extracciones: 5_000 })
+
+      // Y las 150 000 líneas, que son las que el agregado recorre de verdad.
+      const [{ n: lineas }] = await q<{ n: string }>(
+        `SELECT count(*)::text AS n FROM journal_lines WHERE organization_id = $1::uuid`,
+        [ORG]
+      )
+      expect(Number(lineas)).toBe(GRAN_VOLUMEN.totals.journalLines)
+
+      // Σdebe = Σhaber con tolerancia 0 sobre el volumen real: un fixture de
+      // rendimiento que no cuadra mide el reloj de un diario imposible.
+      const [{ debe, haber }] = await q<{ debe: string; haber: string }>(
+        `SELECT sum(debit_cents)::text AS debe, sum(credit_cents)::text AS haber
+           FROM journal_lines WHERE organization_id = $1::uuid`,
+        [ORG]
+      )
+      expect(Number(debe)).toBe(GRAN_VOLUMEN.totals.debitCents)
+      expect(Number(haber)).toBe(GRAN_VOLUMEN.totals.creditCents)
+
       const log: string[] = []
-      const punto2 = await medirUso(log)
+      const medido = await medirUso(log)
 
-      // **Consultas: exacto, no estimado.** `readUsageInput` hace la
-      // organización, las cifras, las fuentes, el desglose por kind y el
-      // `ledgerHash` del mes. El techo de §12 son ocho.
+      // **Consultas: exacto, no estimado.** El número no depende del volumen y
+      // el techo de §12 son ocho.
       expect(log.length, `consultas: ${log.length}\n${log.join("\n")}`).toBeLessThanOrEqual(8)
-
-      // Coste marginal por asiento entre los dos puntos, y extrapolación.
-      const marginalPorAsiento = Math.max(0, punto2 - punto1) / N
-      const fijo = Math.max(0, punto1 - marginalPorAsiento * N)
-      const extrapolado = fijo + marginalPorAsiento * 50_000
-      expect(
-        extrapolado,
-        `medido ${Math.round(punto1)} ms @ ${N} y ${Math.round(punto2)} ms @ ${2 * N} · ` +
-          `fijo ${Math.round(fijo)} ms + ${marginalPorAsiento.toFixed(4)} ms/asiento · ` +
-          `extrapolado a 50 000 = ${Math.round(extrapolado)} ms`
-      ).toBeLessThan(1_200)
+      expect(medido, `MEDIDO con 50 000 asientos / 150 000 líneas: ${Math.round(medido)} ms (techo 1 200 ms)`).toBeLessThan(
+        1_200
+      )
     },
-    900_000
+    2_400_000
   )
 
-  // **BUG-E11-1 (encontrado escribiendo este test).** El techo dice
-  // «< 25 ms · ≤ 2 consultas (camino caliente)», pero `assertWithinLimit` llama
-  // SIEMPRE a `readUsageInTransaction` → `readUsageInput`, que recomputa las
-  // seis cifras desde cero (organización, `readFigures`, `readSources`,
-  // `computeLedgerHash`) en la MISMA transacción de la escritura, sin mirar
-  // `UsageRun`. Es decir: el `assertWithinLimit` real no tiene camino caliente
-  // — cachear entre escrituras exigiría invalidar por `sourceHash` DENTRO de
-  // una transacción abierta, que es justo lo que el diseño evita para no colar
-  // la última plaza (criterio 18). Con volumen mínimo mide 28-70 ms, muy por
-  // encima del techo, incluso tras un warm-up. Se deja el umbral del diseño
-  // para que el test siga en rojo hasta que se resuelva (no se relaja para
-  // maquillar el resultado).
   it("4/10 · `assertWithinLimit` en el camino caliente: < 25 ms · ≤ 2 consultas", async () => {
     // Warm-up: la primera invocación del proceso paga el plan de consulta y el
     // pool de Prisma, que no es lo que el techo mide (E6-perf ya lo advierte).
@@ -504,15 +597,34 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
   }, 15_000)
 
   it(
-    "5/10 · backup completo: medido sobre el volumen sembrado y extrapolado a 50 000 asientos / " +
-      "150 000 líneas — < 15 min, y el PICO de memoria del ZIP en memoria (deuda E12) acotado",
+    "5/10 · backup completo con VOLUMEN REAL (50 000 asientos · 150 000 líneas · 2 000 documentos / 1,5 GB): " +
+      "< 15 min y **pico de memoria estable** — medido, no extrapolado",
     async () => {
+      /**
+       * **E12 · T17 + T14 · el criterio 47 de §10, medido de verdad.**
+       *
+       * E11 sólo podía extrapolar porque el ZIP se construía en memoria: 1,5 GB
+       * no caben en el heap y el proceso moría antes de firmar nada. Con la
+       * emisión en streaming de T14 el archivo sale bloque a bloque, y lo que se
+       * mide aquí es el techo entero: 50 000 asientos, 150 000 líneas y los 2 000
+       * documentos reales del fixture.
+       *
+       * **Lo que se asegura no es sólo el tiempo: es que el pico de memoria NO
+       * crece con el volumen.** Se mide el heap del proceso durante la emisión y
+       * se exige que el crecimiento sea de decenas de MB, con 1,5 GB pasando por
+       * delante. Si alguien volviera a materializar el archivo, esta aserción
+       * —y no el reloj— es la que lo cazaría.
+       */
       const asientos = Number(
         (await q<{ n: string }>(`SELECT count(*)::text AS n FROM journal_entries WHERE organization_id = $1::uuid`, [
           ORG,
         ]))[0].n
       )
-      expect(asientos, "el techo 3 tiene que haber sembrado los asientos").toBeGreaterThan(1_000)
+      expect(asientos, "3/10 tiene que haber sembrado el volumen real").toBe(GRAN_VOLUMEN.totals.entries)
+
+      const sembrado = await sembrarDocumentosReales((m) => console.log(m))
+      expect(sembrado.files).toBe(GRAN_VOLUMEN.totals.files)
+      expect(sembrado.bytes).toBe(GRAN_VOLUMEN.totals.fileBytes)
 
       if (global.gc) global.gc()
       const heapAntes = process.memoryUsage().heapUsed
@@ -520,67 +632,96 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
       const vigilante = setInterval(() => {
         heapPico = Math.max(heapPico, process.memoryUsage().heapUsed)
       }, 25)
+
       let ms = 0
       let bytes = 0
       try {
-        const medida = await watcher.measure(() =>
-          buildBackupArchive(ORG, { refDate: REF, signingKey: SIGNING_KEY, signingKeyId: KEY_ID })
-        )
-        ms = medida.ms
-        bytes = medida.value.archive.length
-        archivo = medida.value.archive
+        // Se consume el plan **en streaming y descartando los bloques**, que es
+        // exactamente lo que hace la subida multipart en producción. Guardar el
+        // archivo en un Buffer aquí mediría lo contrario de lo que se quiere.
+        const arranque = performance.now()
+        const plan = await planBackupArchive(ORG, { refDate: REF, signingKey: SIGNING_KEY, signingKeyId: KEY_ID })
+        try {
+          for await (const chunk of plan.archiveChunks()) bytes += chunk.length
+        } finally {
+          await plan.cleanup()
+        }
+        ms = performance.now() - arranque
       } finally {
         clearInterval(vigilante)
       }
 
-      const factor = 50_000 / asientos
-      const extrapolado = ms * factor
-      expect(
-        extrapolado,
-        `medido ${Math.round(ms)} ms con ${asientos} asientos · extrapolado a 50 000 = ` +
-          `${Math.round(extrapolado / 1000)} s (techo 900 s)`
-      ).toBeLessThan(15 * 60 * 1_000)
+      const crecimientoMb = Math.round((heapPico - heapAntes) / 1024 / 1024)
+      const detalle =
+        `MEDIDO: ${Math.round(ms / 1000)} s con ${asientos} asientos, ${GRAN_VOLUMEN.totals.journalLines} líneas y ` +
+        `${(sembrado.bytes / 1e9).toFixed(2)} GB en ${sembrado.files} documentos · ` +
+        `archivo de ${(bytes / 1e9).toFixed(2)} GB · crecimiento de heap ${crecimientoMb} MB`
 
+      expect(bytes, detalle).toBeGreaterThan(GRAN_VOLUMEN.totals.fileBytes)
+      expect(ms, `${detalle} (techo 900 s)`).toBeLessThan(15 * 60 * 1_000)
       /**
-       * **El techo que justifica la deuda del ZIP en memoria (E12).**
+       * **Pico estable: el heap NO sigue al volumen.**
        *
-       * Lo que se mide y se asegura es el **tamaño del ZIP**, que es
-       * determinista y es la magnitud que de verdad tiene que caber en el heap:
-       * el `heapUsed` del proceso de pruebas incluye la suite entera y no sirve
-       * como techo, así que se **imprime** como evidencia y no se convierte en
-       * aserción. Si el ZIP de las TABLAS extrapolado a 50 000 asientos no
-       * cupiera en el heap de una función serverless, la deuda dejaría de estar
-       * acotada y habría que trocear ya, no en E12.
-       *
-       * Los 1,5 GB de FICHEROS del techo 5 son la otra mitad —y la que obliga al
-       * streaming—: no caben en ningún heap y por eso la deuda está fechada.
+       * El umbral no es un número bonito, es una frontera con significado: el
+       * archivo pesa 1,53 GB, así que una implementación que lo materializara
+       * —la de E11, con `JSZip.generateAsync`— crecería **al menos** esos 1,53 GB,
+       * y en la práctica dos o tres veces más (el contenido sin comprimir y el
+       * comprimido a la vez). Medio giga es un tercio del archivo: por debajo de
+       * ahí, el archivo no está en memoria, y es lo único que hay que demostrar.
        */
-      const bytesPorAsiento = bytes / asientos
-      const bytesExtrapolados = bytesPorAsiento * 50_000
+      const techoDeHeap = 512 * 1024 * 1024
       expect(
-        bytesExtrapolados,
-        `ZIP medido ${Math.round(bytes / 1024)} KB con ${asientos} asientos ` +
-          `(pico de heap del proceso: ${Math.round((heapPico - heapAntes) / 1024 / 1024)} MB, indicativo) · ` +
-          `ZIP extrapolado a 50 000 = ${Math.round(bytesExtrapolados / 1024 / 1024)} MB`
-      ).toBeLessThan(512 * 1024 * 1024)
+        heapPico - heapAntes,
+        `${detalle} · el archivo pesa ${(bytes / 1e9).toFixed(2)} GB y el heap crece ${crecimientoMb} MB ` +
+          `(techo ${techoDeHeap / 1024 / 1024} MB: un tercio del archivo)`
+      ).toBeLessThan(techoDeHeap)
     },
-    600_000
+    3_600_000
   )
 
   it(
-    "6/10 · restauración + las SEIS verificaciones sobre el backup de 5/10: extrapolado < 30 min, " +
-      "y ninguna transacción por encima de 30 s",
+    "6/10 · restauración + las SEIS verificaciones con el diario REAL (50 000 asientos · 150 000 líneas): " +
+      "< 30 min y ninguna transacción por encima de 30 s",
     async () => {
-      expect(archivo, "5/10 tiene que haber producido el ZIP").not.toBeNull()
+      /**
+       * **Lo que este techo mide, y lo que NO.**
+       *
+       * El diario va completo: 50 000 asientos y 150 000 líneas reales, que es lo
+       * que domina el techo de 30 minutos —la restauración inserta fila a fila en
+       * orden de FK y recomputa los sellos—. Los **documentos quedan fuera** del
+       * archivo de este caso, y no por comodidad:
+       * `restoreBackupIntoOrganization` recibe el archivo como `Buffer` y lo abre
+       * con `JSZip.loadAsync`, así que un archivo de 1,5 GB no cabe en el heap.
+       * T14 resolvió la ESCRITURA en streaming; la LECTURA sigue siendo en
+       * memoria, y hacen falta un lector de acceso aleatorio sobre fichero y el
+       * cableado de las seis comprobaciones a él.
+       *
+       * **Se dice aquí y se re-fecha con motivo** (estándar de CLAUDE.md), en vez
+       * de medir el techo con volumen reducido y llamarlo medido, o de dar por
+       * bueno un caso que no se ha ejercido. Lo que este test acredita es el
+       * techo del DIARIO a volumen real; lo que falta —restaurar un archivo
+       * multi-GB— queda declarado como el resto de la deuda 1.
+       */
       const asientos = Number(
         (await q<{ n: string }>(`SELECT count(*)::text AS n FROM journal_entries WHERE organization_id = $1::uuid`, [
           ORG,
         ]))[0].n
       )
+      expect(asientos).toBe(GRAN_VOLUMEN.totals.entries)
+
+      // Sin documentos: el `File` se queda, pero sus bytes no viajan. El manifest
+      // lo declara con tamaño -1 y la comprobación 6 lo enseña, que es justo el
+      // comportamiento que hay que poder verificar.
+      const sinDocumentos = await buildBackupArchive(ORG, {
+        refDate: REF,
+        signingKey: SIGNING_KEY,
+        signingKeyId: KEY_ID,
+        readFileBytes: async () => null,
+      })
 
       const { value: outcome, ms } = await watcher.measure(() =>
         restoreBackupIntoOrganization({
-          archive: archivo!,
+          archive: sinDocumentos.archive,
           targetOrganizationId: DEST,
           requestedById: USER,
           refDate: REF,
@@ -598,22 +739,20 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
         "SELLOS_Y_CIERRE",
       ])
 
-      const extrapolado = ms * (50_000 / asientos)
       expect(
-        extrapolado,
-        `medido ${Math.round(ms)} ms con ${asientos} asientos · extrapolado a 50 000 = ` +
-          `${Math.round(extrapolado / 1000)} s (techo 1 800 s)`
+        ms,
+        `MEDIDO: ${Math.round(ms / 1000)} s restaurando ${asientos} asientos y ` +
+          `${GRAN_VOLUMEN.totals.journalLines} líneas (techo 1 800 s). Documentos excluidos: ver la nota del caso.`
       ).toBeLessThan(30 * 60 * 1_000)
 
-      // «Ninguna transacción > 30 s»: se comprueba que NINGUNA quedó abierta más
-      // de ese tiempo durante la restauración (el arnés vigila `pg_stat_activity`).
+      // «Ninguna transacción > 30 s».
       const [{ max_s }] = await q<{ max_s: string | null }>(
         `SELECT max(extract(epoch FROM (now() - xact_start)))::text AS max_s
            FROM pg_stat_activity WHERE datname = current_database() AND xact_start IS NOT NULL`
       )
       expect(Number(max_s ?? 0)).toBeLessThan(30)
     },
-    900_000
+    3_600_000
   )
 
   it("7/10 · webhook de Stripe: < 300 ms", async () => {
@@ -636,31 +775,65 @@ describe("E11 · §12 — techos de rendimiento de la plataforma", () => {
   }, 15_000)
 
   it(
-    "8/10 · `/api/cron/invariant-sweep`: coste por organización medido y extrapolado a 50 — " +
-      "< 240 s, o `PARTIAL` con cursor",
+    "8/10 · `/api/cron/invariant-sweep` sobre las **50 organizaciones reales** del fixture: < 240 s, " +
+      "o `PARTIAL` con cursor",
     async () => {
-      // El barrido es lineal en organizaciones: cada una abre su transacción,
-      // corre `runLedgerInvariants(audit: true)` y cierra. Se mide UNA con datos
-      // reales —la que 3/10 ha sembrado— y se extrapola a las cincuenta.
+      /**
+       * **E12 · T17.** E11 medía UNA organización y multiplicaba por cincuenta.
+       * Aquí se crean las cincuenta del fixture sellado y se barren todas: el
+       * coste por organización no es constante —cada una abre su transacción,
+       * fija sus GUC y compone su bloque de entrada— y multiplicar escondía
+       * precisamente eso.
+       *
+       * Una de las cincuenta es la del volumen real (50 000 asientos), que es el
+       * caso peor; las otras cuarenta y nueve nacen vacías, que es el caso normal
+       * de una plataforma. La mezcla es deliberada: medir cincuenta
+       * organizaciones cargadas no es el techo que §12 declara.
+       */
       const { runLedgerInvariants } = await import("@/models/ledger")
-      const { ms } = await watcher.measure(() =>
-        runLedgerInvariants(ORG, { refDate: "2027-12-31", audit: true, noCache: true })
-      )
-      const extrapolado = ms * 50
+      const orgs = organizacionesDelFixture(GRAN_VOLUMEN)
+
+      for (const org of orgs) {
+        await q(
+          `INSERT INTO organizations (id, slug, name, updated_at) VALUES ($1::uuid, $2, $2, now())
+           ON CONFLICT (id) DO NOTHING`,
+          [org.id, org.slug]
+        )
+        await q(
+          `INSERT INTO memberships (id, organization_id, user_id, role, accepted_at, created_at, updated_at)
+           VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'ADMIN', now(), now(), now())
+           ON CONFLICT DO NOTHING`,
+          [org.id, USER]
+        )
+        await q(
+          `INSERT INTO subscriptions (organization_id, plan_code, plan_id, status, updated_at)
+           VALUES ($1::uuid, 'ILIMITADO', $2::uuid, 'ACTIVE', now()) ON CONFLICT DO NOTHING`,
+          [org.id, PLAN_ILIMITADO]
+        )
+      }
+      expect(orgs.length).toBe(GRAN_VOLUMEN.totals.organizations)
+
+      const arranque = performance.now()
+      // La cargada primero: si el presupuesto se agota, que sea con el caso peor
+      // ya medido y no escondido al final de la cola.
+      await runLedgerInvariants(ORG, { refDate: "2027-12-31", audit: true, noCache: true })
+      for (const org of orgs) {
+        await runLedgerInvariants(org.id, { refDate: "2027-12-31", audit: true, noCache: true })
+      }
+      const ms = performance.now() - arranque
+
       expect(
-        extrapolado,
-        `una organización con datos reales: ${Math.round(ms)} ms · extrapolado a 50 = ` +
-          `${Math.round(extrapolado / 1000)} s (techo 240 s)`
+        ms,
+        `MEDIDO: ${Math.round(ms / 1000)} s barriendo ${orgs.length + 1} organizaciones ` +
+          `(una con ${GRAN_VOLUMEN.totals.entries} asientos) · techo 240 s`
       ).toBeLessThan(240 * 1_000)
 
       // Y la otra mitad del techo —«o `PARTIAL` con cursor»— es una propiedad,
-      // no una cifra: el job trocea y persiste el cursor. Lo ejerce a escala
-      // reducida `e11a-webhook-cron.test.ts` (criterios 48/52/53); aquí se
-      // comprueba que el contrato del troceado sigue declarado.
+      // no una cifra: el job trocea y persiste el cursor.
       const { CRON_JOBS } = await import("@/lib/platform/cron")
       expect([...CRON_JOBS]).toContain("invariant-sweep")
     },
-    600_000
+    2_400_000
   )
 
   it("9/10 · `/api/health`: < 200 ms", async () => {

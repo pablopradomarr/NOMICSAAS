@@ -1,0 +1,32 @@
+{
+  "digests": {
+    "entries": "2b6ebeeaed3023c60e87fcde4463661f11d0d532bbed2d0876b9c05a838c2962",
+    "files": "352f1b7cf3ba9ac258a114f13158aa1e1c432f092eff0e76b4c9c199367c8f06",
+    "journalLines": "733fa1a7328ee8b9ecdcfaff923524b27d44fd41c765fffc55801ebfd0777907",
+    "organizations": "8805292ad19fa8f149457034871de9642ab17576b848cc70ebe92890360f67ca"
+  },
+  "params": {
+    "accountCredit": "5720",
+    "accountDebit": "6290",
+    "accountDebit2": "6210",
+    "amountMaxCents": 500000,
+    "amountMinCents": 100,
+    "entries": 50000,
+    "fileBytesTotal": 1500000000,
+    "files": 2000,
+    "fiscalYear": 2027,
+    "linesPerEntry": 3,
+    "organizations": 50,
+    "seed": 20261001,
+    "version": "1.0"
+  },
+  "totals": {
+    "creditCents": 24950324631,
+    "debitCents": 24950324631,
+    "entries": 50000,
+    "fileBytes": 1500856171,
+    "files": 2000,
+    "journalLines": 150000,
+    "organizations": 50
+  }
+}
