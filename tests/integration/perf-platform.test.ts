@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { Client } from "pg"
+import { appMaintenanceDatabaseUrl } from "@/tests/support/env"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -88,6 +89,8 @@ const { POST: webhookPOST } = await import("@/app/api/stripe/webhook/route")
 const StripeSdk = (await import("stripe")).default
 
 const OWNER_URL = process.env.DATABASE_URL_TEST || "postgresql://postgres@localhost:5432/erp_test"
+/** `app_maintenance` (BYPASSRLS): el único rol que puede vaciar sin abrir la RLS. */
+const maintenanceUrl = process.env.DATABASE_URL_MAINTENANCE || appMaintenanceDatabaseUrl(OWNER_URL)
 const ORG = "e11ffff0-0000-4000-8000-00000000000a"
 const DEST = "e11ffff0-0000-4000-8000-00000000000b"
 const USER = "e11ffff0-0000-4000-8000-0000000000a1"
@@ -161,13 +164,26 @@ let watcher: ConnectionWatcher
  * lista a mano falla (BUG-E7-1, BUG-E9-5, BUG-E10-1, BUG-E11-2) y la enmienda
  * **E-4** dice exactamente esto: **todo inventario es derivado**.
  *
- * Se recorren TODAS las tablas con `organization_id`, en orden inverso de
- * dependencia, con los disparadores de usuario y el `FORCE ROW LEVEL SECURITY`
- * levantados —es una base de test y este cliente es el propietario—. Una tabla
- * nueva de la épica 68 entra sola.
+ * Se recorren TODAS las tablas con `organization_id`, con los disparadores
+ * desactivados (`session_replication_role = 'replica'`, que también apaga las FK
+ * y hace que una sola pasada baste) y **con el rol `app_maintenance`**, que tiene
+ * `BYPASSRLS` y por tanto ve las filas sin tocar `FORCE ROW LEVEL SECURITY`.
+ *
+ * Lo segundo importa más de lo que parece: la primera versión hacía
+ * `NO FORCE → DELETE → FORCE` como propietario, y como los ficheros de la suite
+ * de integración corren **en paralelo**, otra suite pillaba una tabla en el
+ * instante en que estaba en `NO FORCE` y `e9-esquema` fallaba con razón
+ * («ninguna tabla de negocio queda en NO FORCE»). Un arnés que abre la segunda
+ * barrera del multi-tenant, aunque sea un microsegundo y en una base de test, no
+ * es un arnés aceptable. Una tabla nueva de la épica 68 entra sola.
  */
 async function purgarOrganizaciones(ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return
+  const mantenimiento = new Client({ connectionString: maintenanceUrl })
+  await mantenimiento.connect()
+  const m = async (sql: string, params: unknown[] = []): Promise<void> => {
+    await mantenimiento.query(sql, params).catch(() => undefined)
+  }
   const tablas = await q<{ tabla: string }>(
     `SELECT c.relname AS tabla
        FROM pg_class c
@@ -177,25 +193,20 @@ async function purgarOrganizaciones(ids: readonly string[]): Promise<void> {
       ORDER BY c.relname`
   )
 
-  await q(`SET session_replication_role = 'replica'`)
   try {
-    for (const { tabla } of tablas) {
-      await q(`ALTER TABLE "${tabla}" NO FORCE ROW LEVEL SECURITY`).catch(() => undefined)
-    }
+    await m(`SET session_replication_role = 'replica'`)
     // **Una sola pasada, y basta**: con `session_replication_role = 'replica'`
     // los disparadores de FK no se evalúan, así que el orden alfabético da
-    // igual. Es lo que convierte una purga en cuadrática —tres pasadas sobre
+    // igual. Es lo que convierte una purga cuadrática —tres pasadas sobre
     // sesenta tablas— en una lineal.
     for (const { tabla } of tablas) {
-      await q(`DELETE FROM "${tabla}" WHERE organization_id = ANY($1::uuid[])`, [ids]).catch(() => undefined)
+      await m(`DELETE FROM "${tabla}" WHERE organization_id = ANY($1::uuid[])`, [ids])
     }
-    for (const { tabla } of tablas) {
-      await q(`ALTER TABLE "${tabla}" FORCE ROW LEVEL SECURITY`).catch(() => undefined)
-    }
+    await m(`DELETE FROM organizations WHERE id = ANY($1::uuid[])`, [ids])
   } finally {
-    await q(`SET session_replication_role = 'origin'`)
+    await m(`SET session_replication_role = 'origin'`)
+    await mantenimiento.end()
   }
-  await q(`DELETE FROM organizations WHERE id = ANY($1::uuid[])`, [ids])
 }
 
 async function limpiar() {

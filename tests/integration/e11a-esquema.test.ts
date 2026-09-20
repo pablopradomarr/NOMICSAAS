@@ -312,13 +312,16 @@ describe("M4 · backfill y O-14", () => {
       `SELECT a.attname AS column_name, col_description(a.attrelid, a.attnum) AS comentario
          FROM pg_attribute a
         WHERE a.attrelid = 'organizations'::regclass
-          AND a.attname IN ('membership_plan', 'membership_expires_at', 'storage_limit')`
+          AND a.attname IN ('membership_plan', 'membership_expires_at')`
     )
     // `ai_balance` ya no está en la lista: **M6 la retiró** (ADR-0019 D1.5).
-    // Lo que O-14 exigía —comprobar el saldo antes de darla de baja— lo hacen
-    // las dos migraciones; que la columna ya no exista lo prueba
+    // `storage_limit` y `storage_used` tampoco: las retiró **E12 · T15**
+    // (deuda 3 de §6), por el mismo camino y por el mismo motivo —eran un
+    // contador vivo del dato que `models/usage.ts` deriva, es decir una segunda
+    // fuente de verdad (P2)—. Lo que O-14 exigía, comprobar antes de dar de
+    // baja, lo hacen las migraciones; que las columnas ya no existan lo prueba
     // `e11-integracion-d9`.
-    expect(filas).toHaveLength(3)
+    expect(filas).toHaveLength(2)
     for (const f of filas) {
       expect(f.comentario, f.column_name).toMatch(/DEPRECADA/)
       expect(f.comentario, f.column_name).toMatch(/E12/)
