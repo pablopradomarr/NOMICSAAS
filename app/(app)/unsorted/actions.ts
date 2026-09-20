@@ -54,7 +54,7 @@ import { ExchangeRateUnavailableError, newRateMemo } from "@/lib/fx/rates"
 import { postFromProposal, previewFromProposal, type PostedProposal } from "@/lib/ledger/postFromProposal"
 import type { TemplateCode } from "@/lib/ledger/templates/types"
 import { getOrganizationUploadsDirectory, getTransactionFileUploadPath, safePathJoin, unsortedFilePath } from "@/lib/files"
-import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
+import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer } from "@/lib/uploads"
 import { writeAuditLog } from "@/models/audit-log"
 import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
 import { putObject } from "@/models/storage"
@@ -1402,7 +1402,6 @@ export async function saveFileAsTransactionAction(
     })
 
     await updateTransactionFiles(db, transaction.id, [file.id])
-    await syncOrganizationStorage(org.id)
 
     revalidatePath("/unsorted")
     revalidatePath("/transactions")
@@ -1421,7 +1420,6 @@ export async function deleteUnsortedFileAction(
   try {
     const { db, org } = await requireOrg("EDITOR")
     await deleteFile(db, fileId, getOrganizationUploadsDirectory(org))
-    await syncOrganizationStorage(org.id)
     revalidatePath("/unsorted")
     return { success: true }
   } catch (error) {
@@ -1502,7 +1500,6 @@ export async function splitFileIntoItemsAction(
     }
 
     await deleteFile(db, fileId, getOrganizationUploadsDirectory(org))
-    await syncOrganizationStorage(org.id)
 
     revalidatePath("/unsorted")
     return { success: true }

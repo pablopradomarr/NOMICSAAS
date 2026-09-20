@@ -32,6 +32,7 @@ import config from "@/lib/config"
 import { tenantTransaction } from "@/lib/db"
 import { recordAuditLog } from "@/models/audit-log"
 import {
+  inspectBackupArchive,
   requestBackup,
   restoreBackupIntoOrganization,
   runBackupJob,
@@ -147,6 +148,87 @@ export type StartRestoreResult = {
   checks: RestoreCheckResult[]
 }
 
+export type InspectArchiveResult = {
+  admitido: boolean
+  /** `CLAVE_DESCONOCIDA` cuando el ZIP es de otra instalación. */
+  motivo: string | null
+  detalle: string | null
+  /** Sólo cuando el manifest se ha podido leer: qué trae el archivo. */
+  resumen: {
+    organizationSlug: string
+    createdAt: string
+    schemaVersion: string
+    gitSha: string
+    tablas: number
+    filas: number
+    ficheros: number
+    ledgerHash: string
+  } | null
+  /** `true` si el operador puede autorizarlo pese al rechazo (sólo firma ajena). */
+  autorizable: boolean
+}
+
+/**
+ * **E12 · T16 · G-15b — mirar el archivo ANTES de tocarlo.**
+ *
+ * La pantalla llama a esto primero y enseña lo que el ZIP dice de sí mismo —de
+ * qué organización es, de qué día, con qué esquema y con cuántas filas— junto
+ * con el veredicto de la firma. **Ni una entrada de datos se descomprime**: sólo
+ * el manifest, su sha y la firma, que es lo que §5.4.2 exige.
+ *
+ * Si la firma es de otra instalación, lo dice y marca `autorizable`: el operador
+ * puede seguir adelante escribiendo un motivo, y esa autorización queda en el
+ * registro. Si el sha no cuadra, `autorizable` es falso y no hay camino: eso no
+ * es un archivo ajeno, es un archivo tocado.
+ */
+export async function inspectRestoreArchiveAction(formData: FormData): Promise<ActionState<InspectArchiveResult>> {
+  await requireOrg(Role.ADMIN)
+
+  const upload = formData.get("file")
+  if (!(upload instanceof File) || upload.size === 0) {
+    return { success: false, error: "Adjunta el archivo .zip de la copia que quieres inspeccionar." }
+  }
+  if (upload.size > MAX_RESTORE_ZIP_BYTES) {
+    return {
+      success: false,
+      error: `El archivo supera el límite de ${MAX_RESTORE_ZIP_BYTES / 1024 / 1024} MB que admite esta pantalla.`,
+    }
+  }
+
+  let keys: Map<string, Buffer>
+  try {
+    keys = restoreKeys()
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "No hay clave de firma configurada" }
+  }
+
+  const inspection = await inspectBackupArchive(Buffer.from(await upload.arrayBuffer()), keys)
+  const manifest = inspection.ok ? inspection.manifest : inspection.manifest
+  const resumen = manifest
+    ? {
+        organizationSlug: manifest.organization.slug,
+        createdAt: manifest.createdAt,
+        schemaVersion: manifest.schemaVersion,
+        gitSha: manifest.gitSha,
+        tablas: manifest.totals.tables,
+        filas: manifest.totals.rows,
+        ficheros: manifest.totals.files,
+        ledgerHash: manifest.seals.ledgerHash,
+      }
+    : null
+
+  return {
+    success: true,
+    data: {
+      admitido: inspection.ok,
+      motivo: inspection.ok ? null : inspection.reason,
+      detalle: inspection.ok ? null : inspection.detail,
+      resumen,
+      autorizable: !inspection.ok && inspection.reason === "CLAVE_DESCONOCIDA" && manifest !== null,
+    },
+  }
+}
+
 /**
  * **Restaura el ZIP en una organización NUEVA** y deja las seis comprobaciones
  * a la vista.
@@ -167,6 +249,45 @@ export async function startRestoreAction(formData: FormData): Promise<ActionStat
   const reason = String(formData.get("reason") ?? "").trim()
   if (reason.length < 8) {
     return { success: false, error: "Escribe el motivo de la restauración: queda en el registro de auditoría." }
+  }
+
+  /**
+   * **E12 · T16 · G-15b — la autorización de un ZIP ajeno.**
+   *
+   * Sólo un administrador de PLATAFORMA puede autorizarla: un ADMIN de
+   * organización puede restaurar SUS copias, pero admitir un archivo firmado por
+   * una instalación desconocida es una decisión de quien responde de esta
+   * instalación, no de quien la usa. Y el motivo tiene que ser un motivo —veinte
+   * caracteres, la misma vara que ADR-0020 pone a las escrituras de operador—,
+   * porque lo que queda escrito es lo único que quedará dentro de un año.
+   */
+  const foreignReason = String(formData.get("foreignSignatureReason") ?? "").trim()
+  let allowForeignSignature: { authorizedBy: string; reason: string } | undefined
+  if (foreignReason !== "") {
+    /**
+     * Se resuelve contra `PLATFORM_ADMIN_EMAILS`, que es la misma lista que
+     * gobierna `/admin`. Se lee de la configuración y no del rol de la
+     * organización **a propósito**: un ADMIN de organización manda en la suya, y
+     * admitir un archivo firmado por una instalación desconocida es una decisión
+     * de quien responde de ÉSTA. Sin la variable puesta no hay nadie que pueda
+     * autorizarlo, y eso es el comportamiento correcto por defecto.
+     */
+    const esAdminDePlataforma = config.billing.adminEmails.includes((user.email ?? "").trim().toLowerCase())
+    if (!esAdminDePlataforma) {
+      return {
+        success: false,
+        error:
+          "Ese archivo está firmado por otra instalación. Sólo un administrador de la plataforma puede autorizar " +
+          "su restauración; pídeselo y quedará registrado a su nombre.",
+      }
+    }
+    if (foreignReason.length < 20) {
+      return {
+        success: false,
+        error: "Para admitir una firma ajena hace falta un motivo de al menos 20 caracteres: queda registrado.",
+      }
+    }
+    allowForeignSignature = { authorizedBy: user.id, reason: foreignReason }
   }
 
   const upload = formData.get("file")
@@ -204,7 +325,16 @@ export async function startRestoreAction(formData: FormData): Promise<ActionStat
     entityId: org.id,
     action: "REQUEST_RESTORE",
     reason,
-    after: { target: destino.id, targetName: destino.name },
+    after: {
+      target: destino.id,
+      targetName: destino.name,
+      // **G-15b**: la autorización de una firma ajena se registra **antes** de
+      // que se restaure nada, y en la organización que la pidió. Si el proceso
+      // se cae a la mitad, la autorización sigue escrita.
+      ...(allowForeignSignature
+        ? { firmaAjenaAutorizadaPor: allowForeignSignature.authorizedBy, firmaAjenaMotivo: allowForeignSignature.reason }
+        : {}),
+    },
     userId: user.id,
   })
 
@@ -214,6 +344,7 @@ export async function startRestoreAction(formData: FormData): Promise<ActionStat
     requestedById: user.id,
     refDate,
     keys,
+    allowForeignSignature,
   })
 
   // `CheckResult` (§5.4) trae `id`, `status` y la evidencia enfrentada. La vista

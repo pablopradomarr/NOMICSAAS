@@ -4,13 +4,11 @@ import { transactionFormSchema } from "@/forms/transactions"
 import { ActionState } from "@/lib/actions"
 import { isSubscriptionExpired } from "@/lib/auth"
 import { requireOrg } from "@/lib/authz"
-import {
-  getOrganizationUploadsDirectory,
-  getTransactionFileUploadPath,
-  isEnoughStorageToUploadFile,
-  safePathJoin,
-} from "@/lib/files"
-import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
+import { getOrganizationUploadsDirectory, getTransactionFileUploadPath } from "@/lib/files"
+import { tenantTransaction } from "@/lib/db"
+import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
+import { putObject } from "@/models/storage"
+import { UploadValidationError, assertAcceptableUpload, sha256OfBuffer } from "@/lib/uploads"
 import { updateField } from "@/models/fields"
 import { createFile, deleteFile } from "@/models/files"
 import {
@@ -24,9 +22,7 @@ import {
 } from "@/models/transactions"
 import { Transaction } from "@/prisma/client"
 import { randomUUID } from "crypto"
-import { mkdir, writeFile } from "fs/promises"
 import { revalidatePath } from "next/cache"
-import path from "path"
 
 export async function createTransactionAction(
   _prevState: ActionState<Transaction> | null,
@@ -103,7 +99,6 @@ export async function deleteTransactionAction(
     if (!transaction) throw new Error("Transaction not found")
 
     await deleteTransaction(db, transaction.id, getOrganizationUploadsDirectory(org))
-    await syncOrganizationStorage(org.id)
 
     revalidatePath("/transactions")
 
@@ -136,9 +131,6 @@ export async function deleteTransactionFileAction(
 
   await deleteFile(db, fileId, getOrganizationUploadsDirectory(org))
 
-  // Update organization storage used
-  await syncOrganizationStorage(org.id)
-
   revalidatePath(`/transactions/${transactionId}`)
   return { success: true, data: transaction }
 }
@@ -158,12 +150,21 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
       return { success: false, error: "Transaction not found" }
     }
 
-    const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
-
     // Check limits
+    /**
+     * **E12 · T15 (deuda 3).** Aquí estaba `isEnoughStorageToUploadFile`, que
+     * comparaba contra `organizations.storage_used` — el contador vivo que esta
+     * épica retira. La cuota la pone `assertWithinLimit` sobre la cifra
+     * DERIVADA, en la misma transacción que la escritura.
+     */
     const totalFileSize = files.reduce((acc, file) => acc + file.size, 0)
-    if (!isEnoughStorageToUploadFile(org, totalFileSize)) {
-      return { success: false, error: `Insufficient storage to upload new files` }
+    try {
+      await tenantTransaction(org.id, async (tx) => {
+        await assertWithinLimit(tx, "maxStorageBytes", BigInt(totalFileSize), { refDate: new Date() })
+      })
+    } catch (error) {
+      if (error instanceof LimitExceededError) return { success: false, error: error.message }
+      throw error
     }
 
     if (isSubscriptionExpired(org)) {
@@ -187,9 +188,20 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
 
           const fileUuid = randomUUID()
           const relativeFilePath = getTransactionFileUploadPath(fileUuid, file.name, transaction)
-          const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
-          await mkdir(path.dirname(fullFilePath), { recursive: true })
-          await writeFile(fullFilePath, buffer)
+          /**
+           * **E12 · T15 (deuda 2).** Los adjuntos iban SÓLO al disco, y desde
+           * que `lib/documents.ts` dejó de mirar ahí serían ilegibles. Van al
+           * almacén, como el resto: `file.path` sobrevive como etiqueta lógica
+           * —en qué carpeta iría el documento—, no como localización.
+           */
+          const sha256 = sha256OfBuffer(buffer)
+          await putObject(db, {
+            organizationId: org.id,
+            kind: "DOCUMENT",
+            sha256,
+            mimeType: mimetype,
+            body: buffer,
+          })
 
           return await createFile(db, {
             id: fileUuid,
@@ -199,7 +211,7 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
             path: relativeFilePath,
             mimetype,
             // E8 · T4 (G-11): el sha se calcula AL INGERIR, siempre.
-            sha256: sha256OfBuffer(buffer),
+            sha256,
             sizeBytes: buffer.length,
             isReviewed: true,
             metadata: {
@@ -226,7 +238,6 @@ export async function uploadTransactionFilesAction(formData: FormData): Promise<
     )
 
     // Update organization storage used
-    await syncOrganizationStorage(org.id)
 
     revalidatePath(`/transactions/${transactionId}`)
     return { success: true }

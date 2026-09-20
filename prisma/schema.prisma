@@ -69,11 +69,11 @@ model Organization {
   stripeCustomerId    String?   @unique @map("stripe_customer_id")
   membershipPlan      String?   @map("membership_plan")
   membershipExpiresAt DateTime? @map("membership_expires_at")
-  // E11 · M6 (§2.7): `bigint`. `integer` topaba en 2,147 GB y el plan PRO promete
-  // 100 GB, así que la columna se desbordaba antes de llegar al límite del plan.
-  // DEPRECADAS: el uso real es DERIVADO (`stored_objects`), no un contador.
-  storageUsed         BigInt    @default(0) @map("storage_used")
-  storageLimit        BigInt    @default(-1) @map("storage_limit")
+  // `storageUsed` / `storageLimit` RETIRADAS en E12 · T15 (deuda 3): eran un
+  // contador vivo del mismo dato que `models/usage.ts` deriva de
+  // `stored_objects` — una segunda fuente de verdad, que es lo que P2 prohíbe.
+  // El usado se agrega en SQL por `kind` (O-12c) y el techo lo pone
+  // `maxStorageBytes` del plan.
   // `aiBalance` RETIRADA en M6 (ADR-0019 D1.5, O-14): era un saldo que se
   // decrementaba al escribir —prohibido por P2/P4— y que además nunca funcionó.
 
@@ -3912,11 +3912,27 @@ enum StoredObjectKind {
   DOCUMENT
   PREVIEW
   BACKUP
+  /// E12 · T15 — logotipo y avatar, en el almacén y **fuera de la cuota del
+  /// cliente** (O-12c). Su `purpose` dice cuál de los dos es.
+  BRANDING
+  /// RETIRADAS en E12 · T15: nadie las vuelve a escribir. Un valor de `enum` no
+  /// se puede quitar sin reescribir el tipo entero, así que se quedan como
+  /// cicatriz. Lo que hubiera con ellas pasó a `BRANDING`.
   LOGO
   AVATAR
   PLATFORM_INVOICE
 
   @@map("stored_object_kind")
+}
+
+/// E12 · T15 — para qué sirve un objeto de `BRANDING`. Los bytes se nombran por
+/// su `sha256`, así que la clave no lo dice; esto sí, y con un enumerado en vez
+/// de texto libre (lección O-21).
+enum StoredObjectPurpose {
+  ORG_LOGO
+  USER_AVATAR
+
+  @@map("stored_object_purpose")
 }
 
 /// §2.5 — localización e integridad de los bytes. `files.sha256` SIGUE siendo la
@@ -3932,6 +3948,9 @@ model StoredObject {
   sizeBytes BigInt           @map("size_bytes")
   mimeType  String           @map("mime_type") @db.VarChar(128)
   kind      StoredObjectKind
+  /// Sólo en `BRANDING`, y obligatorio ahí: lo impone el CHECK
+  /// `stored_objects_purpose_solo_branding`.
+  purpose   StoredObjectPurpose? @map("purpose")
 
   verifiedAt DateTime? @map("verified_at")
   createdAt  DateTime  @default(now()) @map("created_at")
@@ -3939,6 +3958,7 @@ model StoredObject {
   @@unique([organizationId, objectKey])
   @@index([organizationId, sha256])
   @@index([organizationId, kind, createdAt])
+  @@index([organizationId, purpose])
   @@map("stored_objects")
 }
 

@@ -34,6 +34,7 @@ import {
   type HeadResult,
   type PutMeta,
   type PutResult,
+  type PutStreamingMeta,
   type StorageDriver,
 } from "./driver"
 
@@ -90,6 +91,40 @@ export class LocalDriver implements StorageDriver {
 
     await rename(temporary, target)
     return { sizeBytes, sha256: actual }
+  }
+
+  /**
+   * **E12 · T14** — escritura en streaming sin `sha256` previo. Mismo patrón
+   * atómico que `put()` (temporal + `rename`), midiendo y sellando al vuelo: el
+   * pico de memoria es el de un bloque, no el del archivo.
+   */
+  async putStreaming(key: string, body: AsyncIterable<Buffer> | Readable, meta: PutStreamingMeta): Promise<PutResult> {
+    void meta
+    const target = this.resolve(key)
+    await mkdir(path.dirname(target), { recursive: true })
+    const temporary = `${target}.${process.pid}.${Date.now()}.part`
+
+    const hash = createHash("sha256")
+    let sizeBytes = BigInt(0)
+    const measured = new Transform({
+      transform(chunk: Buffer | string, _encoding, done) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        hash.update(buffer)
+        sizeBytes += BigInt(buffer.length)
+        done(null, buffer)
+      },
+    })
+
+    try {
+      const source = body instanceof Readable ? body : Readable.from(body)
+      await pipeline(source, measured, createWriteStream(temporary))
+    } catch (error) {
+      await rm(temporary, { force: true })
+      throw error
+    }
+
+    await rename(temporary, target)
+    return { sizeBytes, sha256: hash.digest("hex") }
   }
 
   async get(key: string): Promise<Readable> {

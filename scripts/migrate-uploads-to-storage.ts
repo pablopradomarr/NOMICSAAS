@@ -1,5 +1,5 @@
 /**
- * E11 · T7 — **del disco al almacén** (§4, ADR-0019 D3).
+ * E11 · T7 y **E12 · T15** — **del disco al almacén** (§4, ADR-0019 D3).
  *
  *   npx tsx scripts/migrate-uploads-to-storage.ts [--org <uuid>] [--apply]
  *
@@ -24,11 +24,22 @@
  * Se ejecuta como **operador** (`DATABASE_URL_MAINTENANCE`, `app_maintenance`
  * BYPASSRLS), igual que `scripts/migrate-uploads-to-org.ts`: recorre todas las
  * organizaciones y no hay sesión de usuario de la que sacar el tenant.
+ *
+ * ## E12 · T15 — también el `static/`
+ *
+ * El logotipo de la organización y el avatar del usuario eran los dos últimos
+ * ficheros que vivían sólo en disco (`uploads/<org>/static/`). Ahora van al
+ * almacén con `kind = BRANDING` —fuera de la cuota del cliente (O-12c)— y **se
+ * reescriben las URL** que los apuntaban (`/files/static/<nombre>` →
+ * `/files/branding/<sha256>`). Sin ese segundo paso la migración dejaría las
+ * imágenes subidas y las pantallas enseñando un 404, que es peor que no migrar.
  */
 
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
+import path from "node:path"
 import { prisma } from "@/lib/db"
+import { FILE_UPLOAD_PATH } from "@/lib/files"
 import { storedFilePath } from "@/lib/files-integrity"
 import { objectKey, storage } from "@/lib/storage"
 
@@ -39,6 +50,8 @@ export type MigrationReport = {
   alreadyThere: number
   missing: { fileId: string; path: string }[]
   mismatched: { fileId: string; expected: string; actual: string }[]
+  /** **E12 · T15** — imágenes de marca movidas y URL reescritas. */
+  branding: { uploaded: number; alreadyThere: number; rewrittenUrls: number; skipped: string[] }
 }
 
 export async function migrateUploadsToStorage(options: {
@@ -56,6 +69,7 @@ export async function migrateUploadsToStorage(options: {
     alreadyThere: 0,
     missing: [],
     mismatched: [],
+    branding: { uploaded: 0, alreadyThere: 0, rewrittenUrls: 0, skipped: [] },
   }
 
   const organizations = await prisma.organization.findMany({
@@ -125,9 +139,129 @@ export async function migrateUploadsToStorage(options: {
       }
       report.uploaded += 1
     }
+
+    await migrateBrandingOfOrganization(organization.id, options.apply, report, say)
   }
 
   return report
+}
+
+/**
+ * **E12 · T15** — `uploads/<org>/static/*` → almacén, `kind = BRANDING`.
+ *
+ * Los dos ficheros que puede haber son `avatar.*` y `businessLogo.*`, escritos
+ * por el `uploadStaticImage` anterior a esta épica. El `purpose` se deduce del
+ * nombre, que es lo único que hay: a partir de ahora lo lleva la columna, no el
+ * nombre del fichero.
+ *
+ * Idempotente igual que el resto: la clave sale del `sha256`, y una URL ya
+ * reescrita no se vuelve a tocar.
+ */
+async function migrateBrandingOfOrganization(
+  organizationId: string,
+  apply: boolean,
+  report: MigrationReport,
+  say: (message: string) => void
+): Promise<void> {
+  const { driver, prefix } = storage()
+  const directory = path.join(FILE_UPLOAD_PATH, organizationId, "static")
+
+  let names: string[]
+  try {
+    names = await readdir(directory)
+  } catch {
+    return // La organización no tiene `static/`: nada que migrar.
+  }
+
+  const porNombre = new Map<string, string>()
+  for (const name of names) {
+    const base = name.toLowerCase()
+    const purpose = base.startsWith("avatar") ? "USER_AVATAR" : base.startsWith("businesslogo") ? "ORG_LOGO" : null
+    if (!purpose) {
+      report.branding.skipped.push(`${organizationId}/${name}: nombre no reconocido`)
+      continue
+    }
+
+    const bytes = await readFile(path.join(directory, name))
+    const sha256 = createHash("sha256").update(bytes).digest("hex")
+    const key = objectKey({ prefix, organizationId, kind: "BRANDING", sha256 })
+    porNombre.set(name, sha256)
+
+    const existing = await prisma.storedObject.findFirst({ where: { organizationId, objectKey: key } })
+    if (existing && (await driver.head(key))) {
+      report.branding.alreadyThere += 1
+      continue
+    }
+    if (!apply) {
+      report.branding.uploaded += 1
+      continue
+    }
+
+    const mimeType = mimeOf(name)
+    const { sizeBytes } = await driver.put(key, bytes, { mimeType, sha256 })
+    if (!existing) {
+      await prisma.storedObject.create({
+        data: {
+          organizationId,
+          objectKey: key,
+          backend: driver.backend,
+          sha256,
+          sizeBytes,
+          mimeType,
+          kind: "BRANDING",
+          purpose,
+        },
+      })
+    }
+    report.branding.uploaded += 1
+    say(`  · marca ${name} → ${key}`)
+  }
+
+  if (porNombre.size === 0) return
+
+  // Las URL. `/files/static/<nombre>` ya no existe como ruta: si no se
+  // reescriben, la pantalla enseña un hueco.
+  const organization = await prisma.organization.findFirst({
+    where: { id: organizationId },
+    select: { businessLogo: true },
+  })
+  const logoName = [...porNombre.keys()].find((name) => name.toLowerCase().startsWith("businesslogo"))
+  if (apply && logoName && organization?.businessLogo?.startsWith("/files/static/")) {
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { businessLogo: `/files/branding/${porNombre.get(logoName)!}` },
+    })
+    report.branding.rewrittenUrls += 1
+  } else if (logoName && organization?.businessLogo?.startsWith("/files/static/")) {
+    report.branding.rewrittenUrls += 1
+  }
+
+  const avatarName = [...porNombre.keys()].find((name) => name.toLowerCase().startsWith("avatar"))
+  if (avatarName) {
+    const miembros = await prisma.membership.findMany({
+      where: { organizationId },
+      select: { user: { select: { id: true, avatar: true } } },
+    })
+    for (const miembro of miembros) {
+      if (!miembro.user?.avatar?.startsWith("/files/static/")) continue
+      if (apply) {
+        await prisma.user.update({
+          where: { id: miembro.user.id },
+          data: { avatar: `/files/branding/${porNombre.get(avatarName)!}` },
+        })
+      }
+      report.branding.rewrittenUrls += 1
+    }
+  }
+}
+
+function mimeOf(name: string): string {
+  const extension = path.extname(name).slice(1).toLowerCase()
+  if (extension === "png") return "image/png"
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg"
+  if (extension === "webp") return "image/webp"
+  if (extension === "avif") return "image/avif"
+  return "application/octet-stream"
 }
 
 export const USAGE = `Migra los documentos del disco heredado al almacén de E11.
@@ -159,6 +293,9 @@ async function main(): Promise<void> {
   console.log(`Ya estaban .............. ${report.alreadyThere}`)
   console.log(`Sin bytes en disco ...... ${report.missing.length}`)
   console.log(`Sha256 discordante ...... ${report.mismatched.length}`)
+  console.log(`Imágenes de marca ....... ${report.branding.uploaded} subidas, ${report.branding.alreadyThere} ya estaban`)
+  console.log(`URL de marca reescritas . ${report.branding.rewrittenUrls}`)
+  for (const row of report.branding.skipped) console.log(`  ? ${row}`)
   for (const row of report.mismatched) {
     console.log(`  ! ${row.fileId}: registrado ${row.expected}, en disco ${row.actual}`)
   }

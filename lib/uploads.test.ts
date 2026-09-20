@@ -17,6 +17,9 @@ vi.mock("./config", () => ({
   default: {
     upload: { images: { maxWidth: 1920, maxHeight: 1080, quality: 80 } },
     selfHosted: { isEnabled: true },
+    // E12 · T15: la ingesta consulta la cuota DERIVADA, y quien la resuelve mira
+    // el proveedor de facturación (ADR-0019 D9: `none` = modo interno, sin techo).
+    billing: { provider: "none" },
   },
 }))
 vi.mock("@/models/files", () => ({
@@ -38,13 +41,21 @@ const user = { id: "user-1", email: "u@example.com" } as Record<string, unknown>
 // E1-fix (#3): el uuid es el nombre del directorio físico de la organización.
 const organization = {
   id: "11111111-1111-4111-8111-111111111111",
-  storageUsed: 0,
-  storageLimit: -1,
 } as Record<string, unknown>
 // E11 · T7 — el `db` del contexto necesita el delegado de `StoredObject`: la
 // ingesta registra la localización de los bytes además de escribirlos.
 const storedObjects: Record<string, unknown>[] = []
 const db = {
+  /**
+   * **E12 · T15** — la cuota de almacenamiento ya no se lee de
+   * `organizations.storage_limit` (columna retirada) sino de la cifra derivada,
+   * y `assertWithinLimit` la consulta con `$queryRaw` dentro de la misma
+   * transacción. El doble devuelve el contexto de una organización activa con
+   * plan sin techo: lo que este test prueba es la INGESTA, no la cuota.
+   */
+  $queryRaw: async () => [],
+  $organizationId: "11111111-1111-4111-8111-111111111111",
+  organization: { findFirst: async () => ({ isActive: true }) },
   storedObject: {
     findFirst: async () => null,
     create: async ({ data }: { data: Record<string, unknown> }) => {

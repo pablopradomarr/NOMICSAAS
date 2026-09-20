@@ -40,11 +40,32 @@ export type PutMeta = {
 
 export type PutResult = { sizeBytes: bigint; sha256: string }
 
+/**
+ * Metadatos de una escritura **en streaming** (E12 · T14). Aquí el `sha256`
+ * **no** entra: es el caso en el que no se puede conocer antes de haber escrito
+ * el último byte —el ZIP de un backup de 1,5 GB—, y exigirlo obligaría a
+ * materializar el contenido, que es justo la deuda que se está cerrando.
+ *
+ * La clave sigue siendo un **contenido direccionable**; lo que cambia es *qué*
+ * contenido la direcciona: para el archivo de un backup es el `sha256` del
+ * **manifest**, que ya sella tabla por tabla y fichero por fichero todo lo que
+ * hay dentro. El `sha256` de los bytes se devuelve al terminar y es el que se
+ * guarda en `stored_objects.sha256`, que es lo que I-E11-6 compara.
+ */
+export type PutStreamingMeta = { mimeType: string }
+
 export type HeadResult = { sizeBytes: bigint; sha256?: string }
 
 export interface StorageDriver {
   readonly backend: StorageBackend
   put(key: string, body: Readable | Buffer, meta: PutMeta): Promise<PutResult>
+  /**
+   * Escribe sin conocer el `sha256` de antemano, **sin materializar el cuerpo**
+   * y subiendo por partes cuando el backend lo admite (multipart en S3). Es el
+   * camino del ZIP del backup (E12 · T14): devuelve tamaño y `sha256` reales,
+   * calculados mientras se escribe.
+   */
+  putStreaming(key: string, body: AsyncIterable<Buffer> | Readable, meta: PutStreamingMeta): Promise<PutResult>
   get(key: string): Promise<Readable>
   /** Buffer completo. Sólo para objetos pequeños: un ZIP de 2 GB va por `get()`. */
   getBuffer(key: string): Promise<Buffer>

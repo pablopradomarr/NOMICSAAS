@@ -38,8 +38,18 @@ import {
   type HeadResult,
   type PutMeta,
   type PutResult,
+  type PutStreamingMeta,
   type StorageDriver,
 } from "./driver"
+
+/**
+ * Tamaño de parte de una subida multipart. S3 exige un mínimo de 5 MiB en todas
+ * las partes menos la última; 8 MiB deja margen y mantiene el pico de memoria en
+ * una cifra que cabe en cualquier función serverless. Con 10 000 partes como
+ * tope del protocolo, el techo de un objeto son 80 GB — muy por encima de
+ * cualquier backup que este producto pueda emitir.
+ */
+const PART_SIZE = 8 * 1024 * 1024
 
 export type S3Config = {
   endpoint: string
@@ -200,6 +210,140 @@ export class S3Driver implements StorageDriver {
     return { sizeBytes: BigInt(buffer.length), sha256: actual }
   }
 
+  /**
+   * **E12 · T14 — subida MULTIPART.** El ZIP de un backup de 1,5 GB no cabe en
+   * el heap y tampoco en un solo `PUT` (S3 corta en 5 GiB y cualquier proxy
+   * mucho antes). Se sube por partes de `PART_SIZE`, acumulando **una sola
+   * parte** en memoria cada vez: el pico es de 8 MiB y no depende del volumen.
+   *
+   * Tres cosas que no son adorno:
+   *
+   * - **Cada parte se firma con el sha256 de su propio cuerpo** (`x-amz-content-sha256`),
+   *   que es lo que SigV4 cubre: una parte alterada en tránsito no se acepta.
+   * - **El sha256 del objeto entero se calcula al vuelo** y viaja en
+   *   `x-amz-meta-sha256` al completar, para que I-E11-6 no tenga que descargar
+   *   1,5 GB para comprobar un bucket.
+   * - **Un fallo aborta la subida** (`DELETE ?uploadId`): sin eso, S3 cobra
+   *   indefinidamente por partes huérfanas que nadie ve.
+   *
+   * Un cuerpo que cabe en una sola parte se sube con un `PUT` normal: abrir una
+   * subida multipart para 4 KB es tres viajes de red en vez de uno.
+   */
+  async putStreaming(key: string, body: AsyncIterable<Buffer> | Readable, meta: PutStreamingMeta): Promise<PutResult> {
+    const hash = createHash("sha256")
+    let total = 0
+
+    const partes: Array<{ number: number; etag: string }> = []
+    let uploadId: string | null = null
+    let pendiente: Buffer[] = []
+    let pendienteBytes = 0
+
+    const enviarParte = async (cuerpo: Buffer): Promise<void> => {
+      if (uploadId === null) throw new StorageError(`multipart sin uploadId: ${key}`)
+      const numero = partes.length + 1
+      const respuesta = await this.request("PUT", key, {
+        query: `partNumber=${numero}&uploadId=${uriEncode(uploadId, true)}`,
+        body: cuerpo,
+        headers: { "content-length": String(cuerpo.length) },
+      })
+      if (!respuesta.ok) throw new StorageError(`UploadPart ${numero} de ${key}: ${respuesta.status} ${await respuesta.text()}`)
+      const etag = respuesta.headers.get("etag")
+      if (!etag) throw new StorageError(`UploadPart ${numero} de ${key}: el almacén no devuelve ETag`)
+      partes.push({ number: numero, etag })
+    }
+
+    try {
+      for await (const trozo of body as AsyncIterable<Buffer>) {
+        const buffer = Buffer.isBuffer(trozo) ? trozo : Buffer.from(trozo)
+        if (buffer.length === 0) continue
+        hash.update(buffer)
+        total += buffer.length
+        pendiente.push(buffer)
+        pendienteBytes += buffer.length
+        if (pendienteBytes < PART_SIZE) continue
+
+        if (uploadId === null) uploadId = await this.createMultipartUpload(key, meta.mimeType)
+        // Se envía justo `PART_SIZE` y se conserva el resto: las partes
+        // intermedias de una subida multipart tienen que ser todas del mismo
+        // tamaño salvo la última.
+        const acumulado = Buffer.concat(pendiente, pendienteBytes)
+        let cursor = 0
+        while (acumulado.length - cursor >= PART_SIZE) {
+          await enviarParte(acumulado.subarray(cursor, cursor + PART_SIZE))
+          cursor += PART_SIZE
+        }
+        const resto = acumulado.subarray(cursor)
+        pendiente = resto.length > 0 ? [Buffer.from(resto)] : []
+        pendienteBytes = resto.length
+      }
+
+      const cola = Buffer.concat(pendiente, pendienteBytes)
+      const sha256 = hash.digest("hex")
+
+      if (uploadId === null) {
+        // Cabía en una parte: un `PUT` normal y nos ahorramos dos viajes.
+        const respuesta = await this.request("PUT", key, {
+          body: cola,
+          payloadSha256: createHash("sha256").update(cola).digest("hex"),
+          headers: {
+            "content-type": meta.mimeType,
+            "content-length": String(cola.length),
+            "x-amz-meta-sha256": sha256,
+          },
+        })
+        if (!respuesta.ok) throw new StorageError(`PUT ${key}: ${respuesta.status} ${await respuesta.text()}`)
+        return { sizeBytes: BigInt(total), sha256 }
+      }
+
+      if (cola.length > 0) await enviarParte(cola)
+      await this.completeMultipartUpload(key, uploadId, partes)
+      uploadId = null
+      return { sizeBytes: BigInt(total), sha256 }
+    } catch (error) {
+      if (uploadId !== null) {
+        // Nunca se dejan partes huérfanas: se cobran y no se ven.
+        await this.request("DELETE", key, { query: `uploadId=${uriEncode(uploadId, true)}` }).catch(() => undefined)
+      }
+      throw error
+    }
+  }
+
+  private async createMultipartUpload(key: string, mimeType: string): Promise<string> {
+    const respuesta = await this.request("POST", key, {
+      query: "uploads=",
+      body: Buffer.alloc(0),
+      headers: { "content-type": mimeType },
+    })
+    if (!respuesta.ok) throw new StorageError(`CreateMultipartUpload ${key}: ${respuesta.status} ${await respuesta.text()}`)
+    const xml = await respuesta.text()
+    const uploadId = /<UploadId>([^<]+)<\/UploadId>/.exec(xml)?.[1]
+    if (!uploadId) throw new StorageError(`CreateMultipartUpload ${key}: respuesta sin UploadId`)
+    return decodeXml(uploadId)
+  }
+
+  private async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    partes: ReadonlyArray<{ number: number; etag: string }>
+  ): Promise<void> {
+    if (partes.length === 0) throw new StorageError(`CompleteMultipartUpload ${key}: sin partes`)
+    const cuerpo = Buffer.from(
+      `<CompleteMultipartUpload>${partes
+        .map((parte) => `<Part><PartNumber>${parte.number}</PartNumber><ETag>${escapeXml(parte.etag)}</ETag></Part>`)
+        .join("")}</CompleteMultipartUpload>`,
+      "utf8"
+    )
+    const respuesta = await this.request("POST", key, {
+      query: `uploadId=${uriEncode(uploadId, true)}`,
+      body: cuerpo,
+      headers: { "content-type": "application/xml", "content-length": String(cuerpo.length) },
+    })
+    if (!respuesta.ok) throw new StorageError(`CompleteMultipartUpload ${key}: ${respuesta.status} ${await respuesta.text()}`)
+    // S3 puede devolver 200 con un `<Error>` dentro del cuerpo: un 200 no basta.
+    const xml = await respuesta.text()
+    if (/<Error>/.test(xml)) throw new StorageError(`CompleteMultipartUpload ${key}: ${xml.slice(0, 300)}`)
+  }
+
   async get(key: string): Promise<Readable> {
     const response = await this.request("GET", key)
     if (response.status === 404) throw new StorageObjectNotFound(key)
@@ -274,6 +418,15 @@ export class S3Driver implements StorageDriver {
     const endpoint = new URL(this.config.endpoint)
     return `${endpoint.protocol}//${host}${canonicalUri}?${query}&X-Amz-Signature=${signature}`
   }
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
 }
 
 function decodeXml(value: string): string {

@@ -2,7 +2,7 @@ import { Prisma } from "@/prisma/client"
 import { prisma, tenantDb, withTenantGucs } from "@/lib/db"
 import { isMaintenanceConfigured, withMaintenanceClient } from "@/lib/db-maintenance"
 import { decryptSecret } from "@/lib/encryption"
-import { ingestUnsortedFile, sha256OfBuffer, syncOrganizationStorage, UploadContext } from "@/lib/uploads"
+import { ingestUnsortedFile, sha256OfBuffer, UploadContext } from "@/lib/uploads"
 import { findFilesBySha256 } from "@/models/files"
 import { File, Organization, User } from "@/prisma/client"
 import { attachmentMatchesExtensions, buildSearchCriteria } from "./filters"
@@ -267,7 +267,6 @@ export async function runEmailSync(
       const result = await syncServer(server, ctx)
       await applySyncResult(target.organizationId, target.userId, result)
       if (result.processed > 0) {
-        await syncOrganizationStorage(target.organizationId)
       }
       results.push(result)
     }

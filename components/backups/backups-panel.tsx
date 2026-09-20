@@ -17,7 +17,12 @@
  * Aquí no se calcula nada: se pinta lo que el servidor manda.
  */
 
-import { requestBackupAction, startRestoreAction } from "@/app/(app)/settings/backups/actions"
+import {
+  inspectRestoreArchiveAction,
+  requestBackupAction,
+  startRestoreAction,
+  type InspectArchiveResult,
+} from "@/app/(app)/settings/backups/actions"
 import { FormError } from "@/components/forms/error"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -315,6 +320,33 @@ function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEd
    */
   const [recien, setRecien] = useState<RestoreJobView | null>(null)
   const [destino, setDestino] = useState<{ id: string; name: string } | null>(null)
+  /**
+   * **E12 · T16 · G-15b — inspeccionar antes de restaurar.**
+   *
+   * La pantalla mira el archivo primero: enseña de qué organización es, de qué
+   * día, con qué esquema y con cuántas filas, y el veredicto de la firma. **Ni
+   * un byte de datos se descomprime** para eso. Sólo cuando el archivo está
+   * firmado por OTRA instalación aparece el campo de autorización, y sólo un
+   * administrador de plataforma puede usarlo.
+   */
+  const [inspeccion, setInspeccion] = useState<InspectArchiveResult | null>(null)
+
+  const inspeccionar = (formData: FormData) =>
+    start(async () => {
+      setError(null)
+      setRecien(null)
+      setDestino(null)
+      setInspeccion(null)
+      const result = await inspectRestoreArchiveAction(formData)
+      if (!result.success || !result.data) {
+        setError(result.error ?? "No se ha podido leer el archivo")
+        return
+      }
+      setInspeccion(result.data)
+      if (!result.data.admitido && !result.data.autorizable) {
+        setError(`${result.data.motivo}: ${result.data.detalle ?? ""}`)
+      }
+    })
 
   const submit = (formData: FormData) =>
     start(async () => {
@@ -352,7 +384,7 @@ function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEd
       </div>
 
       {canEdit && (
-        <form action={submit} className="max-w-2xl space-y-3">
+        <form className="max-w-2xl space-y-3">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium">Archivo de copia (.zip)</span>
             <input type="file" name="file" accept=".zip" required data-testid="restore-file" />
@@ -371,9 +403,66 @@ function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEd
             />
           </label>
           <p className="text-xs text-muted-foreground">El motivo queda en el registro de auditoría.</p>
-          <Button type="submit" size="sm" variant="outline" disabled={pending} data-testid="restore-submit">
-            {pending ? "Comprobando el archivo…" : "Restaurar en una organización nueva"}
-          </Button>
+
+          {inspeccion?.resumen && (
+            <div
+              className="rounded-md border bg-muted/40 p-3 text-xs space-y-1"
+              data-testid="restore-inspection"
+            >
+              <p className="font-medium">
+                Lo que dice el archivo (firma {inspeccion.admitido ? "reconocida" : `NO reconocida: ${inspeccion.motivo}`})
+              </p>
+              <p>
+                Organización <strong>{inspeccion.resumen.organizationSlug}</strong> · copia del{" "}
+                {fecha(inspeccion.resumen.createdAt)} · esquema <code>{inspeccion.resumen.schemaVersion}</code> ·{" "}
+                {inspeccion.resumen.tablas} tablas, {inspeccion.resumen.filas} filas, {inspeccion.resumen.ficheros} ficheros
+              </p>
+              <p className="font-mono break-all">ledgerHash {inspeccion.resumen.ledgerHash}</p>
+            </div>
+          )}
+
+          {inspeccion?.autorizable && (
+            <label className="flex flex-col gap-1 text-sm" data-testid="restore-foreign">
+              <span className="font-medium text-[#B45309]">
+                Este archivo lo firmó otra instalación. Autorización del operador
+              </span>
+              <input
+                type="text"
+                name="foreignSignatureReason"
+                minLength={20}
+                maxLength={500}
+                placeholder="Quién trae esta copia, de dónde viene y por qué se admite (mínimo 20 caracteres)"
+                className="w-full rounded-md border bg-background p-2 text-sm"
+                data-testid="restore-foreign-reason"
+              />
+              <span className="text-xs text-muted-foreground">
+                Sólo un administrador de la plataforma puede autorizarlo, y queda registrado a su nombre.
+              </span>
+            </label>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="submit"
+              formAction={inspeccionar}
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              data-testid="restore-inspect"
+            >
+              {pending ? "Leyendo el archivo…" : "Comprobar la firma del archivo"}
+            </Button>
+            <Button
+              type="submit"
+              formAction={submit}
+              size="sm"
+              variant="outline"
+              disabled={pending || inspeccion === null || (!inspeccion.admitido && !inspeccion.autorizable)}
+              data-testid="restore-submit"
+            >
+              {pending ? "Restaurando…" : "Restaurar en una organización nueva"}
+            </Button>
+          </div>
           {error && <FormError>{error}</FormError>}
         </form>
       )}

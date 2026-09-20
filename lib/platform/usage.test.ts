@@ -149,7 +149,11 @@ describe("las listas de exclusión están declaradas en UN solo sitio", () => {
   })
 
   it("los ZIP de backup y nuestras facturas no son cuota del cliente (O-12c)", () => {
-    expect(BILLABLE_STORAGE_KINDS).toEqual(["DOCUMENT", "PREVIEW", "LOGO", "AVATAR"])
+    // **E12 · T15**: `LOGO`/`AVATAR` pasan a `BRANDING`, que NO es cuota del
+    // cliente — cobrarle por su propio logotipo es ruido en una cifra que tiene
+    // que ser creíble (O-12c).
+    expect(BILLABLE_STORAGE_KINDS).toEqual(["DOCUMENT", "PREVIEW"])
+    expect(BILLABLE_STORAGE_KINDS).not.toContain("BRANDING")
     expect(BILLABLE_STORAGE_KINDS).not.toContain("BACKUP")
     expect(BILLABLE_STORAGE_KINDS).not.toContain("PLATFORM_INVOICE")
   })

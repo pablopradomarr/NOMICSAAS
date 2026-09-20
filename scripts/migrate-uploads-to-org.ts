@@ -67,18 +67,12 @@ function parseArgs(argv: string[]) {
 }
 
 let prisma: PrismaClient
-let getOrganizationStorageUsed: (organization: { id: string }) => Promise<number>
-let updateOrganization: (organizationId: string, data: { storageUsed: number }) => Promise<unknown>
 
 /** Conecta como `app_maintenance` y comprueba que de verdad esquiva RLS. */
 async function connectAsMaintenance(): Promise<void> {
   process.env.DATABASE_URL = maintenanceDatabaseUrl()
   const db = await import("@/lib/db")
-  const files = await import("@/lib/files")
-  const organizations = await import("@/models/organizations")
   prisma = db.prisma as unknown as PrismaClient
-  getOrganizationStorageUsed = files.getOrganizationStorageUsed
-  updateOrganization = organizations.updateOrganization as typeof updateOrganization
 
   const rows = await prisma.$queryRaw<{ rolname: string; rolbypassrls: boolean }[]>`
     SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = current_user
@@ -251,9 +245,8 @@ async function main() {
   // La cuota se mide sobre el directorio de la organización: si no se recalcula,
   // `storage_used` sigue reflejando un reparto que ya no existe (#10).
   for (const organizationId of organizacionesTocadas) {
-    const storageUsed = await getOrganizationStorageUsed({ id: organizationId })
-    await updateOrganization(organizationId, { storageUsed })
-    console.log(`[uploads] storage_used de ${organizationId} = ${storageUsed} bytes`)
+    // E12 · T15: `organizations.storage_used` ya no existe. El uso se DERIVA
+    // de `stored_objects` (`models/usage.ts`), así que no hay nada que poner al día.
   }
 
   console.log(`[uploads] hecho. movidos=${moved} omitidos=${skipped} sin destino=${sinDestino.length}`)

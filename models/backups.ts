@@ -24,15 +24,41 @@
  *      `DONE_UNVERIFIED` (O-2) con la organización conservada y marcada: borrarla
  *      sería destruir la evidencia.
  *
- * **Deuda declarada (E12).** El ZIP se construye **en memoria** con `JSZip`: un
- * volcado de 2 GB no cabe en el heap de una función serverless. El troceado en
- * streaming exige cambiar el generador y la subida a multipart, que no es barato
- * y no cabe en esta ronda de integración; queda anotado en `docs/ESTADO.md` con
- * épica de cierre **E12** y techo medido en §12.
+ * ## E12 · T14 — la deuda del ZIP en memoria, cerrada
+ *
+ * Hasta E12 el archivo se construía **entero en el heap** con
+ * `JSZip.generateAsync({ type: "nodebuffer" })`. El propio fichero lo declaraba
+ * como deuda con épica de cierre: *«un volcado de 2 GB no cabe en el heap de una
+ * función serverless»*, y el techo 5 de §12 de E11 sólo pudo medirse
+ * extrapolando.
+ *
+ * Ahora la emisión tiene **dos fases**, y ninguna materializa el archivo:
+ *
+ * 1. **Fase de volcado** (`planBackupArchive`), dentro de la transacción de
+ *    tenant. Cada tabla se recorre **por cursor de clave** en lotes de
+ *    `DUMP_BATCH_ROWS` filas y se escribe a un **carrete temporal** en disco,
+ *    sellando el `sha256` al vuelo. Con eso se conoce todo lo que el manifest
+ *    necesita —recuentos, sellos, numeración, ficheros y sus tamaños— sin haber
+ *    tenido nunca más de un lote vivo. El manifest se firma aquí.
+ * 2. **Fase de emisión** (`archiveChunks`), ya fuera de la transacción. El ZIP
+ *    sale bloque a bloque por `lib/platform/zip-stream.ts` leyendo del carrete y
+ *    **del almacén en streaming** para los documentos, y se sube por
+ *    **multipart** (`putObjectStreaming`). El pico de memoria es el de una parte
+ *    —8 MiB— y **no depende del volumen**, que es lo que el criterio 47 exige.
+ *
+ * `buildBackupArchive` sigue existiendo y devolviendo un `Buffer`: es el camino
+ * de los tests y de las copias pequeñas, y está escrito **sobre el mismo plan**,
+ * de modo que no puede divergir del que corre en producción.
  */
 
 import JSZip from "jszip"
 import { createHash, randomUUID } from "node:crypto"
+import { createReadStream, createWriteStream } from "node:fs"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { zipStream, type ZipEntry } from "@/lib/platform/zip-stream"
+import { objectKey, storage } from "@/lib/storage"
 import { BACKUP_TENANT_MODELS, prismaSchemaMeta, tenantTransaction, type TenantTransactionClient } from "@/lib/db"
 import {
   BACKUP_FORMAT_VERSION,
@@ -55,9 +81,9 @@ import {
 } from "@/lib/platform/backup"
 import { computeLedgerHash } from "@/models/ledger"
 import { currentGitSha } from "@/models/reports"
-import { putObject } from "@/models/storage"
+import { putObject, putObjectStreaming } from "@/models/storage"
 import { backupConsumesQuota } from "@/lib/platform/limits"
-import type { BackupTrigger } from "@/prisma/client"
+import type { BackupTrigger, StoredObjectKind } from "@/prisma/client"
 
 const sha256hex = (input: string | Buffer): string => createHash("sha256").update(input).digest("hex")
 
@@ -129,25 +155,95 @@ export async function computeContentSeals(tx: TenantTransactionClient): Promise<
 // Volcado
 // ─────────────────────────────────────────────────────────────────────────────
 
-type TableDump = { name: string; rows: number; jsonl: string; sha256: string; body: string }
+type TableDump = { name: string; rows: number; jsonl: string; sha256: string; spoolPath: string }
 
 /** Nombre de la columna de tenant. Se quita del volcado: lo inyecta el destino. */
 const TENANT_COLUMN = "organization_id"
 
-async function dumpTable(tx: TenantTransactionClient, table: string): Promise<TableDump> {
-  const rows = await tx.$queryRawUnsafe<Record<string, unknown>[]>(
-    `SELECT * FROM "${table}" WHERE ${TENANT_COLUMN} = $1::uuid ORDER BY id`,
-    tx.$organizationId
-  )
-  const lines = rows.map((row) => {
-    const copy = { ...row }
-    // **`organization_id` no se vuelca**: así un backup no puede aterrizar en
-    // otra organización por accidente. Lo inyecta `tenantDb` al restaurar.
-    delete copy[TENANT_COLUMN]
-    return encodeRow(copy)
+/**
+ * Filas por lote del volcado. Con 150 000 líneas de diario, 2 000 lotes de 2 000
+ * filas: ni una consulta por fila (que sería N+1 sobre la tabla más grande del
+ * sistema) ni la tabla entera en memoria (que es la deuda que se cierra).
+ */
+const DUMP_BATCH_ROWS = 2_000
+
+/**
+ * Vuelca una tabla al carrete, **por cursor de clave**, sellando al vuelo.
+ *
+ * `ORDER BY id` + `id > $cursor` y no `OFFSET`: el desplazamiento hace que la
+ * base recorra otra vez todo lo ya leído en cada lote, y con 150 000 filas eso
+ * es cuadrático. El orden es el mismo que el del volcado anterior, así que el
+ * `sha256` de una tabla que no ha cambiado **es el mismo** que antes de T14: el
+ * formato no se mueve, sólo la manera de producirlo.
+ *
+ * El cuerpo es exactamente el de siempre —una línea por fila, separadas por
+ * `\n`, **sin salto final**—, porque la restauración cuenta líneas y las
+ * enfrenta al manifest.
+ */
+async function dumpTable(tx: TenantTransactionClient, table: string, spoolDir: string): Promise<TableDump> {
+  const spoolPath = path.join(spoolDir, `${table}.jsonl`)
+  const salida = createWriteStream(spoolPath)
+  const hash = createHash("sha256")
+  let rows = 0
+  let cursor: string | number | bigint | null = null
+  let fallo: Error | null = null
+  salida.on("error", (error: Error) => {
+    fallo = error
   })
-  const body = lines.join("\n")
-  return { name: table, rows: rows.length, jsonl: `data/${table}.jsonl`, sha256: sha256hex(body), body }
+
+  const escribir = async (texto: string): Promise<void> => {
+    if (fallo) throw fallo
+    hash.update(texto)
+    // Contrapresión de verdad: sin esperar al `drain`, el carrete se llenaría en
+    // el búfer del stream y volveríamos a tener la tabla entera en memoria.
+    if (!salida.write(texto)) {
+      await new Promise<void>((resolve, reject) => {
+        // Los dos oyentes se retiran al resolver: registrar un par por lote
+        // sobre 2 000 lotes agota el límite de `EventEmitter` y Node lo avisa
+        // por consola como si fuera una fuga — porque lo sería.
+        const alDrenar = () => {
+          salida.off("error", alFallar)
+          resolve()
+        }
+        const alFallar = (error: Error) => {
+          salida.off("drain", alDrenar)
+          reject(error)
+        }
+        salida.once("drain", alDrenar)
+        salida.once("error", alFallar)
+      })
+    }
+  }
+
+  try {
+    for (;;) {
+      const lote: Record<string, unknown>[] = await tx.$queryRawUnsafe<Record<string, unknown>[]>(
+        cursor === null
+          ? `SELECT * FROM "${table}" WHERE ${TENANT_COLUMN} = $1::uuid ORDER BY id LIMIT ${DUMP_BATCH_ROWS}`
+          : `SELECT * FROM "${table}" WHERE ${TENANT_COLUMN} = $1::uuid AND id > $2 ORDER BY id LIMIT ${DUMP_BATCH_ROWS}`,
+        ...(cursor === null ? [tx.$organizationId] : [tx.$organizationId, cursor])
+      )
+      if (lote.length === 0) break
+      for (const row of lote) {
+        const copy = { ...row }
+        // **`organization_id` no se vuelca**: así un backup no puede aterrizar
+        // en otra organización por accidente. Lo inyecta `tenantDb` al restaurar.
+        delete copy[TENANT_COLUMN]
+        await escribir(rows === 0 ? encodeRow(copy) : `\n${encodeRow(copy)}`)
+        rows += 1
+      }
+      const ultimo = lote[lote.length - 1].id
+      if (typeof ultimo !== "string" && typeof ultimo !== "number" && typeof ultimo !== "bigint") {
+        throw new Error(`dumpTable: la tabla ${table} no tiene un id con el que pasar página (${typeof ultimo})`)
+      }
+      cursor = ultimo
+      if (lote.length < DUMP_BATCH_ROWS) break
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => salida.end((error?: Error | null) => (error ? reject(error) : resolve())))
+  }
+
+  return { name: table, rows, jsonl: `data/${table}.jsonl`, sha256: hash.digest("hex"), spoolPath }
 }
 
 /**
@@ -244,6 +340,24 @@ export type BackupResult = {
   archive: Buffer
 }
 
+/**
+ * **El plan de emisión (E12 · T14).** Lo que la fase de volcado deja listo: el
+ * manifest ya firmado y una manera de producir los bloques del ZIP **sin
+ * materializarlo**. Quien lo reciba decide si los concatena (tests, copias
+ * pequeñas) o si los empuja a una subida multipart (producción).
+ *
+ * `cleanup()` borra el carrete. Se llama SIEMPRE, también cuando la emisión
+ * falla: un carrete huérfano de 1,5 GB en `/tmp` deja sin disco al siguiente.
+ */
+export type BackupPlan = {
+  manifest: BackupManifest
+  manifestSha: string
+  signature: string
+  /** Los bloques del archivo, en orden. Se puede consumir **una sola vez**. */
+  archiveChunks: () => AsyncGenerator<Buffer>
+  cleanup: () => Promise<void>
+}
+
 export type BuildBackupOptions = {
   refDate: Date
   signingKey: Buffer
@@ -260,17 +374,24 @@ export type BuildBackupOptions = {
 }
 
 /**
- * Produce el ZIP 2.0 completo.
+ * **Fase 1 · el volcado** (E12 · T14). Produce el manifest firmado y deja el
+ * contenido en un carrete temporal, listo para emitirse en streaming.
  *
  * **Los sellos se calculan al principio y se recalculan al final.** Si difieren,
  * el diario cambió durante el volcado: se falla con `LEDGER_MOVED_DURING_BACKUP`
  * y se reencola. *Un backup de un estado que nunca existió es peor que no tener
  * backup.*
  */
-export async function buildBackupArchive(organizationId: string, options: BuildBackupOptions): Promise<BackupResult> {
-  return await tenantTransaction(
-    organizationId,
-    async (tx) => {
+export async function planBackupArchive(organizationId: string, options: BuildBackupOptions): Promise<BackupPlan> {
+  const spoolDir = await mkdtemp(path.join(tmpdir(), `erp-backup-${organizationId.slice(0, 8)}-`))
+  const cleanup = async (): Promise<void> => {
+    await rm(spoolDir, { recursive: true, force: true })
+  }
+
+  try {
+    return await tenantTransaction(
+      organizationId,
+      async (tx) => {
       const meta = prismaSchemaMeta()
       /**
        * **Auditor H-2.** El inventario se deriva de `BACKUP_TENANT_MODELS`
@@ -286,7 +407,7 @@ export async function buildBackupArchive(organizationId: string, options: BuildB
       if (!organization) throw new Error(`organización desconocida: ${organizationId}`)
 
       const dumps: TableDump[] = []
-      for (const table of inventory) dumps.push(await dumpTable(tx, table))
+      for (const table of inventory) dumps.push(await dumpTable(tx, table, spoolDir))
 
       const exchangeRates = await dumpReferencedExchangeRates(tx)
       const numbering = await dumpNumbering(tx)
@@ -295,26 +416,33 @@ export async function buildBackupArchive(organizationId: string, options: BuildB
       const auditLog = await dumpAuditLog(tx)
       const closing = await dumpClosing(tx)
 
-      // Ficheros: los bytes se leen del almacén por su sha256 y se guardan bajo
-      // `files/<sha[0:2]>/<sha>`. Un `File` sin bytes NO se calla: entra en el
-      // manifest con tamaño -1 y la comprobación 6 lo enseña.
+      /**
+       * Ficheros: se guardan bajo `files/<sha[0:2]>/<sha>` y **sus bytes no se
+       * leen aquí**. Lo que hace falta para el manifest es el tamaño, y eso lo
+       * da un `head()` del almacén sin descargar nada — la diferencia entre
+       * mantener 1,5 GB vivos y no mantenerlos.
+       *
+       * Un `File` sin bytes NO se calla: entra en el manifest con tamaño -1 y la
+       * comprobación 6 lo enseña. La **verificación** del sha256 de cada
+       * documento sigue haciéndose, pero al copiarlo al ZIP (fase 2), que es el
+       * único momento en que sus bytes pasan por aquí; si no cuadra, la emisión
+       * aborta y la subida multipart se cancela.
+       */
       const files = await tx.file.findMany({ select: { id: true, sha256: true, path: true } })
-      const read = options.readFileBytes ?? defaultReadFileBytes(organizationId)
+      const readBytes = options.readFileBytes
       const fileEntries: BackupManifest["files"] = []
-      const fileBodies = new Map<string, Buffer>()
+      const fileSources = new Map<string, { id: string; path: string; sizeBytes: number }>()
       for (const file of files) {
-        if (fileBodies.has(file.sha256)) continue
-        const bytes = await read(file)
-        if (!bytes) {
-          fileEntries.push({ path: `files/${file.sha256.slice(0, 2)}/${file.sha256}`, sha256: file.sha256, sizeBytes: -1 })
-          continue
-        }
-        const actual = sha256hex(bytes)
-        if (actual !== file.sha256) {
-          throw new Error(`el fichero ${file.id} tiene sha256 ${actual} y el registro dice ${file.sha256}`)
-        }
-        fileBodies.set(file.sha256, bytes)
-        fileEntries.push({ path: `files/${file.sha256.slice(0, 2)}/${file.sha256}`, sha256: file.sha256, sizeBytes: bytes.length })
+        if (fileSources.has(file.sha256)) continue
+        const sizeBytes = readBytes
+          ? ((await readBytes(file))?.length ?? -1)
+          : await documentSizeBytes(organizationId, file.sha256)
+        fileEntries.push({
+          path: `files/${file.sha256.slice(0, 2)}/${file.sha256}`,
+          sha256: file.sha256,
+          sizeBytes,
+        })
+        if (sizeBytes >= 0) fileSources.set(file.sha256, { id: file.id, path: file.path, sizeBytes })
       }
 
       const sealsAfter = await computeContentSeals(tx)
@@ -366,35 +494,127 @@ export async function buildBackupArchive(organizationId: string, options: BuildB
       const manifestSha = manifestSha256(manifest)
       const signature = signManifest(manifestSha, options.signingKey, options.signingKeyId)
 
-      const zip = new JSZip()
-      zip.file("manifest.json", JSON.stringify(manifest, null, 2))
-      zip.file("manifest.sha256", manifestSha)
-      zip.file("signature.txt", signature)
-      zip.file("README.txt", README_ES)
-      for (const dump of dumps) zip.file(dump.jsonl, dump.body)
-      zip.file("global/exchange_rates.jsonl", exchangeRates.body)
-      zip.file(
-        "seals.json",
-        JSON.stringify({ seals: sealsAfter, numbering, invoiceSeries: manifest.invoiceSeries, derivedSeals, auditLog, closing }, null, 2)
+      /**
+       * **El orden de las entradas del ZIP no es cosmético.** `manifest.json`,
+       * su `sha256` y la firma van **primero** para que un lector en streaming
+       * pueda verificarlos *antes de descomprimir un byte* (§5.4.2), que es la
+       * regla que sostiene «una firma ajena no se descomprime». Después los
+       * datos, y al final los documentos, que son la parte pesada.
+       */
+      const seals = JSON.stringify(
+        { seals: sealsAfter, numbering, invoiceSeries: manifest.invoiceSeries, derivedSeals, auditLog, closing },
+        null,
+        2
       )
-      for (const [sha, body] of fileBodies) zip.file(`files/${sha.slice(0, 2)}/${sha}`, body)
+      const leerDocumento = readBytes
+        ? async function* (sha: string, id: string, ruta: string) {
+            const bytes = await readBytes({ id, sha256: sha, path: ruta })
+            if (bytes) yield bytes
+          }
+        : documentChunks(organizationId)
 
-      const archive = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
-      return { manifest, manifestSha, signature, archive }
-    },
-    { timeout: 120_000, maxWait: 10_000 }
-  )
+      const archiveChunks = async function* (): AsyncGenerator<Buffer> {
+        const entradas = async function* (): AsyncIterable<ZipEntry> {
+          yield { name: "manifest.json", source: Buffer.from(JSON.stringify(manifest, null, 2), "utf8") }
+          yield { name: "manifest.sha256", source: Buffer.from(manifestSha, "utf8") }
+          yield { name: "signature.txt", source: Buffer.from(signature, "utf8") }
+          yield { name: "README.txt", source: Buffer.from(README_ES, "utf8") }
+          for (const dump of dumps) {
+            yield { name: dump.jsonl, source: () => spoolChunks(dump.spoolPath) }
+          }
+          yield { name: "global/exchange_rates.jsonl", source: Buffer.from(exchangeRates.body, "utf8") }
+          yield { name: "seals.json", source: Buffer.from(seals, "utf8") }
+          for (const [sha, origen] of fileSources) {
+            yield {
+              name: `files/${sha.slice(0, 2)}/${sha}`,
+              // **`STORE`**: un PDF o un JPEG ya vienen comprimidos, y volver a
+              // pasarlos por DEFLATE cuesta el 100 % de la CPU para ganar el
+              // 0 % del tamaño. Con 1,5 GB de documentos, esa decisión es la
+              // diferencia entre entrar y no entrar en el techo de 15 minutos.
+              method: "STORE",
+              source: () => verificando(sha, leerDocumento(sha, origen.id, origen.path)),
+            }
+          }
+        }
+        yield* zipStream(entradas())
+      }
+
+      return { manifest, manifestSha, signature, archiveChunks, cleanup }
+      },
+      { timeout: 600_000, maxWait: 15_000 }
+    )
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
 }
 
 /**
- * Los bytes de un documento para el volcado. **Un solo lector** (`lib/documents`)
- * para las seis rutas que los leen: si el orden almacén→disco cambiara aquí y no
- * allí, el ZIP llevaría unos bytes y la descarga otros.
+ * Produce el ZIP 2.0 completo **en un `Buffer`**.
+ *
+ * Es el camino de los tests y de las copias pequeñas, y está escrito **sobre el
+ * mismo plan** que usa producción: no hay dos generadores que puedan divergir.
+ * Para una organización con volumen real, el llamante es `runBackupJob`, que
+ * consume el plan en streaming y nunca llega aquí.
  */
-function defaultReadFileBytes(organizationId: string) {
-  return async (file: { sha256: string; path: string }): Promise<Buffer | null> => {
-    const { readDocumentBytes } = await import("@/lib/documents")
-    return await readDocumentBytes(organizationId, file)
+export async function buildBackupArchive(organizationId: string, options: BuildBackupOptions): Promise<BackupResult> {
+  const plan = await planBackupArchive(organizationId, options)
+  try {
+    const chunks: Buffer[] = []
+    for await (const chunk of plan.archiveChunks()) chunks.push(chunk)
+    return {
+      manifest: plan.manifest,
+      manifestSha: plan.manifestSha,
+      signature: plan.signature,
+      archive: Buffer.concat(chunks),
+    }
+  } finally {
+    await plan.cleanup()
+  }
+}
+
+/** Bloques de un fichero del carrete. 64 KB: contrapresión sin sobrecarga. */
+async function* spoolChunks(spoolPath: string): AsyncIterable<Buffer> {
+  for await (const chunk of createReadStream(spoolPath, { highWaterMark: 64 * 1024 })) {
+    yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+  }
+}
+
+/**
+ * **El sha256 del documento se comprueba mientras se copia** al ZIP. Es el único
+ * momento en que sus bytes pasan por el proceso, así que verificar aquí no
+ * cuesta ni una lectura más — y no verificar dejaría entrar al archivo unos
+ * bytes que el registro no reconoce, que es I-E8-2 al revés.
+ */
+async function* verificando(sha256: string, source: AsyncIterable<Buffer>): AsyncIterable<Buffer> {
+  const hash = createHash("sha256")
+  for await (const chunk of source) {
+    hash.update(chunk)
+    yield chunk
+  }
+  const actual = hash.digest("hex")
+  if (actual !== sha256) {
+    throw new Error(`el documento ${sha256} tiene sha256 ${actual} en el almacén: el archivo NO se emite`)
+  }
+}
+
+/** Tamaño de un documento sin descargarlo: `head()` del almacén. -1 si no está. */
+async function documentSizeBytes(organizationId: string, sha256: string): Promise<number> {
+  try {
+    const { driver, prefix } = storage()
+    const head = await driver.head(objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256 }))
+    return head ? Number(head.sizeBytes) : -1
+  } catch {
+    return -1
+  }
+}
+
+/** Los bytes de un documento, **en streaming** desde el almacén. */
+function documentChunks(organizationId: string) {
+  return async function* (sha256: string, _id: string, _path: string): AsyncIterable<Buffer> {
+    const { driver, prefix } = storage()
+    const stream = await driver.get(objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256 }))
+    for await (const chunk of stream) yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
   }
 }
 
@@ -613,6 +833,36 @@ function reissueGlobalSecrets(table: string, row: Record<string, unknown>): void
   row.token_hash = createHash("sha256").update(`restore:${randomUUID()}`).digest("hex")
 }
 
+/**
+ * **E12 · T16 (deuda 7) — la clave del objeto se REDERIVA en el destino.**
+ *
+ * `stored_objects.object_key` es `<prefijo>/<organizationId>/<kind>/<sha[0:2]>/<sha>`
+ * y viaja en el ZIP con el `organizationId` **del ORIGEN**. Hasta esta épica la
+ * restauración la copiaba tal cual, de modo que la copia quedaba con filas que
+ * apuntaban al prefijo de otra organización: `assertKeyBelongsTo` —la segunda
+ * barrera del almacén— habría lanzado en la primera lectura, y la comprobación 6
+ * no lo veía porque era «relativa tolerante». Los BYTES sí se reescribían bien
+ * (los sube `putObject` con la clave del destino), así que la fila y los bytes
+ * se contradecían y nadie lo decía.
+ *
+ * Aquí se rederiva con la organización de destino y el prefijo del entorno, que
+ * además puede ser **otro** —restaurar de un entorno a otro es el caso normal de
+ * una copia—. Lo que no se toca es el `sha256`: es el contenido, y el contenido
+ * es el mismo.
+ */
+function rederiveStoredObjectKey(table: string, row: Record<string, unknown>, targetOrganizationId: string): void {
+  if (table !== "stored_objects") return
+  const sha256 = row.sha256
+  const kind = row.kind
+  if (typeof sha256 !== "string" || typeof kind !== "string") return
+  row.object_key = objectKey({
+    prefix: storage().prefix,
+    organizationId: targetOrganizationId,
+    kind: kind as StoredObjectKind,
+    sha256,
+  })
+}
+
 export type RestoreOptions = {
   archive: Buffer
   targetOrganizationId: string
@@ -621,8 +871,73 @@ export type RestoreOptions = {
   refDate: Date
   /** Claves de firma conocidas, por `keyId`. Una firma sin clave es un rechazo. */
   keys: ReadonlyMap<string, Buffer>
+  /**
+   * **E12 · T16 · G-15b** — autorización EXPLÍCITA y REGISTRADA del operador
+   * para restaurar un ZIP **ajeno**: uno firmado con una clave que esta
+   * instalación no conoce (criterio 33 de E11).
+   *
+   * Sólo levanta `CLAVE_DESCONOCIDA`. **No levanta `SHA_DISCORDANTE` ni
+   * `FORMATO_NO_SOPORTADO`**, y ésa es la línea: una clave desconocida significa
+   * «esto lo firmó otro», que es un hecho legítimo cuando un cliente trae su
+   * copia de otra instalación; un sha que no cuadra significa «esto se ha
+   * tocado», y eso no lo autoriza nadie.
+   */
+  allowForeignSignature?: { authorizedBy: string; reason: string }
   /** Escribe los bytes restaurados. Por defecto, el almacén configurado. */
   writeFileBytes?: (sha256: string, bytes: Buffer) => Promise<void>
+}
+
+/**
+ * **E12 · T16 · G-15b — la inspección PREVIA, antes de descomprimir un byte.**
+ *
+ * Lee del archivo **sólo** las tres entradas pequeñas —`manifest.json`, su sha y
+ * la firma— y dictamina. Ninguna entrada de datos ni un solo documento se
+ * descomprime aquí: si el ZIP es ajeno o está alterado, sus bytes no llegan a
+ * tocarse, que es lo que §5.4.2 exige y lo que convierte la pantalla de subida
+ * en algo que se puede ofrecer a un cliente.
+ *
+ * Devuelve también el `schemaVersion`, que es lo que la pantalla enseña antes de
+ * preguntar si se sigue adelante.
+ */
+export type InspectRejection =
+  | "ARCHIVO_INCOMPLETO"
+  | "FORMATO_NO_SOPORTADO"
+  | "SHA_DISCORDANTE"
+  | "FIRMA_INVALIDA"
+  | "CLAVE_DESCONOCIDA"
+
+export type InspectResult =
+  | { ok: true; manifest: BackupManifest; manifestSha: string; signature: string; keyId: string }
+  | { ok: false; reason: InspectRejection; detail: string; manifest: BackupManifest | null }
+
+export async function inspectBackupArchive(
+  archive: Buffer,
+  keys: ReadonlyMap<string, Buffer>
+): Promise<InspectResult> {
+  let zip: JSZip
+  try {
+    zip = await JSZip.loadAsync(archive)
+  } catch (error) {
+    return { ok: false, reason: "ARCHIVO_INCOMPLETO", detail: error instanceof Error ? error.message : "ilegible", manifest: null }
+  }
+
+  const manifestRaw = await zip.file("manifest.json")?.async("string")
+  const declaredSha = (await zip.file("manifest.sha256")?.async("string"))?.trim()
+  const signature = (await zip.file("signature.txt")?.async("string"))?.trim()
+  if (!manifestRaw || !declaredSha || !signature) {
+    return { ok: false, reason: "ARCHIVO_INCOMPLETO", detail: "el archivo no lleva manifest, sha o firma", manifest: null }
+  }
+
+  let manifest: BackupManifest
+  try {
+    manifest = JSON.parse(manifestRaw) as BackupManifest
+  } catch {
+    return { ok: false, reason: "ARCHIVO_INCOMPLETO", detail: "el manifest no es JSON válido", manifest: null }
+  }
+
+  const verdict = verifyManifest(manifest, declaredSha, signature, keys)
+  if (!verdict.ok) return { ok: false, reason: verdict.reason, detail: verdict.detail, manifest }
+  return { ok: true, manifest, manifestSha: declaredSha, signature, keyId: verdict.keyId }
 }
 
 export type RestoreOutcome = {
@@ -644,18 +959,63 @@ export type RestoreOutcome = {
  *   8. `DONE` sólo con las seis en verde; si no, `DONE_UNVERIFIED` (O-2).
  */
 export async function restoreBackupIntoOrganization(options: RestoreOptions): Promise<RestoreOutcome> {
+  /**
+   * **Paso 2 de §5.4 — la firma, ANTES de descomprimir un byte** (E12 · T16).
+   * La inspección sólo toca `manifest.json`, su sha y la firma.
+   */
+  const inspection = await inspectBackupArchive(options.archive, options.keys)
+  let manifest: BackupManifest
+  if (inspection.ok) {
+    manifest = inspection.manifest
+  } else {
+    /**
+     * **G-15b — la única excepción, y está acotada.** Una `CLAVE_DESCONOCIDA`
+     * significa «esto lo firmó otra instalación»: es un hecho legítimo cuando un
+     * cliente trae su copia, y el operador puede autorizarlo **por escrito y con
+     * su nombre**. Cualquier otro motivo —sha discordante, firma que no
+     * corresponde, formato ajeno— es alteración o incompatibilidad, y no lo
+     * autoriza nadie.
+     */
+    const autorizable = inspection.reason === "CLAVE_DESCONOCIDA" && inspection.manifest !== null
+    const permiso = options.allowForeignSignature
+    if (!autorizable || !permiso || permiso.reason.trim().length < 20) {
+      return {
+        status: "FAILED",
+        verification: null,
+        rejected: null,
+        error:
+          `${inspection.reason}: ${inspection.detail}` +
+          (autorizable && !permiso
+            ? ". El archivo está firmado por otra instalación: hace falta autorización explícita del operador, con motivo, y queda registrada."
+            : ""),
+      }
+    }
+    manifest = inspection.manifest!
+  }
+
   const zip = await JSZip.loadAsync(options.archive)
 
-  const manifestRaw = await zip.file("manifest.json")?.async("string")
-  const declaredSha = (await zip.file("manifest.sha256")?.async("string"))?.trim()
-  const signature = (await zip.file("signature.txt")?.async("string"))?.trim()
-  if (!manifestRaw || !declaredSha || !signature) {
-    return { status: "FAILED", verification: null, rejected: null, error: "el archivo no lleva manifest, sha o firma" }
-  }
-  const manifest = JSON.parse(manifestRaw) as BackupManifest
-  const verdict = verifyManifest(manifest, declaredSha, signature, options.keys)
-  if (!verdict.ok) {
-    return { status: "FAILED", verification: null, rejected: null, error: `${verdict.reason}: ${verdict.detail}` }
+  /**
+   * **Criterio 38 — un ZIP de un esquema anterior se RECHAZA nombrando la
+   * versión**, no se restaura «lo que se pueda».
+   *
+   * Restaurar parcialmente un volcado de un esquema viejo produce una
+   * organización a la que le faltan tablas y columnas, con las seis
+   * comprobaciones dando FAIL por motivos que nadie sabría leer. El rechazo
+   * dice qué versión trae el archivo y cuál corre aquí, que es lo único
+   * accionable.
+   */
+  const schemaHere = await tenantTransaction(options.targetOrganizationId, async (tx) => await schemaVersionOf(tx))
+  if (manifest.schemaVersion !== schemaHere) {
+    return {
+      status: "FAILED",
+      verification: null,
+      rejected: null,
+      error:
+        `ESQUEMA_INCOMPATIBLE: el archivo se emitió con schemaVersion «${manifest.schemaVersion}» y esta ` +
+        `instalación corre «${schemaHere}». No se restaura parcialmente: migra la instalación a esa versión ` +
+        "o pide una copia emitida con la actual.",
+    }
   }
 
   let rejected: RestoreOutcome["rejected"] = null
@@ -718,6 +1078,7 @@ export async function restoreBackupIntoOrganization(options: RestoreOptions): Pr
             const row = applyRemap(decodeRow(line), remap, fkByTable.get(table) ?? new Set())
             row[TENANT_COLUMN] = target
             reissueGlobalSecrets(table, row)
+            rederiveStoredObjectKey(table, row, target)
             // El número de LÍNEA del archivo viaja con la fila: si se reordena
             // por la jerarquía, el motivo del rechazo tiene que seguir señalando
             // la línea de verdad y no la posición de inserción.
@@ -1151,9 +1512,38 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
       const sweepOk = baseline
         ? nuevos.length === 0 && desaparecidos.length === 0
         : swept.failed.length === 0
+
+      /**
+       * **E12 · T16 (deuda 7) — de «relativa tolerante» a EXACTA.**
+       *
+       * Hasta esta épica la comprobación se conformaba con que cada `File`
+       * tuviera bytes en alguna parte. Con eso, una copia cuyas filas de
+       * `stored_objects` conservaran la clave del ORIGEN pasaba en verde: los
+       * bytes estaban (los había escrito `putObject` con la clave del destino) y
+       * la fila apuntaba a otro sitio. Dos verdades distintas del mismo objeto,
+       * y la que mandaba —la fila— era la equivocada.
+       *
+       * Ahora se recomputa la clave canónica de CADA objeto restaurado, con la
+       * organización de destino y el prefijo de ESTE entorno, y se exige
+       * igualdad literal. No admite «parecida».
+       */
+      const objetos = await tx.storedObject.findMany({ select: { id: true, objectKey: true, sha256: true, kind: true } })
+      const clavesMal: string[] = []
+      for (const objeto of objetos) {
+        const esperada = objectKey({
+          prefix: storage().prefix,
+          organizationId: target,
+          kind: objeto.kind,
+          sha256: objeto.sha256,
+        })
+        if (objeto.objectKey !== esperada) clavesMal.push(`${objeto.id}: ${objeto.objectKey} ≠ ${esperada}`)
+      }
+      const clavesOk = clavesMal.length === 0
+
       out.push({
         id: "BARRIDO_INVARIANTES",
-        status: sweepOk && orphans.length === 0 && input.filesMissing.length === 0 ? "PASS" : "FAIL",
+        status:
+          sweepOk && clavesOk && orphans.length === 0 && input.filesMissing.length === 0 ? "PASS" : "FAIL",
         title: baseline
           ? "Barrido completo de las nueve familias, ENFRENTADO al del origen, y correspondencia fichero ↔ objeto"
           : "Barrido completo de las nueve familias de invariantes y correspondencia fichero ↔ objeto",
@@ -1174,6 +1564,13 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
             expected: "0",
             actual: String(orphans.length + input.filesMissing.length),
             ok: orphans.length === 0 && input.filesMissing.length === 0,
+          },
+          {
+            // **T16** · comparación EXACTA, no «relativa tolerante».
+            label: `claves de stored_objects rederivadas al destino (${objetos.length} objeto(s))`,
+            expected: "todas iguales a la clave canónica del destino",
+            actual: clavesOk ? "todas iguales" : clavesMal.slice(0, 5).join(" · "),
+            ok: clavesOk,
           },
         ],
         note: baseline
@@ -1292,36 +1689,54 @@ export async function requestBackup(input: RequestBackupInput) {
 export async function runBackupJob(organizationId: string, backupJobId: string, refDate: Date) {
   const { key, keyId } = signingKeyFromEnv()
   try {
-    const result = await buildBackupArchive(organizationId, { refDate, signingKey: key, signingKeyId: keyId })
-    const archiveSha = sha256hex(result.archive)
-    return await tenantTransaction(organizationId, async (tx) => {
-      const object = await putObject(tx, {
-        organizationId,
-        kind: "BACKUP",
-        sha256: archiveSha,
-        mimeType: "application/zip",
-        body: result.archive,
-      })
-      return await tx.backupJob.update({
-        where: { id: backupJobId },
-        data: {
-          status: "DONE",
-          progressBps: 10000,
-          objectKey: object.objectKey,
-          sizeBytes: object.sizeBytes,
-          archiveSha256: archiveSha,
-          manifestSha256: result.manifestSha,
-          signature: result.signature,
-          signingKeyId: keyId,
-          ledgerHash: result.manifest.seals.ledgerHash,
-          analyticsKey: result.manifest.seals.analyticsKey,
-          budgetHash: result.manifest.seals.budgetHash,
-          rowCounts: Object.fromEntries(result.manifest.tables.map((table) => [table.name, table.rows])),
-          startedAt: refDate,
-          finishedAt: refDate,
-        },
-      })
-    })
+    /**
+     * **E12 · T14 — ni un byte del archivo pasa por el heap.** El plan deja el
+     * manifest firmado y el contenido en el carrete; la emisión va directa a la
+     * subida multipart, y el `sha256` del archivo lo devuelve el almacén tras
+     * haberlo calculado bloque a bloque.
+     *
+     * **La clave del objeto la fija el `sha256` del MANIFEST**, no el del
+     * archivo: el del archivo no se conoce hasta el último byte, y esperar a
+     * conocerlo obligaría a materializarlo. El manifest sella tabla por tabla y
+     * fichero por fichero todo lo que hay dentro, así que sigue siendo una clave
+     * direccionable por contenido; `stored_objects.sha256` guarda el del archivo,
+     * que es el que I-E11-6 compara contra el almacén.
+     */
+    const plan = await planBackupArchive(organizationId, { refDate, signingKey: key, signingKeyId: keyId })
+    try {
+      const object = await tenantTransaction(organizationId, async (tx) =>
+        await putObjectStreaming(tx, {
+          organizationId,
+          kind: "BACKUP",
+          keySha256: plan.manifestSha,
+          mimeType: "application/zip",
+          body: plan.archiveChunks(),
+        })
+      )
+      return await tenantTransaction(organizationId, async (tx) =>
+        await tx.backupJob.update({
+          where: { id: backupJobId },
+          data: {
+            status: "DONE",
+            progressBps: 10000,
+            objectKey: object.objectKey,
+            sizeBytes: object.sizeBytes,
+            archiveSha256: object.sha256,
+            manifestSha256: plan.manifestSha,
+            signature: plan.signature,
+            signingKeyId: keyId,
+            ledgerHash: plan.manifest.seals.ledgerHash,
+            analyticsKey: plan.manifest.seals.analyticsKey,
+            budgetHash: plan.manifest.seals.budgetHash,
+            rowCounts: Object.fromEntries(plan.manifest.tables.map((table) => [table.name, table.rows])),
+            startedAt: refDate,
+            finishedAt: refDate,
+          },
+        })
+      )
+    } finally {
+      await plan.cleanup()
+    }
   } catch (error) {
     await tenantTransaction(organizationId, async (tx) => {
       await tx.backupJob.update({

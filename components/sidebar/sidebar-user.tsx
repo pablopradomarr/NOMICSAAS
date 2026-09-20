@@ -13,7 +13,6 @@ import { UserProfile } from "@/lib/auth"
 import { authClient } from "@/lib/auth-client"
 import config from "@/lib/config"
 import { PLANS } from "@/lib/stripe"
-import { formatBytes } from "@/lib/utils"
 import { CreditCard, LogOut, MoreVertical, Sparkles, User } from "lucide-react"
 import Link from "next/link"
 import { redirect } from "next/navigation"
@@ -71,8 +70,13 @@ export default function SidebarUser({ profile, isSelfHosted }: { profile: UserPr
           <DropdownMenuItem asChild>
             <Link href="/settings/profile" className="flex items-center gap-2">
               <Sparkles />
+              {/*
+                E12 · T15: se retira «X used». Salía de `organizations.storage_used`,
+                un contador que sólo coincidía con la realidad si alguien se
+                acordaba de sincronizarlo. La cifra buena —derivada de
+                `stored_objects`— está en /settings/subscription, con su barra.
+              */}
               <span className="truncate">{(PLANS[profile.membershipPlan as keyof typeof PLANS] ?? PLANS.unlimited).name}</span>
-              <span className="ml-auto text-xs text-muted-foreground">{formatBytes(profile.storageUsed)} used</span>
             </Link>
           </DropdownMenuItem>
         </DropdownMenuGroup>

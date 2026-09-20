@@ -7,7 +7,6 @@ import type { TenantClient } from "@/lib/db"
 import {
   getTransactionFileUploadPath,
   getOrganizationUploadsDirectory,
-  isEnoughStorageToUploadFile,
   safePathJoin,
 } from "@/lib/files"
 import { emitInvoiceSchema, type EmitInvoiceInput } from "@/forms/invoices"
@@ -17,7 +16,8 @@ import { lineBaseCents, QUANTITY_SCALE } from "@/lib/invoices/totals"
 import type { Organization } from "@/prisma/client"
 import { getAppData, setAppData } from "@/models/apps"
 import { createFile } from "@/models/files"
-import { sha256OfBuffer, syncOrganizationStorage } from "@/lib/uploads"
+import { sha256OfBuffer } from "@/lib/uploads"
+import { putObject } from "@/models/storage"
 import { Prisma } from "@/prisma/client"
 import {
   createTransaction,
@@ -142,9 +142,6 @@ async function attachInvoicePdf(
   formData: InvoiceFormData
 ): Promise<string> {
   const pdfBuffer = await generateInvoicePDF(formData)
-  if (!isEnoughStorageToUploadFile(org, pdfBuffer.length)) {
-    throw new Error("Insufficient storage to save invoice PDF")
-  }
 
   const transaction = await getTransactionById(db, transactionId)
   if (!transaction) throw new Error("La operación de la factura no existe en esta organización")
@@ -152,10 +149,20 @@ async function attachInvoicePdf(
   const fileUuid = randomUUID()
   const fileName = `factura-${formData.invoiceNumber}.pdf`
   const relativeFilePath = getTransactionFileUploadPath(fileUuid, fileName, transaction)
-  const fullFilePath = safePathJoin(getOrganizationUploadsDirectory(org), relativeFilePath)
 
-  await mkdir(path.dirname(fullFilePath), { recursive: true })
-  await writeFile(fullFilePath, pdfBuffer)
+  /**
+   * **E12 · T15 (deuda 2).** El PDF que emitimos nosotros iba SÓLO al disco, y
+   * desde que `lib/documents.ts` dejó de mirar ahí sería ilegible. Va al
+   * almacén, con su `sha256`, como cualquier otro justificante.
+   */
+  const pdfSha256 = sha256OfBuffer(pdfBuffer)
+  await putObject(db, {
+    organizationId: org.id,
+    kind: "DOCUMENT",
+    sha256: pdfSha256,
+    mimeType: "application/pdf",
+    body: Buffer.from(pdfBuffer),
+  })
 
   const fileRecord = await createFile(db, {
     id: fileUuid,
@@ -165,14 +172,13 @@ async function attachInvoicePdf(
     path: relativeFilePath,
     mimetype: "application/pdf",
     // G-11: el PDF que emitimos nosotros también entra en la cadena de sha.
-    sha256: sha256OfBuffer(pdfBuffer),
+    sha256: pdfSha256,
     sizeBytes: pdfBuffer.length,
     isReviewed: true,
     metadata: { size: pdfBuffer.length, source: "invoice", documentNumber: formData.invoiceNumber },
   })
 
   await updateTransactionFiles(db, transactionId, [fileRecord.id])
-  await syncOrganizationStorage(org.id)
   return fileRecord.id
 }
 
@@ -261,14 +267,6 @@ export async function saveInvoiceAsTransactionAction(
 
     const transaction = await createTransaction(db, rawTransactionData, { createdById: user.id })
 
-    // Check storage limits
-    if (!isEnoughStorageToUploadFile(org, pdfBuffer.length)) {
-      return {
-        success: false,
-        error: "Insufficient storage to save invoice PDF",
-      }
-    }
-
     if (isSubscriptionExpired(org)) {
       return {
         success: false,
@@ -280,11 +278,14 @@ export async function saveInvoiceAsTransactionAction(
     const fileUuid = randomUUID()
     const fileName = `invoice-${formData.invoiceNumber}.pdf`
     const relativeFilePath = getTransactionFileUploadPath(fileUuid, fileName, transaction)
-    const organizationUploadsDirectory = getOrganizationUploadsDirectory(org)
-    const fullFilePath = safePathJoin(organizationUploadsDirectory, relativeFilePath)
-
-    await mkdir(path.dirname(fullFilePath), { recursive: true })
-    await writeFile(fullFilePath, pdfBuffer)
+    const pdfSha256 = sha256OfBuffer(pdfBuffer)
+    await putObject(db, {
+      organizationId: org.id,
+      kind: "DOCUMENT",
+      sha256: pdfSha256,
+      mimeType: "application/pdf",
+      body: Buffer.from(pdfBuffer),
+    })
 
     // Create file record in database
     const fileRecord = await createFile(db, {
@@ -295,7 +296,7 @@ export async function saveInvoiceAsTransactionAction(
       path: relativeFilePath,
       mimetype: "application/pdf",
       // E8 · T4 (G-11): también el PDF que emitimos nosotros tiene su sha.
-      sha256: sha256OfBuffer(pdfBuffer),
+      sha256: pdfSha256,
       sizeBytes: pdfBuffer.length,
       isReviewed: true,
       metadata: {
@@ -306,7 +307,6 @@ export async function saveInvoiceAsTransactionAction(
 
     // Update transaction with the file ID
     await updateTransactionFiles(db, transaction.id, [fileRecord.id])
-    await syncOrganizationStorage(org.id)
 
     revalidatePath("/transactions")
 

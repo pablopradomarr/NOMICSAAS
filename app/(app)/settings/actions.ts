@@ -90,7 +90,7 @@ export async function saveProfileAction(
 ): Promise<ActionState<User>> {
   const user = await getCurrentUser()
   // La organización activa sólo se necesita para contar la cuota de disco del avatar.
-  const { org } = await requireOrg("VIEWER")
+  const { db, org } = await requireOrg("VIEWER")
   const validatedForm = userFormSchema.safeParse(Object.fromEntries(formData))
 
   if (!validatedForm.success) {
@@ -102,8 +102,10 @@ export async function saveProfileAction(
   const avatarFile = formData.get("avatar") as File | null
   if (avatarFile instanceof File && avatarFile.size > 0) {
     try {
-      const uploadedAvatarPath = await (await uploadStaticImage())(user, org, avatarFile, "avatar.webp", 500, 500)
-      avatarUrl = `/files/static/${path.basename(uploadedAvatarPath)}`
+      // E12 · T15: al almacén, con `kind = BRANDING` (fuera de la cuota del
+      // cliente) y nombrado por su `sha256`. La URL la devuelve la propia
+      // función: la interfaz no compone rutas de fichero.
+      avatarUrl = await (await uploadStaticImage())(db, org, avatarFile, "USER_AVATAR", "webp", 500, 500)
     } catch (error) {
       return { success: false, error: "Failed to upload avatar: " + error }
     }
@@ -126,7 +128,7 @@ export async function saveBusinessSettingsAction(
   _prevState: ActionState<Organization> | null,
   formData: FormData
 ): Promise<ActionState<Organization>> {
-  const { org, user } = await requireOrg("ADMIN")
+  const { db, org, user } = await requireOrg("ADMIN")
   const validatedForm = organizationBusinessFormSchema.safeParse(Object.fromEntries(formData))
 
   if (!validatedForm.success) {
@@ -137,8 +139,7 @@ export async function saveBusinessSettingsAction(
   const businessLogoFile = formData.get("businessLogo") as File | null
   if (businessLogoFile instanceof File && businessLogoFile.size > 0) {
     try {
-      const uploadedBusinessLogoPath = await (await uploadStaticImage())(user, org, businessLogoFile, "businessLogo.png", 500, 500)
-      businessLogoUrl = `/files/static/${path.basename(uploadedBusinessLogoPath)}`
+      businessLogoUrl = await (await uploadStaticImage())(db, org, businessLogoFile, "ORG_LOGO", "png", 500, 500)
     } catch (error) {
       return { success: false, error: "Failed to upload business logo: " + error }
     }

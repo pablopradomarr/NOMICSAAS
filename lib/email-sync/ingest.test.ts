@@ -5,7 +5,6 @@ vi.mock("@/lib/uploads", async () => {
   const { createHash } = await import("node:crypto")
   return {
     ingestUnsortedFile: vi.fn(),
-    syncOrganizationStorage: vi.fn(),
     // E8 · T19 (G-22): el dedupe de adjuntos necesita el sha REAL de los bytes.
     sha256OfBuffer: (buffer: Buffer) => createHash("sha256").update(buffer).digest("hex"),
   }
@@ -52,7 +51,7 @@ vi.mock("@/lib/email-sync/imap-client", () => ({ realImapClient: { fetchMessages
 
 const { syncServer, runEmailSync } = await import("./ingest")
 import { realImapClient } from "@/lib/email-sync/imap-client"
-import { ingestUnsortedFile, syncOrganizationStorage } from "@/lib/uploads"
+import { ingestUnsortedFile } from "@/lib/uploads"
 import { File, User } from "@/prisma/client"
 import { EmailServer, ImapClient, ImapMessage } from "./types"
 import { createHash } from "node:crypto"
@@ -218,19 +217,28 @@ describe("runEmailSync storage recompute guard", () => {
     setEmailRow({ userId: "u1", organizationId: "org-1", user, organization, data: { servers: [makeServer()] } })
   })
 
-  it("skips the storage recompute when nothing was ingested (regression: ENOENT on missing uploads dir)", async () => {
+  /**
+   * **E12 · T15.** Aquí había dos casos que comprobaban que el sync llamaba (o
+   * no) a `syncOrganizationStorage`, la función que recalculaba
+   * `organizations.storage_used`. Esa columna **ya no existe**: era un contador
+   * vivo del mismo dato que `models/usage.ts` deriva de `stored_objects`, que es
+   * lo que P2 prohíbe. No hay recálculo que disparar, así que lo que se prueba
+   * ahora es lo que queda en pie: que la ingesta ocurre y que con cero adjuntos
+   * no se toca nada.
+   */
+  it("no ingiere nada cuando el buzón no trae adjuntos", async () => {
     vi.mocked(realImapClient.fetchMessages).mockResolvedValue([]) // 0 attachments
     await runEmailSync()
-    expect(syncOrganizationStorage).not.toHaveBeenCalled()
+    expect(ingestUnsortedFile).not.toHaveBeenCalled()
   })
 
-  it("recomputes storage when at least one attachment was ingested", async () => {
+  it("ingiere el adjunto cuando lo hay", async () => {
     vi.mocked(realImapClient.fetchMessages).mockResolvedValue([
       { uid: 20, attachments: [{ filename: "a.pdf", contentType: "application/pdf", content: Buffer.from("x"), size: 1 }] },
     ])
     vi.mocked(ingestUnsortedFile).mockResolvedValue({ id: "f" } as unknown as File)
     await runEmailSync()
-    expect(syncOrganizationStorage).toHaveBeenCalledWith("org-1")
+    expect(ingestUnsortedFile).toHaveBeenCalled()
   })
 
   it("cron run (respectInterval) skips a server still within its syncInterval", async () => {

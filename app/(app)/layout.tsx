@@ -82,11 +82,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     avatar: user.avatar ? user.avatar + "?" + user.id : undefined,
     organizationName: org.name,
     membershipPlan: org.membershipPlan || "unlimited",
-    // E11 · M6: `storage_used` / `storage_limit` son `bigint` (§2.7) y siguen
-    // DEPRECADAS — el uso real se deriva de `stored_objects`. `aiBalance` se
-    // retiró en M6 (ADR-0019 D1.5, O-14).
-    storageUsed: Number(org.storageUsed ?? 0),
-    storageLimit: Number(org.storageLimit ?? -1),
+    // E12 · T15: `storage_used` / `storage_limit` **ya no existen**. El uso real
+    // es DERIVADO (`computeUsage().storageBytes`) y el techo lo pone
+    // `maxStorageBytes` del plan; la barra de la barra lateral lo lee de ahí.
+    // `aiBalance` se retiró en M6 (ADR-0019 D1.5, O-14).
   }
 
   return (

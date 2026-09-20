@@ -41,7 +41,8 @@ export default async function CloudPaymentSuccessPage({
         stripeCustomerId: session.customer as string,
         membershipPlan: plan?.code,
         membershipExpiresAt: new Date(subscription.items.data[0].current_period_end * 1000),
-        storageLimit: plan?.limits.storage,
+        // E12 · T15: el techo de almacenamiento ya no es una columna de la
+        // organización; lo pone `maxStorageBytes` del plan (ADR-0019 D1).
       }
     )
 

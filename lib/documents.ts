@@ -1,6 +1,6 @@
 /**
- * E11 · integración de las tres olas — **los bytes de un documento se leen del
- * ALMACÉN** (ADR-0019 **D3**, T7 de la ola B).
+ * **Los bytes de un documento se leen del ALMACÉN** (ADR-0019 **D3**; E11 · T7,
+ * y **E12 · T15**, que retira el último camino al disco).
  *
  * ## Qué cierra este módulo
  *
@@ -41,47 +41,35 @@ import { objectKey, storage } from "@/lib/storage"
 export type DocumentRef = { sha256: string | null; path: string }
 
 /**
- * Los bytes del documento, del almacén y —sólo si allí no están— del disco
- * heredado. `null` cuando no están en ninguno de los dos, que es un estado
- * legítimo y con nombre: «el documento no está en el almacén» (410 Gone en las
- * rutas, `INFO` en el barrido), nunca una excepción que tumbe la pantalla.
+ * Los bytes del documento, **del almacén y de ningún otro sitio**. `null`
+ * cuando no están, que es un estado legítimo y con nombre: «el documento no
+ * está en el almacén» (410 Gone en las rutas, `INFO` en el barrido), nunca una
+ * excepción que tumbe la pantalla.
+ *
+ * Un fichero sin `sha256` no tiene localización posible: la columna es `NOT
+ * NULL` desde E8 y el tipo la admite nula sólo por los `select` parciales.
  */
 export async function readDocumentBytes(organizationId: string, file: DocumentRef): Promise<Buffer | null> {
-  if (file.sha256) {
-    try {
-      const { driver, prefix } = storage()
-      return await driver.getBuffer(objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256: file.sha256 }))
-    } catch {
-      // Sigue al disco heredado: puede ser un fichero anterior a la migración.
-    }
-  }
-  return await readLegacyDiskBytes(organizationId, file.path)
-}
-
-/** ¿Están los bytes en algún sitio? Sin traerlos: `head()` es barato. */
-export async function documentBytesExist(organizationId: string, file: DocumentRef): Promise<boolean> {
-  if (file.sha256) {
-    try {
-      const { driver, prefix } = storage()
-      const head = await driver.head(objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256: file.sha256 }))
-      if (head) return true
-    } catch {
-      // Igual que arriba: un almacén caído no convierte la pantalla en un 500.
-    }
-  }
-  const { fileExists } = await import("@/lib/files")
-  const { storedFilePath } = await import("@/lib/files-integrity")
-  return await fileExists(storedFilePath(organizationId, file.path))
-}
-
-/** El disco heredado, `uploads/<organizationId>/<path>`. Transitorio (E12). */
-async function readLegacyDiskBytes(organizationId: string, relativePath: string): Promise<Buffer | null> {
+  if (!file.sha256) return null
   try {
-    const { readFile } = await import("node:fs/promises")
-    const { storedFilePath } = await import("@/lib/files-integrity")
-    return await readFile(storedFilePath(organizationId, relativePath))
+    const { driver, prefix } = storage()
+    return await driver.getBuffer(objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256: file.sha256 }))
   } catch {
     return null
+  }
+}
+
+/** ¿Están los bytes? Sin traerlos: `head()` es barato. */
+export async function documentBytesExist(organizationId: string, file: DocumentRef): Promise<boolean> {
+  if (!file.sha256) return false
+  try {
+    const { driver, prefix } = storage()
+    const head = await driver.head(objectKey({ prefix, organizationId, kind: "DOCUMENT", sha256: file.sha256 }))
+    return head !== null
+  } catch {
+    // Un almacén caído no convierte la pantalla en un 500, pero tampoco
+    // promete unos bytes que no ha visto.
+    return false
   }
 }
 

@@ -138,16 +138,24 @@ describe("M6 · backfill de suscripciones", () => {
 })
 
 describe("M6 · las dos columnas de §2.7 y la retirada de ai_balance", () => {
-  it("storage_used y storage_limit son bigint", async () => {
-    const rows = await q<{ column_name: string; data_type: string }>(
-      `SELECT column_name, data_type FROM information_schema.columns
+  /**
+   * **E12 · T15 invierte este caso, y es un ascenso, no una rebaja.**
+   *
+   * M6 las pasó a `bigint` porque `integer` topaba en 2,147 GB. Lo que E12
+   * resuelve es el problema de fondo que el tipo no arreglaba: eran un **contador
+   * vivo** del mismo dato que `models/usage.ts` deriva de `stored_objects`, es
+   * decir, una segunda fuente de verdad (P2), que sólo coincidía con la realidad
+   * mientras alguien se acordara de llamar a `syncOrganizationStorage()` — en
+   * doce sitios. La deuda 3 de §6 manda eliminarlas, y aquí se comprueba que ya
+   * no están.
+   */
+  it("storage_used y storage_limit ya NO existen (E12 · T15, deuda 3)", async () => {
+    const rows = await q<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
         WHERE table_name = 'organizations' AND column_name IN ('storage_used', 'storage_limit')
         ORDER BY column_name`
     )
-    expect(rows).toEqual([
-      { column_name: "storage_limit", data_type: "bigint" },
-      { column_name: "storage_used", data_type: "bigint" },
-    ])
+    expect(rows).toEqual([])
   })
 
   it("ai_balance ya no existe (O-14: se comprobó que valía 0 antes de retirarla)", async () => {

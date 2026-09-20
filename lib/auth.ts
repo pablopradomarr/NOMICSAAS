@@ -39,8 +39,12 @@ export type UserProfile = {
   avatar?: string
   organizationName: string
   membershipPlan: string
-  storageUsed: number
-  storageLimit: number
+  /**
+   * **E12 · T15**: aquí estaban `storageUsed` y `storageLimit`, leídas de las dos
+   * columnas de `organizations` que esta épica retira por ser un contador vivo
+   * del mismo dato que `models/usage.ts` deriva (P2). El uso y su techo se ven
+   * en `/settings/subscription`, que los deriva del catálogo versionado.
+   */
 }
 
 export const auth = betterAuth({

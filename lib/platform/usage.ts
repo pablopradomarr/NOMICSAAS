@@ -21,7 +21,7 @@
  * | `entries` | `JournalEntry` del mes por `entryDate`, **excluyendo** (O-5) contra-asientos, asientos de sistema (`REGULARIZATION`/`CLOSING`/`OPENING`/`REVERSAL`) y los de una organización `isDemo` (O-6) |
  * | `ocrDocs` | `ExtractionRun` con `parentRunId IS NULL`. Un run de revisión no consume: ya lo pagó el original (ADR-0014 D5) |
  * | `exports` | `ReportRun` con export materializado + `BackupJob` del mes con `trigger = MANUAL`. Un informe visto en pantalla no es una exportación |
- * | `storageBytes` | `Σ StoredObject.sizeBytes` con `kind ∈ {DOCUMENT, PREVIEW, LOGO, AVATAR}` — **por `kind`, no por prefijo** (O-12c) |
+ * | `storageBytes` | `Σ StoredObject.sizeBytes` con `kind ∈ {DOCUMENT, PREVIEW}` — **por `kind`, no por prefijo** (O-12c) |
  * | `backups` | `BackupJob` del mes en `DONE`/`RUNNING` con `trigger = MANUAL`. **`EXIT` nunca cuenta** (O-4), ni `SCHEDULED` |
  *
  * **O-5 en una línea:** corregir un error no puede costar el doble que dejarlo,
@@ -178,7 +178,8 @@ export function monthBounds(periodMonth: string): { start: Date; endExclusive: D
 export const SYSTEM_ENTRY_KINDS: readonly string[] = ["REGULARIZATION", "CLOSING", "OPENING", "REVERSAL"]
 
 /** Familias de `StoredObject` que consumen cuota del cliente (O-12c). */
-export const BILLABLE_STORAGE_KINDS: readonly string[] = ["DOCUMENT", "PREVIEW", "LOGO", "AVATAR"]
+/** **E12 · T15**: las imágenes de marca (`BRANDING`) NO son cuota del cliente. */
+export const BILLABLE_STORAGE_KINDS: readonly string[] = ["DOCUMENT", "PREVIEW"]
 
 /** Disparadores de backup que consumen `maxBackupsMonth`. Sólo uno (O-4). */
 export const BILLABLE_BACKUP_TRIGGERS: readonly string[] = ["MANUAL"]
@@ -195,5 +196,6 @@ export const USAGE_EXCLUSIONS_ES: Readonly<Record<keyof UsageFigures, string>> =
   ocrDocs: "Extracciones raíz del mes. Una revisión no consume: ya la pagó el original.",
   exports: "Informes exportados a fichero y backups manuales del mes. Un informe visto en pantalla no cuenta.",
   backups: "Backups manuales del mes. Los de portabilidad y los programados nunca consumen cuota.",
-  storageBytes: "Documentos, vistas previas, logotipo y avatares. Los ZIP de backup y nuestras facturas no cuentan.",
+  storageBytes:
+    "Documentos y vistas previas. Ni el logotipo y los avatares (BRANDING), ni los ZIP de copia, ni nuestras facturas cuentan.",
 }

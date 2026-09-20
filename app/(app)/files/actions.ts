@@ -4,8 +4,7 @@ import { ActionState } from "@/lib/actions"
 import { isSubscriptionExpired } from "@/lib/auth"
 import { requireOrg } from "@/lib/authz"
 import { tenantTransaction } from "@/lib/db"
-import { isEnoughStorageToUploadFile } from "@/lib/files"
-import { UploadValidationError, ingestUnsortedFile, syncOrganizationStorage } from "@/lib/uploads"
+import { UploadValidationError, ingestUnsortedFile } from "@/lib/uploads"
 import { LimitExceededError, assertWithinLimit } from "@/models/platform-limits"
 import { revalidatePath } from "next/cache"
 
@@ -24,9 +23,6 @@ export async function uploadFilesAction(formData: FormData): Promise<ActionState
 
   // Check limits
   const totalFileSize = files.reduce((acc, file) => acc + file.size, 0)
-  if (!isEnoughStorageToUploadFile(org, totalFileSize)) {
-    return { success: false, error: `Insufficient storage to upload these files` }
-  }
 
   // **El guardián corre ANTES de cualquier escritura**: ni fila a medias ni
   // fichero huérfano. `delta` son los bytes que esta subida va a ocupar.
@@ -68,7 +64,6 @@ export async function uploadFilesAction(formData: FormData): Promise<ActionState
       })
     )
   } catch (error) {
-    await syncOrganizationStorage(org.id)
     if (error instanceof UploadValidationError) {
       return { success: false, error: error.message }
     }
@@ -76,7 +71,6 @@ export async function uploadFilesAction(formData: FormData): Promise<ActionState
     return { success: false, error: "No se han podido subir los ficheros" }
   }
 
-  await syncOrganizationStorage(org.id)
 
   revalidatePath("/unsorted")
 

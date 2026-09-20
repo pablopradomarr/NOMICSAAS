@@ -1,17 +1,10 @@
-import { File as PrismaFile, Organization, User } from "@/prisma/client"
+import { File as PrismaFile, Organization, StoredObjectPurpose, User } from "@/prisma/client"
 import { TenantClient } from "@/lib/db"
 import { createFile, findFilesBySha256 } from "@/models/files"
 import { createHash, randomUUID } from "crypto"
-import { mkdir } from "fs/promises"
 import path from "path"
 import config from "./config"
-import {
-  getStaticDirectory,
-  isEnoughStorageToUploadFile,
-  safePathJoin,
-  unsortedFilePath,
-} from "./files"
-import { updateOrganization } from "@/models/organizations"
+import { unsortedFilePath } from "./files"
 import { putObject } from "@/models/storage"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,39 +135,43 @@ export function assertAcceptableUpload(filename: string, buffer: Buffer): string
   return declared
 }
 
+/**
+ * **E12 · T15 (deuda 4)** — el logotipo de la organización y el avatar del
+ * usuario van **al almacén**, no a `uploads/<org>/static/`.
+ *
+ * Eran los dos últimos ficheros que vivían sólo en disco, y en Vercel eso es
+ * `/tmp`: el logotipo de una factura desaparecía en el despliegue siguiente. El
+ * mismo hecho 4 de ADR-0019 que obligó a mover los documentos.
+ *
+ * Tres cosas cambian y ninguna es cosmética:
+ *
+ *  - **Se nombran por su `sha256`**, como todo lo demás en el almacén. El
+ *    nombre que traía el cliente no entra nunca en una clave.
+ *  - **`kind = BRANDING`**, que **no cuenta para la cuota** (O-12c). Cobrarle al
+ *    cliente 40 KB por su propio logotipo es ruido en una cifra que tiene que
+ *    ser creíble.
+ *  - **`purpose`** dice si es logotipo o avatar, con un enumerado.
+ *
+ * Devuelve la URL con la que la interfaz lo pinta, que es lo único que el
+ * llamante necesita: `/files/branding/<sha256>`.
+ */
 export async function uploadStaticImage(
-  user: User,
+  db: TenantClient,
   organization: Organization,
   file: File,
-  saveFileName: string,
+  purpose: StoredObjectPurpose,
+  targetFormat: "png" | "jpg" | "jpeg" | "webp" | "avif",
   maxWidth: number = config.upload.images.maxWidth,
   maxHeight: number = config.upload.images.maxHeight,
   quality: number = config.upload.images.quality
-) {
-  // E1-fix (#5): `static/` cuelga de la organización, no del email del usuario.
-  const uploadDirectory = getStaticDirectory(organization)
-
-  if (!isEnoughStorageToUploadFile(organization, file.size)) {
-    throw Error("Not enough space to upload the file")
-  }
+): Promise<string> {
   if (file.size > MAX_UPLOAD_FILE_SIZE) {
     throw new UploadValidationError(
       `El fichero supera el límite de ${MAX_UPLOAD_FILE_SIZE / 1024 / 1024} MB por fichero`
     )
   }
 
-  await mkdir(uploadDirectory, { recursive: true })
-
-  // Get target format from saveFileName extension
-  const targetFormat = path.extname(saveFileName).slice(1).toLowerCase()
-  if (!targetFormat) {
-    throw Error("Target filename must have an extension")
-  }
-
-  // Convert image and save to static folder
-  const uploadFilePath = safePathJoin(uploadDirectory, saveFileName)
-  const arrayBuffer = await file.arrayBuffer()
-  const buffer = Buffer.from(arrayBuffer)
+  const buffer = Buffer.from(await file.arrayBuffer())
 
   // El contenido debe ser realmente una imagen (magic bytes), no sólo decir serlo.
   const sniffed = sniffFileExtension(buffer)
@@ -185,11 +182,8 @@ export async function uploadStaticImage(
   /**
    * **Ronda 1 de E8, revisor #5.** `sharp` carga un binario nativo y cuesta
    * ~2,3 s la primera vez. Importarlo arriba metía ese coste en el grafo de
-   * CUALQUIER módulo que tocara `lib/uploads` —incluido
-   * `app/(app)/settings/actions.ts`, que sólo lo usa para el logotipo—, y con él
-   * en `tests/integration/authz-actions.test.ts`, que agotaba los 5 000 ms de
-   * vitest en el `await import()`. Se carga cuando de verdad hay una imagen que
-   * redimensionar; el resto del fichero no lo necesita.
+   * CUALQUIER módulo que tocara `lib/uploads`. Se carga cuando de verdad hay una
+   * imagen que redimensionar.
    */
   const { default: sharp } = await import("sharp")
   const sharpInstance = sharp(buffer).rotate().resize(maxWidth, maxHeight, {
@@ -197,26 +191,45 @@ export async function uploadStaticImage(
     withoutEnlargement: true,
   })
 
-  // Set output format and quality
+  let convertido: Buffer
+  let mimeType: string
   switch (targetFormat) {
     case "png":
-      await sharpInstance.png().toFile(uploadFilePath)
+      convertido = await sharpInstance.png().toBuffer()
+      mimeType = "image/png"
       break
     case "jpg":
     case "jpeg":
-      await sharpInstance.jpeg({ quality }).toFile(uploadFilePath)
+      convertido = await sharpInstance.jpeg({ quality }).toBuffer()
+      mimeType = "image/jpeg"
       break
     case "webp":
-      await sharpInstance.webp({ quality }).toFile(uploadFilePath)
+      convertido = await sharpInstance.webp({ quality }).toBuffer()
+      mimeType = "image/webp"
       break
     case "avif":
-      await sharpInstance.avif({ quality }).toFile(uploadFilePath)
+      convertido = await sharpInstance.avif({ quality }).toBuffer()
+      mimeType = "image/avif"
       break
     default:
-      throw Error(`Unsupported target format: ${targetFormat}`)
+      throw new UploadValidationError(`Formato de destino no admitido: ${targetFormat}`)
   }
 
-  return uploadFilePath
+  const sha256 = sha256OfBuffer(convertido)
+  await putObject(db, {
+    organizationId: organization.id,
+    kind: "BRANDING",
+    purpose,
+    sha256,
+    mimeType,
+    body: convertido,
+  })
+  return brandingUrl(sha256)
+}
+
+/** La URL con la que la interfaz pinta una imagen de marca. */
+export function brandingUrl(sha256: string): string {
+  return `/files/branding/${sha256}`
 }
 
 /**
@@ -261,12 +274,25 @@ export async function ingestUnsortedFileWithDedupe(
   input: { buffer: Buffer; filename: string; mimetype: string; metadata?: Record<string, unknown> }
 ): Promise<IngestResult> {
   const { db, organization, user } = ctx
-  if (!isEnoughStorageToUploadFile(organization, input.buffer.length)) {
-    throw new Error("Not enough space to upload the file")
-  }
 
   // E1-fix (#18): el mimetype que se persiste sale del CONTENIDO, no del cliente.
+  // **Va PRIMERO**: un ejecutable disfrazado de PDF se rechaza por lo que es, no
+  // por lo que ocupa, y el motivo que ve el usuario tiene que ser ése.
   const mimetype = assertAcceptableUpload(input.filename, input.buffer)
+
+  /**
+   * **E12 · T15 (deuda 3).** Aquí estaba `isEnoughStorageToUploadFile`, que leía
+   * `organizations.storage_used` / `storage_limit` — el contador vivo que P2
+   * prohíbe y que esta épica retira. La cuota de almacenamiento la pone
+   * `assertWithinLimit(tx, "maxStorageBytes", …)` sobre la cifra DERIVADA, en la
+   * misma transacción que la escritura, y es quien decide si es dura o blanda
+   * según el nivel de acceso (O-16).
+   *
+   * Vive aquí y no en la server action **a propósito**: una cuota cableada en la
+   * interfaz es una cuota que la pantalla siguiente se olvida de poner.
+   */
+  const { assertWithinLimit } = await import("@/models/platform-limits")
+  await assertWithinLimit(db, "maxStorageBytes", BigInt(input.buffer.length), { refDate: new Date() })
   const sha256 = sha256OfBuffer(input.buffer)
   const duplicateOf = await findFilesBySha256(db, sha256)
 
@@ -327,22 +353,11 @@ export async function ingestUnsortedFile(
 }
 
 /**
- * Recalcula y persiste el consumo de la organización.
+ * **`syncOrganizationStorage` RETIRADA en E12 · T15 (deuda 3).**
  *
- * **E11 · integración** — la cifra sale del **ALMACÉN**, no del directorio de
- * disco. Retirada la doble escritura, `getOrganizationStorageUsed` mediría un
- * árbol de carpetas cada vez más vacío y la barra del perfil enseñaría una
- * mentira decreciente.
- *
- * `organizations.storage_used` sigue **deprecada** (ADR-0019 D1.5): la cifra
- * buena es la derivada de `models/usage.ts`, que además excluye por `kind` lo
- * que no es cuota del cliente (O-12c). Esta columna se conserva mientras el
- * código heredado del perfil la lea, y su retirada está fechada en E12.
+ * Recalculaba y persistía `organizations.storage_used`, que era el contador
+ * vivo del mismo dato que `models/usage.ts` deriva de `stored_objects`: dos
+ * cifras del mismo hecho, coincidiendo sólo mientras alguien se acordara de
+ * llamar a esta función después de cada escritura. En doce sitios. La columna
+ * ya no existe y la cifra es una: `computeUsage().storageBytes`.
  */
-export async function syncOrganizationStorage(organizationId: string): Promise<number> {
-  const { storageBytesUsed } = await import("@/models/storage")
-  const { tenantDb } = await import("@/lib/db")
-  const storageUsed = await storageBytesUsed(tenantDb(organizationId))
-  await updateOrganization(organizationId, { storageUsed })
-  return Number(storageUsed)
-}

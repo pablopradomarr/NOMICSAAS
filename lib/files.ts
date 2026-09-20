@@ -147,27 +147,22 @@ export async function getDirectorySize(directoryPath: string) {
 }
 
 /**
- * Consumo de disco de una organización = tamaño de SU directorio.
+ * **`getOrganizationStorageUsed` e `isEnoughStorageToUploadFile` RETIRADAS en
+ * E12 · T15 (deuda 3).**
  *
- * E1-fix (#6): antes se sumaban los directorios (por email) de todos los
- * miembros, lo que contabilizaba en una organización ficheros que el usuario
- * había subido en OTRA organización de la que también era miembro.
+ * La primera medía un árbol de carpetas que desde E11 ya no recibe bytes; la
+ * segunda comparaba contra `organizations.storage_used` / `storage_limit`, el
+ * contador vivo que esta épica elimina del esquema por ser una **segunda fuente
+ * de verdad** del mismo dato (P2).
+ *
+ * La cuota de almacenamiento la pone ahora, en un solo sitio y sobre la cifra
+ * DERIVADA de `stored_objects`:
+ *
+ * ```ts
+ * await assertWithinLimit(tx, "maxStorageBytes", BigInt(bytes), { refDate })
+ * ```
+ *
+ * dentro de la MISMA transacción que la escritura, y decide sola si es dura o
+ * blanda según el nivel de acceso (O-16): subir el justificante de un hecho ya
+ * ocurrido no lo puede impedir un impago nuestro (E-7).
  */
-export async function getOrganizationStorageUsed(organization: OrganizationRef): Promise<number> {
-  return await getDirectorySize(getOrganizationUploadsDirectory(organization))
-}
-
-/**
- * E1 (T11): la cuota de almacenamiento es de la ORGANIZACIÓN, y desde E1-fix
- * también lo es el directorio físico (`uploads/<organizationId>/…`).
- */
-export function isEnoughStorageToUploadFile(organization: Organization, fileSize: number) {
-  // E11 · M6: las dos columnas son `bigint` (§2.7) — `integer` topaba en 2,147 GB
-  // y el plan PRO promete 100 GB. Mezclar `bigint` y `number` en una suma lanza
-  // en tiempo de ejecución, así que se compara todo en `bigint`.
-  const limit = BigInt(organization.storageLimit)
-  if (config.selfHosted.isEnabled || limit < BigInt(0)) {
-    return true
-  }
-  return BigInt(organization.storageUsed) + BigInt(Math.max(0, Math.trunc(fileSize))) <= limit
-}
