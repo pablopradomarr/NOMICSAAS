@@ -65,3 +65,6 @@ tests/e2e/.artifacts/
 tests/e2e/auth/.artifacts/
 tests/e2e/auth/.seed.json
 playwright-report/
+
+# artefactos de las suites (validacion.json por componente, auditor, perf)
+/artifacts/
