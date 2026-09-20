@@ -61,7 +61,18 @@ Acceso: login propio (E13, email + contraseña) y protección de Vercel Authenti
 | `GRANT app_maintenance TO current_user` condicional | `42501 must be able to SET ROLE` | `GRANT … WITH SET TRUE` incondicional |
 | `ALTER FUNCTION app.* OWNER TO app_maintenance` | `42501 permission denied for schema app` | `GRANT CREATE ON SCHEMA app` antes, `REVOKE` después |
 
-Para la próxima base Supabase (prod): repetir el procedimiento con las dos adaptadas (script en `scripts/` pendiente, E12) y a partir de ahí `prisma migrate deploy` normal.
+Para la próxima base Supabase (prod) **ya no hay procedimiento manual**: `scripts/supabase-bootstrap.sql` (E12 · T21) lleva las cuatro adaptaciones, es idempotente y se ejecuta **dos veces**, antes y después de `prisma migrate deploy`:
+
+```bash
+export SUPA="postgresql://postgres:<pass>@<host>:5432/postgres?sslmode=require"
+psql "$SUPA" -v ON_ERROR_STOP=1 -f scripts/supabase-bootstrap.sql   # FASE 1: roles + extensiones + registro de las dos migraciones
+DIRECT_URL="$SUPA" npx prisma migrate deploy                        # todo lo demás
+psql "$SUPA" -v ON_ERROR_STOP=1 -f scripts/supabase-bootstrap.sql   # FASE 2: políticas, puertas SECURITY DEFINER y privilegios
+```
+
+La fase 2 termina con `bootstrap CONFORME` o falla nombrando lo que falta. Las contraseñas de los tres roles las pone el operador aparte (`ALTER ROLE <rol> WITH LOGIN PASSWORD '…';`): el script no escribe ninguna.
+
+**`btree_gist`, decidido (deuda 15 de E12 cerrada).** En una base **nueva** el bootstrap la instala en el esquema `extensions` —es una extensión *trusted* desde PostgreSQL 13, así que no hace falta superusuario— y el WARN del linter no llega a aparecer. En el **preview ya existente** el WARN se **acepta con motivo escrito**: moverla exige superusuario porque hay nueve índices `EXCLUDE USING gist` dependientes, y el riesgo es nulo desde §11 (`anon`/`authenticated` no tienen ni `USAGE ON SCHEMA public`). Deja de figurar como deuda.
 
 ## 5. Datos de demo
 Opción A (E11): Configuración → Organización → «Crear organización de demo» (fixture reproducible de 84 asientos en una organización propia con `isDemo` inmutable). Esperado: INGRESOS 6.250.000 · MC1 5.670.000 · MC2 3.276.000 · MC3 3.084.110 · EBITDA 2.390.430 · EBIT 1.995.430 · BAI 1.996.430 · RESULTADO 1.497.322 (céntimos).
