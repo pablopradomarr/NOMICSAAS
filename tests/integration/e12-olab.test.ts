@@ -52,7 +52,6 @@ process.env.STORAGE_PREFIX = "erp-test-e12"
 process.env.PLATFORM_SIGNING_KEY = SIGNING_KEY.toString("utf8")
 process.env.PLATFORM_SIGNING_KEY_ID = KEY_ID
 
-const { tenantTransaction } = await import("@/lib/db")
 const { loadFixtureIntoOrg } = await import("@/scripts/load-fixture")
 const {
   buildBackupArchive,
