@@ -1120,9 +1120,23 @@ export async function restoreBackupIntoOrganization(options: RestoreOptions): Pr
          * `exchange_rate_id`— no están en el mapa y pasan intactas, que es
          * justamente lo que se quiere.
          *
-         * Esto NO afecta a los sellos comparables: `ledgerHash` y el analítico
-         * están definidos **sin uuid** precisamente por esto (ADR-0011), y los
-         * sellos de FILA que sí los llevan se vuelven a sellar más abajo.
+         * **Qué sellos sobreviven a esto, con precisión** (corregido en E12 ·
+         * T11, que lo midió):
+         *
+         *  · `ledgerHash` y el `analyticsKey` **que calcula
+         *    `computeContentSeals`** están definidos sobre **claves naturales**
+         *    —fechas, números de asiento y CÓDIGOS de proyecto, CECO y línea de
+         *    negocio—, así que son comparables entre organizaciones y la
+         *    comprobación 5 los enfrenta byte a byte.
+         *  · El `analyticsKey` que guardan `InvariantRun` y `ReportRun` es OTRO:
+         *    `lib/analytics/hash.ts` lo compone sobre `entryId`, `projectId`,
+         *    `costCenterId` y `businessLineId`, que son uuid. Ése **no puede**
+         *    coincidir en una copia, y no es un fallo de la restauración: es un
+         *    sello de detección de mutaciones DENTRO de una organización, del
+         *    mismo tipo que `entry_hash`. Hacerlo comparable exigiría reescribir
+         *    su forma canónica sobre claves naturales, que es **Nivel 2**
+         *    (ADR-0011) e invalidaría todos los sellos ya emitidos.
+         *  · Los sellos de FILA que llevan uuid se vuelven a sellar más abajo.
          */
         const remap = new Map<string, string>()
         for (const entry of manifest.tables) {
@@ -1215,18 +1229,37 @@ export async function restoreBackupIntoOrganization(options: RestoreOptions): Pr
             return true
           })
 
+          const crudo = tx as unknown as { $queryRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown> }
+
           for (let desde = 0; desde < insertables.length; desde += RESTORE_BATCH_ROWS) {
             const lote = insertables.slice(desde, desde + RESTORE_BATCH_ROWS)
+            /**
+             * **El punto de retorno, y por qué es obligatorio.**
+             *
+             * En PostgreSQL, una sentencia que falla **aborta la transacción
+             * entera**: todo lo que venga después responde `25P02` hasta el
+             * `ROLLBACK`. Sin un `SAVEPOINT`, el reintento fila a fila que
+             * identifica la línea culpable no podría ni ejecutarse, y el motivo
+             * que llegaría al operador sería «current transaction is aborted» en
+             * vez de la fila y el porqué — justo lo contrario de lo que G-15
+             * arregló. Lo destapó el caso negativo 3 de T11.
+             */
+            await crudo.$queryRawUnsafe(`SAVEPOINT lote_restauracion`)
             try {
               await insertRows(tx, table, lote)
+              await crudo.$queryRawUnsafe(`RELEASE SAVEPOINT lote_restauracion`)
             } catch {
-              // El lote no dice QUÉ fila lo rompió. Se repite una a una: el
-              // trabajo ya va a abortar, así que el coste da igual y lo que
-              // importa es el mensaje.
+              await crudo.$queryRawUnsafe(`ROLLBACK TO SAVEPOINT lote_restauracion`)
+              // El lote no dice QUÉ fila lo rompió. Se repiten una a una, cada
+              // una con su punto de retorno: el trabajo ya va a abortar, así que
+              // el coste da igual y lo que importa es el mensaje.
               for (let i = 0; i < lote.length; i += 1) {
+                await crudo.$queryRawUnsafe(`SAVEPOINT fila_restauracion`)
                 try {
                   await insertRow(tx, table, lote[i])
+                  await crudo.$queryRawUnsafe(`RELEASE SAVEPOINT fila_restauracion`)
                 } catch (error) {
+                  await crudo.$queryRawUnsafe(`ROLLBACK TO SAVEPOINT fila_restauracion`).catch(() => undefined)
                   throw new RestoreAbort(
                     table,
                     (lote[i] as { [LINE_NUMBER]?: number })[LINE_NUMBER] ?? desde + i + 1,
@@ -1727,7 +1760,26 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
     await enTransaccion(async (tx) => {
       // 6 · BARRIDO de las nueve familias + correspondencia `File` ↔ objeto.
       const sweep = input.sweep ?? defaultInvariantSweep
-      const swept = await sweep(tx, input.refDate)
+      /**
+       * **E12 · T11 — el barrido del destino se hace con la fecha del ORIGEN.**
+       *
+       * La comprobación es *relativa* (H-6): enfrenta los invariantes en FAIL del
+       * origen con los del destino. Para que eso signifique algo, las dos
+       * fotografías tienen que responder a **la misma pregunta**, y media docena
+       * de invariantes dependen de la fecha de referencia: `I8` («ningún asiento
+       * posterior a la fecha»), `I-E7-14` (continuidad entre ejercicios), las
+       * ventanas de IVA… Barrer el origen el día de la copia y el destino el día
+       * de la restauración —que es lo que pasaba— hacía que invariantes en FAIL
+       * «desaparecieran» al restaurar y que la copia se marcara infiel sin serlo.
+       * Lo destapó T11 con la acción real, que fecha la copia con el reloj y la
+       * restauración con otro.
+       *
+       * Con `sourceSweep` en el manifest se usa **su** fecha (`createdAt`); sin
+       * él —copias anteriores a H-6— se mantiene la del llamante, porque no hay
+       * con qué comparar y el criterio vuelve a ser absoluto.
+       */
+      const refDelBarrido = manifest.sourceSweep ? new Date(manifest.createdAt) : input.refDate
+      const swept = await sweep(tx, refDelBarrido)
       const fileRows = await tx.file.findMany({ select: { sha256: true } })
       const restored = new Set(input.filesRestored)
       const orphans = fileRows.filter((row) => !restored.has(row.sha256))
