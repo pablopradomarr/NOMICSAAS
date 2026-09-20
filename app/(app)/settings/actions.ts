@@ -23,7 +23,6 @@ import { SELF_HOSTED_ONLY_SETTINGS, SettingsMap, updateSettings } from "@/models
 import { updateUser } from "@/models/users"
 import { Organization, Prisma, User } from "@/prisma/client"
 import { revalidatePath } from "next/cache"
-import path from "path"
 
 /**
  * **E8 ronda 2 (R2-3) — `lib/uploads` se carga cuando hay una imagen que subir.**
@@ -128,7 +127,7 @@ export async function saveBusinessSettingsAction(
   _prevState: ActionState<Organization> | null,
   formData: FormData
 ): Promise<ActionState<Organization>> {
-  const { db, org, user } = await requireOrg("ADMIN")
+  const { db, org } = await requireOrg("ADMIN")
   const validatedForm = organizationBusinessFormSchema.safeParse(Object.fromEntries(formData))
 
   if (!validatedForm.success) {

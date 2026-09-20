@@ -34,8 +34,16 @@ function run(over: Partial<CronRunRow> = {}): CronRunRow {
 }
 
 describe("catálogo de jobs", () => {
-  it("son los CUATRO de §7.1, ni uno más", () => {
-    expect([...CRON_JOBS]).toEqual(["recurring-due", "invariant-sweep", "backup-worker", "retention"])
+  it("son los SEIS: los cuatro de §7.1 de E11 y los dos que E12 · T20 cierra, ni uno más", () => {
+    // E11 §0.3 dejó `backup-schedule` y `email-sync` fechados en E12 (deuda 14).
+    expect([...CRON_JOBS]).toEqual([
+      "recurring-due",
+      "invariant-sweep",
+      "backup-worker",
+      "retention",
+      "backup-schedule",
+      "email-sync",
+    ])
     expect(Object.keys(CRON_JOB_SPECS).sort()).toEqual([...CRON_JOBS].sort())
   })
 
@@ -48,7 +56,9 @@ describe("catálogo de jobs", () => {
 
   it("isCronJobName no deja pasar un nombre inventado", () => {
     expect(isCronJobName("retention")).toBe(true)
-    expect(isCronJobName("email-sync")).toBe(false)
+    expect(isCronJobName("email-sync")).toBe(true) // E12 · T20: ya es un job del reloj
+    expect(isCronJobName("backup-schedule")).toBe(true)
+    expect(isCronJobName("inventado")).toBe(false)
     expect(isCronJobName("../../etc/passwd")).toBe(false)
   })
 })

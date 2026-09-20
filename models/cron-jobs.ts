@@ -129,6 +129,10 @@ export async function runCronJob(job: CronJobName, ctx: CronJobContext): Promise
       return await runBackupWorker(ctx)
     case "retention":
       return await runRetention(ctx)
+    case "backup-schedule":
+      return await runBackupSchedule(ctx)
+    case "email-sync":
+      return await runEmailSyncJob(ctx)
   }
 }
 
@@ -315,29 +319,156 @@ async function runInvariantSweep(ctx: CronJobContext): Promise<CronJobResult> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * El worker lo entrega la **ola B** (T8: volcado en streaming por lotes con
- * cursor). Esta rama lo invoca si existe y, si todavía no, **lo dice**: un job
- * que se declarara `DONE` sin haber tocado un solo `BackupJob` sería un reloj
- * mintiendo, y `/api/health` lo daría por bueno.
+ * **E12 · T20** — `advanceBackupJobs` existe desde T14 (emisión en streaming con
+ * carrete y subida multipart). La comprobación de que el símbolo está se
+ * conserva a propósito: si un refactor lo retirase, el job diría `PARTIAL` con el
+ * motivo en vez de declararse `DONE` sin haber tocado un solo `BackupJob`, que es
+ * un reloj mintiendo y `/api/health` lo daría por bueno.
  */
-async function runBackupWorker(_ctx: CronJobContext): Promise<CronJobResult> {
+async function runBackupWorker(ctx: CronJobContext): Promise<CronJobResult> {
+  const { advanceBackupJobsOf } = await import("@/models/backups")
+  const hasBudget = () => hasBudgetLeft(Date.now() - ctx.startedAtMs, ctx.budgetMs)
+  let processed = 0
+  let failed = 0
+  let last: string | null = cursorOrgId(ctx.cursor)
+
+  for (const organizationId of await activeOrganizationIds(last)) {
+    if (!hasBudget()) return { status: "PARTIAL", processed, failed, cursor: { lastOrganizationId: last } }
+    last = organizationId
+    try {
+      const r = await advanceBackupJobsOf(organizationId, ctx.refDate, { hasBudget })
+      processed += r.processed
+      failed += r.failed
+    } catch (e) {
+      failed += 1
+      await recordPlatformAudit({
+        actor: "cron",
+        action: PLATFORM_ACTIONS.CRON_FINISHED,
+        organizationId,
+        detail: { job: "backup-worker", reason: (e as Error).message.slice(0, 500) },
+      }).catch(() => undefined)
+    }
+  }
+
+  return { status: failed > 0 ? "PARTIAL" : "DONE", processed, failed, cursor: {} }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5 · `backup-schedule` — la copia que nadie tiene que acordarse de pedir
+//     (E12 · T20, deuda 14)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Encola una copia por organización según su `backupSchedule`.
+ *
+ * **Idempotencia en dos niveles, y hacen falta los dos.** El de fuera es el de
+ * siempre: `cron_runs (job, periodKey)` impide que el job entero corra dos veces
+ * el mismo día. El de dentro es por organización y por periodo de cadencia: un
+ * `PARTIAL` reanudado, o un disparo manual desde `/api/cron`, vuelven a entrar en
+ * el bucle, y sin esta segunda guardia producirían una segunda copia del mismo
+ * periodo — que es exactamente lo que I-E11-12 declara que no puede pasar.
+ *
+ * **No consume cuota** (O-4): el `trigger` es `SCHEDULED`, y `requestBackup` lo
+ * exime. Una copia programada que dejara al cliente sin su copia manual del mes
+ * sería un castigo por tener copias.
+ *
+ * La copia **se encola y se ejecuta en el mismo paso** mientras quede
+ * presupuesto; lo que no quepa se queda en `QUEUED` y lo recoge `backup-worker`,
+ * que corre cada cinco minutos. Por eso el job puede terminar `PARTIAL` con
+ * cursor sin que se pierda nada.
+ */
+async function runBackupSchedule(ctx: CronJobContext): Promise<CronJobResult> {
+  const { requestBackup, runBackupJob } = await import("@/models/backups")
+  let processed = 0
+  let failed = 0
+  let last: string | null = cursorOrgId(ctx.cursor)
+
+  for (const organizationId of await activeOrganizationIds(last)) {
+    if (!hasBudgetLeft(Date.now() - ctx.startedAtMs, ctx.budgetMs)) {
+      return { status: "PARTIAL", processed, failed, cursor: { lastOrganizationId: last } }
+    }
+    last = organizationId
+
+    try {
+      const db = tenantDb(organizationId)
+      const organization = await db.organization.findFirst({
+        where: { id: organizationId },
+        select: { backupSchedule: true, backupRetentionDays: true },
+      })
+      const cadencia = organization?.backupSchedule ?? "NONE"
+      if (cadencia === "NONE") continue
+
+      // El periodo de devengo de la copia: la semana ISO o el mes, según la
+      // cadencia. Sale de `refDate`, nunca del reloj (O-13).
+      const desde = cadencia === "WEEKLY" ? semanaAtras(ctx.refDate) : mesAtras(ctx.refDate)
+      const yaHay = await db.backupJob.count({
+        where: { trigger: "SCHEDULED", createdAt: { gte: desde }, status: { notIn: ["FAILED"] } },
+      })
+      if (yaHay > 0) continue
+
+      const job = await requestBackup({
+        organizationId,
+        trigger: "SCHEDULED",
+        refDate: ctx.refDate,
+        retentionDays: organization?.backupRetentionDays ?? 30,
+      })
+      await runBackupJob(organizationId, job.id, ctx.refDate)
+      processed += 1
+    } catch (error) {
+      // Aislamiento (regla 2): que la 7 falle no impide que corra la 8.
+      failed += 1
+      await recordPlatformAudit({
+        actor: "cron",
+        action: PLATFORM_ACTIONS.CRON_FINISHED,
+        organizationId,
+        detail: { job: "backup-schedule", reason: (error as Error).message.slice(0, 500) },
+      }).catch(() => undefined)
+    }
+  }
+
+  return { status: failed > 0 ? "PARTIAL" : "DONE", processed, failed, cursor: {} }
+}
+
+const DIA_MS = 24 * 60 * 60 * 1000
+
+/** Siete días antes de `refDate`, en UTC. Ventana de la cadencia semanal. */
+function semanaAtras(refDate: Date): Date {
+  return new Date(refDate.getTime() - 7 * DIA_MS)
+}
+
+/** El día 1 del mes de `refDate`, en UTC. Ventana de la cadencia mensual. */
+function mesAtras(refDate: Date): Date {
+  return new Date(Date.UTC(refDate.getUTCFullYear(), refDate.getUTCMonth(), 1))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6 · `email-sync` — la ingesta documental, en el reloj (E12 · T20, deuda 14)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Recoge los adjuntos de los buzones configurados.
+ *
+ * Era lo último que seguía dependiendo de `npm run email:sync` lanzado a mano o
+ * de un cron externo del contenedor. Aquí entra en el mismo reloj que los demás,
+ * con su fila en `cron_runs` y su idempotencia por `(job, periodKey)`.
+ *
+ * `respectInterval: true` porque cada servidor declara su `syncInterval`: el job
+ * corre cada quince minutos, pero un buzón configurado cada seis horas se
+ * consulta cada seis horas. El presupuesto del cron y el intervalo del buzón son
+ * dos cosas distintas y las dos mandan.
+ *
+ * **Corre en mora** (§7.2): es ingesta documental, y registrar el justificante
+ * de un hecho ya ocurrido no lo puede impedir un impago nuestro (enmienda E-7).
+ */
+async function runEmailSyncJob(ctx: CronJobContext): Promise<CronJobResult> {
   try {
-    const mod = (await import("@/models/backups")) as unknown as {
-      advanceBackupJobs?: (opts: { budgetMs: number }) => Promise<{ processed: number; failed: number }>
-    }
-    if (typeof mod.advanceBackupJobs !== "function") {
-      return {
-        status: "PARTIAL",
-        processed: 0,
-        failed: 0,
-        cursor: {},
-        error: "El worker de backup (ola B · T8, models/backups.advanceBackupJobs) todavía no existe",
-      }
-    }
-    const r = await mod.advanceBackupJobs({ budgetMs: _ctx.budgetMs })
-    return { status: "DONE", processed: r.processed, failed: r.failed }
-  } catch (e) {
-    return { status: "FAILED", processed: 0, failed: 0, error: (e as Error).message }
+    const { runEmailSync } = await import("@/lib/email-sync/ingest")
+    const results = await runEmailSync({ respectInterval: true })
+    const failed = results.filter((r) => Boolean((r as { error?: unknown }).error)).length
+    void ctx
+    return { status: failed > 0 ? "PARTIAL" : "DONE", processed: results.length, failed, cursor: {} }
+  } catch (error) {
+    return { status: "FAILED", processed: 0, failed: 0, error: (error as Error).message }
   }
 }
 
@@ -361,15 +492,27 @@ async function runRetention(ctx: CronJobContext): Promise<CronJobResult> {
   processed += await pruneExpiredBuckets(ctx.refDate)
 
   try {
-    const mod = (await import("@/models/backups")) as unknown as {
-      expireBackups?: (refDate: Date) => Promise<number>
+    /**
+     * **E12 · T20.** Aquí se llamaba a `expireBackups(refDate)` con un solo
+     * argumento cuando la firma pide `(organizationId, refDate)`: la fecha
+     * viajaba como identificador de organización, la llamada reventaba y este
+     * mismo `catch` se lo tragaba. La retención de ZIP llevaba una épica sin
+     * ejecutarse y el job terminaba en verde. `expireBackupsEverywhere` recorre
+     * las organizaciones con copias caducadas y su firma no se puede confundir.
+     */
+    const { expireBackups } = await import("@/models/backups")
+    for (const organizationId of await activeOrganizationIds(null)) {
+      processed += await expireBackups(organizationId, ctx.refDate)
     }
-    if (typeof mod.expireBackups === "function") {
-      processed += await mod.expireBackups(ctx.refDate)
+  } catch (error) {
+    // Aislamiento: que la caducidad falle no invalida la limpieza de cubos, que
+    // ya se ha hecho. Pero se CUENTA, en vez de desaparecer.
+    return {
+      status: "PARTIAL",
+      processed,
+      failed: failed + 1,
+      error: `caducidad de copias: ${(error as Error).message}`,
     }
-  } catch {
-    // La retención de ZIP es de la ola B (T8/T9). Su ausencia no invalida la
-    // limpieza de cubos, que sí se ha hecho.
   }
 
   // `scripts/prune-runs.ts` **se conserva** y el cron lo invoca como biblioteca

@@ -61,7 +61,7 @@ beforeAll(() => {
 })
 
 const user = { id: "user-1", email: "u@example.com" } as unknown as User
-const organization = { id: "org-1", storageUsed: 0, storageLimit: -1 }
+const organization = { id: "org-1" }
 // E1 (T10/T11): syncServer recibe el contexto de tenant, no un User suelto.
 const ctx = { db: {}, organization, user } as unknown as Parameters<typeof syncServer>[1]
 

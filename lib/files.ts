@@ -2,7 +2,6 @@ import { File, Organization, Transaction } from "@/prisma/client"
 import { formatDate } from "date-fns"
 import { access, constants, readdir, stat } from "fs/promises"
 import path from "path"
-import config from "./config"
 
 export const FILE_UPLOAD_PATH = path.resolve(process.env.UPLOAD_PATH || "./uploads")
 export const FILE_UNSORTED_DIRECTORY_NAME = "unsorted"

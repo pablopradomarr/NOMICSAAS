@@ -239,6 +239,9 @@ model Organization {
   depreciationStartsOn DepreciationStart @default(MES_SIGUIENTE) @map("depreciation_starts_on")
   /// Retención de las copias de seguridad, dentro del máximo que admita el plan.
   backupRetentionDays Int @default(30) @map("backup_retention_days")
+  /// E12 · T20 — cadencia de la copia automática. `SCHEDULED` no consume cuota
+  /// (O-4): la portabilidad no la puede desactivar un precio.
+  backupSchedule BackupScheduleCadence @default(WEEKLY) @map("backup_schedule")
 
   onboardingRun OnboardingRun?
   /// E12 · ADR-0020 — excepciones de operador vivas o caducadas de esta organización.
@@ -3928,6 +3931,17 @@ enum StoredObjectKind {
 /// E12 · T15 — para qué sirve un objeto de `BRANDING`. Los bytes se nombran por
 /// su `sha256`, así que la clave no lo dice; esto sí, y con un enumerado en vez
 /// de texto libre (lección O-21).
+/// E12 · T20 — cada cuánto se encola sola una copia. Tres valores y un
+/// enumerado: una expresión cron en una columna es texto libre que alguien
+/// escribe mal una vez y nadie vuelve a mirar (lección O-21).
+enum BackupScheduleCadence {
+  NONE
+  WEEKLY
+  MONTHLY
+
+  @@map("backup_schedule_cadence")
+}
+
 enum StoredObjectPurpose {
   ORG_LOGO
   USER_AVATAR

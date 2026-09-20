@@ -242,12 +242,11 @@ async function main() {
     }
   }
 
-  // La cuota se mide sobre el directorio de la organización: si no se recalcula,
-  // `storage_used` sigue reflejando un reparto que ya no existe (#10).
-  for (const organizationId of organizacionesTocadas) {
-    // E12 · T15: `organizations.storage_used` ya no existe. El uso se DERIVA
-    // de `stored_objects` (`models/usage.ts`), así que no hay nada que poner al día.
-  }
+  // **E12 · T15.** Aquí se recalculaba `organizations.storage_used` de cada
+  // organización tocada (#10). La columna ya no existe: el uso se DERIVA de
+  // `stored_objects` (`models/usage.ts`), así que no hay contador que poner al
+  // día — sólo se dice cuántas organizaciones se han movido.
+  console.log(`[uploads] organizaciones afectadas: ${organizacionesTocadas.size}`)
 
   console.log(`[uploads] hecho. movidos=${moved} omitidos=${skipped} sin destino=${sinDestino.length}`)
 }

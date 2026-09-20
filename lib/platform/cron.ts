@@ -11,7 +11,15 @@
  * de retraso, o dos veces**, produce el mismo asiento y el mismo `inputHash`.
  */
 
-export const CRON_JOBS = ["recurring-due", "invariant-sweep", "backup-worker", "retention"] as const
+export const CRON_JOBS = [
+  "recurring-due",
+  "invariant-sweep",
+  "backup-worker",
+  "retention",
+  // **E12 · T20 (deuda 14)** — los dos que E11 §0.3 dejó fechados aquí.
+  "backup-schedule",
+  "email-sync",
+] as const
 
 export type CronJobName = (typeof CRON_JOBS)[number]
 
@@ -31,10 +39,13 @@ export type CronJobSpec = {
 }
 
 /**
- * Los cuatro jobs (§7.1). `backup-schedule` y `email-sync` salen a E12 (§0.3):
- * el primero porque el backup manual y el de salida cubren lo que el ROADMAP
- * pide y lo que O-4 exige; el segundo porque es funcionalidad heredada de
- * TaxHacker, no plataforma.
+ * Los **seis** jobs (§7.1 de E11, más los dos de E12 · T20).
+ *
+ * E11 dejó `backup-schedule` y `email-sync` fuera con fecha de cierre en E12:
+ * el primero porque el backup manual y el de salida cubrían lo mínimo, el
+ * segundo porque es funcionalidad heredada. Los dos entran aquí, con la misma
+ * regla que los otros cuatro: `refDate` explícito e idempotencia por
+ * `(job, periodKey)`.
  */
 export const CRON_JOB_SPECS: Readonly<Record<CronJobName, CronJobSpec>> = {
   "recurring-due": {
@@ -60,6 +71,24 @@ export const CRON_JOB_SPECS: Readonly<Record<CronJobName, CronJobSpec>> = {
     description:
       "Avanza el cursor de los BackupJob vivos. Corre siempre: la portabilidad no la puede " +
       "desactivar un precio (O-4).",
+    runsInArrears: true,
+  },
+  "backup-schedule": {
+    job: "backup-schedule",
+    cadence: "DAILY",
+    description:
+      "Encola la copia programada de cada organización que la tenga configurada. Corre siempre y NO consume " +
+      "cuota (trigger SCHEDULED, O-4): la portabilidad no la puede desactivar un precio. Idempotente por " +
+      "(job, periodKey) y, dentro del día, por organización: dos disparos no producen dos copias.",
+    runsInArrears: true,
+  },
+  "email-sync": {
+    job: "email-sync",
+    cadence: "EVERY_15_MIN",
+    description:
+      "Recoge los adjuntos de los buzones configurados y los deja en la bandeja de entrada. Es INGESTA " +
+      "documental, no contabilidad: corre en mora porque registrar un justificante de un hecho ya ocurrido " +
+      "no lo puede impedir un impago nuestro (E-7). Respeta el syncInterval de cada servidor.",
     runsInArrears: true,
   },
   retention: {

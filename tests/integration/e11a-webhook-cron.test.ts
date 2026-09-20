@@ -312,7 +312,11 @@ describe("`POST /api/cron/[job]`", () => {
   })
 
   it("un job inexistente responde igual que un token malo: 401, no 404", async () => {
-    const res = await cronPOST(cronRequest(CRON_SECRET, "2026-09-27T04:00:00Z"), params("email-sync"))
+    // **E12 · T20**: `email-sync` ya NO es un nombre inventado — es uno de los
+    // seis jobs del reloj (deuda 14 de §6, cerrada). El caso que este test
+    // protege —que un nombre desconocido no revele el catálogo respondiendo 404—
+    // se ejerce con uno que de verdad no existe.
+    const res = await cronPOST(cronRequest(CRON_SECRET, "2026-09-27T04:00:00Z"), params("job-que-no-existe"))
     expect(res.status).toBe(401)
   })
 

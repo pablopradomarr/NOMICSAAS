@@ -63,6 +63,8 @@ import { BACKUP_TENANT_MODELS, prismaSchemaMeta, tenantTransaction, type TenantT
 import {
   BACKUP_FORMAT_VERSION,
   auditLogCanonicalSha256,
+  csvChunkOf,
+  csvColumnsOf,
   backupInventory,
   compareCounts,
   decodeRow,
@@ -155,7 +157,15 @@ export async function computeContentSeals(tx: TenantTransactionClient): Promise<
 // Volcado
 // ─────────────────────────────────────────────────────────────────────────────
 
-type TableDump = { name: string; rows: number; jsonl: string; sha256: string; spoolPath: string }
+type TableDump = {
+  name: string
+  rows: number
+  jsonl: string
+  sha256: string
+  spoolPath: string
+  /** **E12 · T20** — la segunda representación. `null` cuando la tabla va vacía. */
+  csv: { path: string; sha256: string; spoolPath: string } | null
+}
 
 /** Nombre de la columna de tenant. Se quita del volcado: lo inyecta el destino. */
 const TENANT_COLUMN = "organization_id"
@@ -182,8 +192,12 @@ const DUMP_BATCH_ROWS = 2_000
  */
 async function dumpTable(tx: TenantTransactionClient, table: string, spoolDir: string): Promise<TableDump> {
   const spoolPath = path.join(spoolDir, `${table}.jsonl`)
+  const csvSpoolPath = path.join(spoolDir, `${table}.csv`)
   const salida = createWriteStream(spoolPath)
+  const salidaCsv = createWriteStream(csvSpoolPath)
   const hash = createHash("sha256")
+  const hashCsv = createHash("sha256")
+  let columnas: string[] | null = null
   let rows = 0
   let cursor: string | number | bigint | null = null
   let fallo: Error | null = null
@@ -215,6 +229,16 @@ async function dumpTable(tx: TenantTransactionClient, table: string, spoolDir: s
     }
   }
 
+  /**
+   * **E12 · T20** — la representación CSV se escribe **en el mismo recorrido**.
+   * Volcar la tabla dos veces para producir dos formatos sería pagar el doble
+   * por el mismo dato, y con 150 000 líneas eso se nota.
+   */
+  const escribirCsv = (texto: string): void => {
+    hashCsv.update(texto)
+    salidaCsv.write(texto)
+  }
+
   try {
     for (;;) {
       const lote: Record<string, unknown>[] = await tx.$queryRawUnsafe<Record<string, unknown>[]>(
@@ -229,7 +253,13 @@ async function dumpTable(tx: TenantTransactionClient, table: string, spoolDir: s
         // **`organization_id` no se vuelca**: así un backup no puede aterrizar
         // en otra organización por accidente. Lo inyecta `tenantDb` al restaurar.
         delete copy[TENANT_COLUMN]
-        await escribir(rows === 0 ? encodeRow(copy) : `\n${encodeRow(copy)}`)
+        const linea = encodeRow(copy)
+        await escribir(rows === 0 ? linea : `\n${linea}`)
+        if (columnas === null) {
+          columnas = csvColumnsOf(linea)
+          escribirCsv(columnas.join(","))
+        }
+        escribirCsv(`\n${csvChunkOf([linea], columnas)}`)
         rows += 1
       }
       const ultimo = lote[lote.length - 1].id
@@ -241,9 +271,19 @@ async function dumpTable(tx: TenantTransactionClient, table: string, spoolDir: s
     }
   } finally {
     await new Promise<void>((resolve, reject) => salida.end((error?: Error | null) => (error ? reject(error) : resolve())))
+    await new Promise<void>((resolve, reject) => salidaCsv.end((error?: Error | null) => (error ? reject(error) : resolve())))
   }
 
-  return { name: table, rows, jsonl: `data/${table}.jsonl`, sha256: hash.digest("hex"), spoolPath }
+  return {
+    name: table,
+    rows,
+    jsonl: `data/${table}.jsonl`,
+    sha256: hash.digest("hex"),
+    spoolPath,
+    // Una tabla vacía no produce CSV: un fichero con cero bytes y sin cabecera
+    // no aporta nada y ensucia el listado del archivo.
+    csv: rows === 0 ? null : { path: `csv/${table}.csv`, sha256: hashCsv.digest("hex"), spoolPath: csvSpoolPath },
+  }
 }
 
 /**
@@ -479,6 +519,13 @@ export async function planBackupArchive(organizationId: string, options: BuildBa
         derivedSeals,
         auditLog,
         tables: dumps.map(({ name, rows, jsonl, sha256 }) => ({ name, rows, jsonl, sha256 })),
+        /**
+         * **T20** — el manifest sella las DOS representaciones. El JSONL manda:
+         * la restauración no mira el CSV jamás (§ `BackupManifest.csv`).
+         */
+        csv: dumps
+          .filter((dump): dump is TableDump & { csv: NonNullable<TableDump["csv"]> } => dump.csv !== null)
+          .map((dump) => ({ name: dump.name, rows: dump.rows, path: dump.csv.path, sha256: dump.csv.sha256 })),
         globalRefs: { exchangeRates: { rows: exchangeRates.rows, sha256: exchangeRates.sha256 } },
         files: fileEntries,
         closing,
@@ -521,6 +568,9 @@ export async function planBackupArchive(organizationId: string, options: BuildBa
           yield { name: "README.txt", source: Buffer.from(README_ES, "utf8") }
           for (const dump of dumps) {
             yield { name: dump.jsonl, source: () => spoolChunks(dump.spoolPath) }
+          }
+          for (const dump of dumps) {
+            if (dump.csv) yield { name: dump.csv.path, source: () => spoolChunks(dump.csv!.spoolPath) }
           }
           yield { name: "global/exchange_rates.jsonl", source: Buffer.from(exchangeRates.body, "utf8") }
           yield { name: "seals.json", source: Buffer.from(seals, "utf8") }
@@ -628,6 +678,12 @@ sha256 y el registro de auditoría.
                    parte. Se verifica ANTES de descomprimir nada.
   signature.txt    Firma HMAC-SHA256 del manifest, con el identificador de clave.
   data/*.jsonl     Una fila por línea, con los tipos declarados explícitamente.
+                   ES LA FUENTE: la restauración lee de aquí y de ningún otro sitio.
+  csv/*.csv        Los mismos datos en CSV, para abrirlos en una hoja de cálculo
+                   o llevártelos a otro programa. Es una SEGUNDA representación:
+                   el CSV no distingue la cuenta "0400" del número 400, no tiene
+                   nulos ni binarios, y por eso NO se restaura desde él. El
+                   manifest sella los dos; si discrepan, manda el JSONL.
   global/          Tasas de cambio referenciadas (son datos públicos del BCE).
   files/           Los documentos, nombrados por su sha256.
   seals.json       Sellos, numeración por ejercicio, series y estado del cierre.
@@ -1750,6 +1806,70 @@ export async function runBackupJob(organizationId: string, backupJobId: string, 
     })
     throw error
   }
+}
+
+/**
+ * **E12 · T20 — el worker que `backup-worker` invocaba y no existía.**
+ *
+ * `models/cron-jobs.ts` comprobaba si este símbolo estaba y, al no estarlo,
+ * devolvía `PARTIAL` con «el worker de la ola B todavía no existe» en cada
+ * ejecución desde E11. Es decir: **el job llevaba una épica entera sin hacer
+ * nada y diciéndolo en un sitio que nadie leía**. Aquí está.
+ *
+ * Recorre los `BackupJob` en `QUEUED` de todas las organizaciones, en orden de
+ * antigüedad, y los ejecuta **mientras quede presupuesto**. Lo que no cabe se
+ * queda encolado para la ejecución siguiente, que es lo que un worker con
+ * cadencia de cinco minutos tiene que hacer; declarar `DONE` habiendo dejado
+ * trabajo sin hacer sería el mismo reloj mintiendo, de la otra manera.
+ *
+ * Un fallo en una organización no detiene a las demás: se cuenta en `failed`, el
+ * motivo queda escrito en la fila (`runBackupJob` lo hace) y el job sigue.
+ */
+/**
+ * **E12 · T20 — el worker que `backup-worker` invocaba y no existía.**
+ *
+ * `models/cron-jobs.ts` comprobaba si el símbolo estaba y, al no estarlo,
+ * devolvía `PARTIAL` con «el worker de la ola B todavía no existe» en cada
+ * ejecución desde E11: **el job llevaba una épica entera sin hacer nada y
+ * diciéndolo en un sitio que nadie leía**.
+ *
+ * Trabaja sobre UNA organización —la enumeración es del reloj, que es quien
+ * tiene el cursor y el presupuesto— y ejecuta sus `BackupJob` en `QUEUED`
+ * mientras `hasBudget()` lo permita. Lo que no cabe se queda encolado para la
+ * pasada siguiente, que es lo que un worker con cadencia de cinco minutos tiene
+ * que hacer; declararlo `DONE` habiendo dejado trabajo sería el mismo reloj
+ * mintiendo, de la otra manera.
+ */
+export async function advanceBackupJobsOf(
+  organizationId: string,
+  refDate: Date,
+  options: { hasBudget: () => boolean; max?: number }
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0
+  let failed = 0
+
+  const pendientes = await tenantTransaction(organizationId, async (tx) =>
+    await tx.backupJob.findMany({
+      where: { status: "QUEUED" },
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+      take: options.max ?? 20,
+    })
+  )
+
+  for (const job of pendientes) {
+    if (!options.hasBudget()) break
+    try {
+      await runBackupJob(organizationId, job.id, refDate)
+      processed += 1
+    } catch {
+      // `runBackupJob` ya ha dejado la fila en FAILED con el motivo escrito: el
+      // CHECK `backup_jobs_done_is_complete` impide que se disfrace de DONE.
+      failed += 1
+    }
+  }
+
+  return { processed, failed }
 }
 
 /**

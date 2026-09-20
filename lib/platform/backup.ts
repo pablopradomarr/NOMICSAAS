@@ -148,6 +148,45 @@ export function decodeValue(typed: TypedValue): unknown {
   }
 }
 
+/**
+ * **E12 · T20** — una fila JSONL → una fila CSV (RFC 4180).
+ *
+ * Reglas, y las tres son deliberadas:
+ *
+ *  - **Los nulos salen vacíos**, no como `null`: un CSV no tiene nulos, y
+ *    fingir que sí es peor que decirlo en la cabecera del formato.
+ *  - **Los binarios salen como su longitud**, no como base64: nadie va a abrir
+ *    un PDF desde una celda, y meter megabytes en una hoja de cálculo la rompe.
+ *    Los bytes están en `files/`, que es donde tienen que estar.
+ *  - **Comillas, saltos de línea y separadores se escapan** duplicando la
+ *    comilla, que es lo único que toda hoja de cálculo entiende igual.
+ */
+export function csvCell(typed: TypedValue): string {
+  if (typed.t === "z") return ""
+  if (typed.t === "y") return `«${Buffer.from(String(typed.v), "base64").length} bytes»`
+  const raw = typed.t === "j" ? JSON.stringify(typed.v) : String(typed.v)
+  return /[",\n\r]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw
+}
+
+/**
+ * Convierte un bloque de líneas JSONL a CSV. Las columnas se toman de la PRIMERA
+ * fila y se mantienen para todas: un CSV con el número de columnas cambiando a
+ * mitad de fichero no lo abre nadie. Devuelve `null` si no hay ni una fila.
+ */
+export function csvChunkOf(lines: readonly string[], columns: readonly string[]): string {
+  return lines
+    .map((line) => {
+      const parsed = JSON.parse(line) as Record<string, TypedValue>
+      return columns.map((column) => csvCell(parsed[column] ?? { v: null, t: "z" })).join(",")
+    })
+    .join("\n")
+}
+
+/** Cabecera del CSV a partir de la primera línea JSONL. */
+export function csvColumnsOf(firstLine: string): string[] {
+  return Object.keys(JSON.parse(firstLine) as Record<string, TypedValue>)
+}
+
 export class BackupFormatError extends Error {
   constructor(message: string) {
     super(message)
@@ -206,6 +245,24 @@ export type BackupManifest = {
   /** **O-1.4** */
   auditLog: { rows: number; canonicalSha256: string }
   tables: Array<{ name: string; rows: number; jsonl: string; sha256: string }>
+  /**
+   * **E12 · T20 (deuda 14) — la SEGUNDA representación, en CSV.**
+   *
+   * Un ZIP que sólo trae JSONL con tipos etiquetados es perfecto para
+   * restaurarlo en este producto y **inútil** para el cliente que quiere abrir
+   * sus libros en una hoja de cálculo o llevárselos a otro sitio. El CSV existe
+   * para eso, y para nada más.
+   *
+   * **Manda el JSONL, y no es una preferencia: es la regla.** El CSV no
+   * distingue `"0400"` de `400`, no tiene nulos, no tiene binarios y no tiene
+   * fechas con zona; restaurar desde él reintroduciría exactamente el bug que el
+   * formato 2.0 cerró (`preprocessRowData` adivinando tipos). Así que **la
+   * restauración no lo mira jamás** y el manifest sella los dos: si alguien
+   * altera el CSV, se ve; si el CSV y el JSONL discrepan, el bueno es el JSONL.
+   *
+   * Opcional: una copia emitida antes de T20 no lo trae, y eso no la invalida.
+   */
+  csv?: Array<{ name: string; rows: number; path: string; sha256: string }>
   /**
    * **O-1.5** — tabla GLOBAL, no está en `TENANT_MODELS`: sin esto el destino no
    * reproduce `convertedTotal` (I-E8-5). Sólo las tasas REFERENCIADAS.
