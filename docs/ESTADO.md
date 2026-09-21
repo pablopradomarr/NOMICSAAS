@@ -75,11 +75,18 @@ arnés moría con `ENOBUFS`.
 
 `unit` (129 ficheros · 2 722 ✓ / 11 skip) · `integration` (186 ficheros · 3 623 ✓)
 · `integration:rls` (12 · 211 ✓) · `acceptance` (9 · 52 ✓) · `build` ✓.
-**e2e uno a uno desde `erp` recreada**: `admin` 4/4, `analitica`, `cierre`,
-`informes`, `liquidacion`, `recurrentes-iva` **9/9** en verde. Los demás, en el
-registro del run: esta máquina llegó a **carga 32** con el servidor de
-desarrollo y Playwright a la vez, y tres ficheros cayeron por **timeout de
-navegación**, no por un `expect` de producto.
+**e2e uno a uno desde `erp` recreada** (schema borrado y migraciones de cero):
+en verde `admin` 4/4, `analitica`, `cierre`, `horas-presupuesto-real` 6/6,
+`informes`, `libro-diario` 3/3, `liquidacion`, `plan-cuentas` 2/2,
+`presupuesto` 10/10 y `recurrentes-iva` **9/9**. Quedan por confirmar en CI tres
+ficheros —`documentos`, `auditoria` y `onboarding-plataforma`— y el motivo está
+escrito en el registro: esta máquina llegó a **carga 32** con el servidor de
+desarrollo y Playwright a la vez y acabó sin responder, y lo que falla son
+**timeouts de navegación** y dos casos que dependen del estado que deja otro
+fichero (el historial pide dos barridos; la bandeja documental veía un mes
+bloqueado por `recurrentes-iva`), no un `expect` de producto. El 410 que QA
+reportó **sí** está cerrado: los bytes viven en el almacén y el visor los
+sirve.
 Registro: `2026-09-21_e12_ronda1_correccion`.
 
 ## 🔗 E12 · RONDA DE INTEGRACIÓN DE LAS TRES OLAS (2026-09-21)
