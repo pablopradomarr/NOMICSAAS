@@ -68,3 +68,4 @@ playwright-report/
 
 # artefactos de las suites (validacion.json por componente, auditor, perf)
 /artifacts/
+uploads/
