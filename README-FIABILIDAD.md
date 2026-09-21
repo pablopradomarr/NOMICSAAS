@@ -328,7 +328,9 @@ Siete reglas. No son estilo: cada una tiene detrás una épica que la pagó.
    vaciado de organización y en la purga de derivados. **Nunca se mantiene una
    lista a mano**: la lista a mano ha fallado cuatro veces, y la última costó
    perder 177 filas por organización en cada restauración **con las seis
-   comprobaciones en PASS**.
+   comprobaciones en PASS**. Desde la ronda 1 de E12 hay una **séptima**,
+   `COBERTURA_INVENTARIO`, que enfrenta el manifest con el inventario derivado
+   del esquema y falla **nombrando** la tabla que falta.
 4. **Un derivado nuevo declara su hash de fuente** y su entrada en las columnas
    selladas. Si no se puede recomputar, no es un derivado: es una fuente, y
    entonces necesita su propia decisión escrita.

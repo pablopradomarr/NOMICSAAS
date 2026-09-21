@@ -1,6 +1,86 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-21 (**🔗 E12 · RONDA DE INTEGRACIÓN cerrada** — las tres olas cosidas, **T22 (CI)** y **T23 (documentación)** entregadas; quince de las dieciséis deudas fechadas en E12 **CERRADAS**, dos re-fechadas con motivo escrito · **SIGUIENTE: verificación final y cierre de E12 (T24–T26)**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-21 (**🔧 E12 · RONDA 1 DE CORRECCIÓN cerrada** — los 2 BLOQUEA y los 6 DEBE del revisor, los 4 bugs de QA y los hallazgos ALTA/MEDIA de la auditoría, cerrados; **ADR-0021 y ADR-0022** nuevos · **SIGUIENTE: ronda 2 de verificación (revisor + auditor en contexto limpio) y cierre de E12**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## 🔧 E12 · RONDA 1 DE CORRECCIÓN (2026-09-21)
+
+Entradas: `docs/design/E12-revision.md` (revisor: 2 BLOQUEA · 6 DEBE · 7 PUEDE),
+`docs/design/E12-auditoria-informe.md` (auditor, veredicto **DISCREPANCIA**: 3
+ALTA · 4 MEDIA · 4 BAJA · 1 INFO) y los cuatro bugs de QA.
+
+### Los dos BLOQUEA
+
+| # | Qué era | Cómo se cierra |
+|---|---|---|
+| **1** | `deletionOrder` de `/admin` ignoraba las claves ajenas **entrantes desde las tablas que se conservan** —`invariant_runs→fiscal_years`, `→store_sweeps`, `closing_runs→fiscal_years`, `extraction_runs→files`, todas `RESTRICT`—, así que `reset-org` abortaba con `23503` en cualquier organización que hubiera corrido un barrido. El test de T13 no lo veía porque su fixture era más pobre que la realidad | **`lib/platform/deletion-plan.ts`**: un solo planificador, puro, derivado de `pg_constraint`, para `reset-org` **y** `purgeDerived`. Cada tabla lleva una guarda `NOT EXISTS` por arista entrante viva: lo que una fila superviviente señala **se retiene y se declara** con el nombre de quien retiene. No se desengancha poniendo la clave a `NULL` porque esas tablas son las seis de D2 y el operador **no tiene `UPDATE`** sobre ellas. Test con `InvariantRun`, `ClosingRun`, `ExtractionRun`, `StoreSweep`, `File` y marca de revisión |
+| **2** | El test de AST que protege la independencia del auditor (`I-E12-2`, E-12, G-14) **no lo ejecutaba nadie** | `scripts/**/*.test.ts` en el `include` de `vitest.config.ts` (lo corre `npm run test`) **y** paso propio en el job 6, antes de usar el auditor. `SKILL.md` y `README-FIABILIDAD.md` dicen dónde corre, y ahora es verdad |
+
+### Qué es «derivado», escrito (DEBE #3)
+
+`purgeDerived` decidía por criterio estructural (`_runs`/`_sweeps`, hash de
+fuente) y acertaba **menos de la mitad de las veces**: cuatro de las nueve
+candidatas hubo que exceptuarlas. Ahora hay **`DERIVED_MODELS`**, un registro
+explícito tabla a tabla **con motivo**, y el criterio estructural queda como
+**detector que acusa** (`tablasSinDeclarar`): una tabla de caché nueva sin
+declarar **rompe el test**, y no entra sola en la purga. Un `ClosingRun`
+`CERRADO`/`REABIERTO` es un **sello, no una caché**, y se conserva.
+
+### Los hallazgos ALTA y MEDIA de la auditoría
+
+| Hallazgo | Cómo se cierra |
+|---|---|
+| **H-1** · cinco de las diez inyecciones de §3.5 no se ejercían y la suite salía verde con 5/10 | Fixture **`documental-minimo`** (Python con `--check`, en el job 7): dos documentos con sus bytes, dos extracciones con su `proposalSha` en forma canónica **calculado en Python** —un tercer camino—, doce partes de horas, una regla `HOURS`, el consumo del mes y la liquidación del trimestre. Lo carga el arnés **por los caminos del producto** y **sin tocar el diario**: las doce cifras canónicas no se mueven. **10/10 ejercidas y cazadas**; WARN pasa a FAIL y `C4-cobertura` exige 10/10 |
+| **H-2** | Ver BLOQUEA 2 |
+| **H-3** · `fiabilidad.yml` no ejecutaba lo que §8 describe | Doce jobs: **`pureza-motor`** extendido a `lib/platform` y al auditor (y los dos filtros que le faltaban, corregidos también en `ci.yml`, donde el guard saltaba en **todos** los directorios y por eso no decía nada), **`perf`** con los techos baratos en cada push y el **criterio 47** (1,5 GB) en el disparador **nocturno**, y la matriz de e2e **derivada del directorio** |
+| **H-4** · job verde con sello rojo | `ci-audit-fixture.ts` se pone **rojo** ante cualquier FAIL que no esté en la lista **cerrada y con motivo** `tests/support/fail-del-sustrato.ts` —la misma que usa la aceptación— y ante un sello que no sea `VALIDADO AUTOMÁTICAMENTE` sin un FAIL que lo explique. Comprobados los dos caminos |
+| **H-5 / AUD-8** · el auditor sólo contrastaba agregados | Reconstruye la matriz analítica **acumulada por nivel y columna** (`PROJ:`/`CECO:`, regla R-A5 reimplementada desde `MODELO-DATOS` con el tipo efectivo R-A3/R-A4) y la contrasta **celda a celda**. La inyección AUD-8 —100 000 céntimos de `PROJ:P-01` a `PROJ:P-02` con los totales intactos— ahora da **DISCREPANCIA** con `I4-DIMENSION`. Con repartos sellados lo **declara** en vez de callarse |
+| **H-6** · `verifyRestore` no comprobaba la cobertura del inventario | **Séptima comprobación**, `COBERTURA_INVENTARIO`: el manifest contra el inventario **derivado del esquema**, fallando **nombrando** las tablas ausentes |
+| **H-7** · la mitad «sellos» de `purgeDerived` no la ejercía nada | Las columnas `NOT NULL` se **saltan declarándolo** (nada de tragarse la excepción, que era indistinguible de «no había nada»), el informe distingue `nulled` de `error`, y un test siembra la única recomputable que sobrevive a la purga —`invoice_series.last_hash`— y comprueba que queda a `NULL` |
+| **H-10** (BAJA) | Una fila de evidencia puede ser **informativa** (`ok` opcional): el `checksHash del barrido` enseñaba dos valores distintos con un `ok: true` escrito a mano (anti-patrón E-2) |
+| **H-11** (BAJA) | El auditor distingue «el producto no sella `SUMA_DEBE`» de «le han cambiado el nombre a la clave», mirando las claves del headline sellado |
+
+### Los seis DEBE y los PUEDE baratos
+
+`e10-esquema:739` acotado por tenant · `app.operator_organizations` **sin
+`EXECUTE` para `app_runtime`** (migración `20261002090000`) y llamada con
+`SET LOCAL ROLE app_operator` · `runReassignPlan` y `runPurgeRetention` con
+**efecto y los dos registros en UNA transacción** (`changeOrganizationPlanTx`,
+`expireBackupsTx`) · **`PLATFORM_ADMIN_EMAILS` vacía = nadie**, en los dos modos
+(**ADR-0022**), con una sola definición del predicado y aviso de arranque ·
+`requirePlatformAdmin()` en la primera línea de las cuatro `runXAction` · el ZIP
+contra **dos lectores ajenos** (`unzip -t` y el `zipfile` de Python) · la nota de
+alcance sale de ADR-0011 a **ADR-0021** · subclave HKDF para el token de
+`/admin`.
+
+### Lo que la suite e2e desde base LIMPIA destapó (BUG-E12-1)
+
+Tres fallos **de producto** que sobre una base con historial no se veían nunca:
+las **diecinueve claves diferidas de E9** sólo las sembraba la migración M4, así
+que **toda organización creada después nacía sin ellas** (vender un inmovilizado
+con beneficio fallaba en una instalación recién montada); `budgetCellProvenance`
+**no filtraba por tenant** en las subconsultas de dimensión (`21000` con dos
+organizaciones, y fuga si hubiera devuelto la otra fila); y el sembrador del
+arnés moría con `ENOBUFS`.
+
+### Deuda: ninguna nueva. Lo que queda abierto, con nombre
+
+| Abierto | Épica | Motivo |
+|---|---|---|
+| **H-8** · el criterio 29 («dos versiones del motor») es el mismo motor con dos git-sha | **E14** | Ejercer dos versiones exige un artefacto del motor anterior; es una pieza propia y no entra en una ronda de corrección |
+| **H-9** · criterio 12 (celda → documento) sigue en WARN en la suite de aceptación | **E14** | El sustrato documental no ata un documento a un asiento del fixture **a propósito**: hacerlo movería el diario y con él las doce cifras canónicas. El salto lo ejerce el e2e documental |
+| **H-12** (INFO) · `build_gran_volumen.py --check` tarda 4 min | **E14** | Es el 80 % del job 7 para comprobar el fichero más pequeño |
+| **I-E8-17** sobre el fixture | **E14** | El puente al 111 compara el 4751 del diario contra lo declarado **en la propuesta de la extracción**, y las retenciones del fixture se contabilizan por plantilla. Declarado como FAIL del sustrato, con motivo |
+
+### Suites al cerrar la ronda
+
+`unit` (129 ficheros · 2 722 ✓ / 11 skip) · `integration` (186 ficheros · 3 623 ✓)
+· `integration:rls` (12 · 211 ✓) · `acceptance` (9 · 52 ✓) · `build` ✓.
+**e2e uno a uno desde `erp` recreada**: `admin` 4/4, `analitica`, `cierre`,
+`informes`, `liquidacion`, `recurrentes-iva` **9/9** en verde. Los demás, en el
+registro del run: esta máquina llegó a **carga 32** con el servidor de
+desarrollo y Playwright a la vez, y tres ficheros cayeron por **timeout de
+navegación**, no por un `expect` de producto.
+Registro: `2026-09-21_e12_ronda1_correccion`.
 
 ## 🔗 E12 · RONDA DE INTEGRACIÓN DE LAS TRES OLAS (2026-09-21)
 
@@ -123,7 +203,10 @@ que no basta. Lo escribe **un agente que no toca ninguna de las otras 25 tareas*
 si el mismo agente escribe el motor y su refutador, la refutación es teatro.
 
 **Deuda:** de las 16 entradas fechadas en E12, **15 se cierran** y **ninguna se
-re-fecha**. La decimosexta (arqueo de caja como fuente equivalente al extracto) se
+re-fecha** *(previsión del diseño; el resultado real está arriba: quince
+cerradas y **dos re-fechadas con motivo**, y una de las dos —las cinco
+inyecciones no ejercidas— la cierra la ronda 1 de corrección con el fixture
+`documental-minimo`)*. La decimosexta (arqueo de caja como fuente equivalente al extracto) se
 **retira**, no se aplaza: un arqueo lo firma quien lleva la caja, y admitirlo
 degradaría la etiqueta más fuerte del sistema.
 

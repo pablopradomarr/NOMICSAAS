@@ -405,8 +405,16 @@ const describeFigures = (f: UsageFiguresRef): string =>
 // I-E11-2 — Restauración reproducible (P7)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Las seis de §5.4, por si el documento de verificación entrega cinco. */
+/**
+ * Las de §5.4, por si el documento de verificación entrega menos.
+ *
+ * **Ronda 1 de E12 (auditor H-6): son SIETE.** `COBERTURA_INVENTARIO` va
+ * delante de las seis porque comprueba lo que ninguna de ellas podía: que el
+ * manifest declare las tablas que el inventario **derivado del esquema** exige.
+ * Quitar una tabla del ZIP **y** del manifest a la vez pasaba las seis.
+ */
 export const REQUIRED_RESTORE_CHECKS: readonly string[] = [
+  "COBERTURA_INVENTARIO",
   "RECUENTOS",
   "NUMERACION",
   "SELLOS_DERIVADOS",
@@ -436,7 +444,7 @@ export function checkIE112(input: PlatformInvariantInput): CheckResult {
   if (problemas.length === 0) {
     return pass(
       "I-E11-2",
-      `${terminados.length} restauración(es) terminada(s) con las SEIS comprobaciones de §5.4 en verde`
+      `${terminados.length} restauración(es) terminada(s) con las SIETE comprobaciones de §5.4 en verde`
     )
   }
   return failed("I-E11-2", `restauraciones que no acreditan reproducibilidad: ${cut(problemas)}`)

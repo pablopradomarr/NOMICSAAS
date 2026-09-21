@@ -61,6 +61,9 @@ function fixture(): PlatformInvariantInput {
         status: "DONE",
         verified: true,
         checks: [
+          // La SÉPTIMA (ronda 1 de E12 · H-6): el manifest contra el inventario
+          // derivado del esquema.
+          { id: "COBERTURA_INVENTARIO", status: "PASS" },
           { id: "RECUENTOS", status: "PASS" },
           { id: "NUMERACION", status: "PASS" },
           { id: "SELLOS_DERIVADOS", status: "PASS" },
@@ -265,10 +268,18 @@ describe("I-E11-2 · restauración reproducible", () => {
     expect(check.evidencia).toContain("DONE_UNVERIFIED")
   })
 
-  it("FAIL si el documento entrega CINCO comprobaciones en vez de seis", () => {
+  it("FAIL si el documento entrega MENOS comprobaciones de las que §5.4 exige", () => {
     const input = fixture()
     input.restores = [{ ...input.restores![0], checks: input.restores![0].checks.slice(0, 5) }]
-    expect(checkIE112(input).evidencia).toContain("faltan BARRIDO_INVARIANTES")
+    expect(checkIE112(input).evidencia).toContain("faltan SELLOS_Y_CIERRE, BARRIDO_INVARIANTES")
+  })
+
+  it("FAIL si falta la SÉPTIMA, la cobertura del inventario (H-6)", () => {
+    const input = fixture()
+    input.restores = [
+      { ...input.restores![0], checks: input.restores![0].checks.filter((c) => c.id !== "COBERTURA_INVENTARIO") },
+    ]
+    expect(checkIE112(input).evidencia).toContain("faltan COBERTURA_INVENTARIO")
   })
 
   it("FAIL con DONE y verified = false: la etiqueta no puede mentir", () => {
