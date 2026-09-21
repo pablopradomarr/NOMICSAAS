@@ -111,6 +111,14 @@ export function ensureSelfHostedSeed(): SelfHostedSeed {
     env: { ...process.env, DATABASE_URL, DIRECT_URL: DATABASE_URL, PRISMA_LOG: "" },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
+    /**
+     * **Ronda 1 de E12.** Sobre una base RECIÉN creada la siembra imprime el
+     * plan contable entero y pasaba del megabyte que `execFileSync` admite por
+     * defecto: `spawnSync npx ENOBUFS`, y la suite entera moría en el primer
+     * fichero con un error que no habla de la siembra. Sobre una base ya
+     * sembrada no pasaba nunca, que es por lo que no se había visto.
+     */
+    maxBuffer: 64 * 1024 * 1024,
   })
   const line = out.trim().split("\n").filter((l) => l.trim().startsWith("{")).pop()
   if (!line) throw new Error(`El arnés no ha podido sembrar el usuario self-hosted: ${out.slice(-500)}`)

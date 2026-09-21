@@ -56,7 +56,12 @@ function runSeed(script: string, args: readonly string[]): string {
       DATABASE_URL,
       DIRECT_URL: DATABASE_URL,
       PRISMA_LOG: "",
+      // BUG-E12-2: el almacén de objetos tiene su propio raíz y el arnés tiene
+      // que escribir donde la aplicación lee (ADR-0019 D3).
       ...(APP_ENV.UPLOAD_PATH ? { UPLOAD_PATH: APP_ENV.UPLOAD_PATH } : {}),
+      ...(APP_ENV.STORAGE_BACKEND ? { STORAGE_BACKEND: APP_ENV.STORAGE_BACKEND } : {}),
+      ...(APP_ENV.STORAGE_LOCAL_ROOT ? { STORAGE_LOCAL_ROOT: APP_ENV.STORAGE_LOCAL_ROOT } : {}),
+      ...(APP_ENV.STORAGE_PREFIX ? { STORAGE_PREFIX: APP_ENV.STORAGE_PREFIX } : {}),
     },
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],

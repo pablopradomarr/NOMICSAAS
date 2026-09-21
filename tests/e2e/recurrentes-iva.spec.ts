@@ -253,13 +253,20 @@ test("un activo enseña su cuadro sellado y su venta ofrece 543, nunca 430", asy
  * explícito cuando se imputa a otro sitio.
  */
 test("la venta se contabiliza con 543 y el aviso del art. 110 acompaña al asiento", async ({ page }) => {
-  // La organización de fixtures exige destino analítico y el resultado de la
-  // enajenación (771/671) lo hereda **del activo**. `createAssetSchema` admite
-  // `costCenterId` desde T15, pero el formulario todavía no lo ofrece: hasta que
-  // lo haga (deuda de UI anotada en ESTADO), el arnés se lo declara al activo
-  // como lo haría el alta. Con el baile NO FORCE / FORCE que exige la RLS
-  // estricta, y sólo en la organización de pruebas.
-  await darDestinoAnalitico("ACT-E2E")
+  /**
+   * La organización de fixtures exige destino analítico y el resultado de la
+   * enajenación (771/671) lo hereda **del activo**.
+   *
+   * **BUG-E12-3 (QA), segunda mitad.** El arnés se lo declaraba por SQL porque
+   * «el formulario todavía no lo ofrece» — y sí lo ofrece
+   * (`asset-analytic-target`). Desde que el test del alta elige un PROYECTO, el
+   * `UPDATE` de CECO dejaba el activo con **las dos dimensiones**, que es
+   * exactamente lo que `assertAssetDimension` prohíbe («un proyecto O un centro
+   * de coste, nunca los dos»): la venta se negaba y el panel de resultado no
+   * llegaba a existir. El destino lo pone ahora el ALTA, por la pantalla, y el
+   * arnés sólo actúa si el activo llegara aquí sin ninguno.
+   */
+  await asegurarDestinoAnalitico("ACT-E2E")
 
   await page.goto("/settings/assets")
   await page.getByTestId("open-asset-ACT-E2E").click()
@@ -530,9 +537,19 @@ async function useQuarterlyVatRegime(organizationId: string): Promise<void> {
  * Declara al activo su centro de coste, que es de donde T-33 y T-34 sacan el
  * destino del resultado de la enajenación (ronda de integración de E9).
  */
-async function darDestinoAnalitico(assetCode: string): Promise<void> {
+async function asegurarDestinoAnalitico(assetCode: string): Promise<void> {
   const org = await analyticsOrganization()
   await withDb(async (client) => {
+    const { rows } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM fixed_assets
+        WHERE organization_id = $1 AND code = $2
+          AND (project_id IS NOT NULL OR cost_center_id IS NOT NULL)`,
+      [org.id, assetCode]
+    )
+    // Ya tiene destino —lo eligió el alta, por la pantalla—: no se toca. Poner
+    // el segundo dejaría el activo con proyecto Y CECO, que la validación
+    // rechaza con razón.
+    if (Number(rows[0]?.n ?? 0) > 0) return
     await client.query(`ALTER TABLE fixed_assets NO FORCE ROW LEVEL SECURITY`)
     try {
       await client.query(

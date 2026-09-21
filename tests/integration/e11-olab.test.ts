@@ -174,7 +174,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E11 · ola B — almacén, uso, cuotas y ba
   // ───────────────────────────────────────────────────────────────────────────
 
   it(
-    "backup → restauración del fixture completo: los tres sellos IDÉNTICOS y las SEIS comprobaciones en PASS",
+    "backup → restauración del fixture completo: los tres sellos IDÉNTICOS y las SIETE comprobaciones en PASS",
     async () => {
       const outcome = await restoreBackupIntoOrganization({
         archive,
@@ -199,7 +199,10 @@ describe.skipIf(!TEST_DATABASE_URL)("E11 · ola B — almacén, uso, cuotas y ba
         )
       ).toEqual([])
 
-      expect(verification!.checks).toHaveLength(6)
+      // SIETE desde la ronda 1 de E12: `COBERTURA_INVENTARIO` (auditor H-6) se
+      // suma a las seis de §5.4 y va antes que ellas.
+      expect(verification!.checks).toHaveLength(7)
+      expect(verification!.checks.map((c) => c.id)).toContain("COBERTURA_INVENTARIO")
       expect(verification!.verified).toBe(true)
       expect(outcome.status).toBe("DONE")
 

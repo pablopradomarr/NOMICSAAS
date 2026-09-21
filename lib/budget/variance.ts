@@ -497,11 +497,28 @@ const cellWindow = (cell: VarianceCell, ctx: BudgetProvenanceContext): { from: s
   return { from: `${cell.month}-01`, to: `${cell.month}-${String(last).padStart(2, "0")}` }
 }
 
-/** Filtro por dimensión de la columna: `PROJ:`, `CECO:`, `BL:` o la compañía. */
-const dimensionFilter = (column: ColumnKey, table: string): string => {
-  if (column.startsWith("PROJ:")) return `${table}.project_id = (SELECT id FROM projects WHERE code = '${column.slice(5)}')`
-  if (column.startsWith("CECO:")) return `${table}.cost_center_id = (SELECT id FROM cost_centers WHERE code = '${column.slice(5)}')`
-  if (column.startsWith("BL:")) return `${table}.business_line_id = (SELECT id FROM business_lines WHERE code = '${column.slice(3)}')`
+/**
+ * Filtro por dimensión de la columna: `PROJ:`, `CECO:`, `BL:` o la compañía.
+ *
+ * **Ronda 1 de E12.** Las tres subconsultas iban **sin filtro de tenant**
+ * (`SELECT id FROM projects WHERE code = 'P-01'`). El código de un proyecto es
+ * único DENTRO de una organización, no en la base: en cuanto dos organizaciones
+ * tienen un `P-01` —lo normal en una instalación real, y lo que pasa en
+ * `erp_test` en cuanto corren dos suites— la subconsulta devuelve dos filas y
+ * Postgres responde `21000: more than one row returned by a subquery`. La
+ * provenance dejaba de ser ejecutable, que es justo lo que C3 promete que no
+ * pasa. Y si en vez de reventar hubiera devuelto la fila de la otra
+ * organización, habría sido una fuga entre tenants en una consulta de
+ * trazabilidad.
+ *
+ * El `organizationId` ya viaja en el contexto: se usa.
+ */
+const dimensionFilter = (column: ColumnKey, table: string, organizationId: string): string => {
+  const porCodigo = (tabla: string, campo: string, codigo: string): string =>
+    `${table}.${campo} = (SELECT id FROM ${tabla} WHERE organization_id = '${organizationId}' AND code = '${codigo}')`
+  if (column.startsWith("PROJ:")) return porCodigo("projects", "project_id", column.slice(5))
+  if (column.startsWith("CECO:")) return porCodigo("cost_centers", "cost_center_id", column.slice(5))
+  if (column.startsWith("BL:")) return porCodigo("business_lines", "business_line_id", column.slice(3))
   return "true /* columna de compañía: sin filtro de dimensión */"
 }
 
@@ -539,7 +556,7 @@ export function budgetCellProvenance(cell: VarianceCell, ctx: BudgetProvenanceCo
   const { from, to } = cellWindow(cell, ctx)
   const grupos = monthsByBudget(ctx, from, to)
   const niveles = cumulativeLevelsOf(cell.level)
-  const dim = (table: string): string => dimensionFilter(cell.column, table)
+  const dim = (table: string): string => dimensionFilter(cell.column, table, ctx.organizationId)
 
   const registros: Record<string, string> = {
     // (1) El REAL: las líneas del diario que la celda ACUMULA, de todos los

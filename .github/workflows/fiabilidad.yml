@@ -527,6 +527,9 @@ jobs:
       STORAGE_BACKEND: local
       STORAGE_PREFIX: erp
       UPLOAD_PATH: ./data/uploads
+      # ADR-0022: con la lista vacía NADIE es operador de plataforma y /admin
+      # responde 404. El e2e de `/admin` necesita declarar al usuario del arnés.
+      PLATFORM_ADMIN_EMAILS: taxhacker@localhost
       E2E_BASE_URL: http://localhost:7331
     steps:
       - uses: actions/checkout@v7

@@ -206,7 +206,18 @@ describe.skipIf(!TEST_DATABASE_URL)("E2 · plan de cuentas por organización (I1
     const after = await getAccountMapByKey(dbA)
     expect(after.get("COMPRAS_DEFAULT")).toBe("607")
     expect((await dbA.ledgerAccount.findFirst({ where: { code: "607" } }))?.isSystem).toBe(true)
-    expect((await dbA.ledgerAccount.findFirst({ where: { code: "600" } }))?.isSystem).toBe(false)
+    /**
+     * **La 600 sigue siendo de sistema, y es correcto.** Desde la ronda 1 de
+     * E12 el alta del plan siembra también las diecinueve claves diferidas de
+     * E9 (antes sólo las sembraba la migración M4, así que una organización
+     * NUEVA nacía sin ellas), y una de ellas es `ARANCELES → 600`. Desmarcar la
+     * 600 al remapear `COMPRAS_DEFAULT` mentiría: la cuenta sigue mapeada por
+     * otra clave. Lo que el remapeo desmarca es la cuenta que se queda **sin
+     * ninguna** clave.
+     */
+    const seiscientas = await dbA.organizationAccountMap.findMany({ where: { accountCode: "600" } })
+    expect(seiscientas.map((m) => m.key)).toEqual(["ARANCELES"])
+    expect((await dbA.ledgerAccount.findFirst({ where: { code: "600" } }))?.isSystem).toBe(true)
 
     const logs = await listAuditLog(dbA, { entity: "OrganizationAccountMap", action: "remap" })
     expect(logs).toHaveLength(1)

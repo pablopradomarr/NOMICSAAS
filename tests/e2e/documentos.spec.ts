@@ -47,10 +47,21 @@ function seedDocument(orgId: string, kind: "simple" | "ticket" | "mixta", number
         DATABASE_URL,
         DIRECT_URL: DATABASE_URL,
         PRISMA_LOG: "",
-        // El documento tiene que caer donde la APLICACIÓN lo busca: Playwright
-        // no carga `.env`, así que sin esto el arnés escribiría en `./uploads`
-        // por defecto y el visor no encontraría el fichero que acaba de sembrar.
+        /**
+         * El documento tiene que caer donde la APLICACIÓN lo busca: Playwright
+         * no carga `.env`, así que sin esto el arnés escribiría en el sitio por
+         * defecto y el visor no encontraría el fichero que acaba de sembrar.
+         *
+         * **BUG-E12-2 (QA).** Con `UPLOAD_PATH` sólo no bastaba: desde E11 los
+         * documentos viven en el **almacén de objetos** (`STORAGE_*`), cuyo
+         * raíz local es OTRO (`./data/storage`, no `./data/uploads`). El arnés
+         * escribía en el suyo, la fila quedaba puesta y el visor devolvía
+         * **410 Gone**. Se pasan las cuatro variables del almacén.
+         */
         ...(APP_ENV.UPLOAD_PATH ? { UPLOAD_PATH: APP_ENV.UPLOAD_PATH } : {}),
+        ...(APP_ENV.STORAGE_BACKEND ? { STORAGE_BACKEND: APP_ENV.STORAGE_BACKEND } : {}),
+        ...(APP_ENV.STORAGE_LOCAL_ROOT ? { STORAGE_LOCAL_ROOT: APP_ENV.STORAGE_LOCAL_ROOT } : {}),
+        ...(APP_ENV.STORAGE_PREFIX ? { STORAGE_PREFIX: APP_ENV.STORAGE_PREFIX } : {}),
       },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"],

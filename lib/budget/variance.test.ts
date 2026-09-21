@@ -447,7 +447,11 @@ describe("H-7 · provenance por celda del PRESUPUESTO_REAL (§5.1)", () => {
     // escribir SQL a mano, que es lo que el auditor tuvo que hacer.
     expect(p.registros_origen.real).toContain("FROM journal_lines")
     expect(p.registros_origen.real).toContain("'2026-03-01' AND '2026-03-31'")
-    expect(p.registros_origen.real).toContain("projects WHERE code = 'P-01'")
+    // Ronda 1 de E12: la subconsulta de dimensión lleva **filtro de tenant**.
+    // El código de un proyecto es único dentro de una organización, no en la
+    // base: sin él, con dos organizaciones que tengan `P-01`, Postgres responde
+    // `21000` y la provenance deja de ser ejecutable.
+    expect(p.registros_origen.real).toContain("projects WHERE organization_id = 'org-1' AND code = 'P-01'")
     expect(p.registros_origen.imputado).toContain("FROM allocation_lines")
     expect(p.registros_origen.imputado).toContain("target_project_id")
     // El presupuesto sale de la(s) versión(es) que gobiernan los meses de la

@@ -19,6 +19,8 @@ import {
 } from "@/lib/accounts/csv"
 import { checkAnalyticCoherence as checkCoherencePure } from "@/lib/accounts/epigraphs"
 import {
+  ACCOUNT_KEY_DEFAULT_CODE,
+  DEFERRED_ACCOUNT_KEYS,
   defaultAccountMap,
   extraAccountsToCreate,
   REQUIRED_ACCOUNT_KEYS,
@@ -503,6 +505,34 @@ export async function importNpgc(
 
     // ── Mapa de cuentas de sistema ──────────────────────────────────────────
     const { entries, unresolved } = defaultAccountMap(plan, { useSubaccounts, createSoftwareAccounts })
+
+    /**
+     * **Las diecinueve claves DIFERIDAS de E9 (ADR-0016), también aquí.**
+     *
+     * Las sembraba **sólo la migración M4** (`20260920120000_e9_cierre`), y una
+     * migración sólo alcanza a las organizaciones que ya existían: **toda
+     * organización creada después nacía sin ellas**. El síntoma, encontrado al
+     * correr la suite e2e completa desde una base limpia en la ronda 1 de E12:
+     * vender un inmovilizado con beneficio fallaba con «la clave
+     * BENEFICIO_BAJA_INMOVILIZADO no está mapeada a ninguna cuenta del plan»
+     * —y lo mismo el 111/115, las reservas y el dividendo—, en una instalación
+     * recién montada y sin que nada lo avisara.
+     *
+     * La regla es la de M4, literal: **sólo donde la cuenta exista, esté activa
+     * y sea postable**, y con el código EXACTO —nada de subir al ancestro, que
+     * es justo lo que `DEFERRED_ACCOUNT_KEYS` documenta que no se puede hacer—.
+     * Lo que no resuelve queda sin mapear y lo dice la pestaña Auditoría.
+     */
+    const diferidas = DEFERRED_ACCOUNT_KEYS.flatMap((key) => {
+      const code = ACCOUNT_KEY_DEFAULT_CODE[key]
+      const account = plan.byCode.get(code)
+      if (!account || !account.isPostable || account.isActive === false) return []
+      return [{ key, accountCode: code, requested: code, fallback: "NONE" } as const]
+    })
+    for (const entrada of diferidas) {
+      if (!entries.some((e) => e.key === entrada.key)) entries.push(entrada)
+    }
+
     const existingMap = await tx.organizationAccountMap.findMany({ select: { key: true, accountCode: true } })
     const existingKeys = new Set(existingMap.map((m) => m.key))
     // Idempotencia: una clave ya mapeada NO se toca (el ADMIN pudo remapearla).

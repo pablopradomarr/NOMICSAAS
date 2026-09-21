@@ -535,10 +535,24 @@ de Postgres, disparado en `pull_request` y `push` a `main`.
 | `rls` | `npm run test:integration:rls` | ídem (rol `app_runtime`, NOBYPASSRLS) |
 | **`aceptacion`** | `npm run test:acceptance` — **los siete C1–C7 + memoria borrada + reconstrucción desde backup** | cualquiera rojo, **o una familia `SIN_EVALUAR`** |
 | **`auditor-automatizado`** | carga el fixture por el motor y corre `scripts/audit-reconstruct.ts` | **Δ ≠ 0 en cualquiera de las 12**, o veredicto ≠ `CONFORME` (**`NO_VERIFICABLE` falla**) |
-| `fixtures-check` | los **cuatro** generadores con `--check` (los dos de E10 + `ejercicio-completo` + `gran-volumen`) | un fixture que ya no se reproduce byte a byte |
+| `fixtures-check` | **todos** los generadores de `docs/design/fixtures/build_*.py` con `--check` (hoy trece, con el suelo escrito en el job) | un fixture que ya no se reproduce byte a byte |
 | **`e2e`** | `npx playwright test <fichero>` en **matriz por fichero** (13 specs) | cualquiera rojo. Por fichero, para que un fallo diga **cuál** sin leer 600 líneas de log |
 | `pureza-motor` | el guard existente, extendido a `lib/platform/**` y `scripts/audit-reconstruct.ts` (que además **no puede importar `lib/**`**) | impureza o importación prohibida |
 | `perf` | los techos de §12 de E11 (3, 5, 6, 8) sobre `gran-volumen`, **sólo en `push` a `main`** | un techo incumplido, **o degradación > 20 % contra la medición anterior publicada** |
+
+
+> **Ronda 1 de corrección (2026-09-21) — lo que el workflow ejecuta HOY.** La
+> auditoria (H-3) encontro que el workflow tenia nueve jobs pero **dos eran
+> otros**: faltaban `pureza-motor` y `perf`, y en su lugar estaban `lint-tsc` y
+> `build`. Ahora son **doce**, y los de esta tabla estan todos:
+>
+> | Nuevo o corregido | Que cambia |
+> |---|---|
+> | **1 `lint-tsc`** y **9 `build`** | se quedan: son utiles y no sustituyen a nadie |
+> | **6-bis `pureza-motor`** | los once directorios del motor **mas `lib/platform`**, y el auditor con su propia regla (`new Date()` solo para fechar su informe, nunca para calcular). Los dos filtros que le faltaban -comentarios y `import type` del cliente generado- hacian saltar el guard en **todos** los directorios, asi que no decia nada util; corregido tambien en `ci.yml` |
+> | **6-ter `perf`** | `perf-audit`, `perf-budget`, `perf-closing` y `perf-pages` en cada push; **el criterio 47** (volumen real, 1,5 GB) en el disparador **nocturno** (`schedule`) o a mano, porque seis minutos y el bloat que deja no caben en cada push - pero *no correr nunca* tampoco era una opcion |
+> | **6 `auditor-automatizado`** | ejecuta ademas `scripts/audit-reconstruct.imports.test.ts` (BLOQUEA 2 / H-2) **antes** de usar el auditor, y **se pone rojo** si el barrido deja un FAIL que no este en la lista cerrada de FAIL del sustrato o si el sello no es `VALIDADO AUTOMATICAMENTE` sin un FAIL que lo explique (H-4) |
+> | **8 `e2e`** | la matriz **se deriva del directorio** (`ls tests/e2e/*.spec.ts`), con suelo de 13: un fichero nuevo corre solo (PUEDE #12) |
 
 **Entorno común:** `GIT_SHA: ${{ github.sha }}` **en todos los jobs** (sin él los
 sellos salen `REQUIERE REVISIÓN` y la mitad de los asertos serían falsos) y
