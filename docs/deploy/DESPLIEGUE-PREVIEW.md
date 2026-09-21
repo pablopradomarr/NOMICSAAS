@@ -10,6 +10,11 @@ Estado: **DESPLEGADO Y VERIFICADO** (2026-09-05 20:45). URL: https://nomicsaas-p
 >
 > **Actualizado 2026-09-15 (seguridad).** Los dos avisos críticos de Supabase
 > del 13-sep están **resueltos**: §11.
+>
+> **Actualizado 2026-09-21 (E12, cierre del ciclo E0–E12).** El despliegue trae
+> **nueve migraciones nuevas** y **tres variables que dejan de ser opcionales**:
+> `PLATFORM_SIGNING_KEY`, `CRON_SECRET` y `PLATFORM_ADMIN_EMAILS`. Todo, con lo
+> que hay que comprobar antes y después, está en la **§12**.
 
 ## 0. Qué es y qué no es
 
@@ -162,3 +167,89 @@ Aplicado a mano en el preview el 2026-09-15 a las 21:46 UTC (migración `2026092
 - `search_path` fijo en las 63 funciones de `app`.
 
 Verificado con el linter de seguridad de Supabase: **0 errores** (queda un WARN: `btree_gist` en `public`, moverla exige superusuario; deuda E12). Comprobación rápida en el SQL Editor: `select count(*) from information_schema.role_table_grants where grantee in ('anon','authenticated')` → **0**. En cualquier base Supabase nueva la migración se aplica sola con `prisma migrate deploy`.
+
+---
+
+## 12. E12 — lo que el despliegue del cierre exige (2026-09-21)
+
+### 12.1 Las tres variables que pasan a OBLIGATORIAS en Vercel
+
+No son nuevas —las tres existen desde E11—, pero hasta ahora se podían dejar
+vacías y el producto seguía arrancando. Tras E12 **una instalación con
+cualquiera de las tres vacía está degradada de una forma que conviene que sea
+una decisión, no un olvido**:
+
+| Variable | Si falta | Por qué es obligatoria |
+|---|---|---|
+| **`PLATFORM_SIGNING_KEY`** | **No se emite ninguna copia de seguridad.** No se emite una sin firma: se rechaza el trabajo | La firma del manifest (HMAC con `PLATFORM_SIGNING_KEY_ID`, `k1` por defecto) se verifica **antes de descomprimir un byte**. Sin ella, P7 —«el backup es el criterio de reproducibilidad»— no se puede sostener |
+| **`CRON_SECRET`** | `POST /api/cron/[job]` responde **401 siempre**: no corren `recurring-due`, `invariant-sweep`, `backup-worker` ni `retention` | Sin barrido programado nadie ejecuta los invariantes salvo a mano, y sin `retention` las copias no caducan. El secreto va **también** en el secreto homónimo del repositorio, que es quien dispara el reloj (`.github/workflows/cron.yml`) |
+| **`PLATFORM_ADMIN_EMAILS`** | **No es operador de plataforma NADIE**: `/admin` responde 404 a todo el mundo y el plan no se puede cambiar desde la aplicación | **ADR-0022**: la lista vacía significa *nadie*, en los dos modos de facturación. Es cerrado por defecto **a propósito** —antes, con la lista vacía y facturación interna, lo era **cualquier usuario autenticado**—, pero en un preview con varias organizaciones deja el producto sin operador. El arranque lo **avisa en el log** (no falla) si hay más de una organización no personal y la lista está vacía |
+
+`STORAGE_*` (`STORAGE_BACKEND`, `STORAGE_BUCKET`, `STORAGE_PREFIX`,
+`STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_ACCESS_KEY_ID`,
+`STORAGE_SECRET_ACCESS_KEY`) sigue siendo **opcional**: el valor por defecto es
+`STORAGE_BACKEND=local` y con él las subidas del preview son **efímeras** —viven
+en el `/tmp` de la función—. Para el preview se recomienda `s3` (§10.2); para una
+instalación de usar y tirar, `local` es una elección legítima **si se sabe**.
+
+### 12.2 Las nueve migraciones que aplica este despliegue
+
+Todas son ejecutables por un rol **no superusuario** (regla de `CLAUDE.md`) y las
+aplica `prisma migrate deploy` en el build de Vercel, en este orden:
+
+| Migración | Qué hace |
+|---|---|
+| `20260930090000_e12_branding_kind` | tipo de marca de la organización |
+| `20260930091000_e12_retirar_columnas_de_almacen` | **elimina** `organizations.storage_used` y `storage_limit`: eran un contador vivo que podía divergir de los bytes reales. La cifra buena se deriva y su caché lleva `sourceHash` |
+| `20260930092000_e12_backups_programados` | la programación de las copias |
+| `20260930093000_e12_comentario_organizations` | `COMMENT` que deja escrito en la base por qué se fueron las dos columnas |
+| `20261001090000_e12_excepciones_de_operador` | `operator_exceptions`: CHECK de caducidad **≤ 24 h en la base**, motivo con longitud mínima, `REVOKE UPDATE, DELETE` y dos políticas RESTRICTIVE |
+| `20261001100000_e12_rol_de_operador` | rol `app_operator` (NOLOGIN, NOBYPASSRLS) y la política RESTRICTIVE de las 57 tablas vaciables |
+| `20261001110000_e12_presupuesto_capex` | `budget_capex_lines` (ADR-0018 D2 enmendada) |
+| `20261002090000_e12_operator_organizations_solo_operador` | el listado de organizaciones del operador, sólo para el operador |
+| `20261003090000_e12_guarda_bypassrls_revoke_operator_exception` | **aditiva**: guarda de despliegue, `COMMENT` en la función y en la política. Ver §12.3 |
+
+### 12.3 La condición `rolbypassrls` del propietario — **se cumple en Supabase**
+
+La última migración **exige que el propietario de las migraciones tenga
+`BYPASSRLS` (o sea superusuario)** y aborta con `RAISE` nombrando el atributo si
+no lo tiene:
+
+```sql
+IF NOT (rolbypassrls OR rolsuper) THEN RAISE …
+```
+
+No es celo: `operator_exceptions` está en `FORCE ROW LEVEL SECURITY` con la
+política RESTRICTIVA `operator_exceptions_no_update`, y con `FORCE` **el
+propietario tampoco esquiva las políticas**. El `UPDATE` de
+`app.revoke_operator_exception()` —`SECURITY DEFINER`, que corre como el
+propietario— sólo ve sus filas gracias al atributo de rol. Sin él, **revocar una
+excepción de operador devolvería `false` sin error** y la excepción seguiría viva
+hasta caducar sola. Se reprodujo en un clon (`guard_r2`) con el propietario a
+`NOSUPERUSER NOBYPASSRLS`: `f` en silencio; devolviendo la función a `postgres`:
+`t`.
+
+**Comprobación para este despliegue:** el rol `postgres` de Supabase —el que
+`DIRECT_URL` usa para migrar— es `rolsuper=false`, `rolcreaterole=true`,
+**`rolbypassrls=true`** (`CLAUDE.md` §«Convenciones de código» y §4 de este mismo
+runbook). **Cumple la condición**, así que `20261003090000` aplica sin tocar
+nada. Verificable en el SQL Editor antes de desplegar:
+
+```sql
+select rolname, rolsuper, rolbypassrls from pg_roles where rolname = current_user;
+-- esperado: postgres | f | t
+```
+
+Si algún día una base nueva no lo cumpliera, la migración **falla ruidosamente**
+en vez de dejar el producto con una revocación muda. El arreglo es del operador
+(`ALTER ROLE <propietario> WITH BYPASSRLS;`), no de la política: abrir el
+`UPDATE` que `20261001090000` cerró sería un cambio de Nivel 2.
+
+### 12.4 Verificación E12
+
+- [ ] `prisma migrate deploy` aplica las nueve sin error; `20261003090000` no dispara su `RAISE`.
+- [ ] Las tres variables de §12.1 tienen valor en Vercel; el log de arranque no avisa de lista de operadores vacía.
+- [ ] `/admin` abre para un correo de `PLATFORM_ADMIN_EMAILS` y responde **404** para cualquier otro.
+- [ ] Copias: crear → `DONE` con las **SIETE** comprobaciones en PASS (la séptima, `COBERTURA_INVENTARIO`, ya **decide**: con ella en FAIL el trabajo queda `DONE_UNVERIFIED`).
+- [ ] `/audit` → **Ejecutar barrido**: sello con sus motivos, cinco hashes y cuatro cifras firmadas.
+- [ ] Ninguna lectura viva nombra `storage_used` / `storage_limit` (lo comprueba un test estático, pero el despliegue las **borra**).
