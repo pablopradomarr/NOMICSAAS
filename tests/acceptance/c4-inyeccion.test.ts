@@ -123,7 +123,9 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
   let entradasAuditLog = 0
 
   /** Ejecuta el auditor automatizado (Capa 2) y devuelve su veredicto. */
-  const auditor = async (fichero: string): Promise<{ veredicto: string; hallazgos: number; salida: string }> => {
+  const auditor = async (
+    fichero: string
+  ): Promise<{ veredicto: string; hallazgos: number; codigos: string[]; salida: string }> => {
     const out = path.join(tmp, fichero)
     let salida = ""
     try {
@@ -144,8 +146,16 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
       // Exit code ≠ 0 es lo NORMAL cuando el auditor refuta: no es un fallo del test.
       salida = String((error as { stdout?: string }).stdout ?? error)
     }
-    const json = JSON.parse(await readFile(out, "utf8")) as { veredicto: string; hallazgos: unknown[] }
-    return { veredicto: json.veredicto, hallazgos: json.hallazgos.length, salida }
+    const json = JSON.parse(await readFile(out, "utf8")) as {
+      veredicto: string
+      hallazgos: { codigo: string }[]
+    }
+    return {
+      veredicto: json.veredicto,
+      hallazgos: json.hallazgos.length,
+      codigos: json.hallazgos.map((h) => h.codigo),
+      salida,
+    }
   }
 
   beforeAll(async () => {
@@ -156,16 +166,20 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
     // El auditor contrasta contra lo SELLADO: sin informes ni barrido no hay
     // nada que contrastar y el veredicto sería NO_VERIFICABLE por vacío.
     //
-    // **Sólo BALANCE y PyG, y no es casualidad.** El auditor sondea el JSON
-    // sellado buscando claves que terminen en el nombre de la métrica; el
-    // `CASHFLOW` mensual y el `DASHBOARD` sellan además la SERIE por meses, de
-    // modo que el sondeo encuentra diez valores distintos para `INGRESOS` y
-    // declara `P-PRODUCTO-CONTRADICTORIO` sobre una copia intacta. Es un límite
-    // del sondeo de Capa 2 —no del producto—, queda anotado en el
-    // `validacion.json` de este componente y es hallazgo para T24/T25.
+    // **Los CUATRO informes, incluido el CASHFLOW mensual.** La ola A sembraba
+    // sólo BALANCE y PyG: con el `CASHFLOW` mensual, el sondeo de Capa 2
+    // encontraba doce celdas `ingresos` —una por mes— y declaraba
+    // `P-PRODUCTO-CONTRADICTORIO` **sobre una copia intacta**. Era un defecto
+    // del auditor, no del producto, y T23 lo corrigió en el sondeo: una cifra
+    // DEL PERIODO no vive dentro de una serie ni dentro de una lista. Sembrar
+    // aquí el informe que lo destapaba es lo que impide que vuelva: si alguien
+    // deshace el filtro, la copia limpia deja de salir CONFORME y este test lo
+    // dice antes que nadie.
     for (const [type, params] of [
       ["BALANCE", { snapshot: "PRE_REGULARIZACION", variant: "PYMES" }],
       ["PYG", { variant: "PYMES" }],
+      ["CASHFLOW", { method: "DIRECTO", granularity: "MENSUAL", view: "GESTION" }],
+      ["PYG_ANALITICA", { dimension: "PROJECT" }],
     ] as const) {
       await getOrCreateReportRun(org.organizationId, {
         type,
@@ -598,6 +612,61 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
     )
     expect(conAlteracion.veredicto, conAlteracion.salida).toBe("DISCREPANCIA")
     expect(restaurado.veredicto, restaurado.salida).toBe("CONFORME")
+  }, 300_000)
+
+  it("criterio 18 bis · una SERIE mensual sellada no es una contradicción del producto (hallazgo C4 de la ola A)", async () => {
+    /**
+     * La ola A dejó escrito que el auditor declaraba `P-PRODUCTO-CONTRADICTORIO`
+     * **sobre una copia intacta** en cuanto el periodo tenía sellada una serie
+     * mensual: el sondeo recogía doce celdas `ingresos` de doce meses y las leía
+     * como doce afirmaciones distintas sobre la misma cifra. Un refutador que
+     * grita sin razón se acaba silenciando entero.
+     *
+     * T23 lo corrigió en el sondeo (una cifra DEL PERIODO no vive dentro de una
+     * serie ni de una lista). Aquí se le pone delante justo la forma que lo
+     * rompía —inyectada en el `result` de un informe sellado, sobre la copia— y
+     * se exige que el veredicto **no se mueva** y que no aparezca el hallazgo.
+     * Es el test de un defecto del AUDITOR, no del producto, y por eso la
+     * inyección no altera ninguna cifra: sólo añade el desglose.
+     */
+    const fila = await withMaintenance(async (client) =>
+      client.query<{ id: string; result: unknown }>(
+        `SELECT id, result FROM report_runs WHERE organization_id = $1::uuid AND type = 'PYG' ORDER BY created_at DESC LIMIT 1`,
+        [org.organizationId]
+      )
+    )
+    const run = fila.rows[0]
+    expect(run, "no hay PyG sellada a la que añadirle la serie").toBeDefined()
+    if (!run) return
+    const original = JSON.stringify(run.result)
+
+    // Doce meses con ingresos, mc1, ebitda y resultado DISTINTOS entre sí: si el
+    // sondeo los contase, serían doce valores para cada una de las cuatro.
+    const meses: Record<string, Record<string, number>> = {}
+    for (let m = 1; m <= 12; m++) {
+      const clave = `2026-${String(m).padStart(2, "0")}`
+      meses[clave] = { ingresos: 100_000 * m, mc1: 90_000 * m, ebitda: 40_000 * m, resultado: 25_000 * m }
+    }
+    const conSerie = { ...(JSON.parse(original) as Record<string, unknown>), monthlyCents: meses, buckets: meses }
+
+    await withMaintenance(async (client) =>
+      client.query(`UPDATE report_runs SET result = $2::jsonb WHERE id = $1::uuid`, [run.id, JSON.stringify(conSerie)])
+    )
+    const conSerieSellada = await auditor("serie-mensual.json")
+    await withMaintenance(async (client) =>
+      client.query(`UPDATE report_runs SET result = $2::jsonb WHERE id = $1::uuid`, [run.id, original])
+    )
+
+    const contradicciones = conSerieSellada.codigos.filter((c) => c === "P-PRODUCTO-CONTRADICTORIO")
+    registro.assert(
+      "C4-serie-mensual",
+      conSerieSellada.veredicto === "CONFORME" && contradicciones.length === 0,
+      `con doce meses sellados en el mismo informe, el auditor sigue diciendo ${conSerieSellada.veredicto} ` +
+        `y no declara P-PRODUCTO-CONTRADICTORIO (${conSerieSellada.hallazgos} hallazgo(s): ` +
+        `${[...new Set(conSerieSellada.codigos)].join(", ") || "ninguno"})`
+    )
+    expect(contradicciones, conSerieSellada.salida).toEqual([])
+    expect(conSerieSellada.veredicto, conSerieSellada.salida).toBe("CONFORME")
   }, 300_000)
 
   it("criterio 14 · el auditor automatizado no comparte código con el productor (regla de autoría)", async () => {

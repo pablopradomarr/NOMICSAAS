@@ -280,6 +280,86 @@ const ALIAS: Record<string, string[]> = {
 
 type Sonda = { valor: bigint; ruta: string }
 
+/**
+ * **E12 · T23 — la corrección del sondeo (hallazgo C4 de la ola A).**
+ *
+ * El sondeo recorría el JSON sellado entero y se quedaba con **todo** valor
+ * entero cuya clave casara con un alias. Sobre una copia **intacta** eso bastaba
+ * para declarar `P-PRODUCTO-CONTRADICTORIO`: el `CASHFLOW` mensual y el
+ * `DASHBOARD` sellan la **serie por meses**, y doce celdas `ingresos` de doce
+ * meses distintos son doce valores distintos para `INGRESOS`. El auditor
+ * afirmaba que el producto se contradecía cuando lo único que pasaba es que el
+ * auditor estaba leyendo mal. Un refutador que grita con razón una vez y sin
+ * razón diez deja de servir: el ruido se acaba silenciando entero.
+ *
+ * La regla, escrita una vez: **una cifra DEL PERIODO no vive dentro de una
+ * serie**. Por eso el sondeo descarta un valor si su camino:
+ *
+ *  1. atraviesa un **elemento de lista** (`…[3].ingresos`): una lista sellada es
+ *     un desglose —meses, buckets, líneas, columnas—, nunca el total; o
+ *  2. atraviesa una clave de **serie declarada** (`buckets`, `meses`,
+ *     `porMes`, `desglose`…), que es como viajan las series indexadas por
+ *     etiqueta en vez de por posición.
+ *
+ * Lo que queda son los escalares de cabecera, que es lo que el producto afirma
+ * como cifra del periodo y lo único con lo que tiene sentido contrastar. Si tras
+ * el filtro siguen saliendo dos valores distintos, la contradicción es **real** y
+ * el hallazgo se mantiene: el filtro quita ruido, no capacidad de refutar.
+ */
+const CLAVES_DE_SERIE = new Set([
+  "buckets",
+  "bucket",
+  "monthlycents",
+  "mensualcents",
+  "quarterly",
+  "trimestral",
+  "meses",
+  "months",
+  "monthly",
+  "mensual",
+  "pormes",
+  "bymonth",
+  "series",
+  "serie",
+  "desglose",
+  "breakdown",
+  "periodos",
+  "periods",
+  "timeline",
+  "celdas",
+  "cells",
+  "columnas",
+  "columns",
+  "detalle",
+  "detail",
+  "lines",
+  "lineas",
+  "children",
+  "hijos",
+])
+
+/**
+ * Una clave que es una **etiqueta de periodo** (`2026`, `2026-03`, `2026-03-31`)
+ * sólo puede ser el índice de una serie: nadie llama así a una cifra. Es la
+ * tercera forma de indexar un desglose, además de la lista y de la clave de
+ * serie declarada, y es la que usa `directo.monthlyCents["2026-02"]`.
+ */
+const ETIQUETA_DE_PERIODO = /^\d{4}(-(Q[1-4]|\d{2})(-\d{2})?)?$/
+
+/**
+ * ¿El camino RELATIVO A LA RAÍZ de esta sonda atraviesa una serie o una lista?
+ * Se compara sobre el relativo porque la raíz (`report_runs[PYG/ab12].result`)
+ * trae sus propios corchetes y no es parte del JSON sellado.
+ */
+function dentroDeSerie(rutaRelativa: string): boolean {
+  if (rutaRelativa.includes("[")) return true
+  const segmentos = rutaRelativa.split(".").filter((s) => s.length > 0)
+  // El último segmento es la clave de la cifra; lo que la sitúa es su camino.
+  return segmentos
+    .slice(0, -1)
+    .some((s) => CLAVES_DE_SERIE.has(normalizar(s)) || ETIQUETA_DE_PERIODO.test(s))
+}
+
 /** Recorre un JSON sellado y devuelve los valores enteros cuyo camino termina en
  *  una clave reconocida. Acepta el contrato de provenance de C3
  *  (`{valor, metrica, …}`) y el valor desnudo. */
@@ -303,23 +383,23 @@ function sondear(json: unknown, alias: string[], raiz: string): Sonda[] {
     return null
   }
 
-  const andar = (nodo: unknown, ruta: string, profundidad: number): void => {
+  const andar = (nodo: unknown, relativa: string, profundidad: number): void => {
     if (profundidad > 8 || nodo === null || typeof nodo !== "object") return
     if (Array.isArray(nodo)) {
-      nodo.forEach((x, i) => andar(x, `${ruta}[${i}]`, profundidad + 1))
+      nodo.forEach((x, i) => andar(x, `${relativa}[${i}]`, profundidad + 1))
       return
     }
     for (const [k, v] of Object.entries(nodo as Record<string, unknown>)) {
-      const rutaHija = `${ruta}.${k}`
-      if (buscadas.has(normalizar(k))) {
+      const hija = `${relativa}.${k}`
+      if (buscadas.has(normalizar(k)) && !dentroDeSerie(hija)) {
         const n = valorEntero(v)
-        if (n !== null) encontradas.push({ valor: n, ruta: rutaHija })
+        if (n !== null) encontradas.push({ valor: n, ruta: `${raiz}${hija}` })
       }
-      andar(v, rutaHija, profundidad + 1)
+      andar(v, hija, profundidad + 1)
     }
   }
 
-  andar(json, raiz, 0)
+  andar(json, "", 0)
   return encontradas
 }
 
