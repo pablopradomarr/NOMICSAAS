@@ -53,36 +53,24 @@ type Fila = { path: string; cents: number; isLeaf: boolean; isComputed: boolean;
 const hojas = (rows: readonly Fila[]): Fila[] => rows.flatMap((row) => (row.children?.length ? hojas(row.children) : [row]))
 
 /**
- * **Divergencias CONOCIDAS entre el vocabulario del código y el de la skill**,
- * enumeradas una a una y con dueño. No son una laxitud del test: son hallazgos
- * de E12 que **T23 (documentación)** cierra en `fiabilidad/SKILL.md`, que no es
- * un fichero de esta ola. El test compara el conjunto de divergencias con esta
- * lista **exacta**: aparece una nueva ⇒ rojo; se arregla una ⇒ rojo también,
- * para que la lista se vacíe y no se quede de adorno.
+ * **Divergencias entre el vocabulario del código y el de la skill: NINGUNA.**
+ *
+ * La ola A de E12 encontró once (ocho motivos emitidos y no declarados, tres
+ * declarados sin emisor) y las congeló aquí con dueño: **T23**. T23 las cerró en
+ * `.claude/skills/fiabilidad/SKILL.md` —los cinco del cierre que faltaban y los
+ * tres del camino documental, y los tres «declarados sin emisor» resultaron no
+ * ser motivos de sello sino avisos de calidad (`DataQualityWarning`), que ahora
+ * viven en su propia tabla, fuera del vocabulario cerrado—.
+ *
+ * La lista se queda **vacía a propósito**, no se borra: es la forma de que el
+ * test siga siendo exacto. Aparece una divergencia nueva ⇒ rojo. Y si alguien
+ * vuelve a «resolverla» metiéndola aquí en vez de en la skill, el diff lo canta.
  */
 const DIVERGENCIAS_T23 = {
   /** Códigos que el motor emite y la tabla de la skill no declara. */
-  emitidosSinDeclarar: [
-    // E8 (`lib/ledger/invariants.ts` y `lib/extraction/reconcile.ts`): la tabla
-    // de la skill lista los motivos de ADR-0014 D7 tal y como se diseñaron, no
-    // los tres que el barrido acabó emitiendo.
-    "IVA_PERIODO_DESPLAZADO",
-    "PROPUESTA_NO_RECONCILIADA",
-    "RETENCION_NO_PRACTICADA",
-    // E9 (`lib/closing/invariants-e9.ts`): el array tiene diez códigos y la
-    // tabla «Motivos de sello que aporta el cierre (E9)» sólo declara cinco.
-    "DEUDA_SIN_DESGLOSE",
-    "PERIODIFICACION_SIN_AGOTAR",
-    "RECURRENTES_PENDIENTES",
-    "REGULARIZACION_BIENES_INVERSION_PENDIENTE",
-    "VENCIMIENTOS_SIN_FECHA",
-  ],
+  emitidosSinDeclarar: [] as readonly string[],
   /** Códigos que la tabla declara y que ningún motor emite como motivo de sello. */
-  declaradosSinEmitir: [
-    "CUOTA_DEL_DOCUMENTO_DISTINTA_DEL_RECALCULO",
-    "DEDUCIBILIDAD_PENDIENTE",
-    "EXTRACCION_PARCIAL",
-  ],
+  declaradosSinEmitir: [] as readonly string[],
 } as const
 
 /** Códigos de motivo declarados en las tablas «Motivos de sello …» de la skill. */
