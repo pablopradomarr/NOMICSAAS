@@ -97,6 +97,9 @@ const DETAIL_ALLOWED_KEYS = new Set([
   "before",
   "after",
   "affectedCounts",
+  // Ronda 1 de E12: `reset-org` declara también lo que RETIENE —filas que una
+  // tabla conservada por D2 señala y que por eso no se borran—, tabla a tabla.
+  "retenidas",
   "kind",
   "targetKind",
   "targetId",
@@ -112,7 +115,7 @@ const DETAIL_ALLOWED_KEYS = new Set([
  * escalares — ni anidamiento, ni arrays de objetos, ni nada que pueda arrastrar
  * una fila de negocio entera al registro de plataforma.
  */
-const DETAIL_OBJECT_KEYS = new Set(["before", "after", "affectedCounts"])
+const DETAIL_OBJECT_KEYS = new Set(["before", "after", "affectedCounts", "retenidas"])
 
 /** Máximo de claves dentro de un objeto de `detail`. Un recuento por tabla de
  * ochenta tablas cabe; un volcado de filas, no. */

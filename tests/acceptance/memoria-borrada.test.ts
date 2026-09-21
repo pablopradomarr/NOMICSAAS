@@ -48,9 +48,11 @@ import {
   type CanonicalReading,
 } from "./harness"
 import {
+  DERIVED_MODELS,
   FUENTES_AUNQUE_LO_PAREZCAN,
   SELLOS_NO_RECOMPUTABLES,
   derivedTables,
+  tablasSinDeclarar,
   purgableSeals,
   purgeDerived,
   type PurgeReport,
@@ -108,7 +110,7 @@ afterAll(async () => {
 }, 300_000)
 
 describe("E12 · T10 — la lista de lo derivado se DERIVA del esquema", () => {
-  it("I-E12-1a · toda tabla `_runs`/`_sweeps` o con hash de fuente entra sola en la lista", () => {
+  it("I-E12-1a · lo que se purga sale del REGISTRO, tabla por tabla y con motivo", () => {
     const meta = prismaSchemaMeta()
     const lista = derivedTables(meta).map((t) => t.table)
 
@@ -118,46 +120,41 @@ describe("E12 · T10 — la lista de lo derivado se DERIVA del esquema", () => {
       recorder.assert(
         `T10-lista-${esperada}`,
         lista.includes(esperada),
-        `«${esperada}» ${lista.includes(esperada) ? "está" : "NO está"} en la lista derivada`
+        `«${esperada}» ${lista.includes(esperada) ? "está" : "NO está"} en el registro DERIVED_MODELS`
       )
-      expect(lista, `${esperada} tiene que estar en la lista derivada`).toContain(esperada)
+      expect(lista, `${esperada} tiene que estar en el registro`).toContain(esperada)
     }
 
-    // Y la fuente NO entra: `extraction_runs` cumple el criterio de nombre y aun
+    // Y la fuente NO entra: `extraction_runs` parece caché por su nombre y aun
     // así es procedencia (P1). Está declarada con motivo, y el motivo se lee.
     expect(lista).not.toContain("extraction_runs")
     expect(FUENTES_AUNQUE_LO_PAREZCAN.extraction_runs.length).toBeGreaterThan(40)
     recorder.add(
-      "T10-lista-excepciones",
+      "T10-lista-registro",
       "PASS",
-      `${Object.keys(FUENTES_AUNQUE_LO_PAREZCAN).length} tablas declaradas fuente pese a parecer derivadas, con motivo`
+      `${Object.keys(DERIVED_MODELS).length} tablas declaradas derivadas con motivo; ` +
+        `${Object.keys(FUENTES_AUNQUE_LO_PAREZCAN).length} declaradas fuente pese a parecer caché`
     )
   })
 
-  it("cada excepción declarada CUMPLE el criterio estructural: si no, la excepción sobra", () => {
-    const meta = prismaSchemaMeta()
-    for (const table of Object.keys(FUENTES_AUNQUE_LO_PAREZCAN)) {
-      const model = meta.find((m) => m.table === table)
-      expect(model, `la excepción «${table}» nombra una tabla que no existe`).toBeDefined()
-      const cumple =
-        /_(runs|sweeps)$/.test(table) ||
-        model!.columns.some((c) => /(^|_)(source_hash|inputs_hash|source_sha256)$/.test(c.column))
-      expect(cumple, `la excepción «${table}» no cumple el criterio: sobra`).toBe(true)
-      expect(FUENTES_AUNQUE_LO_PAREZCAN[table].length, `«${table}» sin motivo escrito`).toBeGreaterThan(40)
-    }
-  })
-
-  it("criterio 34 · una tabla derivada NUEVA entra sola en la lista, sin tocar código", () => {
+  it("no queda ninguna tabla de caché SIN declarar: el detector acusa y el registro decide", () => {
     /**
-     * La prueba literal del criterio 34: se añade una tabla FICTICIA al modelo de
-     * datos que se le pasa a la función —la función es pura y lo recibe por
-     * parámetro— y la lista tiene que crecer. Si `derivedTables` mantuviera una
-     * lista a mano, esto no cambiaría nada, que es exactamente el fallo que
-     * BUG-E7-1, BUG-E9-5, BUG-E10-1 y BUG-E11-2 repitieron cuatro veces.
+     * La guardia que sustituye a «entra sola en la lista». El detector
+     * estructural ya no borra nada: sólo señala. Una tabla `_runs` nueva sin
+     * declarar rompe aquí, con su nombre, y obliga a decidir de qué lado cae.
      */
     const meta = prismaSchemaMeta()
-    const antes = derivedTables(meta).length
+    const sinDeclarar = tablasSinDeclarar(meta)
+    recorder.assert(
+      "T10-sin-declarar",
+      sinDeclarar.length === 0,
+      sinDeclarar.length === 0
+        ? "ninguna tabla de caché fuera del registro"
+        : `tabla(s) de caché sin declarar: ${sinDeclarar.join(", ")}`
+    )
+    expect(sinDeclarar).toEqual([])
 
+    // Y una tabla de caché ficticia SÍ se detecta: el detector no está muerto.
     const ficticia = {
       model: "FixtureFicticioRun",
       table: "fixture_ficticio_runs",
@@ -166,26 +163,12 @@ describe("E12 · T10 — la lista de lo derivado se DERIVA del esquema", () => {
         { field: "organizationId", column: "organization_id", type: "String", kind: "scalar" },
       ],
     }
-    const conFicticia = derivedTables([...meta, ficticia])
-    expect(conFicticia.length, "la lista NO ha crecido: se está manteniendo a mano").toBe(antes + 1)
-    expect(conFicticia.map((t) => t.table)).toContain("fixture_ficticio_runs")
-
-    // Y una tabla nueva que NO es derivada no entra: el criterio discrimina.
-    const fuente = {
-      model: "FixtureFicticioDocumento",
-      table: "fixture_ficticio_documentos",
-      columns: [
-        { field: "id", column: "id", type: "String", kind: "scalar" },
-        { field: "organizationId", column: "organization_id", type: "String", kind: "scalar" },
-      ],
-    }
-    expect(derivedTables([...meta, fuente]).length).toBe(antes)
-
+    expect(tablasSinDeclarar([...meta, ficticia])).toEqual(["fixture_ficticio_runs"])
+    expect(derivedTables([...meta, ficticia]).map((t) => t.table)).not.toContain("fixture_ficticio_runs")
     recorder.add(
-      "T10-lista-crece-sola",
+      "T10-detector-vivo",
       "PASS",
-      `una tabla ficticia «fixture_ficticio_runs» hace crecer la lista de ${antes} a ${conFicticia.length}; ` +
-        "una que no cumple el criterio no la mueve"
+      "una tabla «fixture_ficticio_runs» sin declarar se detecta y NO se purga: nada se borra por parecerlo"
     )
   })
 

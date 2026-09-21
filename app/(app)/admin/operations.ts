@@ -41,6 +41,15 @@ import "server-only"
  */
 
 import { TENANT_MODELS, prismaSchemaMeta, tenantTransaction, type TenantTransactionClient } from "@/lib/db"
+import {
+  deleteStatement,
+  planDeletion,
+  readForeignKeys,
+  retainersOf,
+  retentionWhere,
+  type DeletionPlan,
+  type ForeignKey,
+} from "@/lib/platform/deletion-plan"
 import { writeAuditLog } from "@/models/audit-log"
 import { PLATFORM_ACTIONS, recordPlatformAuditTx } from "@/models/platform"
 import { createOperatorException, listLiveOperatorExceptions } from "@/models/operator-exceptions"
@@ -177,59 +186,27 @@ export function tableOf(model: string): string {
 }
 
 /**
- * Orden de borrado: **topológico sobre las claves ajenas reales**, leído de
- * `pg_constraint`. No es una lista de tablas «en orden de FK» escrita a mano —
- * ésa es exactamente la que ha fallado cuatro veces—. Una tabla nueva entra en
- * el sitio correcto sin que nadie lo piense.
+ * Orden de borrado y guardas de retención: **topológico sobre las claves ajenas
+ * reales**, leído de `pg_constraint` por `lib/platform/deletion-plan.ts`, que es
+ * el mismo módulo que usa `purgeDerived`. No es una lista de tablas «en orden de
+ * FK» escrita a mano —ésa es exactamente la que ha fallado cuatro veces—.
  *
- * Las autorreferencias se ignoran (un `DELETE FROM t WHERE …` borra todas sus
- * filas en una sentencia y la FK se comprueba al final). Un ciclo entre tablas
- * distintas se **declara** en el plan en vez de fallar en silencio.
+ * Desde la ronda 1 de E12 se tienen en cuenta también las claves ajenas
+ * **entrantes desde las tablas que se conservan** (`invariant_runs→fiscal_years`,
+ * `invariant_runs→store_sweeps`, `closing_runs→fiscal_years`,
+ * `extraction_runs→files`, todas `RESTRICT`): antes se ignoraban por completo y
+ * `reset-org` abortaba con `23503` en cualquier organización que hubiera corrido
+ * un barrido. Ahora cada una pone una guarda `NOT EXISTS` en el `DELETE` de su
+ * padre: la fila señalada **se retiene y se declara**, con el nombre de la tabla
+ * que la retiene. No se desengancha poniendo la clave a `NULL` porque esas
+ * tablas son las seis de D2 y el operador no tiene `UPDATE` sobre ellas.
  */
 export async function deletionOrder(
-  tx: Pick<TenantTransactionClient, "$queryRaw">,
+  tx: Pick<TenantTransactionClient, "$queryRawUnsafe">,
   tables: readonly string[]
-): Promise<{ order: readonly string[]; cycles: readonly string[] }> {
-  const set = new Set(tables)
-  const edges = await tx.$queryRaw<{ child: string; parent: string }[]>`
-    SELECT c.conrelid::regclass::text AS child, c.confrelid::regclass::text AS parent
-      FROM pg_constraint c
-     WHERE c.contype = 'f'
-       AND c.conrelid <> c.confrelid
-  `
-  // hijos de cada padre, restringido a nuestro conjunto
-  const dependents = new Map<string, Set<string>>()
-  const pending = new Map<string, number>()
-  for (const t of set) {
-    dependents.set(t, new Set())
-    pending.set(t, 0)
-  }
-  for (const { child, parent } of edges) {
-    if (!set.has(child) || !set.has(parent) || child === parent) continue
-    if (dependents.get(parent)!.has(child)) continue
-    dependents.get(parent)!.add(child)
-    pending.set(parent, (pending.get(parent) ?? 0) + 1)
-  }
-
-  // Se borra primero lo que NO tiene hijos pendientes (las hojas del grafo).
-  const order: string[] = []
-  const ready = [...set].filter((t) => (pending.get(t) ?? 0) === 0).sort()
-  const childrenOf = new Map<string, string[]>()
-  for (const [parent, hijos] of dependents) for (const h of hijos) {
-    childrenOf.set(h, [...(childrenOf.get(h) ?? []), parent])
-  }
-  while (ready.length > 0) {
-    const t = ready.shift()!
-    order.push(t)
-    for (const parent of childrenOf.get(t) ?? []) {
-      const n = (pending.get(parent) ?? 0) - 1
-      pending.set(parent, n)
-      if (n === 0) ready.push(parent)
-    }
-    ready.sort()
-  }
-  const cycles = [...set].filter((t) => !order.includes(t)).sort()
-  return { order, cycles }
+): Promise<DeletionPlan> {
+  const edges = await readForeignKeys(async (sql) => await tx.$queryRawUnsafe<Record<string, unknown>[]>(sql))
+  return planDeletion(tables, edges)
 }
 
 async function countRows(
@@ -243,6 +220,25 @@ async function countRows(
   return Number(rows[0]?.n ?? 0)
 }
 
+/**
+ * Las filas que el borrado SÍ podrá llevarse: las que ninguna tabla conservada
+ * señala. Es la misma cláusula que ejecuta `runResetOrg`, para que el plan
+ * enumere exactamente lo que va a pasar y no una aproximación.
+ */
+async function countDeletable(
+  tx: Pick<TenantTransactionClient, "$queryRawUnsafe">,
+  table: string,
+  plan: DeletionPlan,
+  organizationId: string,
+  activa: (fk: ForeignKey) => boolean = () => true
+): Promise<number> {
+  const rows = await tx.$queryRawUnsafe<{ n: bigint }[]>(
+    `SELECT count(*)::bigint AS n FROM "${table}" WHERE ${retentionWhere(table, plan, null, activa)}`,
+    organizationId
+  )
+  return Number(rows[0]?.n ?? 0)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1 · reset-org (D1: se niega con un solo asiento, y no hay --force)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,14 +249,30 @@ export async function planResetOrg(organizationId: string): Promise<OperationPla
     const entries = await tx.journalEntry.count()
 
     const tables = resetModels().map(tableOf)
-    const { order, cycles } = await deletionOrder(tx, tables)
+    const deletion = await deletionOrder(tx, tables)
+    const { order, cycles } = deletion
     const affectedCounts: Record<string, number> = {}
-    for (const table of [...tables].sort()) {
+    /** Lo que una tabla conservada señala y por tanto NO se borra. Se declara. */
+    const retenidas: Record<string, number> = {}
+    /**
+     * Se enumera **en el orden del borrado** y se lleva la cuenta de lo que va
+     * quedando: una guarda cuyo hijo va a quedar vacío no retiene nada, y
+     * contarla haría que el plan anunciara como retenida una `business_lines`
+     * que sólo espera a que se borren sus proyectos.
+     */
+    const enElConjunto = new Set(tables)
+    const sobran: Record<string, number> = {}
+    for (const table of order) {
       const n = await countRows(tx, table, organizationId)
-      if (n > 0) affectedCounts[table] = n
+      const activa = (fk: { child: string }) => !enElConjunto.has(fk.child) || (sobran[fk.child] ?? 0) > 0
+      const borrables = n === 0 ? 0 : await countDeletable(tx, table, deletion, organizationId, activa)
+      sobran[table] = n - borrables
+      if (borrables > 0) affectedCounts[table] = borrables
+      if (n - borrables > 0) retenidas[table] = n - borrables
     }
 
     const total = Object.values(affectedCounts).reduce((a, b) => a + b, 0)
+    const totalRetenidas = Object.values(retenidas).reduce((a, b) => a + b, 0)
     const steps: PlanStep[] = [
       {
         label: `Vaciar ${Object.keys(affectedCounts).length} tabla(s) con filas, ${total} fila(s) en total`,
@@ -275,6 +287,19 @@ export async function planResetOrg(organizationId: string): Promise<OperationPla
         note: RESET_PRESERVED.map((p) => `${tableOf(p.model)}: ${p.reason}`).join(" · "),
       },
     ]
+    if (totalRetenidas > 0) {
+      steps.push({
+        label: `${totalRetenidas} fila(s) se RETIENEN: las señala una tabla que se conserva`,
+        rows: totalRetenidas,
+        note:
+          Object.entries(retenidas)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([table, rows]) => `${table}: ${rows} fila(s) retenida(s) por ${retainersOf(table, deletion).join(", ")}`)
+            .join(" · ") +
+          " — ADR-0020 D2: esas tablas son append-only y el operador no tiene UPDATE sobre ellas, " +
+          "así que la clave ajena no se puede desenganchar; la fila señalada se conserva y se dice.",
+      })
+    }
     if (cycles.length > 0) {
       steps.push({ label: "Ciclo de claves ajenas detectado", note: cycles.join(", ") })
     }
@@ -297,7 +322,12 @@ export async function planResetOrg(organizationId: string): Promise<OperationPla
       steps,
       affectedCounts,
       before: { journalEntries: entries, tablasConFilas: Object.keys(affectedCounts).length, filas: total },
-      after: { journalEntries: entries, tablasConFilas: 0, filas: 0 },
+      after: {
+        journalEntries: entries,
+        tablasConFilas: Object.keys(retenidas).length,
+        filas: totalRetenidas,
+        retenidas: totalRetenidas,
+      },
       blocked,
       // El orden no viaja al token: es un detalle de ejecución, no algo que el
       // operador decida. (Se recalcula dentro de la transacción de escritura.)
@@ -312,14 +342,25 @@ export async function runResetOrg(organizationId: string, ctx: OperatorContext):
   if (plan.blocked) throw new OperatorDenied(plan.blocked)
 
   const borradas: Record<string, number> = {}
+  const retenidas: Record<string, number> = {}
   await operatorTransaction(organizationId, ctx.userId, async (tx) => {
     const tables = resetModels().map(tableOf)
-    const { order } = await deletionOrder(tx, tables)
-    for (const table of order) {
-      const n = await tx.$executeRaw(
-        Prisma.sql`DELETE FROM ${Prisma.raw(`"${table}"`)} WHERE "organization_id" = ${organizationId}::uuid`
+    const deletion = await deletionOrder(tx, tables)
+    for (const table of deletion.order) {
+      // `$queryRawUnsafe` y no `$executeRawUnsafe` porque el segundo está
+      // deliberadamente fuera de `TenantTransactionClient`; el `RETURNING`
+      // devuelve una fila por borrada y sirve de recuento.
+      const filas = await tx.$queryRawUnsafe<{ borrada: number }[]>(
+        `${deleteStatement(table, deletion)} RETURNING 1 AS borrada`,
+        organizationId
       )
-      if (n > 0) borradas[table] = n
+      if (filas.length > 0) borradas[table] = filas.length
+    }
+    // Lo retenido no se estima: se cuenta después de borrar, y se declara con
+    // el nombre de la tabla que retiene.
+    for (const table of [...deletion.order].sort()) {
+      const quedan = await countRows(tx, table, organizationId)
+      if (quedan > 0) retenidas[table] = quedan
     }
     // D3 · la línea en el registro DEL CLIENTE. Es el único `INSERT` que este
     // fichero hace sobre una de las seis tablas de D2, y es el que D3 exige.
@@ -328,7 +369,11 @@ export async function runResetOrg(organizationId: string, ctx: OperatorContext):
       entityId: organizationId,
       action: "OPERATOR_RESET_ORG",
       before: plan.before as Record<string, unknown>,
-      after: { ...plan.after, tablasVaciadas: Object.keys(borradas).length },
+      after: {
+        ...plan.after,
+        tablasVaciadas: Object.keys(borradas).length,
+        filasRetenidas: Object.values(retenidas).reduce((a, b) => a + b, 0),
+      },
       reason: `[operador ${ctx.actor}] ${ctx.reason}`,
       userId: ctx.userId,
     })
@@ -341,6 +386,7 @@ export async function runResetOrg(organizationId: string, ctx: OperatorContext):
         before: plan.before,
         after: plan.after,
         affectedCounts: borradas,
+        retenidas,
       },
     })
   })
