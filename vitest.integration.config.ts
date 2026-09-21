@@ -12,6 +12,18 @@ export default defineConfig({
       DATABASE_URL_TEST: process.env.DATABASE_URL_TEST || DEFAULT_TEST_DATABASE_URL,
     },
     include: ["ai/**/*.test.ts", "lib/**/*.test.ts", "forms/**/*.test.ts", "models/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    /**
+     * **E12 · T17 — la suite de VOLUMEN REAL corre aparte** (`npm run test:perf`,
+     * `vitest.perf.config.ts`).
+     *
+     * Siembra 50 000 asientos, 150 000 líneas y 1,5 GB de documentos, tarda seis
+     * minutos y deja la base con bloat aunque borre sus filas. Con ella dentro,
+     * el techo de `perf-audit` —que mide conexiones simultáneas y por tanto
+     * depende de cuánto tarde cada consulta— se cae por el estado de la base y
+     * no por el código. §8 del diseño de E12 ya la pone en su propio job de CI,
+     * y sólo en `push` a `main`: aquí se cumple.
+     */
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.next/**", "tests/integration/perf-platform.test.ts"],
     globalSetup: ["./vitest.integration.setup.ts"],
     fileParallelism: false,
     // BLOQUEA #1: los ficheros van en SERIE. Cada fichero abre su propio pool de

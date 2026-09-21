@@ -2,7 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { Client } from "pg"
-import { appMaintenanceDatabaseUrl } from "@/tests/support/env"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -89,8 +88,6 @@ const { POST: webhookPOST } = await import("@/app/api/stripe/webhook/route")
 const StripeSdk = (await import("stripe")).default
 
 const OWNER_URL = process.env.DATABASE_URL_TEST || "postgresql://postgres@localhost:5432/erp_test"
-/** `app_maintenance` (BYPASSRLS): el único rol que puede vaciar sin abrir la RLS. */
-const maintenanceUrl = process.env.DATABASE_URL_MAINTENANCE || appMaintenanceDatabaseUrl(OWNER_URL)
 const ORG = "e11ffff0-0000-4000-8000-00000000000a"
 const DEST = "e11ffff0-0000-4000-8000-00000000000b"
 const USER = "e11ffff0-0000-4000-8000-0000000000a1"
@@ -179,11 +176,7 @@ let watcher: ConnectionWatcher
  */
 async function purgarOrganizaciones(ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return
-  const mantenimiento = new Client({ connectionString: maintenanceUrl })
-  await mantenimiento.connect()
-  const m = async (sql: string, params: unknown[] = []): Promise<void> => {
-    await mantenimiento.query(sql, params).catch(() => undefined)
-  }
+
   const tablas = await q<{ tabla: string }>(
     `SELECT c.relname AS tabla
        FROM pg_class c
@@ -192,26 +185,87 @@ async function purgarOrganizaciones(ids: readonly string[]): Promise<void> {
         AND a.attname = 'organization_id' AND a.attnum > 0 AND NOT a.attisdropped
       ORDER BY c.relname`
   )
+  const nombres = tablas.map((fila) => fila.tabla)
+
+  /**
+   * **El orden de borrado se DERIVA de las FK reales**, no se escribe: los hijos
+   * antes que los padres, con un topológico sobre `pg_constraint`. Las
+   * autorreferencias se ignoran (una tabla no se bloquea a sí misma con un
+   * DELETE masivo).
+   */
+  const aristas = await q<{ hijo: string; padre: string }>(
+    `SELECT c.conrelid::regclass::text AS hijo, c.confrelid::regclass::text AS padre
+       FROM pg_constraint c
+      WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace`
+  )
+  const enJuego = new Set(nombres)
+  const padresDe = new Map<string, Set<string>>(nombres.map((n) => [n, new Set<string>()]))
+  for (const { hijo, padre } of aristas) {
+    const h = hijo.replace(/^public\./, "")
+    const p = padre.replace(/^public\./, "")
+    if (h === p || !enJuego.has(h) || !enJuego.has(p)) continue
+    padresDe.get(h)!.add(p)
+  }
+  const orden: string[] = []
+  const puestas = new Set<string>()
+  for (let vuelta = 0; vuelta < nombres.length && orden.length < nombres.length; vuelta += 1) {
+    for (const tabla of nombres) {
+      if (puestas.has(tabla)) continue
+      if ([...padresDe.get(tabla)!].every((padre) => puestas.has(padre))) {
+        orden.push(tabla)
+        puestas.add(tabla)
+      }
+    }
+  }
+  for (const tabla of nombres) if (!puestas.has(tabla)) orden.push(tabla)
+  const deBorrado = [...orden].reverse()
+
+  /**
+   * **Los guardianes append-only, apagados y vueltos a encender.**
+   * `time_entries` rechaza el borrado de un parte APROBADO (I-E10-4) con un
+   * disparador, y hace bien: en producción eso se contra-apunta, no se borra. En
+   * el arnés hay que poder vaciar.
+   *
+   * Ojo con la diferencia que importa: esto apaga un DISPARADOR de negocio, **no
+   * el `FORCE ROW LEVEL SECURITY`**. La primera versión de esta purga hacía
+   * `NO FORCE → DELETE → FORCE`, y como la suite de integración corre muchos
+   * ficheros seguidos, otra suite pillaba una tabla en ese instante y
+   * `e9-esquema` fallaba con razón. La segunda barrera del multi-tenant no se
+   * baja nunca; lo que se hace es **satisfacer la política**, fijando
+   * `app.current_org` en cada organización antes de borrar la suya.
+   */
+  const conGuardian = ["time_entries"]
+  for (const tabla of conGuardian) await q(`ALTER TABLE ${tabla} DISABLE TRIGGER USER`).catch(() => undefined)
 
   try {
-    await m(`SET session_replication_role = 'replica'`)
-    // **Una sola pasada, y basta**: con `session_replication_role = 'replica'`
-    // los disparadores de FK no se evalúan, así que el orden alfabético da
-    // igual. Es lo que convierte una purga cuadrática —tres pasadas sobre
-    // sesenta tablas— en una lineal.
-    for (const { tabla } of tablas) {
-      await m(`DELETE FROM "${tabla}" WHERE organization_id = ANY($1::uuid[])`, [ids])
+    // Todo en UNA transacción: los constraint triggers diferidos —«un asiento
+    // tiene al menos dos líneas»— se evalúan al COMMIT.
+    await q("BEGIN")
+    try {
+      await q("SET CONSTRAINTS ALL DEFERRED")
+      for (const id of ids) {
+        await q(`SELECT set_config('app.current_org', $1, true)`, [id])
+        for (const tabla of deBorrado) {
+          await q(`DELETE FROM "${tabla}" WHERE organization_id = $1::uuid`, [id])
+        }
+        await q(`DELETE FROM organizations WHERE id = $1::uuid`, [id])
+      }
+      await q("COMMIT")
+    } catch (error) {
+      await q("ROLLBACK").catch(() => undefined)
+      throw error
     }
-    await m(`DELETE FROM organizations WHERE id = ANY($1::uuid[])`, [ids])
   } finally {
-    await m(`SET session_replication_role = 'origin'`)
-    await mantenimiento.end()
+    for (const tabla of conGuardian) await q(`ALTER TABLE ${tabla} ENABLE TRIGGER USER`).catch(() => undefined)
   }
 }
 
 async function limpiar() {
   const gv = organizacionesDelFixture(GRAN_VOLUMEN).map((o) => o.id)
   await purgarOrganizaciones([DEST, ORG, ...gv])
+  // El usuario se intenta retirar, pero no siempre se puede: lo referencian
+  // tablas sin `organization_id` que la purga no recorre. No es un fallo —la
+  // siembra es idempotente— y por eso no aborta la limpieza.
   await q(`DELETE FROM users WHERE id = $1::uuid`, [USER]).catch(() => undefined)
 }
 
@@ -431,9 +485,14 @@ beforeAll(async () => {
   await watcher.start()
   await limpiar()
 
+  // Idempotente: si una ejecución anterior se cortó, el usuario puede seguir
+  // ahí —lo referencian tablas que no llevan `organization_id`, así que la
+  // purga no siempre puede retirarlo— y eso no es motivo para no poder repetir
+  // la suite.
   await q(
     `INSERT INTO users (id, email, name, created_at, updated_at)
-     VALUES ($1::uuid, 'e11-perf@test.local', 'E11 perf', now(), now())`,
+     VALUES ($1::uuid, 'e11-perf@test.local', 'E11 perf', now(), now())
+     ON CONFLICT (id) DO NOTHING`,
     [USER]
   )
   await q(
