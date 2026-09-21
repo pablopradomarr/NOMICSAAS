@@ -22,6 +22,13 @@ export default defineConfig({
        * `npm run test`, y además como paso propio del job 6 de CI.
        */
       "scripts/**/*.test.ts",
+      /**
+       * Ronda 2 (H-4): el arnés también tiene lógica —la lista cerrada de FAIL
+       * del sustrato y el criterio del sello del job de CI— y la misma enmienda
+       * E-1 le aplica. Sólo `*.test.ts`: el resto de `tests/support/**` son
+       * sembradores, no tests.
+       */
+      "tests/support/**/*.test.ts",
     ],
   },
   resolve: {

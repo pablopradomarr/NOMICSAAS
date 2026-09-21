@@ -39,3 +39,60 @@ export const FAIL_DEL_SUSTRATO: Readonly<Record<string, string>> = {
 export function failesNoDeclarados(ids: readonly string[]): string[] {
   return [...new Set(ids)].filter((id) => FAIL_DEL_SUSTRATO[id] === undefined).sort()
 }
+
+/**
+ * E12 · **ronda 2 (H-4 PARCIAL del auditor)** — el criterio del sello, de
+ * verdad.
+ *
+ * La ronda 1 escribió la puerta así:
+ *
+ * ```ts
+ * const selloLimpio = sello === "VALIDADO AUTOMÁTICAMENTE" || fallos.length > 0
+ * ```
+ *
+ * y eso es **vacuo**: el sustrato deja SIEMPRE tres FAIL declarados, así que la
+ * segunda rama es siempre cierta y la primera no se evalúa nunca. El job podía
+ * publicar en el resumen del PR un sello `REQUIERE REVISIÓN` por **cualquier**
+ * motivo —un aviso por encima del umbral, un cambio de motor, una revisión
+ * forzada, una excepción de operador viva— y seguir en verde. La puerta de los
+ * FAIL no declarados sí funcionaba, y es lo que salvaba el job; el sello, no.
+ *
+ * El criterio correcto no cuenta FAIL: **mira cada razón del sello y exige que
+ * esté explicada por la lista cerrada de arriba**. Una y sólo una clase de
+ * razón puede estarlo —la que enumera los invariantes en FAIL, y sólo si TODOS
+ * los que enumera están declarados—; cualquier otra razón, sea de la naturaleza
+ * que sea, deja el sello rojo **fuera** de la lista y pone el job en rojo.
+ *
+ * Así el criterio 13 («el ciclo sale con sello VALIDADO AUTOMÁTICAMENTE») pasa a
+ * ser comprobable sobre el fixture de CI: o el sello está verde, o su rojez está
+ * enteramente declarada con motivo escrito. Nada más.
+ */
+export type RazonDeSello = { kind: string; message: string; code?: string }
+
+/** El prefijo con el que `seal()` enumera los invariantes en FAIL. */
+const PREFIJO_INVARIANTES = "invariantes en FAIL: "
+
+/**
+ * Las razones del sello que la lista cerrada **no** explica, cada una con el
+ * motivo por el que no lo está. Vacío ⇔ el sello rojo es enteramente del
+ * sustrato declarado.
+ */
+export function motivosNoExplicadosPorElSustrato(razones: readonly RazonDeSello[]): string[] {
+  const out: string[] = []
+  for (const razon of razones) {
+    if (razon.kind === "INVARIANTE" && razon.message.startsWith(PREFIJO_INVARIANTES)) {
+      const ids = razon.message
+        .slice(PREFIJO_INVARIANTES.length)
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id !== "")
+      const noDeclarados = failesNoDeclarados(ids)
+      if (noDeclarados.length > 0) {
+        out.push(`invariante(s) en FAIL sin declarar: ${noDeclarados.join(", ")}`)
+      }
+      continue
+    }
+    out.push(`${razon.kind} · ${razon.message}`)
+  }
+  return out
+}

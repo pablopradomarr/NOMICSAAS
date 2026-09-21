@@ -170,7 +170,9 @@ async function main(): Promise<void> {
    * Los del sustrato se imprimen con su motivo: el lector del PR ve por qué el
    * sello no está verde sin abrir un artefacto.
    */
-  const { FAIL_DEL_SUSTRATO, failesNoDeclarados } = await import("@/tests/support/fail-del-sustrato")
+  const { FAIL_DEL_SUSTRATO, failesNoDeclarados, motivosNoExplicadosPorElSustrato } = await import(
+    "@/tests/support/fail-del-sustrato"
+  )
   const noDeclarados = failesNoDeclarados(fallos.map((c) => c.id))
   for (const c of fallos) {
     const motivo = FAIL_DEL_SUSTRATO[c.id]
@@ -186,14 +188,33 @@ async function main(): Promise<void> {
     }
     throw new Error(`${noDeclarados.length} invariante(s) en FAIL sin declarar`)
   }
-  const selloLimpio = barrido.sello.sello === "VALIDADO AUTOMÁTICAMENTE" || fallos.length > 0
-  if (!selloLimpio) {
+  /**
+   * **H-4, ronda 2.** La comprobación de la ronda 1 era
+   * `sello === "VALIDADO AUTOMÁTICAMENTE" || fallos.length > 0`: como el
+   * sustrato deja siempre tres FAIL declarados, la segunda rama era siempre
+   * cierta y **el sello no se evaluaba nunca**. El criterio no cuenta FAIL:
+   * recorre las RAZONES del sello y exige que cada una esté explicada por la
+   * lista cerrada del sustrato. Cualquier razón de otra naturaleza —un aviso
+   * por encima del umbral, un cambio de motor, una revisión forzada, una
+   * excepción de operador viva— es un sello rojo fuera de la lista y pone el
+   * job en rojo, aunque no haya ni un FAIL nuevo.
+   */
+  const selloVerde = barrido.sello.sello === "VALIDADO AUTOMÁTICAMENTE"
+  const noExplicados = selloVerde ? [] : motivosNoExplicadosPorElSustrato(barrido.sello.razones)
+  if (noExplicados.length > 0) {
     console.error(
-      `::error::el sello del fixture es «${barrido.sello.sello}» sin ningún invariante en FAIL: ` +
-        `motivos ${barrido.sello.motivos.join(", ") || "(ninguno declarado)"}. Un job verde con un sello rojo no vale (H-4)`
+      `::error::el sello del fixture es «${barrido.sello.sello}» por ${noExplicados.length} motivo(s) que la lista ` +
+        "cerrada del sustrato NO explica. Un job verde con un sello rojo no vale (H-4):"
     )
-    throw new Error("sello del fixture distinto de VALIDADO AUTOMÁTICAMENTE por un motivo no declarado")
+    for (const motivo of noExplicados) console.error(`  · ${motivo}`)
+    throw new Error(`sello del fixture rojo por ${noExplicados.length} motivo(s) fuera de la lista del sustrato`)
   }
+  console.log(
+    selloVerde
+      ? "· sello VALIDADO AUTOMÁTICAMENTE: el criterio 13 se cumple sin excepciones"
+      : `· sello «${barrido.sello.sello}» explicado ENTERAMENTE por la lista cerrada del sustrato ` +
+          `(${barrido.sello.razones.length} razón/razones, todas declaradas)`
+  )
 }
 
 main()
