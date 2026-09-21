@@ -478,6 +478,18 @@ describe("C3 · la provenance de cada celda se EJECUTA y reproduce su cifra", ()
     )
     expect(movidasPorSustrato, "el sustrato documental movió una cifra canónica").toEqual([])
     expect(sellosPorSustrato).not.toContain("ledgerHash")
+    /**
+     * **N-5 del auditor.** `not.toContain("ledgerHash")` deja pasar que el
+     * sustrato mueva cualquier OTRO sello sin que nadie se entere. El conjunto
+     * de sellos que se mueven es exactamente uno —`analyticsKey`, por la regla
+     * de reparto que el sustrato trae— y se afirma como tal: si mañana el
+     * sustrato moviera `planHash`, `accountMapHash`, `configHash` o el propio
+     * `ledgerHash`, esta línea lo dice con su nombre.
+     */
+    expect(
+      sellosPorSustrato,
+      "el sustrato documental mueve un sello que no es `analyticsKey`: revisa qué ha cambiado"
+    ).toEqual(["analyticsKey"])
 
     const atado = await tenantTransaction(org.organizationId, org.userId, async (tx) => {
       const lineas = await tx.$queryRawUnsafe<{ id: string }[]>(prov.registros_origen, ...prov.parametros)

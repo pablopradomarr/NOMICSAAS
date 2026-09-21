@@ -162,3 +162,111 @@ ADR-0022 deroga.
 ni fixture; las suites se lanzaron una a una sobre `erp_test`
 (`psql -h /var/run/postgresql`). Los e2e y `next build` no se lanzaron, por
 instrucción del encargo.*
+
+---
+
+# Ronda 2 — RE-REVISIÓN (`revisor-codigo`, contexto limpio)
+
+**Diff revisado:** `git diff b56eafd...a62b57c` · 9 commits · 24 ficheros,
++1 226 / −113 · **Fecha:** 2026-09-21 · **Entradas:** la sección de arriba
+(mis #10, A, B, C, D–H), `docs/adr/0023-registro-explicito-de-lo-derivado.md`,
+la migración `20261003090000`, `docs/ESTADO.md` §«E12 · RONDA 2 DE CORRECCIÓN».
+
+## Suites (una a una, en esta máquina)
+
+| Suite | Resultado |
+|---|---|
+| `npm run lint` | ✅ 0 errores · 12 avisos heredados (los mismos) |
+| `npx tsc --noEmit` | ✅ limpio |
+| `npm run test` | ✅ **130 ficheros · 2 738 ✓ / 11 skip** (eran 129 / 2 723; +1 fichero y +15 tests, ningún skip nuevo) |
+| `npm run test:integration` | ✅ **187 ficheros · 3 633 ✓** (eran 186 / 3 624) |
+| `npm run test:integration:rls` | ✅ 12 ficheros · 211 ✓ |
+| `tests/acceptance/c3-provenance.test.ts` | ✅ 6 ✓ **con el aserto de N-5 ya puesto** (única modificación de código de esta revisión) |
+| acceptance completa · e2e · `build` | no lanzados (instrucción del encargo; la aceptación la verificó el auditor en 9 · 53 ✓) |
+
+## Seguimiento de mis hallazgos de la ronda 1
+
+| # | Sev. | Estado | Evidencia |
+|---|---|---|---|
+| **#10** `revoke_operator_exception` y `rolbypassrls` | PUEDE (reabierto) | **CERRADO** | Migración `20261003090000` (aditiva, sólo `COMMENT` + un `DO` de lectura sobre `pg_proc`/`pg_roles`, ejecutable por no superusuario): guarda `IF v_force AND NOT (v_bypass OR v_super) THEN RAISE` con el mensaje que nombra el atributo y el modo de fallo silencioso, `COMMENT` en la función **y** en la política `operator_exceptions_no_update`. **No toca la política**, y dice por qué (sería Nivel 2 y reabriría el `UPDATE` que `20261001090000` cerró): es la respuesta correcta, no la cómoda. Vivo en `tests/integration/e12-ronda2.test.ts:89` y `:112` |
+| **A** criterio 34 decía lo contrario que el código | DEBE | **CERRADO** | **ADR-0023** (Nivel 2, aprobado y fechado) con el **alcance acotado a `purgeDerived`** y la razón medida (4 aciertos de 9 candidatas); E-4 se deja intacta para backup, `--reset-org` y `derivedSealColumns()`. Reescritos el criterio 34 (`dod:690-702`, con el enunciado anterior **derogado y citado**), `I-E12-1` en el diseño **y** en `SKILL.md:420`, §4.1 (`dod:250-260`) y la regla 3 de §7. El test **no es más débil**: `derivedTables(meta, registro)` admite un registro ficticio (D5) y `memoria-borrada.test.ts` afirma las tres consecuencias —sin declarar se detecta y **no** se purga; declarada derivada entra sin tocar otra línea; declarada fuente sale del detector—, más que el borrado afirmaba. El producto nunca pasa el segundo argumento (`purge-derived.ts:299` es el único llamante) |
+| **B** `.env.example` documentaba la regla derogada | DEBE | **CERRADO** | `.env.example:143-163`: «**Vacía = NADIE es operador de plataforma**, en los DOS modos (ADR-0022 D1)», el 404, el aviso de arranque y una frase que invalida de antemano cualquier documento que repita la regla vieja |
+| **C** `listOrganizationsForOperator` sin ejercer | DEBE | **CERRADO** | `tests/integration/e12-ronda2.test.ts` (7 ✓, verde en la pasada completa): privilegios `app_runtime` **f** / `app_operator` **t** / `app_maintenance` **t**; la llamada por el modelo con la organización sembrada dentro; **`42501` desnudo** como `app_runtime`; y que el `SET LOCAL ROLE` **muere con la transacción**. Cubre exactamente lo que DEBE #6 compró |
+| **D** rastro de la ronda en `ESTADO.md` | PUEDE | **CERRADO** | §ola B apunta ya a **ADR-0021**; §T22 dice **doce** jobs, **trece** generadores y matriz **derivada del directorio** |
+| **E** `deleteObject` dentro de la transacción del llamante | PUEDE | **ANOTADO A E14 · motivo VÁLIDO** | El arreglo correcto cambia la **semántica de fallo** (purgar tras el `COMMIT` con reintento, o `objectKey` a `NULL` y borrado físico diferido al barrido) y necesita diseño y tests propios; el patrón es **anterior** a E12 y la ronda sólo lo heredó. Está en la tabla de deuda con épica y motivo escrito |
+| **F** el calentamiento del techo 2/9 podía medir otra cosa | PUEDE | **CERRADO, y mejor que lo sugerido** | En vez de un desplazamiento coprimo, un **borrador propio** (`warmupDraftId`): la clave única de `budget_lines` lleva `budget_id`, así que la disyunción es **por construcción** y no depende de ninguna aritmética modular. Y la premisa se **comprueba**: `perf-budget.test.ts:519-527` exige `budget_id = draftId` a **cero** celdas antes de medir |
+| **G** el bloque de §8 sin tildes | PUEDE | **CERRADO** | `dod:551-563` restituido, y la fila del job 6 explica además qué cambia la ronda 2 en la puerta del sello |
+| **H** provenance por interpolación de cadena | PUEDE | **ANOTADO A E14 · motivo VÁLIDO, con una reserva** | Cierto que parametrizar obliga a cambiar `registros_origen` de `Record<string,string>` a `{sql, params}` y con él la pantalla, la suite C3 y el invariante: no es pequeño. **Reserva (R-1, abajo):** mientras tanto, `I-E12-3` sigue diciendo «consulta **parametrizada**» de algo que en `variance.ts` no lo es — que es literalmente la lección de **A** |
+
+## Lo que el auditor dejó abierto y toca a código
+
+| Punto | Estado | Evidencia |
+|---|---|---|
+| **N-1** · el registro no validaba contra su propio esquema | **CERRADO** | `runs/registro.schema.ts:98-131`: `detallePorSuite` de **un solo nivel** (`string` o `string[]`), ampliado **a propósito y con motivo escrito**, no aplanando la línea. Mitad negativa presente: `c7-registro-runs.test.ts` «criterio 27 ter» comprueba que un **segundo** nivel de anidamiento se sigue rechazando. Ampliar un esquema sin conservar lo que rechaza es la forma barata de no tener esquema; aquí no se ha hecho |
+| **N-2 / H-6** · la séptima comprobación no decidía | **CERRADO** | `lib/platform/backup.ts:437` — `COBERTURA_INVENTARIO` dentro de `REQUIRED_CHECKS`, que es la única lista que `isVerified()` recorre; comentarios «las SEIS» corregidos a SIETE en `backup.ts` y `models/backups.ts:23,1032,1372`; test negativo en `backup.test.ts` (séptima en FAIL + seis en PASS ⇒ **no** verificada) |
+| **H-4** · la puerta del sello era vacua | **CERRADO** | `scripts/ci-audit-fixture.ts:191-217` ya **no cuenta FAIL**: recorre `barrido.sello.razones` y exige que **cada una** la explique la lista cerrada (`motivosNoExplicadosPorElSustrato`, pura, con `tests/support/fail-del-sustrato.test.ts`). Y el arnés entra en `vitest.config.ts:25-31` (`tests/support/**/*.test.ts`): la enmienda E-1 aplicada también a quien vigila |
+| **N-3** · tercera copia del predicado | **CERRADO** | `settings/backups/actions.ts:276` llama a `isPlatformAdminEmail()`. Ya no queda ninguna copia en línea |
+| **N-4 / H-9** | **CERRADO, y destapó producto** | No se reescribe el motivo falso: se cierra el hallazgo. Al hacerlo apareció que el tercer salto **no se podía ejecutar** (`transactions` no tiene `file_id` → `42703`, enmascarado porque el fixture deja `transaction_id` a `NULL`); va por `journal_entries.file_id`, que ADR-0011 deja fuera de las tres formas canónicas |
+| **N-5** · el aserto de sellos era laxo | **CERRADO EN ESTA REVISIÓN** | `tests/acceptance/c3-provenance.test.ts:474-486`: `expect(sellosPorSustrato).toEqual(["analyticsKey"])` junto al `not.toContain("ledgerHash")` que ya estaba. Fichero ejecutado: **6 ✓**. Es la única línea de código que esta revisión toca |
+
+## Hallazgos NUEVOS de la ronda 2
+
+| # | Fichero:línea | Severidad | Problema | Sugerencia |
+|---|---|---|---|---|
+| **R-1** | `docs/design/E12-fiabilidad-dod.md:594` · `.claude/skills/fiabilidad/SKILL.md:421` | PUEDE | `I-E12-3` sigue diciendo «consulta **parametrizada**». Para la provenance de informes es cierto —`c3-provenance.test.ts:483` la ejecuta con `...prov.parametros`—, pero para `budgetCellProvenance` no lo es, y el propio equipo acaba de anotar esa diferencia a E14 (**H**). Es la misma forma del hallazgo **A**: un invariante que afirma más de lo que el código hace, con la diferencia de que aquí ya está identificada y fechada | Una cláusula en el enunciado de `I-E12-3`: «(la provenance de **presupuesto** se compone hoy por interpolación de valores ya validados; parametrizarla está anotado en E14)». Cuesta una línea y evita que dentro de tres épicas alguien lea el invariante como una garantía |
+| **R-2** | `lib/platform/backup.ts:383-390` y `:437` | PUEDE | El comentario de `CheckId` dice que `COBERTURA_INVENTARIO` «va **antes** que las seis», pero en `REQUIRED_CHECKS` aparece **segunda** (tras `RECUENTOS`) y en la emisión de `verifyRestore` se empuja **después** de `compareCounts`. No cambia nada —`isVerified` usa `every`— pero el orden es lo que el operador lee en el documento de verificación, y la comprobación que explica por qué las demás pueden estar engañadas conviene que se lea primero | Moverla al principio de `REQUIRED_CHECKS` y del `out.push` de `models/backups.ts:1577`, o quitar el «va antes» del comentario. Una de las dos |
+
+## Checklist del rol sobre el diff de la ronda 2
+
+- **Dinero:** ningún cambio monetario; ni un `Float`, `parseFloat` ni `toFixed` nuevo.
+- **Tenant:** ninguna consulta de negocio nueva; el SQL crudo añadido vive en
+  `e12-ronda2.test.ts` y es deliberadamente **de catálogo y de privilegios**
+  (`pg_proc`, `pg_roles`, `has_function_privilege`), no de negocio.
+- **Pureza:** `lib/platform/backup.ts` sólo gana una entrada en una lista de
+  constantes; ni reloj, ni IO, ni LLM, ni `Math.random` nuevos en `lib/**`.
+- **Asientos:** ningún `delete`; el único `UPDATE` sobre `journal_entries` es el
+  del test de H-9 y toca **`file_id`**, que no entra en ninguna forma canónica de
+  ADR-0011 ni en cifra alguna — y el test lo demuestra midiendo antes y después.
+- **Migraciones:** `20261003090000` aditiva, nombrada, no edita ninguna aplicada
+  y **no exige SUPERUSER** (`COMMENT` sobre objetos propios y un `DO` de lectura);
+  falla nombrando el atributo que falta en vez de dejar el fallo silencioso.
+- **Tests:** ni un `skip` nuevo (siguen los 11 de E8), ni un `any`, ni código
+  muerto. Los tres tests que cambian **se endurecen**: el negativo del esquema,
+  el negativo de la séptima comprobación y la premisa de disyunción del techo 2/9.
+- **zod:** la ampliación de `tests` es acotada, con motivo y con su mitad negativa.
+- **Secretos:** `.env.example` sin valores; ningún `secrets.*` nuevo.
+- **Nivel 2 con ADR:** ADR-0023, aprobado, fechado y con el alcance escrito. El
+  resto del diff es Nivel 1.
+- **Legibilidad:** identificadores en inglés, dominio en español, tildes
+  restituidas en el bloque de §8.
+
+## Veredicto de la ronda 2
+
+**APROBADO** — 0 BLOQUEA · 0 DEBE · 2 PUEDE (**R-1**, **R-2**), ninguno
+bloqueante y los dos de una línea.
+
+Los nueve puntos que traía de la ronda 1 están cerrados (siete) o **anotados a
+E14 con épica y motivo válido** (dos: **E** y **H**, los dos PUEDE, los dos con
+la razón correcta escrita — un cambio de semántica de fallo y un cambio de tipo
+que arrastra a todos los consumidores). Los seis del auditor están cerrados, el
+N-5 incluido —lo he cerrado yo en `c3-provenance.test.ts` con el fichero en
+verde, la única línea de código que esta revisión toca—.
+
+Lo que distingue a esta ronda: **no se ha cerrado ningún hallazgo bajando el
+listón**. El esquema del registro se amplía conservando lo que rechaza; la puerta
+del sello deja de contar FAIL y pasa a exigir que **cada razón** esté explicada;
+el criterio 34 no se borra, se **deroga por ADR** citando el enunciado viejo; el
+calentamiento del techo no se apaña con un módulo coprimo sino con un borrador
+propio y un aserto de la premisa; y la dependencia de `BYPASSRLS` se convierte en
+una **condición de despliegue que se comprueba** en vez de tocar una política que
+habría sido Nivel 2. En los tres sitios donde había la tentación de la vía barata
+—aplanar la línea del registro, quitar el aserto, abrir la política— se ha tomado
+la otra.
+
+**No hay cambio de Nivel 2 sin ADR.**
+
+---
+
+*Ronda 2 revisada el 2026-09-21 en contexto limpio. Suites lanzadas una a una
+sobre `erp_test`; acceptance completa, e2e y `next build` no lanzados por
+instrucción del encargo. Única modificación de producto/tests: el aserto de N-5.*
