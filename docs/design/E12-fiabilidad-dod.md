@@ -551,16 +551,16 @@ de Postgres, disparado en `pull_request` y `push` a `main`.
 
 
 > **Ronda 1 de corrección (2026-09-21) — lo que el workflow ejecuta HOY.** La
-> auditoria (H-3) encontro que el workflow tenia nueve jobs pero **dos eran
+> auditoría (H-3) encontró que el workflow tenía nueve jobs pero **dos eran
 > otros**: faltaban `pureza-motor` y `perf`, y en su lugar estaban `lint-tsc` y
-> `build`. Ahora son **doce**, y los de esta tabla estan todos:
+> `build`. Ahora son **doce**, y los de esta tabla están todos:
 >
-> | Nuevo o corregido | Que cambia |
+> | Nuevo o corregido | Qué cambia |
 > |---|---|
-> | **1 `lint-tsc`** y **9 `build`** | se quedan: son utiles y no sustituyen a nadie |
-> | **6-bis `pureza-motor`** | los once directorios del motor **mas `lib/platform`**, y el auditor con su propia regla (`new Date()` solo para fechar su informe, nunca para calcular). Los dos filtros que le faltaban -comentarios y `import type` del cliente generado- hacian saltar el guard en **todos** los directorios, asi que no decia nada util; corregido tambien en `ci.yml` |
-> | **6-ter `perf`** | `perf-audit`, `perf-budget`, `perf-closing` y `perf-pages` en cada push; **el criterio 47** (volumen real, 1,5 GB) en el disparador **nocturno** (`schedule`) o a mano, porque seis minutos y el bloat que deja no caben en cada push - pero *no correr nunca* tampoco era una opcion |
-> | **6 `auditor-automatizado`** | ejecuta ademas `scripts/audit-reconstruct.imports.test.ts` (BLOQUEA 2 / H-2) **antes** de usar el auditor, y **se pone rojo** si el barrido deja un FAIL que no este en la lista cerrada de FAIL del sustrato o si el sello no es `VALIDADO AUTOMATICAMENTE` sin un FAIL que lo explique (H-4) |
+> | **1 `lint-tsc`** y **9 `build`** | se quedan: son útiles y no sustituyen a nadie |
+> | **6-bis `pureza-motor`** | los once directorios del motor **más `lib/platform`**, y el auditor con su propia regla (`new Date()` sólo para fechar su informe, nunca para calcular). Los dos filtros que le faltaban —comentarios e `import type` del cliente generado— hacían saltar el guard en **todos** los directorios, así que no decía nada útil; corregido también en `ci.yml` |
+> | **6-ter `perf`** | `perf-audit`, `perf-budget`, `perf-closing` y `perf-pages` en cada push; **el criterio 47** (volumen real, 1,5 GB) en el disparador **nocturno** (`schedule`) o a mano, porque seis minutos y el bloat que deja no caben en cada push — pero *no correr nunca* tampoco era una opción |
+> | **6 `auditor-automatizado`** | ejecuta además `scripts/audit-reconstruct.imports.test.ts` (BLOQUEA 2 / H-2) **antes** de usar el auditor, y **se pone rojo** si el barrido deja un FAIL que no esté en la lista cerrada de FAIL del sustrato. **Ronda 2 (H-4):** la comprobación del sello dejó de ser vacua —contaba FAIL, y con tres FAIL de sustrato permanentes nunca se evaluaba—: ahora recorre las RAZONES del sello y exige que **cada una** esté explicada por esa lista cerrada; cualquier razón de otra naturaleza pone el job en rojo aunque no haya ni un FAIL nuevo |
 > | **8 `e2e`** | la matriz **se deriva del directorio** (`ls tests/e2e/*.spec.ts`), con suelo de 13: un fichero nuevo corre solo (PUEDE #12) |
 
 **Entorno común:** `GIT_SHA: ${{ github.sha }}` **en todos los jobs** (sin él los

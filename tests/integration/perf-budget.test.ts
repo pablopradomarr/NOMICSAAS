@@ -134,6 +134,8 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T19 — perf-budget (§9, los NUEVE 
   let budgetId = ""
   let draftId = ""
   let importDraftId = ""
+  /** Borrador propio del CALENTAMIENTO del techo 2/9 (hallazgo F de la ronda 1). */
+  let warmupDraftId = ""
   let settleBudgetId = ""
   const projectIds: string[] = []
   const cecoIds: string[] = []
@@ -304,6 +306,30 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T19 — perf-budget (§9, los NUEVE 
       )
     ).id
 
+    /**
+     * **Hallazgo F de la re-revisión.** El calentamiento del techo 2/9 usaba el
+     * MISMO borrador con un desplazamiento de 1 500 celdas, y lo único que
+     * hacía distintas las claves `(mes, cuenta, proyecto)` era que
+     * `1500 % 120 = 60 ≠ 0`. Con `SCALE.accounts` a 100, 125, 150, 250 o 500 el
+     * calentamiento sembraría **las mismas** celdas y el `createMany` que el
+     * techo mide pasaría a ser un `updateMany`: el número seguiría saliendo
+     * verde midiendo otra cosa.
+     *
+     * La clave única de `budget_lines` es
+     * `(organization_id, budget_id, month, project_id, account_code)`, así que
+     * un **budget distinto** hace las claves disjuntas **por construcción**, sin
+     * depender de ninguna aritmética modular. Y el test lo comprueba.
+     */
+    warmupDraftId = (
+      await tenantTransaction(ORG, USER, async (tx) =>
+        createBudgetVersionTx(
+          tx,
+          { fiscalYearId, scenario: "REVISADO", name: "Borrador calentamiento perf", validFrom: "2026-05-01" },
+          actor
+        )
+      )
+    ).id
+
     // Un presupuesto ANUAL de verdad (12 meses × 20 dimensiones × 2 cuentas =
     // 480 celdas) para los techos 4 y 5, que miden el ejercicio y no la hoja de
     // estrés del techo 1.
@@ -466,8 +492,11 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T19 — perf-budget (§9, los NUEVE 
      *    una tabla vacía, y lo que se mide es el error del planificador.
      *  · **Calentamiento**: la primera llamada paga el `prepare` de las
      *    sentencias, la conexión del pool y las páginas frías de la caché. Se
-     *    hace con un lote DISTINTO —otras celdas, mismo tamaño y misma forma—
-     *    para no convertir el `createMany` medido en un `updateMany`.
+     *    hace contra un **borrador distinto** —mismo tamaño y misma forma— para
+     *    no convertir el `createMany` medido en un `updateMany`. Ronda 2
+     *    (hallazgo F): antes era el mismo borrador con un desplazamiento, y que
+     *    las claves fueran distintas dependía de `1500 % SCALE.accounts ≠ 0`.
+     *    Con otro `budgetId` la disyunción es por construcción, y se comprueba.
      */
     const lote = (desde: number) =>
       Array.from({ length: SCALE.batchCells }, (_, i) => ({
@@ -483,10 +512,20 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T19 — perf-budget (§9, los NUEVE 
     const config = await tenantTransaction(ORG, USER, async (tx) =>
       getAnalyticsConfig(tx, { periodEnd: FY_END })
     )
-    // Calentamiento, fuera de la medida.
+    // Calentamiento, fuera de la medida y en OTRO borrador.
     await tenantTransaction(ORG, USER, async (tx) =>
-      upsertBudgetCellsTx(tx, { budgetId: draftId, config, cells: lote(SCALE.batchCells * 3) }, actor)
+      upsertBudgetCellsTx(tx, { budgetId: warmupDraftId, config, cells: lote(0) }, actor)
     )
+    // La disyunción es la premisa del techo: si el calentamiento tocara las
+    // mismas filas, lo medido sería un `updateMany` y el número mentiría.
+    expect(warmupDraftId, "el borrador de calentamiento no se creó").not.toBe("")
+    expect(warmupDraftId, "el calentamiento usa el MISMO borrador que la medida").not.toBe(draftId)
+    const yaSembradas = await tenantTransaction(ORG, USER, async (tx) => {
+      const filas = await tx.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*)::bigint AS n FROM budget_lines WHERE budget_id = ${draftId}::uuid`
+      return Number(filas[0]?.n ?? 0)
+    })
+    expect(yaSembradas, "el borrador de la medida ya tiene celdas: el createMany medido sería un updateMany").toBe(0)
     const { ms } = await watcher.measure(async () =>
       tenantTransaction(ORG, USER, async (tx) => upsertBudgetCellsTx(tx, { budgetId: draftId, config, cells }, actor))
     )
