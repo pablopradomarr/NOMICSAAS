@@ -130,6 +130,53 @@ describe("C7 · el registro de runs valida, es append-only y la trazabilidad es 
     expect(tipoRaro.runs.length).toBe(0)
   })
 
+  it("criterio 27 ter · `tests` admite UN nivel de detalle tipado, y sólo uno (N-1 de la ronda 2)", () => {
+    /**
+     * La ronda 1 escribió `tests.e2e_detalle` como objeto y el esquema lo
+     * rechazaba: la suite que acredita la épica quedó roja por el commit que la
+     * cerraba. Se amplió el esquema a propósito —el detalle de los trece e2e es
+     * información, no ruido— pero **acotado**: un nivel, valores `string` o
+     * lista de `string`. Este test es la mitad negativa de esa decisión.
+     */
+    const base = {
+      ts_utc: "2099-01-03T00:00:00Z",
+      tipo: "tarea" as const,
+      epica: "E99",
+      agentes: ["dev-backend"],
+      git_sha_base: "abcdef1",
+    }
+    const bueno = parseRunRegistry(
+      JSON.stringify({
+        ...base,
+        run_id: "2099-01-03_detalle_valido",
+        tests: { unit: 10, fail: 0, e2e_detalle: { verdes: ["admin 4/4"], nota: "la máquina se saturó" } },
+      })
+    )
+    registro.assert(
+      "C7-5-bis",
+      bueno.errores.length === 0 && bueno.runs.length === 1,
+      bueno.errores.length === 0
+        ? "un `tests.e2e_detalle` de un nivel (frases y listas de frases) valida"
+        : `el detalle de un nivel se rechazó: ${bueno.errores.map((e) => e.mensaje).join(" · ")}`
+    )
+    expect(bueno.errores).toEqual([])
+
+    // Dos niveles NO: un registro no es un almacén de estructuras.
+    const anidadoDoble = parseRunRegistry(
+      JSON.stringify({
+        ...base,
+        run_id: "2099-01-04_detalle_anidado_doble",
+        tests: { e2e_detalle: { bloque: { mas: "adentro" } } },
+      })
+    )
+    registro.assert(
+      "C7-5-ter",
+      anidadoDoble.runs.length === 0,
+      "un segundo nivel de anidamiento en `tests` se rechaza"
+    )
+    expect(anidadoDoble.runs.length).toBe(0)
+  })
+
   it("el registro es APPEND-ONLY: lo que ya estaba en HEAD no se ha editado ni reordenado", () => {
     const enHead = contenidoEnHead("runs/registro.jsonl")
     if (enHead === null) {

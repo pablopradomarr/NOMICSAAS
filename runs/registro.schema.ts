@@ -96,12 +96,37 @@ const epica = z.string().regex(/^E\d+([ ,/+-]+E?\d+)*$/, "`epica` es `E<n>` (o v
 const tarea = z.string().min(1).max(60)
 
 /**
+ * **Detalle por suite**: un bloque de un solo nivel cuyos valores son frases o
+ * listas de frases. Existe para lo que un recuento no puede decir —qué ficheros
+ * de e2e pasaron uno a uno, cuáles no cerraron en esa máquina y por qué—, y se
+ * admite **tipado** en vez de aplanado porque esa información es justamente la
+ * que hace útil el registro seis meses después: aplanarla a
+ * `e2e_detalle_nota_1`, `…_2` la conserva sin poder leerla.
+ *
+ * Es de **un solo nivel a propósito**: `string | string[]`, nada de objetos
+ * dentro de objetos. Un registro no es un almacén de estructuras; lo que no
+ * quepa en una frase o en una lista de frases no va en el registro, va en un
+ * documento con su enlace.
+ */
+const detallePorSuite = z.record(
+  z.string(),
+  z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+)
+
+/**
  * `tests` es el recuento por suite (`{unit: 2461, fail: 0}`) o, en dos runs de
  * E6, la frase con la que se anotó la salida. Las dos formas están en el
  * fichero y el fichero es append-only.
+ *
+ * Desde la **ronda 2 de E12** (hallazgo N-1 del auditor) un valor puede ser
+ * además un `detallePorSuite`: el run de la ronda 1 escribió `e2e_detalle` como
+ * objeto y el esquema lo rechazaba. Se amplía **a propósito y con motivo**, no
+ * se aplana la línea, porque el bloque dice cuáles de los trece ficheros de e2e
+ * quedaron sin cerrar y por qué — y eso es lo que alguien va a buscar. La
+ * ampliación es acotada: un nivel, y valores que se leen.
  */
 const tests = z.union([
-  z.record(z.string(), z.union([z.number().int().nonnegative(), z.string()])),
+  z.record(z.string(), z.union([z.number().int().nonnegative(), z.string(), detallePorSuite])),
   z.string().min(3),
 ])
 
