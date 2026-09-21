@@ -14,11 +14,13 @@
  * `import()` dinámico y `require()`. No es una promesa en un comentario: es una
  * comprobación sobre el árbol sintáctico, que es lo que §13 exige.
  *
- * DOS MODOS, a propósito (regla E-1: un control sin llamante no cuenta como
- * implementado; `vitest.config.ts` no incluye hoy `scripts/**`):
+ * DOS MODOS, y los dos con llamante (regla E-1: un control sin llamante no
+ * cuenta como implementado). Desde la ronda 1 de E12 los dos corren de verdad:
  *
- *   npx tsx scripts/audit-reconstruct.imports.test.ts   → ejecuta y sale ≠ 0 si falla
- *   npx vitest run scripts/audit-reconstruct.imports…   → cuando CI añada scripts/** al include
+ *   npx tsx scripts/audit-reconstruct.imports.test.ts   → paso propio del job 6 de CI
+ *   npx vitest run …                                    → `scripts/**\/*.test.ts` está en el
+ *                                                         `include` de `vitest.config.ts`,
+ *                                                         luego entra en `npm run test`
  */
 
 import { readFileSync } from "node:fs"

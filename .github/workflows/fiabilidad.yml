@@ -25,6 +25,12 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # El techo de 1,5 GB (criterio 47) tarda seis minutos y deja la base con
+  # bloat: no puede correr en cada push, pero tampoco puede no correr nunca
+  # (H-3). Va de noche, y se puede lanzar a mano.
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -277,6 +283,13 @@ jobs:
         run: ./scripts/dev-db-setup.sh
       - name: Esquema al día
         run: npx prisma migrate deploy
+      # **BLOQUEA 2 / H-2** — el control que protege la independencia del
+      # auditor (criterio 14, I-E12-2, cierre de G-14). Corre también en
+      # `npm run test` (está en el `include` de `vitest.config.ts`); aquí va
+      # además como paso propio y ANTES de usar el auditor, porque un auditor
+      # que hubiera derivado hacia el motor no debe llegar ni a ejecutarse.
+      - name: El auditor no importa nada del productor (AST)
+        run: npx tsx scripts/audit-reconstruct.imports.test.ts
       # **Los informes se emiten ANTES del auditor**, y ése es el orden que
       # importa: sin cifras selladas el veredicto sería `NO_VERIFICABLE`, que
       # aquí falla igual que `DISCREPANCIA` (enmienda E-9).

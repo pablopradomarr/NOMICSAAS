@@ -74,7 +74,7 @@ vigila**. Los ocho corren en integración continua, no una vez por épica.
 | Id | Qué exige |
 |---|---|
 | **`I-E12-1`** | **Determinismo de extremo a extremo.** Purgados todos los derivados y regenerados —en los tres órdenes posibles—, las 12 cifras y los cinco sellos salen **idénticos byte a byte** |
-| **`I-E12-2`** | **Reconstrucción independiente.** Un segundo motor, `scripts/audit-reconstruct.ts`, rehace las 12 cifras por SQL crudo con Δ = 0, y un test sobre el AST prueba que **no importa una sola línea** de `lib/`, `models/` ni `ai/` |
+| **`I-E12-2`** | **Reconstrucción independiente.** Un segundo motor, `scripts/audit-reconstruct.ts`, rehace las 12 cifras por SQL crudo con Δ = 0, y un test sobre el AST prueba que **no importa una sola línea** de `lib/`, `models/` ni `ai/` (`scripts/audit-reconstruct.imports.test.ts`: corre en `npm run test` y en el job 6 de CI) |
 | **`I-E12-3`** | **Provenance ejecutable.** Toda celda trae una consulta parametrizada que, **ejecutada**, devuelve su propio valor. Cero celdas sin consulta y cero consultas que devuelvan 0 filas para un valor ≠ 0 |
 | **`I-E12-4`** | **Cobertura de la spec.** Cada componente C1–C7 tiene al menos un test de aceptación que lo ejerce y **está en CI**. Un componente sin test es FAIL, no INFO |
 | **`I-E12-5`** | **Escrituras de operador acotadas** (arriba) |

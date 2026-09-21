@@ -12,6 +12,16 @@ export default defineConfig({
       "forms/**/*.test.ts",
       "models/**/*.test.ts",
       "components/**/*.test.tsx",
+      /**
+       * **BLOQUEA 2 / H-2 de la ronda 1.** `scripts/**` faltaba, y con él el
+       * único control que protege la independencia del auditor
+       * (`scripts/audit-reconstruct.imports.test.ts`, criterio 14 e I-E12-2):
+       * el fichero existía, pasaba a mano y **no lo ejecutaba nadie**. Con la
+       * enmienda E-1 —un control sin llamante no cuenta como implementado— eso
+       * dejaba en FAIL la afirmación central de la épica. Ahora corre en
+       * `npm run test`, y además como paso propio del job 6 de CI.
+       */
+      "scripts/**/*.test.ts",
     ],
   },
   resolve: {
