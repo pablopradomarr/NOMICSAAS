@@ -1,6 +1,53 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-21 (**🔧 E12 · RONDA 1 DE CORRECCIÓN cerrada** — los 2 BLOQUEA y los 6 DEBE del revisor, los 4 bugs de QA y los hallazgos ALTA/MEDIA de la auditoría, cerrados; **ADR-0021 y ADR-0022** nuevos · **SIGUIENTE: ronda 2 de verificación (revisor + auditor en contexto limpio) y cierre de E12**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-21 (**🔧 E12 · RONDA 2 DE CORRECCIÓN cerrada** — N-1…N-4 del auditor, los dos PARCIALES (H-4, H-6), H-9 cerrado de verdad, el #10 del revisor y sus A, B, C, D, F y G; **ADR-0023** nuevo · **SIGUIENTE: ronda 3 de verificación (revisor + auditor en contexto limpio) y cierre de E12**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## 🔧 E12 · RONDA 2 DE CORRECCIÓN (2026-09-21)
+
+Entradas: `docs/design/E12-reauditoria-informe.md` (auditor, veredicto
+**DISCREPANCIA** — H-4 y H-6 PARCIALES, N-1…N-4) y
+`docs/design/E12-revision-ronda1.md` (revisor, **CAMBIOS REQUERIDOS** — #10 NO
+CERRADO, A/B/C DEBE, D–H PUEDE). El auditor lo dijo sin rodeos: **en las cifras
+no hay discrepancia** —las trece reconstruyen con Δ = 0 por un tercer camino y
+la ronda 1 no movió un céntimo—; la discrepancia era **de estado**.
+
+### Punto a punto
+
+| Punto | Qué se ha hecho | Evidencia |
+|---|---|---|
+| **N-1** (BLOQUEA de estado) · `runs/registro.jsonl:79` no validaba contra su propio esquema (`tests.e2e_detalle` anidado) | Se **amplía el esquema a propósito**, no se aplana la línea: el bloque dice cuáles de los trece e2e quedaron sin cerrar y por qué, que es lo que alguien busca seis meses después. Ampliación **acotada**: un nivel, valores `string` o lista de `string` | `runs/registro.schema.ts` (`detallePorSuite`) · `c7-registro-runs.test.ts` «criterio 27 ter» con su mitad negativa: un segundo nivel de anidamiento **se sigue rechazando**. `npm run test:acceptance` **9 · 53 ✓** (eran 9 · 2 fallos / 50 ✓) |
+| **H-4** (PARCIAL) · la comprobación del sello era **vacua** | `sello === "VALIDADO…" \|\| fallos.length > 0`: con tres FAIL de sustrato permanentes la segunda rama era siempre cierta y **el sello no se evaluaba nunca**. El criterio nuevo **no cuenta FAIL**: recorre las RAZONES del sello y exige que **cada una** esté explicada por la lista cerrada del sustrato; cualquier razón de otra naturaleza —aviso sobre el umbral, cambio de motor, revisión forzada, excepción de operador viva— pone el job en rojo | `motivosNoExplicadosPorElSustrato()` (puro, 13 tests con la tabla de las siete naturalezas). **Probado en negativo sobre el clon `h4_r2`** (`createdb -T erp_test`, destruido): intacto → EXIT=0 con el rojo explicado entero; sin `I-E11-5` declarado → **EXIT=1** por la puerta de los FAIL; lo mismo con esa puerta neutralizada a mano → **EXIT=1 por la puerta del SELLO**, que es la que H-4 dejaba muerta |
+| **H-6 / N-2** · `COBERTURA_INVENTARIO` detectaba pero **no decidía** | Entra en **`REQUIRED_CHECKS`**, que es la única lista que `isVerified()` recorre. Antes, con la séptima en FAIL y las seis en PASS, el resultado era `verified: true` y estado `DONE`: una copia a la que le falta **una tabla entera** se entregaba como verificada | `lib/platform/backup.ts:437` · test negativo en `backup.test.ts` («la SÉPTIMA en FAIL y las seis en PASS ⇒ NO verificada») · `reconstruccion-backup` 10/10 en verde con las siete |
+| **N-3** · tercera copia del predicado de operador | `settings/backups/actions.ts` llama a **`isPlatformAdminEmail()`** en vez de reescribirlo en línea. Sin fuga antes —cerrado por defecto— pero era lo que **ADR-0022 D2** prohíbe | `app/(app)/settings/backups/actions.ts:276` |
+| **N-4 / H-9** · el motivo del re-fechado era **falso** | No se reescribe el motivo: **se cierra H-9**. Atar un documento a un asiento no mueve nada porque `file_id` no entra en ninguna forma canónica de ADR-0011. Y al hacerlo apareció lo grave: **el tercer salto no se podía ejecutar** (`FROM transactions t JOIN files f ON f.id = t.file_id`, y `transactions` **no tiene** `file_id` → `42703`); no saltaba porque el fixture deja `transaction_id` a NULL. Va por `journal_entries.file_id` | `c3-provenance.test.ts` criterio 12: **`C3-drilldown-documento` PASS** («el asiento nº 52 lleva al documento *factura-servicios-2026-02.txt*», 4 ms). Dos medidas separadas: cargar el sustrato deja las 14 cifras y el **`ledgerHash 4a1af0ee555f…`** intactos y mueve `analyticsKey` (trae una regla de reparto: el sello existe para decirlo); **atar el documento no mueve ni una cifra ni uno de los cinco sellos** |
+| **#10** · dependencia invisible de `rolbypassrls` | `operator_exceptions` está en FORCE RLS con la política RESTRICTIVA `no_update`; el `UPDATE` de `app.revoke_operator_exception()` (SECURITY DEFINER) sólo ve sus filas por el `BYPASSRLS` del propietario. Nueva migración **aditiva** con la guarda `IF NOT (rolbypassrls OR rolsuper) THEN RAISE`, `COMMENT` en la función y en la política, y la nota en el runbook. **No se toca la política** —sería Nivel 2 y reabriría el `UPDATE` que `20261001090000` cerró— | `20261003090000_e12_guarda_bypassrls_revoke_operator_exception`. **Probado en negativo sobre el clon `guard_r2`** con el propietario cambiado a `NOSUPERUSER NOBYPASSRLS`: `revoke_operator_exception(…)` → **`f` en silencio** (la excepción sigue viva); devolviendo la función a `postgres` → **`t`**. La migración RAISE nombrando el atributo. Dos tests en `e12-ronda2.test.ts` lo mantienen vivo |
+| **A** · el criterio 34 decía lo contrario de lo que el código hace | **ADR-0023** (Nivel 2, permiso delegado) escribe la decisión y **acota su alcance a `purgeDerived`**: allí la pregunta no es «¿qué tablas hay?» —que el esquema contesta— sino «¿qué es caché y qué es fuente?», que no contesta, y medido acertaba **cuatro de cada nueve**. E-4 sigue intacta para el backup, `--reset-org` y `derivedSealColumns()`. Criterio 34, `I-E12-1` (diseño **y** `SKILL.md`) y §4.1/§7 reescritos | El test **no es más débil que el borrado**: con la misma tabla ficticia afirma las **tres** consecuencias del registro — sin declarar se detecta y **NO** se purga; **declarada derivada entra en la purga sin tocar otra línea**; declarada fuente sale del detector y sigue sin purgarse — y comprueba que el producto usa los registros reales |
+| **B** · `.env.example` documentaba la regla que ADR-0022 deroga | Reescrito: «**vacía = NADIE es operador de plataforma**, en los dos modos; `/admin` responde 404 y el cambio de plan se niega», con el aviso de arranque y la nota de que la regla vieja está derogada | `.env.example:143-163` |
+| **C** · `listOrganizationsForOperator` sin ejercer por ninguna suite | Test de integración nuevo: los privilegios que la migración promete (`app_runtime` **f**, `app_operator` **t**, `app_maintenance` **t**), la llamada por el modelo con la organización sembrada dentro, el **`42501`** desnudo como `app_runtime` y que el `SET LOCAL ROLE` **muere con la transacción** | `tests/integration/e12-ronda2.test.ts` (7 ✓) |
+| **D** (PUEDE) · rastro de la ronda en ESTADO | La nota de alcance apunta a **ADR-0021**; §T22 dice **doce** jobs, trece generadores y matriz **derivada del directorio** | Este documento, §ola B y §T22 |
+| **F** (PUEDE) · el calentamiento del techo 2/9 podía medir otra cosa | Va contra un **borrador propio**: la clave única de `budget_lines` lleva `budget_id`, así que la disyunción es **por construcción** y no depende de `1500 % SCALE.accounts ≠ 0`. El test comprueba la premisa: el borrador de la medida está a **cero celdas** antes de medir | `perf-budget.test.ts` 7 ✓ |
+| **G** (PUEDE) · el bloque de §8 sin tildes | Restituidas, y la fila del job 6 dice lo que la ronda 2 cambia en la puerta del sello | `E12-fiabilidad-dod.md` §8 |
+
+### Deuda: ninguna nueva. Lo que se anota con épica y motivo
+
+| Abierto | Épica | Motivo |
+|---|---|---|
+| **E** (PUEDE) · `expireBackupsTx` borra objetos del almacén **dentro** de la transacción del llamante | **E14** | Si la transacción revierte después del primer `deleteObject`, los bytes ya no están y las filas de `BackupJob` vuelven. El arreglo correcto —recoger las claves dentro y purgarlas **después del COMMIT**, con reintento, o poner `objectKey` a `NULL` y dejar el borrado físico al barrido— es un cambio de semántica de fallo con su propio diseño y sus propios tests, no un arreglo de ronda. El patrón es **anterior** a E12 |
+| **H** (PUEDE) · la provenance de `variance.ts` se compone por interpolación de cadena | **E14** | El arreglo de tenant es correcto y la cadena no se ejecuta desde ahí, pero `I-E12-3` la llama «consulta **parametrizada**». Emitir `$1…$n` obliga a cambiar `registros_origen` de `Record<string,string>` a `Record<string,{sql,params}>` y con él **todos** los consumidores —la pantalla, la suite C3 y el propio invariante—: es mecánico pero no es pequeño |
+| **H-8** · el criterio 29 («dos versiones del motor») | **E14** | Sin cambio: exige un artefacto del motor anterior |
+| **H-12** (INFO) · `build_gran_volumen.py --check` tarda 4 min | **E14** | Sin cambio |
+| **I-E8-17** sobre el fixture | **E14** | Sin cambio. Declarado FAIL del sustrato, con motivo |
+
+### Suites al cerrar la ronda 2
+
+`lint` **0 errores / 12 avisos heredados** · `tsc --noEmit` **limpio** ·
+`unit` **130 ficheros · 2 738 ✓ / 11 skip** · `integration` **187 ficheros · 3 633 ✓** ·
+`integration:rls` **12 ficheros · 211 ✓** · `acceptance` **9 ficheros · 53 ✓**.
+e2e y `build` **no lanzados** (instrucción del encargo; ningún cambio toca la UI
+ni `/admin` — `settings/backups/actions.ts` cambia sólo a qué función llama el
+predicado, con idéntico comportamiento). Clones `h4_r2` y `guard_r2` creados con
+`createdb -T erp_test` y **destruidos**.
+Registro: `2026-09-21_e12_ronda2_correccion`.
 
 ## 🔧 E12 · RONDA 1 DE CORRECCIÓN (2026-09-21)
 
@@ -67,7 +114,7 @@ arnés moría con `ENOBUFS`.
 | Abierto | Épica | Motivo |
 |---|---|---|
 | **H-8** · el criterio 29 («dos versiones del motor») es el mismo motor con dos git-sha | **E14** | Ejercer dos versiones exige un artefacto del motor anterior; es una pieza propia y no entra en una ronda de corrección |
-| **H-9** · criterio 12 (celda → documento) sigue en WARN en la suite de aceptación | **E14** | El sustrato documental no ata un documento a un asiento del fixture **a propósito**: hacerlo movería el diario y con él las doce cifras canónicas. El salto lo ejerce el e2e documental |
+| ~~**H-9** · criterio 12 (celda → documento) en WARN~~ | ~~E14~~ | **CERRADO en la ronda 2.** El motivo escrito era **falso** (N-4): `file_id` no entra en ninguna forma canónica de ADR-0011. Ver §«E12 · RONDA 2 DE CORRECCIÓN» |
 | **H-12** (INFO) · `build_gran_volumen.py --check` tarda 4 min | **E14** | Es el 80 % del job 7 para comprobar el fichero más pequeño |
 | **I-E8-17** sobre el fixture | **E14** | El puente al 111 compara el 4751 del diario contra lo declarado **en la propuesta de la extracción**, y las retenciones del fixture se contabilizan por plantilla. Declarado como FAIL del sustrato, con motivo |
 
@@ -115,9 +162,10 @@ dos tareas que quedaban: **T22** (integración continua) y **T23** (documentaci�
 ### El hallazgo de la ola B (Nivel 2), resuelto como decisión
 
 **`InvariantRun.analyticsKey` se compone sobre uuid y no puede sobrevivir a una
-restauración.** Se resuelve **cerrándolo**, no alineándolo: nota de alcance
-fechada en **ADR-0011** (2026-09-21, permiso delegado), que no cambia ninguna
-tupla. El sello analítico comparable entre copias es el de `computeContentSeals`,
+restauración.** Se resuelve **cerrándolo**, no alineándolo: la nota de alcance
+vive en **ADR-0021** (2026-09-21, permiso delegado) —salió de dentro de ADR-0011,
+que es inmutable, y allí queda una referencia de tres líneas (hallazgo #13 de la
+ronda 1)—, y no cambia ninguna tupla. El sello analítico comparable entre copias es el de `computeContentSeals`,
 sobre **claves naturales**, y ése sí coincide —el test de reconstrucción lo
 enfrenta explícitamente—. Alinearlos exigiría reescribir `canonicalAnalyticsForm`
 e **invalidaría todos los sellos emitidos**, que es justo lo que ADR-0011
@@ -127,12 +175,15 @@ humanos: qué sello sobrevive a una copia y cuál no.
 
 ### T22 · integración continua (`.github/workflows/fiabilidad.yml`)
 
-**Nueve trabajos**, con `GIT_SHA` y `TZ: Europe/Madrid` **en la raíz del
-workflow** —heredarlos es la única forma de que ninguno se quede sin ellos al
-añadir el siguiente—: lint+tsc · unitarios · integración · RLS · **aceptación
-C1–C7** (más memoria borrada y reconstrucción desde copia) · **auditor
-automatizado** · **fixtures `--check`** (los **doce** generadores, por glob, no
-por lista) · **e2e uno por fichero** (matriz de 13) · build.
+**Doce trabajos** (eran nueve en el diseño, y dos de los nueve eran otros: la
+ronda 1 añadió `pureza-motor` y `perf`), con `GIT_SHA` y `TZ: Europe/Madrid` **en
+la raíz del workflow** —heredarlos es la única forma de que ninguno se quede sin
+ellos al añadir el siguiente—: lint+tsc · unitarios · integración · RLS ·
+**aceptación C1–C7** (más memoria borrada y reconstrucción desde copia) ·
+**auditor automatizado** · **fixtures `--check`** (los **trece** generadores, por
+glob, no por lista) · **e2e uno por fichero**, con la **matriz derivada del
+directorio** (`ls tests/e2e/*.spec.ts`, suelo 13) · `pureza-motor` · `perf` ·
+build.
 
 - El job del auditor **emite los informes antes** (`scripts/ci-audit-fixture.ts`:
   fixture cargado por el motor, BALANCE, PyG, **CASHFLOW mensual** y PyG
