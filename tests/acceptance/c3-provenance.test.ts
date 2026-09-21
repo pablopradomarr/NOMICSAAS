@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import {
+  ACCEPTANCE_GIT_SHA,
   BASE_CURRENCY,
   CANONICAL_FIGURES,
   CANONICAL_LEVELS,
@@ -39,6 +40,7 @@ const registro = new ValidacionRecorder(COMPONENTE)
 const { tenantTransaction } = await import("@/lib/db")
 const { getOrCreateReportRun, getCashflowBucketDetail } = await import("@/models/reports")
 const { getAnalyticPnl } = await import("@/models/margins")
+const { headlineFigures } = await import("@/models/audit")
 
 type Provenance = {
   valor: number
@@ -330,6 +332,62 @@ describe("C3 · la provenance de cada celda se EJECUTA y reproduce su cifra", ()
     expect(conFilas, "ningún bucket del cashflow devolvió líneas: el drill-down no prueba nada").toBeGreaterThan(0)
     expect(fallos, fallos.join("\n")).toEqual([])
     expect(directo.closingCashCents).toBe(CANONICAL_FIGURES.TESORERIA)
+  })
+
+  it("criterio 10 · las CUATRO cifras firmadas del barrido ejecutan su consulta (hallazgo C3 de la ola A)", async () => {
+    /**
+     * La ola A encontró que la provenance de `headlineFigures` **no era
+     * ejecutable**: una sola consulta agregada con `$1` y `$2` mientras
+     * `cellProvenance` le mandaba tres parámetros (`08P01`). T23 le dio una
+     * consulta por cifra, que devuelve `journal_lines.id` como todas las demás,
+     * con los parámetros que declara y ni uno más. Aquí se ejecutan las cuatro.
+     */
+    const headline = await tenantTransaction(org.organizationId, org.userId, async (tx) =>
+      headlineFigures(tx, {
+        ...RANGE,
+        fiscalYearId: org.fiscalYearId,
+        ledgerHash: "0".repeat(64),
+        runId: `c3-headline`,
+        gitSha: ACCEPTANCE_GIT_SHA,
+        baseCurrency: BASE_CURRENCY,
+      })
+    )
+
+    const fallos: string[] = []
+    for (const [nombre, figura] of Object.entries(headline) as [string, { cents: number; provenance: Provenance }][]) {
+      const ejecucion = await ejecutar(figura.provenance)
+      const reproduce = ejecucion.debeMenosHaber === figura.cents || ejecucion.haberMenosDebe === figura.cents
+      const vacioConImporte = ejecucion.filas === 0 && figura.cents !== 0
+      if (!reproduce || vacioConImporte) {
+        fallos.push(
+          `${nombre}: celda ${figura.cents}, consulta ${ejecucion.filas} fila(s) → ` +
+            `${ejecucion.debeMenosHaber} / ${ejecucion.haberMenosDebe}`
+        )
+      }
+      registro.assert(
+        `C3-headline-${nombre}`,
+        reproduce && !vacioConImporte,
+        `${nombre}: ${ejecucion.filas} línea(s) reproducen ${figura.cents} céntimos`,
+        figura.provenance.registros_origen
+      )
+    }
+
+    // Y las dos que además son cifra canónica, para que esto no pase por vacuidad.
+    registro.assert(
+      "C3-headline-canonicas",
+      headline.RESULTADO.cents === CANONICAL_FIGURES.RESULTADO && headline.TESORERIA.cents === CANONICAL_FIGURES.TESORERIA,
+      `resultado ${headline.RESULTADO.cents} (#4) y tesorería ${headline.TESORERIA.cents} (#5)`
+    )
+    registro.assert(
+      "C3-headline-i2",
+      headline.ACTIVO.cents === headline.PN_MAS_PASIVO.cents,
+      `I2 sobre las cifras firmadas: activo ${headline.ACTIVO.cents} = PN + pasivo ${headline.PN_MAS_PASIVO.cents}`
+    )
+
+    expect(fallos, fallos.join("\n")).toEqual([])
+    expect(headline.RESULTADO.cents).toBe(CANONICAL_FIGURES.RESULTADO)
+    expect(headline.TESORERIA.cents).toBe(CANONICAL_FIGURES.TESORERIA)
+    expect(headline.ACTIVO.cents).toBe(headline.PN_MAS_PASIVO.cents)
   })
 
   it("criterio 12 · de la celda al documento: ≤ 3 saltos de identificador y < 5 s", async () => {

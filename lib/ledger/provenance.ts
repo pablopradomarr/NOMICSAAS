@@ -54,6 +54,23 @@ export type ProvenanceParams = {
   entryKind?: string
   /** Consulta que devuelve las líneas que componen la cifra. */
   query?: string
+  /**
+   * **E12 · T23 (hallazgo C3 de la ola A).** Parámetros EXACTOS de una `query`
+   * explícita, en lugar del trío por defecto `$1 org, $2 from, $3 to`.
+   *
+   * Por qué existe: una cifra ACUMULADA (el activo a fecha de corte, la
+   * tesorería) no tiene fecha de inicio. Con el trío por defecto viajaban tres
+   * parámetros hacia una consulta que sólo declaraba `$1` y `$2`, y ejecutarla
+   * daba `08P01` («bind message supplies 3 parameters…»): la consulta viajaba y
+   * **no se podía ejecutar**, que es justo lo que `I-E12-3` prohíbe. Rellenar el
+   * hueco con un `$2` decorativo habría sido peor: un parámetro que la cifra no
+   * usa, documentado como si lo usara.
+   *
+   * Sólo se admite junto a `query`, y entonces manda entero: ni `accountCode`,
+   * ni `fiscalYearId`, ni `extraParams` añaden nada detrás. Quien trae la
+   * consulta trae sus parámetros, y responde de que casen.
+   */
+  queryParams?: readonly ProvenanceParam[]
   extraParams?: readonly ProvenanceParam[]
   // ── E4 (§3.3): dimensiones analíticas de la celda. Todo parametrizado. ──
   projectId?: string
@@ -90,8 +107,12 @@ export function cellProvenance(
   confidence: Confidence = "calculado"
 ): Provenance {
   let query = params.query ?? (params.accountCode ? ACCOUNT_QUERY : DEFAULT_QUERY)
-  const parametros: ProvenanceParam[] = [params.organizationId, params.from, params.to]
-  if (params.accountCode) parametros.push(params.accountCode)
+  // Consulta explícita CON sus parámetros: manda entera y nada se le añade.
+  const explicitos = params.query !== undefined && params.queryParams !== undefined
+  const parametros: ProvenanceParam[] = explicitos
+    ? [...(params.queryParams as readonly ProvenanceParam[])]
+    : [params.organizationId, params.from, params.to]
+  if (!explicitos && params.accountCode) parametros.push(params.accountCode)
 
   // #10: el filtro que acota REALMENTE la celda se añade a la consulta, no se
   // deja implícito. `query` explícita manda: quien la trae ya sabe lo que hace.
@@ -120,7 +141,7 @@ export function cellProvenance(
     parametros.push(params.analyticType)
     query += ` AND analytic_type = $${parametros.length}`
   }
-  if (params.extraParams) parametros.push(...params.extraParams)
+  if (!explicitos && params.extraParams) parametros.push(...params.extraParams)
 
   return {
     valor: value,

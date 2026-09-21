@@ -240,10 +240,59 @@ export async function listInvariantRunIntegrityRefs(
 // `headline` — las cuatro cifras, por AGREGADO SQL (O-19)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HEADLINE_QUERY =
-  "SELECT a.statement, l.entry_kind, l.account_code, SUM(l.debit_cents - l.credit_cents) " +
-  "FROM journal_lines l JOIN accounts a ON a.organization_id = l.organization_id AND a.code = l.account_code " +
-  "WHERE l.organization_id = $1 AND l.entry_date <= $2 AND l.entry_kind <> 'CLOSING' GROUP BY 1, 2, 3"
+/**
+ * **E12 · T23 — la provenance de las cuatro cifras, EJECUTABLE (hallazgo C3).**
+ *
+ * La consulta anterior era una sola, agregada y `GROUP BY 1,2,3`: no devolvía
+ * las líneas de NINGUNA de las cuatro cifras (devolvía el desglose de las
+ * cuatro juntas) y declaraba `$1` y `$2` mientras `cellProvenance` le mandaba
+ * tres parámetros. Ejecutarla daba `08P01`. Una consulta que no se puede
+ * ejecutar no es trazabilidad: es una cita.
+ *
+ * Ahora hay **una consulta por cifra**, devuelve `journal_lines.id` —el mismo
+ * contrato que el resto de celdas del producto, para que el drill-down y el
+ * test de C3 la traten igual— y sus parámetros son los que declara, ni uno más:
+ *
+ * · las tres cifras ACUMULADAS (`activo`, `pn + pasivo`, `tesorería`) cortan por
+ *   la fecha de corte y **no tienen fecha de inicio**: `$1 org, $2 to`;
+ * · el `resultado` es del periodo: `$1 org, $2 from, $3 to`.
+ *
+ * El ejercicio, cuando acota, entra como último parámetro y nunca interpolado.
+ */
+type HeadlineMetric = "ACTIVO" | "PN_MAS_PASIVO" | "RESULTADO" | "TESORERIA"
+
+const HEADLINE_SOURCE =
+  "SELECT l.id FROM journal_lines l " +
+  "JOIN accounts a ON a.organization_id = l.organization_id AND a.code = l.account_code " +
+  "WHERE l.organization_id = $1::uuid"
+
+/** El filtro propio de cada cifra, con la numeración de sus parámetros. */
+const HEADLINE_FILTER: Readonly<Record<HeadlineMetric, string>> = {
+  ACTIVO: " AND l.entry_date <= $2::date AND a.statement = 'BALANCE_ACTIVO' AND l.entry_kind <> 'CLOSING'",
+  PN_MAS_PASIVO:
+    " AND l.entry_date <= $2::date AND a.statement IN ('BALANCE_PASIVO', 'BALANCE_PN') AND l.entry_kind <> 'CLOSING'",
+  RESULTADO:
+    " AND l.entry_date >= $2::date AND l.entry_date <= $3::date AND a.statement = 'PYG'" +
+    " AND l.entry_kind NOT IN ('CLOSING', 'OPENING', 'REGULARIZATION')",
+  TESORERIA: " AND l.entry_date <= $2::date AND left(l.account_code, 2) = '57' AND l.entry_kind <> 'CLOSING'",
+}
+
+/** La consulta y sus parámetros, casados por construcción. */
+function headlineProvenanceQuery(
+  metric: HeadlineMetric,
+  opts: { organizationId: string; from: LocalDate; to: LocalDate; fiscalYearId: string | null }
+): { query: string; queryParams: string[] } {
+  const queryParams =
+    metric === "RESULTADO"
+      ? [opts.organizationId, opts.from, opts.to]
+      : [opts.organizationId, opts.to]
+  let query = HEADLINE_SOURCE + HEADLINE_FILTER[metric]
+  if (opts.fiscalYearId) {
+    queryParams.push(opts.fiscalYearId)
+    query += ` AND l.fiscal_year_id = $${queryParams.length}::uuid`
+  }
+  return { query, queryParams }
+}
 
 type HeadlineRow = { activo: bigint; pn_mas_pasivo: bigint; resultado: bigint; tesoreria: bigint }
 
@@ -297,7 +346,7 @@ export async function headlineFigures(
        AND (${fiscalYearId}::uuid IS NULL OR l.fiscal_year_id = ${fiscalYearId}::uuid)`
 
   const row = rows[0] ?? { activo: BigInt(0), pn_mas_pasivo: BigInt(0), resultado: BigInt(0), tesoreria: BigInt(0) }
-  const figure = (metrica: string, cents: number) => ({
+  const figure = (metric: HeadlineMetric, metrica: string, cents: number) => ({
     cents,
     provenance: cellProvenance(
       metrica,
@@ -307,7 +356,7 @@ export async function headlineFigures(
         from: opts.from,
         to: opts.to,
         ...(fiscalYearId ? { fiscalYearId } : {}),
-        query: HEADLINE_QUERY,
+        ...headlineProvenanceQuery(metric, { organizationId, from: opts.from, to: opts.to, fiscalYearId }),
       },
       {
         runId: opts.runId,
@@ -320,10 +369,10 @@ export async function headlineFigures(
   })
 
   return {
-    ACTIVO: figure("headline.activo", centsFromDb(row.activo, "activo")),
-    PN_MAS_PASIVO: figure("headline.pn_mas_pasivo", centsFromDb(row.pn_mas_pasivo, "PN + pasivo")),
-    RESULTADO: figure("headline.resultado", centsFromDb(row.resultado, "resultado")),
-    TESORERIA: figure("headline.tesoreria", centsFromDb(row.tesoreria, "tesorería")),
+    ACTIVO: figure("ACTIVO", "headline.activo", centsFromDb(row.activo, "activo")),
+    PN_MAS_PASIVO: figure("PN_MAS_PASIVO", "headline.pn_mas_pasivo", centsFromDb(row.pn_mas_pasivo, "PN + pasivo")),
+    RESULTADO: figure("RESULTADO", "headline.resultado", centsFromDb(row.resultado, "resultado")),
+    TESORERIA: figure("TESORERIA", "headline.tesoreria", centsFromDb(row.tesoreria, "tesorería")),
   }
 }
 
