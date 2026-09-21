@@ -457,6 +457,18 @@ test("restaurar esa copia crea una organización NUEVA y la verificación pasa",
     buffer: zip,
   })
   await page.getByTestId("restore-reason").fill("Prueba de reproducibilidad P7 del recorrido e2e")
+
+  // **E12 · T16: la firma se comprueba ANTES de descomprimir un byte.** El botón
+  // de restaurar nace deshabilitado y sólo se habilita cuando el archivo ha
+  // pasado por la inspección, que dice de quién es la firma. No es un paso de
+  // adorno del formulario: es el control que impide que un ZIP ajeno entre sin
+  // que nadie lo autorice, y por eso el recorrido tiene que pasar por él igual
+  // que una persona.
+  await page.getByTestId("restore-inspect").click()
+  const inspeccion = page.getByTestId("restore-inspection")
+  await expect(inspeccion).toBeVisible({ timeout: 120_000 })
+  await expect(inspeccion).toContainText("firma reconocida")
+  await expect(page.getByTestId("restore-submit")).toBeEnabled({ timeout: 120_000 })
   await page.getByTestId("restore-submit").click()
 
   // **Las seis comprobaciones, enfrentadas.** `DONE_UNVERIFIED` es un FAIL, no

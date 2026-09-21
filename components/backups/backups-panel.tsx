@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useRouter } from "next/navigation"
-import { useState, useTransition } from "react"
+import { useRef, useState, useTransition } from "react"
 
 export type BackupJobView = {
   id: string
@@ -331,6 +331,23 @@ function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEd
    */
   const [inspeccion, setInspeccion] = useState<InspectArchiveResult | null>(null)
 
+  /**
+   * **E12 · integración — por qué inspeccionar NO es una acción de formulario.**
+   *
+   * React 19 **resetea el formulario** cuando una acción de formulario termina.
+   * Con «Comprobar la firma» declarado como `formAction`, el paso 1 borraba el
+   * fichero y el motivo que el usuario acababa de poner, y el paso 2 —restaurar—
+   * chocaba contra la validación nativa de `required` **sin decir nada**: ni
+   * POST, ni error en pantalla, ni pista. Un control de dos pasos que pierde lo
+   * del primer paso no es un control: es un muro.
+   *
+   * Así que la inspección compone su `FormData` del propio formulario y lo envía
+   * por su cuenta; el formulario no se entera y no se resetea. La acción de
+   * formulario se reserva para restaurar, donde el reseteo sí es lo que se
+   * quiere: lo restaurado ya no se vuelve a restaurar.
+   */
+  const formRef = useRef<HTMLFormElement | null>(null)
+
   const inspeccionar = (formData: FormData) =>
     start(async () => {
       setError(null)
@@ -384,7 +401,7 @@ function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEd
       </div>
 
       {canEdit && (
-        <form className="max-w-2xl space-y-3">
+        <form ref={formRef} className="max-w-2xl space-y-3">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium">Archivo de copia (.zip)</span>
             <input type="file" name="file" accept=".zip" required data-testid="restore-file" />
@@ -443,8 +460,17 @@ function RestorePanel({ restores, canEdit }: { restores: RestoreJobView[]; canEd
 
           <div className="flex flex-wrap gap-2">
             <Button
-              type="submit"
-              formAction={inspeccionar}
+              type="button"
+              onClick={() => {
+                const form = formRef.current
+                if (!form) return
+                const fichero = form.elements.namedItem("file")
+                if (fichero instanceof HTMLInputElement && (fichero.files?.length ?? 0) === 0) {
+                  setError("Elige primero el archivo .zip de la copia")
+                  return
+                }
+                inspeccionar(new FormData(form))
+              }}
               size="sm"
               variant="outline"
               disabled={pending}
