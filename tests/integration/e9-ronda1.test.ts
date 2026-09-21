@@ -598,7 +598,13 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · ronda 1 — los bloqueantes de la aud
 
   it("H-3 · `voidEntry` (la anulación pública) sigue rechazando OPENING, CLOSING y REGULARIZATION", async () => {
     for (const templateCode of ["APERTURA_EJERCICIO", "CIERRE_EJERCICIO", "REGULARIZACION_RESULTADO"]) {
-      const target = await prisma.journalEntry.findFirst({ where: { templateCode, voidedAt: null } })
+      // Con filtro de tenant (ronda 1 de E12, la regla del DEBE #4): sin él, en
+      // una base con más de una organización —la de la suite de aceptación, la
+      // del fixture de CI— la consulta traía el asiento de OTRA y `voidEntry`
+      // respondía ENTRY_NOT_FOUND, que no es lo que este test comprueba.
+      const target = await prisma.journalEntry.findFirst({
+        where: { organizationId: ORG, templateCode, voidedAt: null },
+      })
       expect(target, `falta el asiento ${templateCode} del cierre real`).toBeTruthy()
       const r = await voidEntry(ORG, target!.id, "intento de anular un asiento de sistema desde fuera", { userId: ADMIN })
       expect(r.ok, `${templateCode} NO puede anularse por la vía pública (CA-1)`).toBe(false)
