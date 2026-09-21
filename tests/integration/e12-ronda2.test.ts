@@ -77,6 +77,46 @@ describe.skipIf(!TEST_DATABASE_URL)("E12 · ronda 2 — `listOrganizationsForOpe
     expect(typeof mia!.liveExceptions).toBe("number")
   })
 
+  /**
+   * Hallazgo **#10**, reabierto por la re-revisión: `revoke_operator_exception`
+   * es `SECURITY DEFINER` y su `UPDATE` sólo ve sus filas porque el PROPIETARIO
+   * tiene `BYPASSRLS`. Con `FORCE ROW LEVEL SECURITY` y la política RESTRICTIVA
+   * `operator_exceptions_no_update`, un propietario sin ese atributo haría que
+   * la revocación devolviera `false` **sin error**: la excepción de operador
+   * seguiría viva hasta caducar sola. La migración `20261003090000` lo comprueba
+   * al desplegar; esto lo comprueba en cada `test:integration`.
+   */
+  it("#10 · la revocación de excepciones depende de `BYPASSRLS`, y la dependencia está viva", async () => {
+    const [fila] = await prisma.$queryRaw<
+      { owner: string; bypass: boolean; issuper: boolean; force: boolean; restrictiva: boolean }[]
+    >`
+      SELECT r.rolname AS owner, r.rolbypassrls AS bypass, r.rolsuper AS issuper,
+             (SELECT relforcerowsecurity FROM pg_class WHERE relname = 'operator_exceptions') AS force,
+             EXISTS (SELECT 1 FROM pg_policies
+                      WHERE tablename = 'operator_exceptions'
+                        AND policyname = 'operator_exceptions_no_update'
+                        AND permissive = 'RESTRICTIVE') AS restrictiva
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_roles r     ON r.oid = p.proowner
+       WHERE n.nspname = 'app' AND p.proname = 'revoke_operator_exception'`
+    expect(fila, "app.revoke_operator_exception no existe").toBeDefined()
+    expect(fila.force, "operator_exceptions dejó de estar en FORCE ROW LEVEL SECURITY").toBe(true)
+    expect(fila.restrictiva, "la política RESTRICTIVA no_update desapareció: la tabla dejó de ser append-only").toBe(true)
+    expect(
+      fila.bypass || fila.issuper,
+      `el propietario «${fila.owner}» no tiene BYPASSRLS: revocar una excepción de operador devolvería false EN SILENCIO`
+    ).toBe(true)
+  })
+
+  it("#10 · el COMENTARIO de la función deja escrita la dependencia, para quien la lea sin este test", async () => {
+    const [fila] = await prisma.$queryRaw<{ comentario: string | null }[]>`
+      SELECT obj_description(p.oid, 'pg_proc') AS comentario
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'app' AND p.proname = 'revoke_operator_exception'`
+    expect(fila.comentario ?? "").toContain("BYPASSRLS")
+  })
+
   describe("desde el rol con el que se sirve la aplicación", () => {
     let cliente: Client
 

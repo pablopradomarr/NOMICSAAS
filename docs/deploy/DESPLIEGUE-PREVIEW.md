@@ -61,6 +61,18 @@ Acceso: login propio (E13, email + contraseña) y protección de Vercel Authenti
 | `GRANT app_maintenance TO current_user` condicional | `42501 must be able to SET ROLE` | `GRANT … WITH SET TRUE` incondicional |
 | `ALTER FUNCTION app.* OWNER TO app_maintenance` | `42501 permission denied for schema app` | `GRANT CREATE ON SCHEMA app` antes, `REVOKE` después |
 
+**El propietario de las migraciones necesita `BYPASSRLS`, y desde E12 se
+comprueba** (hallazgo #10 de la ronda 1, cerrado en la ronda 2).
+`operator_exceptions` está en `FORCE ROW LEVEL SECURITY` con la política
+RESTRICTIVA `operator_exceptions_no_update`: con `FORCE`, el propietario tampoco
+esquiva las políticas, así que el `UPDATE` de `app.revoke_operator_exception()`
+—`SECURITY DEFINER`, que corre como el propietario— sólo ve sus filas gracias al
+atributo de rol `BYPASSRLS`. Sin él, **revocar una excepción de operador
+devolvería `false` sin error** y la excepción seguiría viva hasta caducar sola.
+En Supabase `postgres` ya lo tiene (`rolbypassrls=true`, arriba); la migración
+`20261003090000` para el despliegue nombrando el atributo si algún día no fuera
+así, y el comentario de la función lo deja escrito en la propia base.
+
 Para la próxima base Supabase (prod) **ya no hay procedimiento manual**: `scripts/supabase-bootstrap.sql` (E12 · T21) lleva las cuatro adaptaciones, es idempotente y se ejecuta **dos veces**, antes y después de `prisma migrate deploy`:
 
 ```bash
