@@ -528,7 +528,11 @@ OperatorException     La excepción de un operador a una GUARDIA, nunca a un inv
 app_operator          Rol de base (NOLOGIN, NOBYPASSRLS) con política RESTRICTIVE que
                       exige `app.operator_reset_allowed()` en las **57 tablas
                       vaciables** —la lista derivada de `TENANT_MODELS`, el orden
-                      de borrado derivado de `pg_constraint`—. Un `reset-org` con
+                      de borrado derivado de `pg_constraint` por un solo
+                      planificador puro, `lib/platform/deletion-plan.ts`, que
+                      sirve a `reset-org` **y** a `purgeDerived` y lleva una
+                      guarda `NOT EXISTS` por arista entrante viva: lo que una
+                      fila superviviente señala se RETIENE y se declara—. Un `reset-org` con
                       un solo asiento fuera del alcance es imposible porque **lo
                       niega Postgres**, no la aplicación.
 
@@ -562,7 +566,8 @@ Organization          **`storage_used` y `storage_limit` ELIMINADAS** (T15). Era
 | El CAPEX previsto entra en el sello del presupuesto, y una versión sin CAPEX sella igual que antes de E12 | `budgetHash` con bloque `∅CAPEX` condicional + fixture `presupuesto-horas-esperado.v1.4.json` (v1.0–v1.3 congeladas) |
 | Las 12 cifras canónicas se reconstruyen por **un segundo camino** que no comparte código con el motor | `scripts/audit-reconstruct.ts` (SQL crudo) + test sobre el AST + I-E12-2 |
 | La consulta de provenance de **toda** celda se puede ejecutar y devuelve su propia cifra | I-E12-3 y la suite C3 (`tests/acceptance/c3-provenance.test.ts`), que la ejecuta de verdad |
-| Un sello comparable **entre copias** no lleva identificadores de fila | nota de alcance de ADR-0011 (2026-09-21): `ledgerHash`, `planHash`, `accountMapHash`, `configHash` y el `analyticsKey` del manifest sí viajan; el `analyticsKey` de `InvariantRun` y el `entryHash` no, y es correcto |
+| **Qué tabla es derivada se declara**, tabla a tabla y con motivo; el criterio estructural sólo **acusa** | `DERIVED_MODELS` en `models/purge-derived.ts` + **ADR-0023** (alcance acotado a `purgeDerived`: la regla E-4 sigue intacta para el backup, `--reset-org` y `derivedSealColumns()`). Una tabla de caché nueva sin declarar **rompe el test** y no entra sola en la purga; un `ClosingRun` `CERRADO`/`REABIERTO` es un **sello, no una caché**, y se conserva |
+| Un sello comparable **entre copias** no lleva identificadores de fila | **ADR-0021** (2026-09-21, salido de dentro de ADR-0011, que es inmutable): `ledgerHash`, `planHash`, `accountMapHash`, `configHash` y el `analyticsKey` del manifest sí viajan; el `analyticsKey` de `InvariantRun` y el `entryHash` no, y es correcto |
 
 ## Integridad (resumen)
 | Regla | Dónde |
