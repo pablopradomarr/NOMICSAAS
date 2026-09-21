@@ -1,21 +1,26 @@
 # SPEC-FIABILIDAD v1.1 — **propuesta de enmiendas** a la v1.0
 
-> **Qué es esto y qué no es.** Es una **propuesta** de diez enmiendas a
+> **Revisada el 2026-09-21 (E12 · T23)** con lo que la propia E12 aprendió al
+> implementarse: la propuesta se escribió en el diseño de la épica y las diez
+> enmiendas se han revisado contra lo que costó ejecutarlas. Se añaden **dos**
+> —E-11 y E-12—, y cinco de las diez estrenan cicatriz nueva. Ninguna se retira.
+>
+> **Qué es esto y qué no es.** Es una **propuesta** de doce enmiendas a
 > `docs/spec/SPEC-FIABILIDAD.md`, dirigida a Pablo. **La v1.0 no se toca**: es
 > inmutable por su propia cabecera y un job de CI comprueba que su `git diff`
 > está vacío. Nada de lo que sigue está aprobado, y el cierre de E12 no depende
 > de que se apruebe.
 >
-> **Y no es una lista de errores de la spec.** Es lo contrario: son las diez
-> cosas que la v1.0, aplicada durante doce épicas a un ERP contable real,
-> **provocó que aprendiéramos**. Nueve de las diez ya están implementadas de
+> **Y no es una lista de errores de la spec.** Es lo contrario: son las doce
+> cosas que la v1.0, aplicada durante trece épicas a un ERP contable real,
+> **provocó que aprendiéramos**. Diez de las doce ya están implementadas de
 > facto en el producto; lo que falta es que estén escritas donde mandan.
 
 | | |
 |---|---|
-| Origen | Épicas E0–E11 de MICRO ERP SAAS, 2026-09-04 → 2026-09-15 |
+| Origen | Épicas E0–E12 de MICRO ERP SAAS, 2026-09-04 → 2026-09-21 |
 | Base | `docs/spec/SPEC-FIABILIDAD.md` v1.0 (Pablo, CFOnomic) |
-| Entregado en | E12 · T23 (`docs/design/E12-fiabilidad-dod.md` §7.4) |
+| Entregado en | E12 · T23 (`docs/design/E12-fiabilidad-dod.md` §7.4), revisada en la ronda de integración de E12 |
 | Estado | **PROPUESTA** — sin firma |
 
 ---
@@ -50,6 +55,14 @@ veces lo encontró el auditor, no el productor ni el revisor:
 
 Cincuenta y ocho invariantes escritos, cero ejecutados, tres veces el mismo
 fallo. Y el propio diseño de E11 lo citaba de memoria antes de repetirlo.
+
+**Lo que añade E12.** La cuarta vez **no ocurrió**, y por qué no ocurrió es la
+parte útil: `I-E12-5` se escribió **con su llamante en el mismo commit** y el
+diseño de la épica lo exigía por escrito («no escrito y sin llamante, que es el
+H-1 que E9, E10 y E11 pagaron tres veces»). La regla funciona cuando está
+delante de quien implementa, no cuando está en el informe de la auditoría
+anterior. Eso es precisamente lo que pide esta enmienda: que esté en la spec, no
+en el recuerdo de la épica pasada.
 
 **Coste.** Nulo en el producto (E12 lo convierte en `I-E12-4` y en la regla 1 de
 «cómo se extiende sin romper la capa»). En la spec: un párrafo.
@@ -100,6 +113,14 @@ que además viene con un sello verde.
 | **E9** | R-2: los 22 pares de reclasificación sólo existían por el backfill, e **I-E9-16 pasaba por vacuidad** |
 | **E10** | El bloque de absorción del fixture **contradecía al motor**; la provenance por celda devolvía **0 filas** en los niveles acumulados y los tests no lo veían |
 | **E11** | Las **seis comprobaciones** de la restauración daban PASS y `verified = true` mientras `currencies` —177 filas por organización— se perdía entera |
+| **E12** | El **fixture tapaba** dos veces. La suite de inyección sembraba sólo BALANCE y PyG, así que el falso positivo del auditor —que sólo aparece con una serie mensual sellada— **no se podía ver**; y cinco de las diez inyecciones no eran ejercibles porque el fixture completo no trae `allocation_lines`, `extraction_runs`, `files` ni `usage_runs` coherentes. Lo segundo se **declaró** con su motivo en vez de fingirse, que es la mitad buena de la lección |
+
+**Lo que añade E12 a la redacción propuesta.** Un cuarto anti-patrón, hermano de
+los tres: **un fixture elegido de modo que el defecto no pueda manifestarse**. No
+es un test escrito a la medida del código: es un test cuyo *sustrato* está
+escogido —casi siempre sin querer— para que el camino que falla no se recorra. Se
+combate igual que los otros tres: nombrándolo, y sembrando en la suite justo la
+forma que destapó el fallo.
 
 **Coste.** En la spec, un párrafo. En la práctica, obliga a congelar cifras
 esperadas en fixtures o reconstruirlas por otro camino, que es lo que el ERP ya
@@ -128,8 +149,10 @@ bloquear un test que pasa.
 | **BUG-E11-2** | ídem con las de E11 — y esta vez se cerró **derivando** la lista de `TENANT_MODELS` |
 | **H-2 de E11** | El inventario del backup se derivaba de `TENANT_MODELS`, pero `currencies` **no estaba en `TENANT_MODELS`**: 177 filas por organización perdidas en cada restauración, con las seis comprobaciones en verde |
 
-El último es el más instructivo: derivar de una lista **que también se mantiene a
-mano** no es derivar. La derivación tiene que llegar hasta el esquema.
+| **E12** | La lista de tablas vaciables de `/admin` se derivó de `TENANT_MODELS` y el orden de borrado, de `pg_constraint`: la quinta vez, por fin, sin lista a mano. Y la comprobación de fixtures sellados de CI recorre **todos** los generadores con un glob, no una enumeración — que es la misma regla aplicada al control que la vigila |
+
+El penúltimo es el más instructivo: derivar de una lista **que también se
+mantiene a mano** no es derivar. La derivación tiene que llegar hasta el esquema.
 
 **Coste.** Medio: obliga a que cada tabla nueva de negocio pase por
 `app.enforce_tenant_rls` + `TENANT_MODELS`, y a un invariante que compare
@@ -156,6 +179,20 @@ mano** no es derivar. La derivación tiene que llegar hasta el esquema.
   **secreto**; al restaurar hay que **reemitirlo**, no copiarlo (copiarlo daría
   acceso a dos organizaciones con el mismo enlace). Estaba dentro de
   `derivedSealColumns()`, y compararlo **castigaba** hacer lo correcto. Salió.
+- **E12, T11**: al enfrentar una copia restaurada contra su origen apareció el
+  caso límite. `InvariantRun.analyticsKey` se compone sobre **uuid** (`entryId`,
+  `projectId`, `costCenterId`, `businessLineId`) y por construcción **no puede
+  sobrevivir a una restauración**, por idéntica que sea la analítica. El sello
+  comparable existe y es otro: el de `computeContentSeals`, sobre **claves
+  naturales**, y ése sí coincide. La decisión —escrita como nota de alcance
+  fechada en ADR-0011— fue **no alinearlos**: son dos oficios (clave de caché
+  local frente a certificado que viaja) y alinearlos invalidaría todos los
+  sellos emitidos, que es lo que el propio ADR prohíbe.
+- Y de ahí el matiz que E12 añade a la redacción: **la regla no es «ningún hash
+  lleva ids», es «ningún hash que deba ser comparable FUERA de su base lleva
+  ids»**. Un sello de fila los lleva y hace bien. Lo que la spec tiene que
+  exigir es que cada sello **declare su ámbito de comparabilidad**: dentro de la
+  fila, dentro de la base, o entre copias.
 
 **Coste.** Bajo: es una regla de diseño de hashes. **Beneficio.** Evita sellos
 que dan FAIL por motivos que no son un cambio del hecho sellado — que es la
@@ -228,6 +265,16 @@ bloqueantes), E10 (H-1…H-7, dos graves), E11 (tres bloqueantes). **Funciona.**
 Pero corre **una vez por épica**: entre medias, un `push` puede romper una cifra
 y nadie se entera hasta la siguiente auditoría, semanas después.
 
+**Lo que añade E12.** Funcionó, y **encontró un defecto en sí mismo**, que es la
+prueba más incómoda de que hacía falta: sobre una copia **intacta** declaraba
+`P-PRODUCTO-CONTRADICTORIO` porque su sondeo leía las doce celdas de una serie
+mensual como doce afirmaciones distintas sobre la misma cifra. Un refutador que
+grita sin razón se silencia entero, así que el falso positivo de un control
+adversarial es tan grave como su falso negativo. De ahí la coletilla que E12
+propone añadir a la redacción: **la reconstrucción automatizada declara también
+qué NO puede detectar**, y esa lista viaja con ella (el auditor del ERP enumera
+diez cosas en su cabecera, empezando por «un diario coherente pero falso»).
+
 **Coste.** Alto y explícito: en E12 son **40 h** (`scripts/audit-reconstruct.ts`)
 más el coste permanente de mantener dos implementaciones de las mismas doce
 cifras. Es deliberado — una segunda implementación que se mantiene sola sería la
@@ -249,6 +296,11 @@ no ven, y pasa de anual a continuo.
 v1.0 define los tres veredictos (§C4) y §C4 Capa 3 escala al humano si hay
 `DISCREPANCIA` **o** `NO_VERIFICABLE` — correcto —, pero no dice qué hace una
 tubería automática, y lo natural es dejar pasar lo que no es un fallo explícito.
+
+**Lo que añade E12.** Ya está implementado: el código de salida de
+`scripts/audit-reconstruct.ts` es 0 **sólo** con `CONFORME`, y el job
+`auditor-automatizado` de `.github/workflows/fiabilidad.yml` no lo envuelve en
+ningún `|| true`. Costó, literalmente, no escribir una línea.
 
 **Coste.** Una línea en el workflow. **Beneficio.** Impide que la Capa 2 se
 degrade a decorativa el día que algo deje de ser reconstruible.
@@ -277,6 +329,75 @@ tiempo de una épica en descubrirse:
 
 ---
 
+## E-11 · Un techo se mide con volumen REAL, nunca extrapolado
+
+> **Enmienda nueva, añadida en la revisión de E12 (2026-09-21).**
+
+**Qué dice.** Añadir a §C7 (rendimiento y reproducibilidad):
+
+> Un límite de rendimiento declarado —«N asientos en menos de T»— se comprueba
+> **con el volumen declarado, generado de verdad**. Extrapolar desde una medición
+> pequeña no es medir: es suponer que la curva es lineal, y en una base de datos
+> casi nunca lo es. El fixture de gran volumen es **reproducible byte a byte** y
+> la medición se publica, para que la siguiente se compare contra ella y no
+> contra el recuerdo de nadie.
+
+**La cicatriz.** Cuatro techos de E11 se habían declarado cumplidos por
+extrapolación. Al medirlos en E12 con **50 000 asientos, 150 000 líneas, 2 000
+ficheros y 50 organizaciones** reales:
+
+- la restauración insertaba **fila a fila** y tardaba **628 s** donde el techo
+  eran 300: incumplía por diseño, y la extrapolación no lo podía ver porque el
+  coste por fila sólo se dispara con el volumen;
+- sin `ANALYZE` tras insertar 150 000 filas, el planificador elegía bucles
+  anidados y una sola comprobación pasaba de segundos a **670 s**. Ninguna
+  extrapolación desde 84 asientos predice un cambio de plan de ejecución;
+- y la propia suite de volumen tuvo que salir de la pasada de integración,
+  porque medir con la base cargada **cambiaba lo que medían los demás techos**.
+
+**Coste.** Alto y honesto: generar el volumen, mantener el generador
+`--check`eable y aceptar que ese trabajo tarda. **Beneficio.** Un techo que no se
+ha medido con su volumen **no es un techo, es una expectativa**, y en producción
+se descubre el día peor.
+
+---
+
+## E-12 · El refutador no comparte autoría con el productor
+
+> **Enmienda nueva, añadida en la revisión de E12 (2026-09-21).** Es el corolario
+> de E-8 que E12 tuvo que hacer explícito para poder cumplirlo.
+
+**Qué dice.** Añadir a §C4, Capa 2:
+
+> La independencia del control adversarial es **de autoría**, no sólo de
+> ejecución. El artefacto que refuta:
+>
+> 1. **no importa código del productor**, y eso se comprueba **estáticamente**
+>    sobre el árbol sintáctico, no se promete en un comentario;
+> 2. deriva sus reglas de **fuentes normativas** —los ADR, la definición única de
+>    los invariantes, el modelo de datos—, nunca del motor que audita;
+> 3. lo escribe **quien no escribió lo auditado**, y si eso no es posible, se
+>    declara y el veredicto baja de categoría;
+> 4. y **declara por escrito qué no puede detectar**, antes de que nadie se
+>    apoye en un `CONFORME`.
+
+**La cicatriz.** Toda la Capa 2 se apoya en una propiedad que, hasta E12, era una
+costumbre: «el auditor no usa el motor». Una costumbre se rompe en el primer
+`import` cómodo, y además en silencio —el test seguiría verde—. En E12 se
+convirtió en un test sobre el AST (`scripts/audit-reconstruct.imports.test.ts`) y
+en `I-E12-2`. La regla 3 tiene su propia cicatriz: los cuatro informes de
+auditoría de E7, E9, E10 y E11 encontraron lo que los tests no veían **porque los
+escribió otro**, y las tres primeras veces encontraron **el mismo** fallo, señal
+de que el productor no puede auditarse a sí mismo por mucho rigor que ponga.
+
+**Coste.** Bajo una vez escrito el segundo motor (es una comprobación estática);
+alto si se toma en serio la regla 3, que cuesta una pasada de agente o de persona
+en contexto limpio por entrega.
+**Beneficio.** Sin esto, E-8 es una intención. Con esto, es una propiedad
+comprobable en cada `push`.
+
+---
+
 ## Resumen de coste / beneficio
 
 | Enmienda | Coste de adoptar | ¿Ya implementado en el ERP? | Beneficio |
@@ -288,12 +409,19 @@ tiempo de una épica en descubrirse:
 | **E-5** forma canónica sin mutables | Bajo | Sí | Sellos que sólo fallan cuando el hecho cambia |
 | **E-6** caché alterada = FAIL | Bajo | Sí (`I-E11-1`) | Separa «el dato cambió» de «alguien lo tocó» |
 | **E-7** ningún control frena un hecho ocurrido | Cero | Sí (ADR-0019 D7) | Regla contable antes que técnica |
-| **E-8** auditor automatizado | **Alto: 40 h + mantenimiento doble** | **No — es el núcleo de E12** | El control más eficaz pasa de anual a continuo |
-| **E-9** `NO_VERIFICABLE` falla | Una línea | No | Impide que la Capa 2 se degrade |
+| **E-8** auditor automatizado | **Alto: 40 h + mantenimiento doble** | **Sí — es el núcleo de E12, y corre en cada `push`** | El control más eficaz pasa de anual a continuo |
+| **E-9** `NO_VERIFICABLE` falla | Una línea | Sí (E12 · T22, en CI) | Impide que la Capa 2 se degrade |
 | **E-10** ids de gap inmutables | Cero | No | Evita la cuarta errata |
+| **E-11** techos con volumen real | **Alto: generar y mantener el volumen** | Sí (E12 · T17) | Un techo sin medir no es un techo |
+| **E-12** autoría separada del refutador | Bajo (1) y (2); alto (3) | Sí (E12: `I-E12-2` + test sobre el AST) | Convierte E-8 de intención en propiedad |
 
-**Nueve de las diez cuestan un párrafo y ya están vivas.** La única que cuesta de
-verdad es **E-8**, y es la que responde a la pregunta que la v1.0 plantea en su
+**Nueve de las doce cuestan un párrafo y ya están vivas.** Las que cuestan de
+verdad son **E-8**, **E-11** y **E-12** (la tercera regla), y no por casualidad:
+son las tres que exigen hacer un trabajo **dos veces** —calcular por dos caminos,
+medir con el volumen de verdad, escribirlo con otras manos—. La duplicación es el
+precio, y es el precio correcto: un control que se ahorra la duplicación acaba
+confirmando en vez de refutar. De las tres, la que responde a la pregunta que la
+v1.0 plantea en su §0 es **E-8**, y es la que responde a la pregunta que la v1.0 plantea en su
 §0: *que dos ejecuciones que se contradigan sean explicables por diff de datos,
 nunca un misterio*. Para que eso sea cierto entre épicas y no sólo dentro de
 ellas, alguien tiene que estar recalculando las cifras por otro camino **todos

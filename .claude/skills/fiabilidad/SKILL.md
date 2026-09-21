@@ -76,14 +76,38 @@ Salida: `validacion.json` `{run_id, checks: [{id, status: PASS|FAIL, evidencia}]
 ### Motivos de sello que aporta el camino documental (E8, ADR-0014 D7)
 Código cerrado; los aporta `reconcile()` documento a documento y se agregan al sello del periodo. Un motivo de sello es un dato de auditoría, no un texto libre.
 
+Son **seis**, y son los seis de `E8_SEAL_REASONS` (`lib/ledger/invariants.ts` y
+`lib/extraction/reconcile.ts`), ni uno más:
+
 | Motivo | Qué dice |
 |---|---|
 | `DOCUMENTO_ALTERADO` | Los bytes del fichero no son los que vio la extracción (I-E8-2) |
-| `EXTRACCION_PARCIAL` | El modelo vio menos páginas de las que tiene el documento (G-02) |
-| `CUOTA_DEL_DOCUMENTO_DISTINTA_DEL_RECALCULO` | Se contabiliza la del documento (D3) y la desviación se mide (I-E8-7b) |
-| `DEDUCIBILIDAD_PENDIENTE` | Nadie ha decidido si la cuota es deducible (art. 96 LIVA) |
+| `PROPUESTA_NO_RECONCILIADA` | La propuesta de la extracción no reconcilia (algún `RC-nn` en FAIL): el documento no puede contabilizarse |
 | `TASA_FORZADA` | El `convertedTotal` se forzó con motivo en vez de salir de la tasa |
+| `RETENCION_NO_PRACTICADA` | La retención practicada no coincide con la abonada a `4751` (I-E8-17: puente al 111/115) |
+| `IVA_PERIODO_DESPLAZADO` | El periodo de IVA del documento no es el del asiento: manda `max(receptionDate, documentDate)` (ADR-0014 D8) |
 | `REGIMEN_NO_SOPORTADO` | RECC/REDEME: el devengo sigue al cobro y la contabilización automática se bloquea (RC-24) |
+
+### Avisos de calidad del documento (E8) — fuera del vocabulario cerrado
+
+**E12 · T23.** Estos tres estaban en la tabla de arriba y no los emite nadie como
+motivo de sello. No era una omisión del motor: es que **no son motivos de sello**.
+Son `DataQualityWarning` de `lib/ledger/invariants-e8.ts` —trabajo pendiente que
+la pestaña Auditoría pinta—, y ninguno significa que una cifra esté mal, que es
+justo lo que un motivo de sello sí significa. Se quedan aquí, con su código real,
+porque confundir las dos listas fue el hallazgo C5 de la ola A de E12.
+
+| Aviso | Qué dice |
+|---|---|
+| `EXTRACCION_PARCIAL` | El modelo vio menos páginas de las que tiene el documento (G-02): hay que teclear las cifras |
+| `DESVIACION_DE_CUOTA` | Se contabiliza la cuota del documento (D3) y la desviación se mide (I-E8-7b). *Se llamaba `CUOTA_DEL_DOCUMENTO_DISTINTA_DEL_RECALCULO` en el diseño de E8; el código emite este nombre* |
+| `DEDUCIBILIDAD_PENDIENTE` | Nadie ha decidido si la cuota es deducible (art. 96 LIVA) |
+
+Los otros siete avisos de la misma lista —`DOCUMENTO_SIN_ASIENTO`,
+`RUN_FAIL_SIN_RESOLVER`, `FICHERO_SIN_SHA256`, `DUPLICADO_FORZADO`,
+`TICKET_CUALIFICADO`, `CONTRAPARTE_SIN_REGIMEN` y `RETENCION_NO_PRACTICADA`
+(que además **sí** es motivo de sello)— se derivan de `dataQualityWarnings()`; la
+lista de avisos no se mantiene a mano en ningún sitio.
 
 ## Invariantes de auditoría y conciliación bancaria (E7, `lib/audit/invariants-e7.ts`)
 
@@ -230,11 +254,20 @@ Código cerrado, como los de E7 y E8; los declara el catálogo de pasos
 (`lib/closing/checklist.ts`) y viajan en `ClosingRun.sealReasons`. Un paso
 **bloqueante** sin PASS no sella: impide cerrar.
 
+Son **diez**, y son los diez de `E9_SEAL_REASONS`. *(Hasta E12 · T23 esta tabla
+declaraba cinco y el array emitía diez: la mitad del vocabulario del cierre
+viajaba sin declarar. Hallazgo C5 de la ola A de E12.)*
+
 | Motivo | Qué dice |
 |---|---|
-| `IVA_NO_LIQUIDADO` | Queda algún periodo de IVA del ejercicio sin liquidar |
+| `IVA_NO_LIQUIDADO` | Queda algún periodo de IVA del ejercicio sin liquidar: `472` y `477` siguen con saldo |
+| `RECURRENTES_PENDIENTES` | Hay reglas recurrentes con periodos vencidos sin generar |
+| `PERIODIFICACION_SIN_AGOTAR` | Hay periodificaciones cuyo periodo terminó y conservan saldo pendiente de imputar |
+| `VENCIMIENTOS_SIN_FECHA` | Hay posiciones vivas sin fecha de vencimiento: no se reclasifican, las decide una persona |
+| `DEUDA_SIN_DESGLOSE` | Hay deuda viva de `17x`/`52x` sin cuadro de vencimientos: su parte corriente no se puede presentar |
+| `REGULARIZACION_BIENES_INVERSION_PENDIENTE` | Bienes de inversión del art. 108 con desviación de prorrata > 10 puntos: falta la regularización del art. 107 |
 | `IMPUESTO_DIFERIDO_NO_RECONOCIDO` | Diferencias temporarias, BIN o deducciones sin responder |
-| `RESULTADO_SIN_DISTRIBUIR` | El resultado del ejercicio anterior sigue en `129` |
+| `RESULTADO_SIN_DISTRIBUIR` | El resultado de un ejercicio ya aprobado sigue en `129` sin distribuir |
 | `MODELO_200_PRESENTADO` | El impuesto se tocó con el modelo 200 ya presentado (art. 122 LGT: complementaria) |
 | `CIERRE_REABIERTO` | El ejercicio se reabrió: el `ClosingRun` pasa a `REABIERTO` y a `REQUIERE REVISIÓN` |
 
@@ -371,6 +404,39 @@ Código cerrado. Los compone `platformSealReasons()` **a partir de los datos**.
 | `CUOTA_DE_ALMACEN_SUPERADA_EN_MORA` | O-16 | Se ha subido un justificante por encima de `maxStorageBytes` estando fuera de `FULL`: excepción **automática** registrada, porque subir el papel de un hecho ya ocurrido es parte del registro |
 | `RESTAURACION_SIN_VERIFICAR` | O-2 | Hay una restauración en `DONE_UNVERIFIED`: la organización se conserva como evidencia y **no acredita** reproducibilidad |
 | `COPIA_SIN_VERIFICAR` | §5.4.2 | Una copia emitida cuyo manifest no valida contra su firma |
+
+## E12 · Los invariantes del propio control — `I-E12-1…8`
+
+`docs/design/E12-fiabilidad-dod.md` §9. Familia **`INTEGRIDAD`** salvo indicación
+expresa. **Tolerancia 0** en los que comparan cifras. Se definen aquí una sola
+vez, como los de E7–E11.
+
+E12 no añade contabilidad: añade los invariantes que vigilan **la capa que
+vigila**, y los pone a correr en cada integración
+(`.github/workflows/fiabilidad.yml`), no una vez por épica.
+
+| ID | Invariante | Tol. |
+|---|---|---|
+| **I-E12-1** | **Determinismo de extremo a extremo.** Purgados todos los derivados (`purgeDerived`, con la lista **derivada del esquema**) y regenerados, las **12 cifras canónicas** y los **cinco sellos** salen idénticos **byte a byte**, en los tres órdenes de regeneración | 0 |
+| **I-E12-2** | **Reconstrucción independiente.** `scripts/audit-reconstruct.ts` da **Δ = 0** en las 12, y su grafo de importaciones **no contiene `lib/**`, `models/**`, `ai/**` ni `app/**`** (test estático sobre el AST, `scripts/audit-reconstruct.imports.test.ts`). Un total que sale de la misma función que lo produjo no prueba nada | 0 |
+| **I-E12-3** | **Provenance ejecutable.** Toda celda de informe trae consulta parametrizada que, **ejecutada con sus parámetros**, devuelve su propio valor. **Cero** celdas sin consulta, **cero** consultas que devuelvan 0 filas para un valor ≠ 0 y **cero** consultas que no se puedan ejecutar (el `08P01` de la cabecera del barrido, hallazgo C3 de E12) | 0 |
+| **I-E12-4** | **Cobertura de la spec.** Cada componente C1–C7 tiene ≥ 1 test de aceptación que lo ejerce **y está en CI**. Un componente sin test es **FAIL**, no INFO | — |
+| **I-E12-5** | **Escrituras de operador acotadas** (familia `PLATAFORMA`). Ver abajo | — |
+| **I-E12-6** | **Detección demostrada.** Las **diez** inyecciones de la matriz de §3.5 son cazadas, cada una, por ≥ 1 check **nombrado**. Una inyección no detectada es FAIL; una que no se puede ejercer se **DECLARA** con su motivo y comprobando que el sustrato falta de verdad | — |
+| **I-E12-7** | **Registro de runs completo y válido.** `runs/registro.jsonl` valida contra `runs/registro.schema.ts`, sin `run_id` duplicado, y **todo entregable sellado es localizable** por su `run_id` con su git-sha y su snapshot | — |
+| **I-E12-8** | **Ningún derivado es fuente.** Ninguna cifra de informe se sirve de una columna de caché sin que su hash de fuente se haya recomputado **en la misma petición** (test estático + barrido) | — |
+
+**Los cinco sellos que E12 contrasta**: `ledgerHash`, `analyticsKey`, `planHash`,
+`accountMapHash` y `configHash`. Y **las doce cifras canónicas**: los ocho
+niveles de margen acumulados (INGRESOS, MC1, MC2, MC3, EBITDA, EBIT, BAI,
+RESULTADO), Σdebe del periodo, activo, PN + pasivo y tesorería.
+
+**Qué sello sobrevive a una COPIA restaurada** (nota de alcance de ADR-0011,
+2026-09-21): `ledgerHash`, `planHash`, `accountMapHash`, `configHash` y el
+`analyticsKey` **del manifest** —que va sobre claves naturales— sí; el
+`analyticsKey` de `InvariantRun` y el `entryHash` **no**, porque llevan uuid y su
+oficio es local a la base. No es un defecto: son dos oficios distintos y no se
+alinean, porque alinearlos invalidaría los sellos ya emitidos.
 
 ## E12 · Escrituras de operador — `I-E12-5` (familia `PLATAFORMA`)
 

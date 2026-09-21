@@ -505,6 +505,65 @@ Prisma generado y `information_schema`—: falla si aparece cualquier tabla con
 `organization_id` fuera del inventario y de esa lista, si una exclusión declarada
 ya no existe, si su motivo está vacío o si las dos fuentes divergen.
 
+## Escrituras de operador y CAPEX del presupuesto (E12)
+
+E12 no añade contabilidad, así que sólo toca el modelo en tres sitios, y los tres
+son de control:
+
+```
+// ── A · Escrituras de operador (ADR-0020, D1–D6) ────────────────────────────
+OperatorException     La excepción de un operador a una GUARDIA, nunca a un invariante.
+                      `kind ∈ {UNBLOCK_PERIOD_LOCK, UNBLOCK_CLOSING_GUARD,
+                      UNSTICK_RESTORE_JOB, UNSTICK_CRON_JOB}` y `targetKind` con
+                      `targetId` (uuid) o `targetRef` (`job:periodKey`, que no
+                      tiene uuid). **Caduca sola**: CHECK `expires_at > created_at`
+                      Y `expires_at <= created_at + 24h`, **en la base**, no en la
+                      aplicación. `reason` con longitud mínima por CHECK.
+                      **Append-only**: `REVOKE UPDATE, DELETE` + dos políticas
+                      RESTRICTIVE; revocar es escribir `revoked_at` por la
+                      función `SECURITY DEFINER` acotada
+                      `app.revoke_operator_exception`, que **no puede alargar la
+                      caducidad**. Mientras haya una viva, el periodo no se firma
+                      como validado (`EXCEPCION_DE_OPERADOR_VIGENTE`). **I-E12-5**.
+app_operator          Rol de base (NOLOGIN, NOBYPASSRLS) con política RESTRICTIVE que
+                      exige `app.operator_reset_allowed()` en las **57 tablas
+                      vaciables** —la lista derivada de `TENANT_MODELS`, el orden
+                      de borrado derivado de `pg_constraint`—. Un `reset-org` con
+                      un solo asiento fuera del alcance es imposible porque **lo
+                      niega Postgres**, no la aplicación.
+
+// ── B · CAPEX del presupuesto (Q-4 de E10, ADR-0018 D2 enmendada) ───────────
+BudgetCapexLine       La inversión prevista, en tabla propia y no como una línea de
+                      explotación con el signo cambiado: `accountCode` del grupo 2
+                      por CHECK, importe **positivo** (un activo que entra no es un
+                      gasto), valor residual, vida útil **en meses** y arranque de
+                      la dotación (D-3 de E9). Exactamente **una** dimensión (O-A6),
+                      con FK compuesta por tenant. Entra **dentro del `budgetHash`**;
+                      el bloque `∅CAPEX` sólo se emite si hay inversiones, de modo
+                      que una versión sin CAPEX sella el mismo hash que en E10.
+
+// ── C · Lo que E12 RETIRA ───────────────────────────────────────────────────
+Organization          **`storage_used` y `storage_limit` ELIMINADAS** (T15). Eran un
+                      contador vivo que podía divergir de los bytes reales; la cifra
+                      buena se deriva de `models/usage.ts` y su caché lleva
+                      `sourceHash` (I-E11-1). Dos guardias lo sostienen: las
+                      dependencias del esquema en la propia migración, y un test
+                      estático que falla, **con fichero y línea**, si alguna lectura
+                      viva vuelve a nombrarlas.
+```
+
+### E12 · integridad
+
+| Regla | Dónde |
+|---|---|
+| Una excepción de operador **nunca dura más de 24 h** ni existe sin su línea en el registro | CHECK en `operator_exceptions` + `PlatformAuditLog` + I-E12-5 |
+| **Ninguna** escritura de `/admin` alcanza el diario ni las tablas append-only | **tres vías**: privilegios del rol `app_operator`, test estático sobre el AST de `app/(app)/admin/**`, e I-E12-5. Una sola vía es una promesa; tres son un control |
+| Toda escritura de operador lleva motivo ≥ 20 caracteres (con lista negra de genéricos), actor y confirmación **por nombre comparada en el servidor** | `app/(app)/admin/**` en dos mitades (enumerar+firmar con HMAC, reenumerar y exigir que el resumen no haya cambiado) + I-E12-5 |
+| El CAPEX previsto entra en el sello del presupuesto, y una versión sin CAPEX sella igual que antes de E12 | `budgetHash` con bloque `∅CAPEX` condicional + fixture `presupuesto-horas-esperado.v1.4.json` (v1.0–v1.3 congeladas) |
+| Las 12 cifras canónicas se reconstruyen por **un segundo camino** que no comparte código con el motor | `scripts/audit-reconstruct.ts` (SQL crudo) + test sobre el AST + I-E12-2 |
+| La consulta de provenance de **toda** celda se puede ejecutar y devuelve su propia cifra | I-E12-3 y la suite C3 (`tests/acceptance/c3-provenance.test.ts`), que la ejecuta de verdad |
+| Un sello comparable **entre copias** no lleva identificadores de fila | nota de alcance de ADR-0011 (2026-09-21): `ledgerHash`, `planHash`, `accountMapHash`, `configHash` y el `analyticsKey` del manifest sí viajan; el `analyticsKey` de `InvariantRun` y el `entryHash` no, y es correcto |
+
 ## Integridad (resumen)
 | Regla | Dónde |
 |---|---|
