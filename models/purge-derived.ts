@@ -117,6 +117,15 @@ export const FUENTES_AUNQUE_LO_PAREZCAN: Readonly<Record<string, string>> = {
     "Registra que una organización se sembró y con qué fixture. No se recomputa: el alta ocurrió una vez.",
 }
 
+/** El registro de lo derivado y el de las fuentes, juntos. Sólo los tests lo
+ * sustituyen: el producto usa siempre los dos de arriba. */
+export type RegistroDeLoDerivado = {
+  derivados: Readonly<Record<string, { motivo: string; where?: string }>>
+  fuentes: Readonly<Record<string, string>>
+}
+
+const REGISTRO: RegistroDeLoDerivado = { derivados: DERIVED_MODELS, fuentes: FUENTES_AUNQUE_LO_PAREZCAN }
+
 /**
  * El detector. **No decide**: acusa. Cumplirlo es motivo suficiente para que
  * alguien tenga que declarar la tabla, en un lado o en el otro.
@@ -133,12 +142,15 @@ export function pareceCache(model: SchemaModel): boolean {
  * `DERIVED_MODELS` ni en `FUENTES_AUNQUE_LO_PAREZCAN`. El test de T10 falla
  * nombrándolas. Es la guardia que sustituye a «entra sola en la lista».
  */
-export function tablasSinDeclarar(meta: readonly SchemaModel[] = prismaSchemaMeta()): string[] {
+export function tablasSinDeclarar(
+  meta: readonly SchemaModel[] = prismaSchemaMeta(),
+  registro: RegistroDeLoDerivado = REGISTRO
+): string[] {
   return meta
     .filter((model) => pareceCache(model))
     .filter((model) => model.columns.some((column) => column.column === "organization_id"))
     .map((model) => model.table)
-    .filter((table) => DERIVED_MODELS[table] === undefined && FUENTES_AUNQUE_LO_PAREZCAN[table] === undefined)
+    .filter((table) => registro.derivados[table] === undefined && registro.fuentes[table] === undefined)
     .sort()
 }
 
@@ -154,10 +166,18 @@ export type TablaDerivada = { table: string; where: string | null; motivo: strin
  * de tenant**. Es pura —recibe el modelo de datos por parámetro— y una entrada
  * del registro que nombre una tabla inexistente la caza el test de T10, no un
  * `DELETE` contra una tabla que no está.
+ *
+ * El `registro` entra por parámetro **sólo para poder probarlo**: el criterio 34
+ * (ADR-0023 D5) exige demostrar con una tabla ficticia que **declararla basta**
+ * para que entre en la purga, sin tocar ninguna otra línea. El producto nunca
+ * pasa el segundo argumento.
  */
-export function derivedTables(meta: readonly SchemaModel[] = prismaSchemaMeta()): TablaDerivada[] {
+export function derivedTables(
+  meta: readonly SchemaModel[] = prismaSchemaMeta(),
+  registro: RegistroDeLoDerivado = REGISTRO
+): TablaDerivada[] {
   const out: TablaDerivada[] = []
-  for (const [table, { motivo, where }] of Object.entries(DERIVED_MODELS)) {
+  for (const [table, { motivo, where }] of Object.entries(registro.derivados)) {
     const model = meta.find((m) => m.table === table)
     if (!model) continue
     // Sólo tablas de tenant: una tabla global no es de nadie y no se purga por

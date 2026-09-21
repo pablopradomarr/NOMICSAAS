@@ -250,9 +250,14 @@ suavizar:
 > **Borrado todo lo que el sistema recuerda haber calculado, y regenerado desde
 > el diario, las cifras y los sellos son idénticos byte a byte.**
 
-**Qué se borra.** Un helper único, `purgeDerived(orgId)`, cuya lista **se deriva
-del esquema y no se escribe a mano** —la lección de BUG-E7-1 / BUG-E9-5 /
-BUG-E10-1 / BUG-E11-2, que es el mismo error cuatro veces—:
+**Qué se borra.** Un helper único, `purgeDerived(orgId)`, cuya lista es el
+**registro declarado `DERIVED_MODELS`**: tabla a tabla, con el motivo por el que
+se puede recomputar desde la fuente (**ADR-0023**). El criterio estructural que
+este documento proponía al escribirse —derivar la lista del esquema, la lección
+de BUG-E7-1 / BUG-E9-5 / BUG-E10-1 / BUG-E11-2— se conserva como **detector que
+acusa y no borra**: el esquema sabe qué tablas hay, pero no cuál es caché y cuál
+es fuente, y medido contra las tablas reales acertaba menos de la mitad de las
+veces (cuatro excepciones sobre nueve candidatas). Lo que se purga hoy:
 
 | Categoría | Tablas / estado |
 |---|---|
@@ -481,9 +486,13 @@ está mal diseñado** y es un hallazgo de E12, no un problema del auditor.
    inyección que da FAIL**. Tres épicas seguidas entregaron invariantes muertos.
 2. **Una familia sin evaluar sale `SIN_EVALUAR`, jamás en verde.**
 3. **Una tabla nueva de negocio** se protege con `app.enforce_tenant_rls`, entra
-   en `TENANT_MODELS`, y con eso entra sola en el backup, en `--reset-org` y en
-   `purgeDerived`. **Nunca se mantiene una lista a mano**: la lista a mano ha
-   fallado cuatro veces (BUG-E7-1, BUG-E9-5, BUG-E10-1, BUG-E11-2).
+   en `TENANT_MODELS`, y con eso entra sola en el backup y en `--reset-org`.
+   **Nunca se mantiene una lista a mano**: la lista a mano ha fallado cuatro veces
+   (BUG-E7-1, BUG-E9-5, BUG-E10-1, BUG-E11-2). **Excepción única, y es
+   `purgeDerived`** (ADR-0023): allí la pregunta no es «¿qué tablas hay?» —que el
+   esquema contesta— sino «¿qué es caché y qué es fuente?», que no contesta; la
+   tabla se **declara** en `DERIVED_MODELS` o en `FUENTES_AUNQUE_LO_PAREZCAN`, con
+   motivo, y el detector estructural pone la suite roja si no está en ninguna.
 4. **Un derivado nuevo** declara su **hash de fuente** y su entrada en
    `derivedSealColumns()`. Si no se puede recomputar, no es un derivado: es una
    fuente, y necesita ADR.
@@ -582,7 +591,7 @@ Se definen **una sola vez** en `.claude/skills/fiabilidad/SKILL.md`, familia
 
 | ID | Invariante | Tol. |
 |---|---|---|
-| **I-E12-1** | **Determinismo de extremo a extremo.** Purgados todos los derivados (`purgeDerived`, lista derivada del esquema) y regenerados, las **12 cifras** y los **cinco sellos** son idénticos **byte a byte**, en los tres órdenes de regeneración | 0 |
+| **I-E12-1** | **Determinismo de extremo a extremo.** Purgados todos los derivados (`purgeDerived`, con el registro declarado `DERIVED_MODELS` de ADR-0023, y sin ninguna tabla de caché sin declarar) y regenerados, las **12 cifras** y los **cinco sellos** son idénticos **byte a byte**, en los tres órdenes de regeneración | 0 |
 | **I-E12-2** | **Reconstrucción independiente.** `audit-reconstruct` da **Δ = 0** en las 12, y su grafo de importaciones **no contiene `lib/**`, `models/**` ni `ai/**`** (test estático sobre el AST) | 0 |
 | **I-E12-3** | **Provenance ejecutable.** Toda celda de informe trae consulta parametrizada que, ejecutada, devuelve su propio valor. **Cero celdas sin consulta** y cero consultas que devuelvan 0 filas para un valor ≠ 0 | 0 |
 | **I-E12-4** | **Cobertura de la spec.** Cada componente C1–C7 tiene ≥ 1 test de aceptación que lo ejerce **y está en CI**. Un componente sin test es **FAIL**, no INFO | — |
@@ -681,8 +690,16 @@ Se definen **una sola vez** en `.claude/skills/fiabilidad/SKILL.md`, familia
 32. Lo mismo **regenerando en otro orden**.
 33. Tras la purga y **antes** de regenerar, ninguna pantalla enseña una cifra:
     enseña «sin calcular».
-34. `purgeDerived` deriva su lista del esquema: una tabla derivada nueva entra
-    sola. Test que **añade una tabla ficticia** y comprueba que la lista crece.
+34. `purgeDerived` borra **lo que el registro `DERIVED_MODELS` declara**, tabla
+    a tabla y con motivo (**ADR-0023**); el criterio estructural se conserva como
+    **detector que acusa y no borra**. Ninguna tabla de caché queda fuera del
+    registro en silencio: `tablasSinDeclarar()` la nombra y la suite falla. Test
+    que **añade una tabla ficticia** y comprueba las tres cosas: sin declarar se
+    detecta y **no** se purga; declarada derivada entra en la lista sin tocar
+    ninguna otra línea; declarada fuente sale del detector y no se purga.
+    *(Enunciado anterior —«deriva su lista del esquema: una tabla derivada nueva
+    entra sola»— derogado por ADR-0023, que explica por qué el esquema sabe qué
+    tablas hay pero no cuál es caché y cuál es fuente.)*
 
 **Reconstrucción desde backup (P7)**
 

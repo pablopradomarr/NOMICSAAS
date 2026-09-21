@@ -7,9 +7,13 @@
  * > **Borrado todo lo que el sistema recuerda haber calculado, y regenerado
  * > desde el diario, las cifras y los sellos son idénticos byte a byte.**
  *
- * Lo que se borra lo decide `models/purge-derived.ts`, cuya lista **se deriva
- * del esquema**: una tabla `_runs` nueva, o una que declare el hash de sus
- * fuentes, entra sola. Lo que NO se borra es la fuente única de verdad —el
+ * Lo que se borra lo decide `models/purge-derived.ts`, cuya lista es el
+ * **registro declarado `DERIVED_MODELS`**: tabla a tabla, con el motivo por el
+ * que se puede recomputar desde la fuente (**ADR-0023**). El criterio
+ * estructural —nombre `_runs`/`_sweeps`, o columna de hash de origen— se
+ * conserva como **detector que acusa y no borra**: el esquema sabe qué tablas
+ * hay, pero no cuál es caché y cuál es fuente, y acertaba menos de la mitad de
+ * las veces. Lo que NO se borra es la fuente única de verdad —el
  * diario, los documentos, el `AuditLog`, los `ExtractionRun`, la configuración
  * versionada—, y ésa es la mitad del test: *si algo derivado no se pudiera
  * borrar sin perder una cifra, sería una fuente encubierta y el producto estaría
@@ -109,7 +113,7 @@ afterAll(async () => {
   await disconnect()
 }, 300_000)
 
-describe("E12 · T10 — la lista de lo derivado se DERIVA del esquema", () => {
+describe("E12 · T10 — lo derivado se DECLARA, y el detector acusa (criterio 34, ADR-0023)", () => {
   it("I-E12-1a · lo que se purga sale del REGISTRO, tabla por tabla y con motivo", () => {
     const meta = prismaSchemaMeta()
     const lista = derivedTables(meta).map((t) => t.table)
@@ -137,13 +141,21 @@ describe("E12 · T10 — la lista de lo derivado se DERIVA del esquema", () => {
     )
   })
 
-  it("no queda ninguna tabla de caché SIN declarar: el detector acusa y el registro decide", () => {
-    /**
-     * La guardia que sustituye a «entra sola en la lista». El detector
-     * estructural ya no borra nada: sólo señala. Una tabla `_runs` nueva sin
-     * declarar rompe aquí, con su nombre, y obliga a decidir de qué lado cae.
-     */
+  /**
+   * **Criterio 34, reescrito por ADR-0023 D4/D5.**
+   *
+   * El enunciado anterior —«`purgeDerived` deriva su lista del esquema: una
+   * tabla derivada nueva entra sola»— dejó de ser cierto cuando la ronda 1 pasó
+   * a registro explícito, y su test se sustituyó por uno más débil
+   * (`tablasSinDeclarar() === []`). Éste no puede ser más débil que el que
+   * borró: afirma **las tres** consecuencias del registro, y las tres se
+   * ejercen con la misma tabla ficticia.
+   */
+  it("criterio 34 · una tabla de caché NUEVA no puede quedarse fuera en silencio, y declararla BASTA", () => {
     const meta = prismaSchemaMeta()
+
+    // (0) El estado de hoy: nadie sin declarar. Si esto falla, el diff dirá qué
+    // tabla añadió la épica de turno sin decidir de qué lado cae.
     const sinDeclarar = tablasSinDeclarar(meta)
     recorder.assert(
       "T10-sin-declarar",
@@ -154,7 +166,6 @@ describe("E12 · T10 — la lista de lo derivado se DERIVA del esquema", () => {
     )
     expect(sinDeclarar).toEqual([])
 
-    // Y una tabla de caché ficticia SÍ se detecta: el detector no está muerto.
     const ficticia = {
       model: "FixtureFicticioRun",
       table: "fixture_ficticio_runs",
@@ -163,13 +174,56 @@ describe("E12 · T10 — la lista de lo derivado se DERIVA del esquema", () => {
         { field: "organizationId", column: "organization_id", type: "String", kind: "scalar" },
       ],
     }
-    expect(tablasSinDeclarar([...meta, ficticia])).toEqual(["fixture_ficticio_runs"])
-    expect(derivedTables([...meta, ficticia]).map((t) => t.table)).not.toContain("fixture_ficticio_runs")
+    const conFicticia = [...meta, ficticia]
+    const registroReal = { derivados: DERIVED_MODELS, fuentes: FUENTES_AUNQUE_LO_PAREZCAN }
+
+    // (1) SIN DECLARAR: el detector la nombra y la purga NO la toca. Que no se
+    //     borre es la mitad importante: una tabla que parece caché y es un
+    //     hecho contable no se pierde por parecerlo.
+    expect(tablasSinDeclarar(conFicticia, registroReal)).toEqual(["fixture_ficticio_runs"])
+    expect(derivedTables(conFicticia, registroReal).map((t) => t.table)).not.toContain("fixture_ficticio_runs")
     recorder.add(
       "T10-detector-vivo",
       "PASS",
       "una tabla «fixture_ficticio_runs» sin declarar se detecta y NO se purga: nada se borra por parecerlo"
     )
+
+    // (2) DECLARADA DERIVADA: entra en la purga **sin tocar ninguna otra
+    //     línea**. Es el automatismo que el criterio 34 compraba, movido de
+    //     «el esquema decide» a «declararla basta» (ADR-0023 D5.2).
+    const comoDerivada = {
+      derivados: { ...DERIVED_MODELS, fixture_ficticio_runs: { motivo: "Ficticia del test del criterio 34." } },
+      fuentes: FUENTES_AUNQUE_LO_PAREZCAN,
+    }
+    const listaDeclarada = derivedTables(conFicticia, comoDerivada)
+    expect(listaDeclarada.map((t) => t.table)).toContain("fixture_ficticio_runs")
+    expect(listaDeclarada.length).toBe(derivedTables(meta, registroReal).length + 1)
+    expect(tablasSinDeclarar(conFicticia, comoDerivada)).toEqual([])
+    recorder.add(
+      "T10-declarar-basta",
+      "PASS",
+      "declarar «fixture_ficticio_runs» en DERIVED_MODELS la mete en la purga sin tocar otra línea, y la saca del detector"
+    )
+
+    // (3) DECLARADA FUENTE: sale del detector y sigue SIN purgarse. Es el caso
+    //     de `extraction_runs` y el que impide que el detector acuse siempre al
+    //     mismo inocente.
+    const comoFuente = {
+      derivados: DERIVED_MODELS,
+      fuentes: { ...FUENTES_AUNQUE_LO_PAREZCAN, fixture_ficticio_runs: "Ficticia declarada FUENTE en el test." },
+    }
+    expect(tablasSinDeclarar(conFicticia, comoFuente)).toEqual([])
+    expect(derivedTables(conFicticia, comoFuente).map((t) => t.table)).not.toContain("fixture_ficticio_runs")
+    recorder.add(
+      "T10-fuente-declarada",
+      "PASS",
+      "declararla FUENTE la saca del detector y sigue sin purgarse: las dos mitades del registro deciden"
+    )
+
+    // Y el producto no pasa nunca el segundo argumento: los valores por defecto
+    // son los registros reales, no un registro de test que se colara.
+    expect(derivedTables(meta).map((t) => t.table)).toEqual(derivedTables(meta, registroReal).map((t) => t.table))
+    expect(tablasSinDeclarar(meta)).toEqual(tablasSinDeclarar(meta, registroReal))
   })
 
   it("los sellos que NO se purgan están declarados, y con motivo", () => {
