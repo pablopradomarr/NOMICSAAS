@@ -1,5 +1,11 @@
 # Fiabilidad de MICRO ERP SAAS — qué garantiza y cómo comprobarlo
 
+> **Estado: capa CERRADA con el ciclo E0–E12** (2026-09-21). La re-auditoría de
+> la ronda 2 dio **CONFORME** (13 de 13 cifras reconstruidas con Δ = 0 por un
+> tercer camino, `ledgerHash 4a1af0ee555f…` intacto) y la re-revisión,
+> **APROBADO** (0 BLOQUEA · 0 DEBE). Lo que queda abierto está en **E14**, con
+> épica y motivo, en `docs/ROADMAP.md` §E14.
+>
 > **Versión final, cerrada en E12 · T23** (2026-09-21). El borrador es de E7 · T22
 > y no se tiró: se completó con lo que E12 demuestra —los tests de aceptación
 > C1–C7 de extremo a extremo, el auditor automatizado, «memoria borrada» y la
@@ -44,7 +50,26 @@ afirma, y cómo comprobarlo uno mismo.
 
 ---
 
-## 2. Los invariantes, por familia
+## 2. La capa: los siete componentes y los invariantes por familia
+
+### 2.1 Estado final de C1–C7
+
+Los siete componentes de `docs/spec/SPEC-FIABILIDAD.md` están **implementados y
+ejercidos**, cada uno por al menos un test de aceptación que corre en integración
+continua. Un componente sin test es **FAIL**, no INFO: lo vigila `I-E12-4`.
+
+| Componente | Dónde vive | Qué lo ejerce |
+|---|---|---|
+| **C1** snapshots versionados | `ledgerHash` + `ReportRun` inmutable con caché por hash; `files.sha256` comparado con los bytes del almacén; `ExtractionRun`, `InvariantRun`, `ClosingRun` y `AllocationRun` sellados y *append-only* | `tests/acceptance/c1-snapshots.test.ts` |
+| **C2** motor determinista | `lib/ledger`, `lib/analytics`, `lib/closing`, `lib/recurring`, `lib/audit`, `lib/budget`, `lib/time`, `lib/platform`: funciones puras, sin reloj, sin IO, sin LLM —lo impone el hook `.claude/hooks/guard.sh` antes de escribir y el job `pureza-motor` en CI— | `c2-motor.test.ts` · job 6-bis |
+| **C3** provenance | Cada celda: `{valor, metrica, run_id, ledgerHash, calculado_por, registros_origen, confianza}`, con la consulta **ejecutable** (`I-E12-3`) | `c3-provenance.test.ts`, que la ejecuta de verdad |
+| **C4** validación por capas | Capa 1 los invariantes de §2.2; Capa 2 el agente `auditor-fiabilidad` **y** `scripts/audit-reconstruct.ts` en cada integración; Capa 3 revisión por excepción (el sello) | `c4-inyeccion.test.ts`: las **diez** inyecciones de la matriz, ejercidas y cazadas |
+| **C5** niveles de confianza | `ConfidenceBadge` en toda cifra; cuatro niveles **por campo** en el camino documental; el nivel se **deriva en lectura**, nunca se almacena | `c5-sellos.test.ts` |
+| **C6** memoria | Ninguna cifra en memoria de agente ni `cachedParseResult`; `AuditLog` y `runs/registro.jsonl` estructurados; lo derivado se **declara** tabla a tabla (`DERIVED_MODELS`, **ADR-0023**) y se purga sin perder una fuente | `c6-revision-humana.test.ts` · `memoria-borrada.test.ts` (tres variantes) |
+| **C7** versionado del propio sistema | Prompts en git + `PromptVersion`; `ReportRun.gitSha`; `ExtractionRun.{model, promptSha, schemaSha, proposalSha, gitSha}`; `runs/registro.jsonl` validado contra su esquema (`I-E12-7`) | `c7-registro-runs.test.ts` |
+| **C1′** reproducibilidad (P7) | El backup 2.0 firmado, restaurado **siempre a organización nueva**, con **siete** comprobaciones —las seis de E11 más `COBERTURA_INVENTARIO`, que desde la ronda 2 **decide** y no sólo detecta— | `reconstruccion-backup.test.ts` |
+
+### 2.2 Los invariantes, por familia
 
 Un invariante es una igualdad que el sistema comprueba sobre **datos reales**, no
 sobre un fixture. Todos comparten un contrato: **nunca un PASS que no se haya
@@ -102,17 +127,23 @@ es lo que hace la copia de seguridad desde E11:
 3. Restaurar es **siempre a una organización nueva**. La de origen no se toca,
    nunca. Una sola fila rechazada aborta el trabajo entero, con tabla, número de
    línea y motivo.
-4. Y entonces se **comprueban seis cosas**, no tres: los recuentos tabla a tabla
+4. Y entonces se **comprueban siete cosas**, no tres: los recuentos tabla a tabla
    con igualdad exacta; la numeración por ejercicio **sin huecos ni duplicados**
    y las series de facturación; **todos** los sellos derivados recomputados sobre
    una lista que sale del código; el recuento y la huella del registro de
    auditoría; los tres sellos de contenido y el estado del cierre; y el barrido
-   completo de las nueve familias de invariantes **enfrentado al del origen**.
+   completo de las nueve familias de invariantes **enfrentado al del origen**; y
+   la **cobertura del inventario** (`COBERTURA_INVENTARIO`), que enfrenta el
+   manifest con el inventario derivado del esquema y falla **nombrando** la tabla
+   que falta. Ésta es la séptima, nació en la ronda 1 de E12 y **decide** desde
+   la ronda 2: entró en `REQUIRED_CHECKS`, que es la única lista que
+   `isVerified()` recorre. Antes, con ella en FAIL y las seis en PASS, una copia
+   a la que le faltaba **una tabla entera** se entregaba como verificada.
 
 Esa última palabra importa: fidelidad es **destino ≡ origen**, no «destino
 perfecto». Una copia fiel de una organización que ya tenía un invariante en rojo
 se verifica; lo que no se verifica es una copia que cambia algo. Sólo con las
-seis en verde el trabajo queda en `DONE`; si falta una, `DONE_UNVERIFIED`, la
+siete en verde el trabajo queda en `DONE`; si falta una, `DONE_UNVERIFIED`, la
 organización se **conserva** como evidencia y `I-E11-2` lo lee como el fallo que
 es. Nadie que filtre por «lista» puede leer como buena una copia sin verificar.
 
@@ -189,7 +220,8 @@ consecuencias que no se negocian:
 ### Qué sello sobrevive a una COPIA, y cuál no
 
 Esto importa el día que hay que demostrar que una restauración es fiel, y estaba
-implícito hasta que E12 lo enfrentó (nota de alcance de **ADR-0011**, 2026-09-21).
+implícito hasta que E12 lo enfrentó (**ADR-0021**, 2026-09-21: la nota de alcance
+salió de dentro de ADR-0011, que es inmutable, y allí queda la referencia).
 Restaurar crea filas nuevas: **todos los identificadores internos cambian**. Por
 tanto:
 
@@ -259,12 +291,28 @@ Es la prueba más fuerte que hay en el sistema, y lo es por cómo está hecho:
 
 ### Y en cada `push`, sin que nadie lo pida
 
-Los diez minutos de arriba los repite una máquina en cada integración
-(`.github/workflows/fiabilidad.yml`, nueve trabajos): unitarios, integración,
-RLS con el rol sin privilegios, **los siete tests de aceptación C1–C7** más
-«memoria borrada» y «reconstrucción desde copia», el **auditor automatizado**
-sobre el fixture con sus informes emitidos antes, los **fixtures sellados** que
-se regeneran byte a byte, los **e2e uno por fichero** y el build. Cada PR recibe
+Los diez minutos de arriba los repite una máquina en cada integración:
+`.github/workflows/fiabilidad.yml`, **doce trabajos**, con `GIT_SHA` y
+`TZ: Europe/Madrid` en la raíz del workflow —heredarlos es la única forma de que
+ninguno se quede sin ellos al añadir el siguiente—:
+
+| # | Trabajo | Qué corre |
+|---|---|---|
+| **1** | `lint-tsc` | `npm run lint` y `tsc --noEmit` |
+| **2** | `unit` | el motor puro y los fixtures congelados |
+| **3** | `integracion` | contra Postgres de verdad, con RLS activa |
+| **4** | `rls` | la misma suite como `app_runtime`, el rol sin privilegios |
+| **5** | `aceptacion` | **los siete C1–C7**, «memoria borrada» y «reconstrucción desde copia»; ninguna familia `SIN_EVALUAR` se cuela en verde |
+| **6** | `auditor-automatizado` | emite antes los informes (`ci-audit-fixture.ts`), comprueba por AST que **no importa nada del productor** y reconstruye por SQL crudo |
+| **6-bis** | `pureza-motor` | sin reloj, IO ni LLM en el motor, en `lib/platform` y en el propio auditor |
+| **6-ter** | `perf` | los techos baratos en cada push; el **criterio 47** (volumen real, 1,5 GB) en el disparador nocturno |
+| **7** | `fixtures-check` | los **trece** generadores regeneran su fixture byte a byte (`--check`), por glob y no por lista |
+| **8** | `e2e-matriz` | la matriz **derivada del directorio** (`ls tests/e2e/*.spec.ts`, suelo 13) |
+| **9** | `e2e` | un fichero por job, en máquina dedicada |
+| **10** | `build` | `next build` |
+
+Artefactos a 90 días: `validacion.json`, `barrido.json`,
+`audit-reconstruct.json` y el `validacion.json` de cada componente. Cada PR recibe
 una tabla con el sello, los cinco hashes, las doce cifras con su Δ y el recuento
 por familia. Que se lea sin abrir un artefacto es la diferencia entre un control
 y un adorno.
@@ -299,10 +347,15 @@ Decirlo importa tanto como lo anterior:
   y su línea en el registro. Todo lo demás sigue siendo SQL de runbook, a
   propósito.
 - **No exporta los modelos 303/349** ni cubre el ciclo comercial (factura emitida
-  con PDF, envío, cobro, *aging*): están fechados en E14.
-- **No regulariza los bienes de inversión** (arts. 107-110 LIVA). La guardia es
-  determinista y lo avisa con su motivo de sello; el ajuste es de una épica
-  posterior.
+  con PDF, envío, cobro, *aging*): están fechados en **E14**, con los otros nueve
+  puntos que el ciclo E0–E12 deja abiertos. La lista completa, cada línea con su
+  motivo, está en `docs/ROADMAP.md` §E14; mientras tanto, el 303/349 de nuestra
+  propia facturación sale por las dos consultas SQL de
+  `docs/deploy/e11-plataforma.md`.
+- **No lee una copia de varios GB.** El ZIP se **escribe** en streaming desde
+  E12, pero se **lee** con `JSZip` sobre un `Buffer`: el techo 6 está medido con
+  el diario completo y **sin** los 1,5 GB de documentos. El lector de acceso
+  aleatorio está en E14.
 - **No cierra un ejercicio por su cuenta.** El cierre es un **checklist de 43
   pasos** con nueve bloqueantes: sin PASS en los nueve no se cierra, y los pasos
   declarados sin responder son WARN, nunca PASS. Reabrir exige motivo, el código
@@ -330,7 +383,9 @@ Siete reglas. No son estilo: cada una tiene detrás una épica que la pagó.
    perder 177 filas por organización en cada restauración **con las seis
    comprobaciones en PASS**. Desde la ronda 1 de E12 hay una **séptima**,
    `COBERTURA_INVENTARIO`, que enfrenta el manifest con el inventario derivado
-   del esquema y falla **nombrando** la tabla que falta.
+   del esquema y falla **nombrando** la tabla que falta; y desde la ronda 2
+   **decide**: detectar sin entrar en `REQUIRED_CHECKS` era mirar hacia otro
+   lado con el informe escrito.
 4. **Un derivado nuevo declara su hash de fuente** y su entrada en las columnas
    selladas. Si no se puede recomputar, no es un derivado: es una fuente, y
    entonces necesita su propia decisión escrita.
@@ -347,19 +402,30 @@ Siete reglas. No son estilo: cada una tiene detrás una épica que la pagó.
    —el que pasa por vacuidad, el que se ajusta al código, el que tiene un fixture
    que contradice al motor— es un defecto de severidad ALTA, no una molestia.
 
-### Cómo comprobarlo uno mismo, desde la línea de órdenes
+### Reconstruir y auditar la capa entera, en cinco órdenes
 
-Sin pasar por la aplicación:
+Sin pasar por la aplicación, y en este orden:
 
 ```bash
-DATABASE_URL_MAINTENANCE=… npx tsx scripts/run-invariants.ts --org <id>   # → validacion.json
-npm run test              # motor puro: invariantes y fixtures congelados
-npm run test:integration  # contra Postgres de verdad, con RLS activa
-npm run test:integration:rls
-npm run test:acceptance   # los siete C1–C7, «memoria borrada» y la copia restaurada
-npx tsx scripts/audit-reconstruct.ts --org <id> --ref-date <AAAA-MM-DD>   # el paso 4 de la §4
-python3 docs/design/fixtures/build_ejercicio_completo_v2.py --check       # byte a byte
+# 1 · el barrido: los invariantes de las nueve familias sobre datos reales → validacion.json
+DATABASE_URL_MAINTENANCE=… npx tsx scripts/run-invariants.ts --org <id>
+
+# 2 · el motor puro, la base con RLS y el rol sin privilegios, de una vez
+npm run test:all
+
+# 3 · los siete componentes C1–C7, «memoria borrada» y la copia restaurada
+npm run test:acceptance
+
+# 4 · el segundo motor: las 12 cifras por SQL crudo. Sale 0 SÓLO si el veredicto es CONFORME
+npx tsx scripts/audit-reconstruct.ts --org <id> --ref-date <AAAA-MM-DD> --out audit.json
+
+# 5 · los trece fixtures sellados se regeneran byte a byte
+for g in docs/design/fixtures/build_*.py; do python3 "$g" --check || break; done
 ```
+
+Los cinco son los que la máquina repite en cada integración (§4). El **4** es el
+que vale por los otros cuatro si sólo se tiene tiempo para uno: un total que sale
+de la misma función que lo produjo no prueba nada.
 
 **Reconstruyendo por fuera.** Es lo que hace el agente `auditor-fiabilidad` en
 contexto limpio —y, desde E12, también una máquina en cada integración—:
@@ -386,9 +452,14 @@ dejó de correr una vez por épica: `scripts/audit-reconstruct.ts` corre en cada
 integración con la **misma prohibición** de compartir código con el productor, y
 un test sobre el árbol sintáctico la impone. Las dos capas se necesitan: la
 humana encuentra lo que nadie pensó en comprobar; la automática impide que lo
-encontrado vuelva. Cuatro informes de auditoría (E7, E9, E10, E11) encontraron
-cada uno lo que los tests no veían, y las tres primeras veces el mismo fallo:
-invariantes escritos y jamás llamados.
+encontrado vuelva. **Cinco** informes de auditoría (E7, E9, E10, E11 y E12)
+encontraron cada uno lo que los tests no veían, y las tres primeras veces el
+mismo fallo: invariantes escritos y jamás llamados. El quinto, el de E12,
+encontró la variante más incómoda del mismo patrón: controles que **no podían
+fallar porque no se ejecutaban** —la puerta del sello del job de CI, vacua por
+una tautología; el tercer salto del drill-down documental, que habría dado
+`42703` si alguien hubiera llegado a ejecutarlo—. La re-auditoría de la ronda 2
+cerró el ciclo en **CONFORME**: 13 de 13 cifras con Δ = 0.
 
 Todo run —implementación, revisión, auditoría— queda en `runs/registro.jsonl` con
 su git-sha, sus tests, su deuda y su sello, y `I-E12-7` comprueba que el registro
