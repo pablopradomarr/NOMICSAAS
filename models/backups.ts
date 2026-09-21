@@ -66,6 +66,7 @@ import {
   csvChunkOf,
   csvColumnsOf,
   backupInventory,
+  compareInventoryCoverage,
   compareCounts,
   decodeRow,
   derivedSealColumns,
@@ -1573,6 +1574,19 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
         actualCounts.set(table.name, Number(rows[0]?.n ?? 0))
       }
       out.push(compareCounts(new Map(manifest.tables.map((t) => [t.name, t.rows])), actualCounts))
+      /**
+       * **H-6.** Y antes que los recuentos: que el manifest declare las tablas
+       * que el inventario DERIVADO del esquema exige. Sin esto, quitar una tabla
+       * del ZIP y del manifest a la vez —con la firma rehecha— pasaba las seis
+       * comprobaciones, y el rechazo llegaba de rebote (un invariante que se
+       * mueve) o por una clave ajena con la causa vacía.
+       */
+      out.push(
+        compareInventoryCoverage(
+          backupInventory(BACKUP_TENANT_MODELS, prismaSchemaMeta()),
+          manifest.tables.map((t) => t.name)
+        )
+      )
     })
 
     await enTransaccion(async (tx) => {
@@ -1629,7 +1643,7 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
       }
       out.push({
         id: "NUMERACION",
-        status: evidence.every((row) => row.ok) ? "PASS" : "FAIL",
+        status: evidence.every((row) => row.ok !== false) ? "PASS" : "FAIL",
         title: "Numeración correlativa por ejercicio, sin huecos ni duplicados, y series de facturación",
         evidence,
         note: "Los tres sellos NO cubren esto: dos asientos con los números intercambiados dan el mismo ledgerHash.",
@@ -1677,7 +1691,7 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
       }
       out.push({
         id: "SELLOS_DERIVADOS",
-        status: sealEvidence.every((row) => row.ok) ? "PASS" : "FAIL",
+        status: sealEvidence.every((row) => row.ok !== false) ? "PASS" : "FAIL",
         title: "Recomputo de TODOS los sellos derivados sobre la lista derivada del código",
         evidence: sealEvidence,
       })
@@ -1751,7 +1765,7 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
       ]
       out.push({
         id: "SELLOS_Y_CIERRE",
-        status: sealsEvidence.every((row) => row.ok) ? "PASS" : "FAIL",
+        status: sealsEvidence.every((row) => row.ok !== false) ? "PASS" : "FAIL",
         title: "Los tres sellos de contenido y el estado del cierre",
         evidence: sealsEvidence,
       })
@@ -1858,10 +1872,18 @@ export async function verifyRestore(input: VerifyRestoreInput): Promise<RestoreV
             ok: sweepOk,
           },
           {
-            label: "checksHash del barrido",
+            /**
+             * **INFORMATIVA, sin `ok`** (auditor H-10). El `checksHash` del
+             * barrido no es comparable entre COPIAS —su evidencia lleva uuid, y
+             * ADR-0021 dice qué sello sobrevive a una restauración y cuál no—,
+             * así que aquí no hay comparación que hacer. Antes la fila enseñaba
+             * dos valores distintos y los marcaba en verde con un `ok: true`
+             * escrito a mano: exactamente el anti-patrón que la enmienda E-2
+             * prohíbe. Ahora se enseña y no decide.
+             */
+            label: "checksHash del barrido (informativo: no comparable entre copias, ADR-0021)",
             expected: baseline?.checksHash ?? "—",
             actual: swept.checksHash,
-            ok: true,
           },
           {
             label: "ficheros sin bytes",

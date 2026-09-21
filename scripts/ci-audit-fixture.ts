@@ -153,6 +153,47 @@ async function main(): Promise<void> {
       ` · ${barrido.validacion.checks.length} checks, ${fallos.length} FAIL → ${out}`
   )
   console.log(`ORG=${organizationId}`)
+
+  /**
+   * **H-4 de la auditoría: un job verde con un sello rojo.** Este script
+   * contaba los FAIL, los imprimía y devolvía 0: el job publicaba en el resumen
+   * del PR un sello `REQUIERE REVISIÓN` y seguía en verde. El criterio 13 dice
+   * que «el ciclo sale sin intervención humana con sello VALIDADO
+   * AUTOMÁTICAMENTE», así que a partir de aquí:
+   *
+   *  · cualquier FAIL que **no** esté en la lista CERRADA de FAIL del sustrato
+   *    —la misma que usa la suite de aceptación— pone el job en rojo, con el
+   *    nombre del invariante;
+   *  · y si el sello no es `VALIDADO AUTOMATICAMENTE` **por un motivo que no sea
+   *    esa lista**, también.
+   *
+   * Los del sustrato se imprimen con su motivo: el lector del PR ve por qué el
+   * sello no está verde sin abrir un artefacto.
+   */
+  const { FAIL_DEL_SUSTRATO, failesNoDeclarados } = await import("@/tests/support/fail-del-sustrato")
+  const noDeclarados = failesNoDeclarados(fallos.map((c) => c.id))
+  for (const c of fallos) {
+    const motivo = FAIL_DEL_SUSTRATO[c.id]
+    if (motivo) console.log(`  · FAIL del SUSTRATO ${c.id}: ${motivo}`)
+  }
+  if (noDeclarados.length > 0) {
+    console.error(
+      `::error::invariante(s) en FAIL que nadie ha declarado: ${noDeclarados.join(", ")}. ` +
+        "Si son del sustrato, decláralos con su motivo en tests/support/fail-del-sustrato.ts; si no, son del producto."
+    )
+    for (const c of fallos.filter((f) => noDeclarados.includes(f.id))) {
+      console.error(`  [FAIL] ${c.id}: ${String(c.evidencia).slice(0, 300)}`)
+    }
+    throw new Error(`${noDeclarados.length} invariante(s) en FAIL sin declarar`)
+  }
+  const selloLimpio = barrido.sello.sello === "VALIDADO AUTOMÁTICAMENTE" || fallos.length > 0
+  if (!selloLimpio) {
+    console.error(
+      `::error::el sello del fixture es «${barrido.sello.sello}» sin ningún invariante en FAIL: ` +
+        `motivos ${barrido.sello.motivos.join(", ") || "(ninguno declarado)"}. Un job verde con un sello rojo no vale (H-4)`
+    )
+    throw new Error("sello del fixture distinto de VALIDADO AUTOMÁTICAMENTE por un motivo no declarado")
+  }
 }
 
 main()

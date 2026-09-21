@@ -135,7 +135,8 @@ export type RestoreCheckResult = {
   status: "PASS" | "FAIL" | "INFO"
   ok: boolean
   detail: string | null
-  evidence: { label: string; expected: string; actual: string; ok: boolean }[]
+  /** `ok` ausente = fila INFORMATIVA: se enseña y no decide (enmienda E-2). */
+  evidence: { label: string; expected: string; actual: string; ok?: boolean }[]
 }
 
 export type StartRestoreResult = {
@@ -364,7 +365,7 @@ export async function startRestoreAction(formData: FormData): Promise<ActionStat
     detail:
       check.note ??
       (check.evidence
-        .filter((row) => !row.ok)
+        .filter((row) => row.ok === false)
         .map((row) => `${row.label}: se esperaba ${row.expected} y hay ${row.actual}`)
         .join(" · ") ||
         null),

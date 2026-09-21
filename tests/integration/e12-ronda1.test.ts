@@ -302,7 +302,45 @@ describe.skipIf(!TEST_DATABASE_URL)("E12 · ronda 1 — FK entrantes desde tabla
       })
     })
 
-    it("el informe distingue «no había nada que anular» de «el UPDATE falló» (H-7)", async () => {
+    it("la MITAD de sellos se ejerce: una columna-sello recomputable se pone a NULL (H-7)", async () => {
+      /**
+       * **H-7 de la auditoría.** La mitad de `purgeDerived` que pone
+       * columnas-sello a `NULL` no la ejercía nada: en el fixture, las filas que
+       * las contienen se borran antes (`report_runs`, `invariant_runs`) y el
+       * resto de columnas son `NOT NULL`. Aquí se siembra la única que
+       * SOBREVIVE y es recomputable —el hash de cadena de una serie de
+       * facturación, que se rehace desde sus facturas— y se comprueba que la
+       * purga la vacía de verdad.
+       */
+      await withMaintenance(async (client) => {
+        await client.query(
+          `INSERT INTO "invoice_series" (id, organization_id, code, kind, prefix, next_number, year, last_hash,
+              is_active, created_at, updated_at)
+           VALUES (gen_random_uuid(), $1::uuid, 'FR-2026', 'ORDINARIA', 'FR', 7, 2026, repeat('c',64), true, now(), now())
+           ON CONFLICT DO NOTHING`,
+          [ORG]
+        )
+      })
+
+      const informe = await withMaintenance(async (client) =>
+        purgeDerived(ORG, async (sql, params) => (await client.query(sql, params ? [...params] : [])).rows)
+      )
+      const sello = informe.seals.find((s) => s.table === "invoice_series" && s.column === "last_hash")
+      expect(sello, "«invoice_series.last_hash» no aparece en el informe de sellos").toBeDefined()
+      expect(sello!.error).toBeUndefined()
+      expect(sello!.nulled, "la columna-sello NO se ha puesto a NULL: la mitad de sellos sigue sin ejercerse").toBe(1)
+      expect(informe.totalNulled).toBeGreaterThan(0)
+
+      await withMaintenance(async (client) => {
+        const { rows } = await client.query<{ last_hash: string | null }>(
+          `SELECT last_hash FROM invoice_series WHERE organization_id = $1::uuid AND code = 'FR-2026'`,
+          [ORG]
+        )
+        expect(rows[0]!.last_hash).toBeNull()
+      })
+    })
+
+    it("el informe distingue «no había nada que anular» de «el UPDATE falló», y las NOT NULL se saltan (H-7)", async () => {
       const informe = await withMaintenance(async (client) =>
         purgeDerived(ORG, async (sql, params) => (await client.query(sql, params ? [...params] : [])).rows)
       )
@@ -310,8 +348,13 @@ describe.skipIf(!TEST_DATABASE_URL)("E12 · ronda 1 — FK entrantes desde tabla
       for (const sello of informe.seals) {
         expect(sello.error, `${sello.table}.${sello.column}`).toBeUndefined()
       }
-      // Y la mitad de sellos existe de verdad: hay columnas que mirar.
+      // Y la mitad de sellos existe de verdad: hay columnas que mirar, y las
+      // que no admiten NULL se saltan DECLARÁNDOLO en vez de fallar en silencio.
       expect(informe.seals.length).toBeGreaterThan(0)
+      expect(informe.sealSkipped, "ninguna columna-sello NOT NULL declarada: el filtro no está mirando").toBeGreaterThan(0)
+      for (const saltada of informe.seals.filter((s) => s.skipped)) {
+        expect(saltada.skipped).toContain("NOT NULL")
+      }
     })
 
     it("todas las tablas del registro tienen su entrada en el informe: ninguna se salta", async () => {

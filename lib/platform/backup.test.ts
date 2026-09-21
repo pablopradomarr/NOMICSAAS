@@ -6,6 +6,7 @@ import {
   backupInventory,
   canonicalManifestForm,
   compareCounts,
+  compareInventoryCoverage,
   decodeRow,
   derivedSealColumns,
   encodeRow,
@@ -279,5 +280,27 @@ describe("O-2 — `DONE` queda reservado a las SEIS en verde", () => {
 
   it("entregar CINCO comprobaciones no basta: falta una y no se verifica", () => {
     expect(isVerified(seis("PASS").slice(0, 5))).toBe(false)
+  })
+})
+
+describe("compareInventoryCoverage — el manifest declara lo que el inventario exige (H-6)", () => {
+  const inventario = ["accounts", "currencies", "files", "journal_entries"]
+
+  it("PASS cuando el manifest trae exactamente las tablas del inventario", () => {
+    const r = compareInventoryCoverage(inventario, [...inventario].reverse())
+    expect(r.status).toBe("PASS")
+    expect(r.id).toBe("COBERTURA_INVENTARIO")
+  })
+
+  it("FAIL NOMBRANDO la tabla que falta: es el caso de H-2 de E11 al restaurar", () => {
+    const r = compareInventoryCoverage(inventario, ["accounts", "files", "journal_entries"])
+    expect(r.status).toBe("FAIL")
+    expect(r.evidence.some((fila) => fila.label.includes("«currencies» falta en el manifest"))).toBe(true)
+  })
+
+  it("FAIL también si el manifest declara una tabla que el inventario no conoce", () => {
+    const r = compareInventoryCoverage(inventario, [...inventario, "tabla_inventada"])
+    expect(r.status).toBe("FAIL")
+    expect(r.evidence.some((fila) => fila.label.includes("«tabla_inventada»"))).toBe(true)
   })
 })

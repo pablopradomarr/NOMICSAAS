@@ -54,23 +54,11 @@ const { loadDocumentalMinimo, readDocumentalFixture } = await import("@/tests/su
 
 /**
  * FAIL que la **organización efímera** produce por lo que ES, no por lo que el
- * producto hace mal. Se declaran uno a uno, con su motivo: sin esta lista el
- * baseline sería «hay tres FAIL y no sé por qué», que es justo el silencio que
- * esta épica persigue. Cualquier OTRO FAIL en el ciclo limpio es rojo.
+ * producto hace mal. La lista vive en `tests/support/fail-del-sustrato.ts`
+ * porque el job 6 de CI la usa TAMBIÉN para decidir si se pone rojo (H-4): dos
+ * copias habrían vuelto a separarse.
  */
-const FAIL_DEL_SUSTRATO: Readonly<Record<string, string>> = {
-  "I-E9-14":
-    "el fixture no abre el ejercicio siguiente, así que la apertura no puede casar línea a línea con el cierre de 2026",
-  "I-E11-5":
-    "la organización de la suite nace por SQL de arnés, sin el alta de plataforma que le daría suscripción (E11 · D9)",
-  "I-E11-10":
-    "sin política de retención ejecutada sobre una organización recién creada no hay purga que comprobar",
-  "I-E8-17":
-    "el puente al 111 compara el abono a 4751 del diario con lo PRACTICADO según la propuesta de la extracción, y las " +
-    "retenciones del fixture se contabilizan por plantilla, sin documento: con sustrato documental cargado el bloque se " +
-    "evalúa y el término practicado es 0. Es el fixture, no el producto: las tres diferencias son exactamente el 4751 del " +
-    "ejercicio (ronda 1 de E12, anotado para E14)",
-}
+const { FAIL_DEL_SUSTRATO } = await import("@/tests/support/fail-del-sustrato")
 
 type EstadoChecks = Map<string, { status: string; evidencia: string }>
 

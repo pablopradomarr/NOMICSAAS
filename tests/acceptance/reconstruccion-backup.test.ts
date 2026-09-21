@@ -255,7 +255,7 @@ afterAll(async () => {
 }, 600_000)
 
 describe("E12 · T11 — A → ZIP → destruir A → restaurar B", () => {
-  it("criterio 35 · destruida A y restaurada B: seis comprobaciones en verde y `verified = true`", async () => {
+  it("criterio 35 · destruida A y restaurada B: las siete comprobaciones en verde y `verified = true`", async () => {
     expect(archivo.length, "la acción real tiene que haber dejado un ZIP en el almacén").toBeGreaterThan(1_000)
 
     /**
@@ -308,8 +308,10 @@ describe("E12 · T11 — A → ZIP → destruir A → restaurar B", () => {
     expect(outcome.rejected, `fila rechazada: ${JSON.stringify(outcome.rejected)}`).toBeNull()
     expect(outcome.error, outcome.error ?? "").toBeNull()
 
-    // 5 · **las seis**, nombradas. Que estén las seis es parte del criterio: una
-    // verificación de cinco no acredita nada (O-2).
+    // 5 · **las SIETE**, nombradas. Que estén todas es parte del criterio: una
+    // verificación de cinco no acredita nada (O-2). La séptima —`COBERTURA_
+    // INVENTARIO`— la añade la ronda 1 de E12 (auditor H-6): sin ella, quitar
+    // una tabla del ZIP **y** del manifest a la vez pasaba las seis.
     // Diagnóstico permanente: el barrido del DESTINO, entero, en el
     // `validacion.json`. La comprobación 6 sólo publica los identificadores que
     // fallan; cuando algo no cuadra, lo que hace falta es la evidencia.
@@ -329,6 +331,7 @@ describe("E12 · T11 — A → ZIP → destruir A → restaurar B", () => {
     expect(ids).toEqual([
       "AUDIT_LOG",
       "BARRIDO_INVARIANTES",
+      "COBERTURA_INVENTARIO",
       "NUMERACION",
       "RECUENTOS",
       "SELLOS_DERIVADOS",

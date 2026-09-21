@@ -385,6 +385,8 @@ export function numberingOf(numbers: readonly number[]): { max: number; count: n
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type CheckId =
+  /** Ronda 1 de E12 (H-6): la SÉPTIMA, y va antes que las seis. */
+  | "COBERTURA_INVENTARIO"
   | "RECUENTOS"
   | "NUMERACION"
   | "SELLOS_DERIVADOS"
@@ -399,7 +401,14 @@ export type CheckResult = {
   status: "PASS" | "FAIL" | "INFO"
   title: string
   /** Lo enfrentado, origen contra destino. Es lo que ve el operador. */
-  evidence: Array<{ label: string; expected: string; actual: string; ok: boolean }>
+  /**
+   * Filas de evidencia. `ok` **ausente** = fila INFORMATIVA: se enseña y no
+   * decide nada. Existe por la enmienda **E-2** y por el hallazgo H-10 de la
+   * auditoría de E12: había una fila que enseñaba `expected` y `actual`
+   * DISTINTOS y los marcaba en verde con un `ok: true` escrito a mano. Un tick
+   * verde sobre una comparación que no se hace es peor que no enseñar la fila.
+   */
+  evidence: Array<{ label: string; expected: string; actual: string; ok?: boolean }>
   note?: string
 }
 
@@ -460,8 +469,59 @@ export function compareCounts(
   })
   return {
     id: "RECUENTOS",
-    status: evidence.every((row) => row.ok) ? "PASS" : "FAIL",
+    status: evidence.every((row) => row.ok !== false) ? "PASS" : "FAIL",
     title: "Recuentos tabla a tabla contra el manifest, con igualdad exacta",
+    evidence,
+  }
+}
+
+/**
+ * **Cobertura del inventario** (auditor H-6 de E12).
+ *
+ * `compareCounts` itera sobre `manifest.tables`, es decir, sobre **la lista que
+ * el propio ZIP declara**: si una tabla desaparece del ZIP **y** del manifest,
+ * esa comprobación no puede notarlo. Es la forma exacta de H-2 de E11
+ * —`currencies`, 177 filas por organización, perdida con las seis
+ * comprobaciones en PASS— trasladada al lado de la restauración, y la enmienda
+ * **E-4** («todo inventario es derivado») aplicada al emitir pero no al
+ * verificar.
+ *
+ * Aquí se enfrenta el inventario **derivado del esquema** con el que el manifest
+ * trae, y se falla **nombrando** las tablas ausentes. La derivación ya existe y
+ * ya se usa al emitir: es la misma.
+ */
+export function compareInventoryCoverage(
+  inventory: readonly string[],
+  manifestTables: readonly string[]
+): CheckResult {
+  const declaradas = new Set(manifestTables)
+  const esperadas = new Set(inventory)
+  const ausentes = [...esperadas].filter((table) => !declaradas.has(table)).sort()
+  const sobrantes = [...declaradas].filter((table) => !esperadas.has(table)).sort()
+  const evidence = [
+    {
+      label: "tablas del inventario derivado presentes en el manifest",
+      expected: String(esperadas.size),
+      actual: String(esperadas.size - ausentes.length),
+      ok: ausentes.length === 0,
+    },
+    ...ausentes.map((table) => ({
+      label: `«${table}» falta en el manifest`,
+      expected: "declarada",
+      actual: "ausente del ZIP y del manifest",
+      ok: false,
+    })),
+    ...sobrantes.map((table) => ({
+      label: `«${table}» está en el manifest y no en el inventario`,
+      expected: "no declarada",
+      actual: "presente",
+      ok: false,
+    })),
+  ]
+  return {
+    id: "COBERTURA_INVENTARIO",
+    status: evidence.every((row) => row.ok !== false) ? "PASS" : "FAIL",
+    title: "El manifest declara EXACTAMENTE las tablas que el inventario derivado exige",
     evidence,
   }
 }

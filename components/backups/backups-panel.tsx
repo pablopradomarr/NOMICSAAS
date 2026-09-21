@@ -65,7 +65,8 @@ export type RestoreCheckView = {
   status: "PASS" | "FAIL" | "INFO"
   ok: boolean
   detail: string | null
-  evidence: { label: string; expected: string; actual: string; ok: boolean }[]
+  /** `ok` ausente = fila INFORMATIVA: ni ✓ ni ≠, porque no hay comparación. */
+  evidence: { label: string; expected: string; actual: string; ok?: boolean }[]
 }
 
 export type RestoreJobView = {
@@ -555,9 +556,9 @@ function RestoreVerification({ restore }: { restore: RestoreJobView }) {
                 {check.evidence.length > 0 && (
                   <span className="mt-1 block space-y-0.5 text-xs text-muted-foreground">
                     {check.evidence.slice(0, 12).map((row) => (
-                      <span key={row.label} className="block" data-ok={row.ok}>
-                        {row.ok ? "·" : "≠"} {row.label}: origen <code>{row.expected}</code> · destino{" "}
-                        <code>{row.actual}</code>
+                      <span key={row.label} className="block" data-ok={row.ok ?? "informativa"}>
+                        {row.ok === undefined ? "ℹ" : row.ok ? "·" : "≠"} {row.label}: origen{" "}
+                        <code>{row.expected}</code> · destino <code>{row.actual}</code>
                       </span>
                     ))}
                     {check.evidence.length > 12 && (

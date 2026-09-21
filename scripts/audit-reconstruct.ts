@@ -1054,6 +1054,16 @@ async function main(): Promise<void> {
         "nivel por margin_level_configs vigente, INDIRECTO_CECO por cost_centers.margin_level, NO_ANALITICO por R-A11"
     }
 
+    /**
+     * Las claves que el `headline` del último barrido sellado trae, para poder
+     * distinguir «no lo sella» de «le cambiaron el nombre» (H-11).
+     */
+    const clavesDelHeadline = (() => {
+      const ultimo = invariantRuns[0]
+      const headline = (ultimo?.headline ?? null) as Record<string, unknown> | null
+      return headline && typeof headline === "object" ? Object.keys(headline).sort() : []
+    })()
+
     const cifras: Cifra[] = []
     let reconstruidas = 0
     let comparadas = 0
@@ -1074,6 +1084,29 @@ async function main(): Promise<void> {
           gravedad: "ALTA",
           mensaje: `el producto tiene sellados ${distintas.length} valores distintos para ${metrica}`,
           evidencia: encontradas.map((s) => ({ ruta: s.ruta, valor: s.valor.toString() })),
+        })
+      }
+      /**
+       * **H-11 de la auditoría.** Cuando el sondeo no encuentra la métrica, «el
+       * producto no la sella» y «al producto le cambiaron el nombre de la
+       * clave» eran indistinguibles: la fila salía «sin comparar» y el veredicto
+       * seguía siendo `CONFORME`. Ahora se dice cuál de las dos es, mirando si
+       * el `headline` del barrido sellado trae las claves que se esperan: si el
+       * headline está y la métrica no, es que **el producto no la sella** (y se
+       * anota como límite conocido); si el headline no se parece a nada de lo
+       * que este auditor conoce, es una alarma.
+       */
+      if (producto === null && rec !== null) {
+        const conocidas = clavesDelHeadline.length > 0
+        hallazgos.push({
+          codigo: conocidas ? "A-METRICA-NO-SELLADA" : "P-HEADLINE-DESCONOCIDO",
+          gravedad: conocidas ? "INFO" : "MEDIA",
+          mensaje: conocidas
+            ? `${metrica}: el producto NO la sella en ningún JSON (el headline del barrido trae ` +
+              `${clavesDelHeadline.join(", ")}). No es que se le haya cambiado el nombre: no está`
+            : `${metrica}: no se encuentra, y el headline del barrido tampoco trae ninguna clave conocida: ` +
+              "puede que le hayan cambiado el nombre a las claves selladas",
+          evidencia: { headline: clavesDelHeadline },
         })
       }
       const delta = producto !== null && rec !== null ? producto - rec : null
