@@ -381,11 +381,12 @@ export function numberingOf(numbers: readonly number[]): { max: number; count: n
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. El documento de verificación: las SEIS comprobaciones (O-1, O-2)
+// 5. El documento de verificación: las SIETE comprobaciones (O-1, O-2)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type CheckId =
-  /** Ronda 1 de E12 (H-6): la SÉPTIMA, y va antes que las seis. */
+  /** Ronda 1 de E12 (H-6): la SÉPTIMA, y va antes que las seis. Decide desde
+   * la ronda 2 (N-2): está en `REQUIRED_CHECKS`. */
   | "COBERTURA_INVENTARIO"
   | "RECUENTOS"
   | "NUMERACION"
@@ -419,13 +420,24 @@ export type RestoreVerification = {
   targetOrganizationId: string
   verifiedAt: string
   checks: CheckResult[]
-  /** `true` sólo con las SEIS en verde. Si no ⇒ `DONE_UNVERIFIED` (O-2). */
+  /** `true` sólo con las SIETE en verde. Si no ⇒ `DONE_UNVERIFIED` (O-2). */
   verified: boolean
 }
 
-/** Las seis, en orden. Declarada para que nadie entregue cinco. */
+/**
+ * Las **siete**, en orden. Declarada para que nadie entregue seis.
+ *
+ * `COBERTURA_INVENTARIO` entra aquí en la **ronda 2 de E12** (H-6 PARCIAL del
+ * auditor, N-2): la séptima comprobación existía, nombraba la tabla ausente y
+ * `I-E11-2` la exigía, pero **no estaba en esta lista**, que es la única que
+ * `isVerified()` recorre. Con ella en FAIL y las seis en PASS el resultado era
+ * `verified: true` y estado `DONE`: una restauración a la que le falta una
+ * tabla entera se entregaba como verificada, y sólo el barrido posterior —más
+ * tarde y en otro sitio— la desmentía. Detectar sin decidir no es verificar.
+ */
 export const REQUIRED_CHECKS: readonly CheckId[] = [
   "RECUENTOS",
+  "COBERTURA_INVENTARIO",
   "NUMERACION",
   "SELLOS_DERIVADOS",
   "AUDIT_LOG",
@@ -434,9 +446,9 @@ export const REQUIRED_CHECKS: readonly CheckId[] = [
 ]
 
 /**
- * **`verified` sólo con las seis en verde** (§5.4.8). Un `INFO` **no** es verde:
- * «no se pudo comprobar» no acredita nada, y la lección de H-1 de E9 y H-1 de
- * E10 —dos veces— es que lo que no se comprueba se acaba dando por bueno.
+ * **`verified` sólo con las siete en verde** (§5.4.8). Un `INFO` **no** es
+ * verde: «no se pudo comprobar» no acredita nada, y la lección de H-1 de E9 y
+ * H-1 de E10 —dos veces— es que lo que no se comprueba se acaba dando por bueno.
  */
 export function isVerified(checks: readonly CheckResult[]): boolean {
   const byId = new Map(checks.map((check) => [check.id, check] as const))

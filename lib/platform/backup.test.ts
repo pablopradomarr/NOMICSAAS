@@ -13,6 +13,7 @@ import {
   isVerified,
   manifestSha256,
   numberingOf,
+  REQUIRED_CHECKS,
   restoreStatusOf,
   sealColumnSha256,
   signManifest,
@@ -245,41 +246,53 @@ describe("sellos derivados y AuditLog", () => {
   })
 })
 
-describe("O-2 — `DONE` queda reservado a las SEIS en verde", () => {
+describe("O-2 — `DONE` queda reservado a las SIETE en verde", () => {
   const check = (id: CheckResult["id"], status: CheckResult["status"]): CheckResult => ({
     id,
     status,
     title: id,
     evidence: [],
   })
-  const seis = (status: CheckResult["status"]): CheckResult[] => [
-    check("RECUENTOS", status),
-    check("NUMERACION", status),
-    check("SELLOS_DERIVADOS", status),
-    check("AUDIT_LOG", status),
-    check("SELLOS_Y_CIERRE", status),
-    check("BARRIDO_INVARIANTES", status),
-  ]
+  const siete = (status: CheckResult["status"]): CheckResult[] =>
+    REQUIRED_CHECKS.map((id) => check(id, status))
 
-  it("las seis en PASS ⇒ DONE", () => {
-    expect(isVerified(seis("PASS"))).toBe(true)
-    expect(restoreStatusOf(seis("PASS"))).toBe("DONE")
+  it("la lista que decide son las SIETE, y `COBERTURA_INVENTARIO` es una de ellas", () => {
+    expect(REQUIRED_CHECKS).toHaveLength(7)
+    expect(REQUIRED_CHECKS).toContain("COBERTURA_INVENTARIO")
   })
 
-  it("cinco en verde y una en FAIL ⇒ DONE_UNVERIFIED, nunca DONE", () => {
-    const checks = seis("PASS")
-    checks[3] = check("AUDIT_LOG", "FAIL")
+  it("las siete en PASS ⇒ DONE", () => {
+    expect(isVerified(siete("PASS"))).toBe(true)
+    expect(restoreStatusOf(siete("PASS"))).toBe("DONE")
+  })
+
+  it("seis en verde y una en FAIL ⇒ DONE_UNVERIFIED, nunca DONE", () => {
+    const checks = siete("PASS")
+    checks[checks.findIndex((c) => c.id === "AUDIT_LOG")] = check("AUDIT_LOG", "FAIL")
+    expect(restoreStatusOf(checks)).toBe("DONE_UNVERIFIED")
+  })
+
+  /**
+   * **N-2 de la ronda 2.** La séptima comprobación existía, nombraba la tabla
+   * ausente y `I-E11-2` la exigía, pero no estaba en `REQUIRED_CHECKS`: con
+   * ella en FAIL y las seis en PASS el resultado era `verified: true` y `DONE`.
+   * Una copia a la que le falta una tabla entera se entregaba como verificada.
+   */
+  it("la SÉPTIMA en FAIL y las seis en PASS ⇒ NO verificada (N-2)", () => {
+    const checks = siete("PASS")
+    checks[checks.findIndex((c) => c.id === "COBERTURA_INVENTARIO")] = check("COBERTURA_INVENTARIO", "FAIL")
+    expect(isVerified(checks)).toBe(false)
     expect(restoreStatusOf(checks)).toBe("DONE_UNVERIFIED")
   })
 
   it("un `INFO` NO es verde: «no se pudo comprobar» no acredita nada", () => {
-    const checks = seis("PASS")
-    checks[5] = check("BARRIDO_INVARIANTES", "INFO")
+    const checks = siete("PASS")
+    checks[checks.findIndex((c) => c.id === "BARRIDO_INVARIANTES")] = check("BARRIDO_INVARIANTES", "INFO")
     expect(isVerified(checks)).toBe(false)
   })
 
-  it("entregar CINCO comprobaciones no basta: falta una y no se verifica", () => {
-    expect(isVerified(seis("PASS").slice(0, 5))).toBe(false)
+  it("entregar SEIS comprobaciones no basta: falta una y no se verifica", () => {
+    expect(isVerified(siete("PASS").slice(0, 6))).toBe(false)
   })
 })
 

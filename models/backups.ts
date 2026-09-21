@@ -20,7 +20,7 @@
  *      línea y motivo.
  *   3. **Restaurar es SIEMPRE a organización nueva.** La de origen no se toca,
  *      nunca; el usuario compara y decide.
- *   4. **`DONE` exige las SEIS comprobaciones de §5.4.** Si falta una,
+ *   4. **`DONE` exige las SIETE comprobaciones de §5.4.** Si falta una,
  *      `DONE_UNVERIFIED` (O-2) con la organización conservada y marcada: borrarla
  *      sería destruir la evidencia.
  *
@@ -1029,8 +1029,8 @@ export type RestoreOutcome = {
  *   4. tabla por tabla en orden de FK, **abortando a la primera fila rechazada**;
  *   5. las `exchange_rates` referenciadas;
  *   6. los ficheros, **verificando el sha256 de cada uno**;
- *   7. las **seis** comprobaciones;
- *   8. `DONE` sólo con las seis en verde; si no, `DONE_UNVERIFIED` (O-2).
+ *   7. las **siete** comprobaciones;
+ *   8. `DONE` sólo con las siete en verde; si no, `DONE_UNVERIFIED` (O-2).
  */
 export async function restoreBackupIntoOrganization(options: RestoreOptions): Promise<RestoreOutcome> {
   /**
@@ -1369,7 +1369,7 @@ export async function restoreBackupIntoOrganization(options: RestoreOptions): Pr
     filesRestored.push(entry.sha256)
   }
 
-  // 7 · las SEIS comprobaciones.
+  // 7 · las SIETE comprobaciones.
   const verification = await verifyRestore({
     manifest,
     targetOrganizationId: target,
