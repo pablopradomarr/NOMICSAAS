@@ -384,6 +384,7 @@ palabra por palabra el día que `BILLING_PROVIDER=stripe` se encienda.
    `PLATFORM_ADMIN_EMAILS`; vacía, en modo interno lo es el ADMIN de la
    organización (quien opera y quien administra son la misma persona) y en modo
    `stripe`, **nadie**: allí el plan se cambia donde está la tarjeta.
+   *(Esta última regla la SUSTITUYE `docs/adr/0022-operador-de-plataforma-cerrado-por-defecto.md`: lista vacía = nadie, en los dos modos.)*
 5. **Stripe queda como módulo apagado.** `/api/stripe/*` responde **404** —no 501
    ni 403: los dos confirmarían que la ruta existe—, **ninguna clave es
    necesaria** y la comprobación es de configuración, así que se resuelve antes

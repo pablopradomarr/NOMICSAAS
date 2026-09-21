@@ -19,7 +19,6 @@ import "server-only"
 
 import { getCurrentUser } from "@/lib/auth"
 import config from "@/lib/config"
-import { isInternalBilling } from "@/lib/platform/billing"
 import type { User } from "@/prisma/client"
 import { notFound } from "next/navigation"
 import { cache } from "react"
@@ -27,22 +26,24 @@ import { cache } from "react"
 /**
  * ¿Es esta persona operador de plataforma?
  *
- * Con `PLATFORM_ADMIN_EMAILS` puesta, manda la lista —y es lo que se espera de
- * una instalación de verdad—. Vacía:
+ * **Con `PLATFORM_ADMIN_EMAILS` puesta manda la lista; vacía, no lo es NADIE.**
  *
- *  · en modo **INTERNO**, lo es cualquier usuario autenticado de la instalación:
- *    quien opera y quien administra son la misma persona, y exigir una variable
- *    de entorno para poder desbloquear un `PeriodLock` sería un candado sin
- *    cerradura en el único escenario en el que la llave y la puerta son de la
- *    misma mano;
- *  · en modo **`stripe`**, **nadie**. Ahí hay clientes de verdad, y un panel de
- *    operador abierto por omisión sería el fallo más caro de esta épica.
+ * **DEBE #8 de la ronda 1 de E12.** Hasta aquí, con la lista vacía y facturación
+ * interna, lo era *cualquier usuario autenticado*. Era una decisión escrita y
+ * defendible para un self-hosted de una sola persona —quien opera y quien
+ * administra son la misma—, pero el preview declaraba la variable «Opcional» y
+ * allí conviven varias organizaciones: en esa instalación, cualquiera que se
+ * registrara podía enumerar la plataforma entera y pedir un `reset-org`.
+ *
+ * El criterio pasa a ser el mismo en los dos modos, y es el que un candado debe
+ * tener: **cerrado por defecto**. Quien quiera `/admin` declara quién lo abre.
+ * El runbook del preview lo pide como obligatoria y el arranque avisa
+ * (`warnIfNoPlatformAdmins`) si hay más de una organización no personal y nadie
+ * declarado.
  */
 export function isPlatformAdminEmail(email: string): boolean {
-  if (config.billing.adminEmails.length > 0) {
-    return config.billing.adminEmails.includes(email.trim().toLowerCase())
-  }
-  return isInternalBilling(config.billing.provider)
+  if (config.billing.adminEmails.length === 0) return false
+  return config.billing.adminEmails.includes(email.trim().toLowerCase())
 }
 
 export type PlatformAdminContext = {
@@ -79,4 +80,25 @@ export async function platformAdminOrNull(): Promise<PlatformAdminContext | null
   } catch {
     return null
   }
+}
+
+/**
+ * Aviso de arranque: **más de una organización no personal y nadie declarado
+ * operador**. No falla —una instalación recién creada no tiene por qué
+ * declarar nada todavía—, pero deja dicho en el log que `/admin` está cerrado y
+ * por qué, que es lo contrario de descubrirlo con un 404 inexplicable.
+ *
+ * Se llama desde `instrumentation.ts`, una vez por arranque.
+ */
+export async function warnIfNoPlatformAdmins(
+  contarOrganizaciones: () => Promise<number>
+): Promise<string | null> {
+  if (config.billing.adminEmails.length > 0) return null
+  const n = await contarOrganizaciones().catch(() => 0)
+  if (n <= 1) return null
+  const aviso =
+    `PLATFORM_ADMIN_EMAILS está vacía y hay ${n} organizaciones no personales: /admin queda CERRADO para todos ` +
+    "(ADR-0020, ronda 1 de E12). Declare los correos de los operadores de plataforma para poder usarlo."
+  console.warn(`[admin] ${aviso}`)
+  return aviso
 }

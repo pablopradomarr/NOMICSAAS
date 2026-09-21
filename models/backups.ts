@@ -2134,9 +2134,14 @@ export async function advanceBackupJobsOf(
  * conservación (art. 165.Uno LIVA, arts. 19–23 RD 1619/2012), no ZIP de
  * exportación.
  */
-export async function expireBackups(organizationId: string, refDate: Date): Promise<number> {
+/**
+ * La purga **dentro de la transacción que abre el llamante** (DEBE #7 de la
+ * ronda 1 de E12): `/admin` escribe el efecto y sus dos registros en una sola
+ * transacción, y no en dos que pueden quedarse a medias.
+ */
+export async function expireBackupsTx(tx: TenantTransactionClient, refDate: Date): Promise<number> {
   const { deleteObject } = await import("@/models/storage")
-  return await tenantTransaction(organizationId, async (tx) => {
+  {
     const candidates = await tx.backupJob.findMany({
       where: { status: "DONE", expiresAt: { lt: refDate }, objectKey: { not: null } },
       include: { restores: { where: { status: { in: ["QUEUED", "RUNNING", "VERIFYING"] } }, select: { id: true } } },
@@ -2150,5 +2155,9 @@ export async function expireBackups(organizationId: string, refDate: Date): Prom
       expired += 1
     }
     return expired
-  })
+  }
+}
+
+export async function expireBackups(organizationId: string, refDate: Date): Promise<number> {
+  return await tenantTransaction(organizationId, async (tx) => expireBackupsTx(tx, refDate))
 }

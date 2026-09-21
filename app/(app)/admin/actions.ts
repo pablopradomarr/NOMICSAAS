@@ -135,6 +135,15 @@ export async function planResetOrgAction(organizationId: string): Promise<Action
 }
 
 export async function resetOrgAction(formData: FormData): Promise<ActionState<OperationPlan>> {
+  /**
+   * **El guard, en la PRIMERA línea** (PUEDE #9 de la ronda 1). Antes se
+   * validaba el `FormData` primero y un no-operador que enviara un
+   * formulario mal formado recibía un mensaje de validación en español en
+   * vez del 404: con eso deducía que la ruta existe, que es justo lo que
+   * §5.5 quiere evitar. `requirePlatformAdmin()` está memoizado por
+   * petición, así que llamarlo aquí y dentro de `authorize` no cuesta nada.
+   */
+  await requirePlatformAdmin()
   const parsed = confirmSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0]!.message }
   try {
@@ -189,6 +198,15 @@ export async function planUnblockAction(
 }
 
 export async function unblockAction(formData: FormData): Promise<ActionState<OperationPlan>> {
+  /**
+   * **El guard, en la PRIMERA línea** (PUEDE #9 de la ronda 1). Antes se
+   * validaba el `FormData` primero y un no-operador que enviara un
+   * formulario mal formado recibía un mensaje de validación en español en
+   * vez del 404: con eso deducía que la ruta existe, que es justo lo que
+   * §5.5 quiere evitar. `requirePlatformAdmin()` está memoizado por
+   * petición, así que llamarlo aquí y dentro de `authorize` no cuesta nada.
+   */
+  await requirePlatformAdmin()
   const parsed = confirmSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0]!.message }
   const t = parseTarget({
@@ -232,6 +250,15 @@ export async function planReassignPlanAction(
 }
 
 export async function reassignPlanAction(formData: FormData): Promise<ActionState<OperationPlan>> {
+  /**
+   * **El guard, en la PRIMERA línea** (PUEDE #9 de la ronda 1). Antes se
+   * validaba el `FormData` primero y un no-operador que enviara un
+   * formulario mal formado recibía un mensaje de validación en español en
+   * vez del 404: con eso deducía que la ruta existe, que es justo lo que
+   * §5.5 quiere evitar. `requirePlatformAdmin()` está memoizado por
+   * petición, así que llamarlo aquí y dentro de `authorize` no cuesta nada.
+   */
+  await requirePlatformAdmin()
   const parsed = confirmSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0]!.message }
   const planCode = String(formData.get("planCode") ?? "").trim()
@@ -267,6 +294,15 @@ export async function planPurgeRetentionAction(organizationId: string): Promise<
 }
 
 export async function purgeRetentionAction(formData: FormData): Promise<ActionState<OperationPlan>> {
+  /**
+   * **El guard, en la PRIMERA línea** (PUEDE #9 de la ronda 1). Antes se
+   * validaba el `FormData` primero y un no-operador que enviara un
+   * formulario mal formado recibía un mensaje de validación en español en
+   * vez del 404: con eso deducía que la ruta existe, que es justo lo que
+   * §5.5 quiere evitar. `requirePlatformAdmin()` está memoizado por
+   * petición, así que llamarlo aquí y dentro de `authorize` no cuesta nada.
+   */
+  await requirePlatformAdmin()
   const parsed = confirmSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0]!.message }
   try {

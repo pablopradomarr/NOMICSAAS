@@ -8,7 +8,11 @@
  */
 
 import JSZip from "jszip"
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import { Crc32, crc32, zipStream, type ZipEntry, type ZipStreamResult } from "./zip-stream"
 
@@ -149,4 +153,70 @@ describe("E12 · T14 — `zipStream`", () => {
       `64 MB emitidos con un crecimiento de heap de ${Math.round(crecimiento / 1024 / 1024)} MB`
     ).toBeLessThan(24 * 1024 * 1024)
   }, 120_000)
+
+  /**
+   * **PUEDE #11 de la ronda 1.** Hasta aquí el único juez era `JSZip`, que es
+   * el lector más permisivo **y el que ya usábamos**: un archivo que sólo pasa
+   * el examen de su propio autor no prueba gran cosa. El cliente abre la copia
+   * con el explorador del sistema, así que el juez tiene que ser un lector
+   * ajeno. Se usan los dos que hay en cualquier máquina: `unzip -t` (Info-ZIP,
+   * el de `unzip` de Linux y macOS) y el `zipfile` de Python.
+   *
+   * El archivo lleva **las dos compresiones** (`STORE` y `DEFLATE`), descriptor
+   * de datos —el escritor no conoce el tamaño hasta haber emitido la entrada— y
+   * una entrada con nombre no ASCII, que es donde los lectores discrepan.
+   */
+  it("un lector AJENO lo abre: `unzip -t` y el `zipfile` de Python (PUEDE #11)", async () => {
+    const texto = Buffer.from("El libro diario del ejercicio 2026, con ñ y €.\n".repeat(200), "utf8")
+    const binario = Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 251))
+    const { buffer } = await recoger([
+      { name: "manifest.json", source: async function* () { yield texto }, method: "DEFLATE" },
+      { name: "datos/ñoño-€.jsonl", source: async function* () { yield texto }, method: "DEFLATE" },
+      { name: "objetos/bytes.bin", source: async function* () { yield binario }, method: "STORE" },
+    ])
+
+    const dir = mkdtempSync(path.join(tmpdir(), "zip-ajeno-"))
+    const archivo = path.join(dir, "copia.zip")
+    writeFileSync(archivo, buffer)
+
+    // 1 · Info-ZIP. `-t` recomprueba el CRC de CADA entrada, que es lo que
+    // interesa: no basta con que abra el índice.
+    const unzip = execFileSync("unzip", ["-t", archivo], { encoding: "utf8" })
+    expect(unzip).toContain("No errors detected")
+    expect(unzip).toContain("manifest.json")
+    expect(unzip).toContain("objetos/bytes.bin")
+
+    // 2 · El `zipfile` de Python: `testzip()` devuelve el nombre de la primera
+    // entrada corrupta, o `None`. Y se compara el contenido, no sólo el CRC.
+    const python = execFileSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import json,zipfile,sys",
+          "z = zipfile.ZipFile(sys.argv[1])",
+          "bad = z.testzip()",
+          "print(json.dumps({",
+          "  'bad': bad,",
+          "  'names': z.namelist(),",
+          "  'sizes': {n: z.getinfo(n).file_size for n in z.namelist()},",
+          "  'sha_manifest': __import__('hashlib').sha256(z.read('manifest.json')).hexdigest(),",
+          "}))",
+        ].join("\n"),
+        archivo,
+      ],
+      { encoding: "utf8" }
+    )
+    const leido = JSON.parse(python) as {
+      bad: string | null
+      names: string[]
+      sizes: Record<string, number>
+      sha_manifest: string
+    }
+    expect(leido.bad, `Python declara corrupta la entrada ${leido.bad}`).toBeNull()
+    expect(leido.names.sort()).toEqual(["datos/ñoño-€.jsonl", "manifest.json", "objetos/bytes.bin"])
+    expect(leido.sizes["objetos/bytes.bin"]).toBe(binario.length)
+    expect(leido.sizes["manifest.json"]).toBe(texto.length)
+    expect(leido.sha_manifest).toBe(createHash("sha256").update(texto).digest("hex"))
+  })
 })

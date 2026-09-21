@@ -110,8 +110,11 @@ Runbook completo: **`docs/deploy/e11-plataforma.md`**.
 BILLING_PROVIDER=none
 PLATFORM_SIGNING_KEY=<cadena larga y aleatoria>
 PLATFORM_SIGNING_KEY_ID=k1
+PLATFORM_ADMIN_EMAILS=pablo@cfonomic.com      # OBLIGATORIA: sin ella /admin queda cerrado
 ```
-`BILLING_PROVIDER=none` = **modo INTERNO** (ADR-0019 D9, aprobado por Pablo el 2026-09-15) y valor por defecto: sin Stripe (`/api/stripe/*` → 404, sin claves), toda organización con plan `ILIMITADO`, nunca `READ_ONLY` por impago, ninguna factura de plataforma; `/settings/subscription` enseña «Modo interno: sin facturación», el plan y el uso del mes. `PLATFORM_SIGNING_KEY` firma el manifest de los backups (sin ella no se emite ninguna copia). Opcional: `PLATFORM_ADMIN_EMAILS`.
+`BILLING_PROVIDER=none` = **modo INTERNO** (ADR-0019 D9, aprobado por Pablo el 2026-09-15) y valor por defecto: sin Stripe (`/api/stripe/*` → 404, sin claves), toda organización con plan `ILIMITADO`, nunca `READ_ONLY` por impago, ninguna factura de plataforma; `/settings/subscription` enseña «Modo interno: sin facturación», el plan y el uso del mes. `PLATFORM_SIGNING_KEY` firma el manifest de los backups (sin ella no se emite ninguna copia).
+
+**`PLATFORM_ADMIN_EMAILS` es OBLIGATORIA en el preview** (ronda 1 de E12, DEBE #8 de la revisión). Desde ADR-0020 y su corrección, con la lista **vacía no es operador de plataforma NADIE**, en ningún modo de facturación: `/admin` responde 404 a todo el mundo y el plan no se puede cambiar desde la aplicación. Antes, con la lista vacía y facturación interna, lo era **cualquier usuario autenticado**, y en el preview conviven varias organizaciones: ahí eso significaba enumeración cruzada y `reset-org` al alcance de quien se registrara. El arranque avisa en el log (no falla) si hay más de una organización no personal y la lista está vacía.
 
 ### 10.2 Almacén de objetos
 ```

@@ -371,11 +371,21 @@ export type OperatorOrganizationRow = {
  * cualquier cliente, y ADR-0020 §9.2 dice que el operador ve **cuánto**, no
  * **qué**. Quien autoriza sigue siendo `requirePlatformAdmin()`.
  *
+ * **Ronda 1 · DEBE #6.** Y ya no basta con eso: la llamada se hace **dentro de
+ * una transacción con `SET LOCAL ROLE app_operator`**, porque desde la
+ * migración `20261002090000` el rol con el que sirve la aplicación
+ * (`app_runtime`) **no tiene `EXECUTE`** sobre la función. Si mañana alguien
+ * olvida el `requirePlatformAdmin()` en una acción nueva, la base responde
+ * `42501` en vez de enumerar la plataforma entera. El `SET LOCAL` dura hasta el
+ * `COMMIT`: fuera de esta función el proceso vuelve a ser `app_runtime`.
+ *
  * Una sola consulta. Cincuenta organizaciones no pueden costar doscientas (el
  * N+1 que el estándar de calidad prohíbe).
  */
 export async function listOrganizationsForOperator(refDate: Date): Promise<OperatorOrganizationRow[]> {
-  const rows = await prisma.$queryRaw<
+  const rows = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL ROLE app_operator`
+    return await tx.$queryRaw<
     {
       id: string
       slug: string
@@ -390,7 +400,8 @@ export async function listOrganizationsForOperator(refDate: Date): Promise<Opera
       last_sweep_at: Date | null
       live_exceptions: bigint
     }[]
-  >`SELECT * FROM app.operator_organizations(${refDate}::timestamp(3))`
+    >`SELECT * FROM app.operator_organizations(${refDate}::timestamp(3))`
+  })
   return rows.map((r) => ({
     id: r.id,
     slug: r.slug,

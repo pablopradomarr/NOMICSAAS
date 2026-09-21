@@ -30,7 +30,7 @@ import "server-only"
  */
 
 import config from "@/lib/config"
-import { createHmac, timingSafeEqual } from "node:crypto"
+import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto"
 import type { OperatorAction } from "@/lib/ledger/invariants-e12"
 
 /** Vida del token, en milisegundos. */
@@ -49,8 +49,29 @@ export type ConfirmationClaims = {
 
 const b64url = (buf: Buffer): string => buf.toString("base64url")
 
+/**
+ * **Subclave propia para el token de operador** (PUEDE #15 de la ronda 1).
+ *
+ * Antes se firmaba con `config.auth.secret` —el mismo secreto que la sesión de
+ * better-auth—. Rotarlo por un incidente de sesión invalidaba también los
+ * tokens de operador, lo cual es inofensivo; lo que no lo es tanto es **mezclar
+ * dominios de clave**: el día que haya que rotar uno sin el otro, no se podrá.
+ *
+ * `ADMIN_CONFIRMATION_SECRET` manda si está puesta; si no, la clave se DERIVA
+ * del secreto de auth con HKDF y una etiqueta de dominio, que no es lo mismo que
+ * usarlo tal cual: del token de operador no se puede volver al secreto de la
+ * sesión.
+ */
+function confirmationKey(): Buffer {
+  const propia = process.env.ADMIN_CONFIRMATION_SECRET?.trim()
+  if (propia) return Buffer.from(propia, "utf8")
+  return Buffer.from(
+    hkdfSync("sha256", Buffer.from(config.auth.secret, "utf8"), Buffer.alloc(0), "erp:admin-confirmation:v1", 32)
+  )
+}
+
 function sign(payload: string): string {
-  return b64url(createHmac("sha256", config.auth.secret).update(payload).digest())
+  return b64url(createHmac("sha256", confirmationKey()).update(payload).digest())
 }
 
 /**

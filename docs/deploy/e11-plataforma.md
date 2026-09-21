@@ -25,13 +25,15 @@ instalación que se olvide de configurarla no cobra, en vez de cobrar mal.
 
 ```bash
 BILLING_PROVIDER="none"          # INTERNO. Ponga "stripe" sólo para cobrar de verdad
-PLATFORM_ADMIN_EMAILS=""         # quién puede cambiar el plan de una organización
+PLATFORM_ADMIN_EMAILS=""         # quién es OPERADOR DE PLATAFORMA. Vacía = nadie
 ```
 
-`PLATFORM_ADMIN_EMAILS` vacía en modo interno significa «el ADMIN de la
-organización»: en una instalación de uso interno quien opera y quien administra
-son la misma persona. En modo `stripe` vacía significa **nadie**, porque allí el
-plan se cambia en el portal, que es donde están la tarjeta y los datos fiscales.
+`PLATFORM_ADMIN_EMAILS` **vacía significa NADIE, en los dos modos** (ronda 1 de
+E12, DEBE #8). Hasta entonces, en modo interno significaba «el ADMIN de la
+organización» —quien opera y quien administra son la misma persona en una
+instalación de una sola empresa—, pero en cuanto una instalación tiene dos
+organizaciones esa regla abre `/admin` a cualquiera que se registre. Un candado
+se cierra por defecto: quien quiera operar declara quién opera.
 
 **Para probar los límites** (D7, D9.4): Configuración → Suscripción y uso →
 *Cambiar el plan*. Asignar `STARTER` o `FREE` a una organización hace que las

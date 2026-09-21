@@ -734,9 +734,20 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T4 — M1…M6: CHECK, índices y tr
           [row.id, USER]
         )
       ).toBeNull()
-      // Un BORRADOR sí se borra: nadie ha afirmado nada todavía.
+      /**
+       * Un BORRADOR sí se borra: nadie ha afirmado nada todavía.
+       *
+       * **DEBE #4 de la ronda 1.** El `DELETE` iba sin `organization_id` y, en
+       * la pasada completa de la suite, alcanzaba la fila homónima que el
+       * fixture `ejercicio-completo-v2` deja sembrada en OTRA organización: un
+       * `23514` intermitente que dejaba la suite roja sin ser un fallo de
+       * producto. Es además la regla de CLAUDE.md —toda consulta de negocio
+       * filtra por tenant, también en los tests—, y ahora se cumple.
+       */
       await insertEntry({ date: "2026-03-18", minutes: 60 })
-      expect(await errcode(`DELETE FROM time_entries WHERE date = '2026-03-18'`)).toBeNull()
+      expect(
+        await errcode(`DELETE FROM time_entries WHERE organization_id = $1::uuid AND date = '2026-03-18'`, [ORG])
+      ).toBeNull()
     })
 
     it("O-E10-21: el techo AGREGADO por (empleado, día) es 1 440 minutos", async () => {

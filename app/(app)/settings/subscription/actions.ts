@@ -24,6 +24,7 @@
  *     código que no exista hoy: `resolvePlanAt` lanza y la acción lo traduce.
  */
 
+import { isPlatformAdminEmail } from "@/app/(app)/admin/admin"
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
@@ -38,29 +39,20 @@ const SUBSCRIPTION_PATH = "/settings/subscription"
 /**
  * ¿Es esta persona el administrador de plataforma?
  *
- * Con `PLATFORM_ADMIN_EMAILS` puesta, manda la lista. Vacía:
- *
- *  · en modo **INTERNO**, lo es el ADMIN de la organización — en una instalación
- *    de uso interno quien opera y quien administra son la misma persona, y
- *    exigir una variable de entorno para poder cambiar de plan sería un candado
- *    sin cerradura;
- *  · en modo **`stripe`**, **nadie**: allí el plan se cambia en el portal, que es
- *    donde están la tarjeta y los datos fiscales, y un atajo por la aplicación
- *    dejaría la suscripción de Stripe y la nuestra diciendo cosas distintas.
+ * **Una sola definición, y vive en `app/(app)/admin/admin.ts`** (ronda 1 de
+ * E12): aquí había una copia que, con `PLATFORM_ADMIN_EMAILS` vacía y
+ * facturación interna, decía que sí a cualquier ADMIN de organización. Dos
+ * predicados de autorización que no dicen lo mismo es la forma más barata de
+ * que uno de los dos se quede abierto — y era éste. Cerrado por defecto: sin
+ * lista, nadie cambia de plan por la aplicación.
  */
-function isPlatformAdmin(email: string): boolean {
-  if (config.billing.adminEmails.length > 0) {
-    return config.billing.adminEmails.includes(email.trim().toLowerCase())
-  }
-  return isInternalBilling(config.billing.provider)
-}
 
 export type ChangePlanResult = { planCode: string; previousPlanCode: string | null }
 
 export async function changePlanAction(formData: FormData): Promise<ActionState<ChangePlanResult>> {
   const { org, user } = await requireOrg(Role.ADMIN)
 
-  if (!isPlatformAdmin(user.email)) {
+  if (!isPlatformAdminEmail(user.email)) {
     return {
       success: false,
       error:

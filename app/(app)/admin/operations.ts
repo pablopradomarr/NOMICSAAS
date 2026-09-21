@@ -570,14 +570,21 @@ export async function runReassignPlan(
   assertReasonAndName(ctx, plan.organizationName)
   if (plan.blocked) throw new OperatorDenied(plan.blocked)
 
-  // El cambio en sí lo hace el camino de E11 (D9), que ya es correcto y ya
-  // escribe su `AuditLog`: aquí no se reimplementa, se **envuelve** con lo que
-  // ADR-0020 añade — motivo obligatorio, confirmación por nombre y la línea
-  // `admin.plan_changed` con `before`/`after`.
-  const { changeOrganizationPlan } = await import("@/models/subscriptions")
-  const resultado = await changeOrganizationPlan(organizationId, planCode.trim().toUpperCase(), ctx.now, ctx.actor)
+  /**
+   * El cambio en sí lo hace el camino de E11 (D9), que ya es correcto y ya
+   * escribe su `AuditLog`: aquí no se reimplementa, se **envuelve** con lo que
+   * ADR-0020 añade — motivo obligatorio, confirmación por nombre y la línea
+   * `admin.plan_changed` con `before`/`after`.
+   *
+   * **DEBE #7 de la ronda 1**: el efecto y los DOS registros van en **una sola
+   * transacción**. Antes el cambio se hacía fuera y, si la transacción de los
+   * registros fallaba, quedaba hecho y sin traza — justo lo que D3 prohíbe.
+   */
+  const { changeOrganizationPlanTx } = await import("@/models/subscriptions")
+  let resultado!: { planCode: string }
 
   await tenantTransaction(organizationId, ctx.userId, async (tx) => {
+    resultado = await changeOrganizationPlanTx(tx, organizationId, planCode.trim().toUpperCase(), ctx.now, ctx.actor)
     await writeAuditLog(tx, {
       entity: "Organization",
       entityId: organizationId,
@@ -666,14 +673,18 @@ export async function runPurgeRetention(organizationId: string, ctx: OperatorCon
   assertReasonAndName(ctx, plan.organizationName)
   if (plan.blocked) throw new OperatorDenied(plan.blocked)
 
-  // La purga la ejecuta el camino de E11 (`expireBackups`), que ya respeta las
-  // dos prohibiciones de I-E11-11 —restauración viva y factura de plataforma—.
-  // Envolverlo es mejor que duplicarlo: dos purgas con reglas distintas es el
-  // principio de que una de las dos se quede atrás.
-  const { expireBackups } = await import("@/models/backups")
-  const purgadas = await expireBackups(organizationId, ctx.now)
+  /**
+   * La purga la ejecuta el camino de E11 (`expireBackupsTx`), que ya respeta
+   * las dos prohibiciones de I-E11-11 —restauración viva y factura de
+   * plataforma—. Envolverlo es mejor que duplicarlo.
+   *
+   * **DEBE #7 de la ronda 1**: efecto y registros, en **una** transacción.
+   */
+  const { expireBackupsTx } = await import("@/models/backups")
+  let purgadas = 0
 
   await tenantTransaction(organizationId, ctx.userId, async (tx) => {
+    purgadas = await expireBackupsTx(tx, ctx.now)
     await writeAuditLog(tx, {
       entity: "BackupJob",
       entityId: organizationId,

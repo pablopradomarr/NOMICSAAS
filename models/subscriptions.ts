@@ -425,13 +425,22 @@ export async function ensureSubscriptionForOrganization(
  * `stripe_event_id UNIQUE`; inventarle uno sintético ensuciaría la idempotencia
  * del webhook. La traza de plataforma es el sitio correcto.
  */
-export async function changeOrganizationPlan(
+/**
+ * El cambio de plan **dentro de una transacción que abre el llamante**.
+ *
+ * Se separa del envoltorio por el DEBE #7 de la ronda 1 de E12: `/admin` tiene
+ * que escribir el EFECTO y sus dos registros (`AuditLog` del cliente y
+ * `PlatformAuditLog`) en **una sola** transacción, y con la función de antes
+ * —que abría la suya— el efecto podía quedar hecho y sin registro si la segunda
+ * fallaba, que es exactamente lo que ADR-0020 D3 prohíbe.
+ */
+export async function changeOrganizationPlanTx(
+  tx: TenantTransactionClient,
   organizationId: string,
   planCode: string,
   refDate: Date,
   actor: string
 ): Promise<{ planCode: string; planId: string; previousPlanCode: string | null }> {
-  const resultado = await tenantTransaction(organizationId, async (tx) => {
     const plan = await getPlanAt(tx, planCode, refDate)
     const antes = await getSubscription(tx)
 
@@ -474,7 +483,17 @@ export async function changeOrganizationPlan(
       },
     })
     return { planCode: plan.code, planId: plan.id, previousPlanCode: antes.planCode }
-  })
+}
+
+export async function changeOrganizationPlan(
+  organizationId: string,
+  planCode: string,
+  refDate: Date,
+  actor: string
+): Promise<{ planCode: string; planId: string; previousPlanCode: string | null }> {
+  const resultado = await tenantTransaction(organizationId, async (tx) =>
+    changeOrganizationPlanTx(tx, organizationId, planCode, refDate, actor)
+  )
 
   // **R2-4.** El techo blando memorizado por `noteSoftEntryQuota` es
   // configuración del plan, y acaba de cambiar: se olvida aquí, que es el único
