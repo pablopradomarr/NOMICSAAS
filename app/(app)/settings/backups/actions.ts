@@ -26,6 +26,7 @@
  *    evidencia; llamarla `DONE` sería mentir.
  */
 
+import { isPlatformAdminEmail } from "@/app/(app)/admin/admin"
 import { ActionState } from "@/lib/actions"
 import { requireOrg } from "@/lib/authz"
 import config from "@/lib/config"
@@ -272,8 +273,15 @@ export async function startRestoreAction(formData: FormData): Promise<ActionStat
      * admitir un archivo firmado por una instalación desconocida es una decisión
      * de quien responde de ÉSTA. Sin la variable puesta no hay nadie que pueda
      * autorizarlo, y eso es el comportamiento correcto por defecto.
+     *
+     * **N-3 de la ronda 2.** Aquí había una TERCERA copia del predicado escrita
+     * en línea (`config.billing.adminEmails.includes(...)`). El comportamiento
+     * era idéntico y cerrado por defecto, así que no había fuga; lo que había
+     * era lo que **ADR-0022 D2 prohíbe**: una autorización definida en tres
+     * sitios. Una sola definición, `isPlatformAdminEmail()`, y cambiarla cambia
+     * los tres caminos a la vez.
      */
-    const esAdminDePlataforma = config.billing.adminEmails.includes((user.email ?? "").trim().toLowerCase())
+    const esAdminDePlataforma = isPlatformAdminEmail(user.email ?? "")
     if (!esAdminDePlataforma) {
       return {
         success: false,
