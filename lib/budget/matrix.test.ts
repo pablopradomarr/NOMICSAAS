@@ -3,7 +3,7 @@
  *
  * El criterio 2 de §12: la matriz del presupuesto es la suma de sus líneas, por
  * los ocho niveles y los doce meses, `unresolved` vacío, y **byte a byte**
- * contra `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json`.
+ * contra `docs/design/fixtures/presupuesto-horas-esperado.v1.4.json`.
  */
 
 import { describe, expect, it } from "vitest"

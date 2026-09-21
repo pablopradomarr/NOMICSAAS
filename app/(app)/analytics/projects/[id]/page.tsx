@@ -111,6 +111,12 @@ export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ db, org,
     profitabilityState?.success && profitabilityState.data
       ? (profitabilityState.data.absorption as AbsorptionReport | null)
       : null
+  // E12 · T19 (Q-6) — la descomposición volumen/precio sale del MISMO informe,
+  // no se recalcula aquí: dos cifras que salen de dos sitios acaban discrepando.
+  const volumePrice =
+    profitabilityState?.success && profitabilityState.data
+      ? (profitabilityState.data.volumePrice.find((r) => r.column === `PROJ:${project.code}`) ?? null)
+      : null
   const profitabilityUnavailable = !openFy
     ? "el proyecto no tiene ejercicio abierto con el que fijar el periodo"
     : !profitabilityState?.success
@@ -236,6 +242,7 @@ export default tenantPage<{ params: Promise<{ id: string }> }>(async ({ db, org,
       <ProfitabilityBlock
         row={profitabilityRow}
         absorption={absorption}
+        volumePrice={volumePrice}
         currency={org.baseCurrency}
         sealed={profitabilityState?.data?.sealed ?? false}
         unavailableReason={profitabilityUnavailable}

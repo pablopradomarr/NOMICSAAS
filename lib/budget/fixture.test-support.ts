@@ -2,7 +2,7 @@
  * E10 · T7/T8 — soporte COMPARTIDO de los tests de `lib/budget/**`.
  *
  * Reconstruye, desde el fixture sellado
- * `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json`, las dos versiones de
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.4.json`, las dos versiones de
  * presupuesto y la `AnalyticsConfig` del ejercicio 2026, para que los tests
  * comparen **byte a byte** contra el contrato congelado por D6.
  *
@@ -17,7 +17,7 @@ import { defaultMarginLevels } from "@/lib/analytics/seed"
 import type { HeadcountRow } from "@/lib/time/aggregate"
 import type { AnalyticsConfig, AnalyticType, MarginLevel, MarginLevelRow } from "@/lib/analytics/types"
 import { INCOME_TAX_PREFIXES } from "@/lib/analytics/types"
-import type { BudgetCell, BudgetHoursCell, BudgetVersion } from "@/lib/budget/types"
+import type { BudgetCapexCellRef, BudgetCell, BudgetHoursCell, BudgetVersion } from "@/lib/budget/types"
 import { loadFixture, planForVariant } from "@/tests/support/fixtures"
 
 export const EXPECTED_PATH = path.join(
@@ -25,7 +25,7 @@ export const EXPECTED_PATH = path.join(
   "docs",
   "design",
   "fixtures",
-  "presupuesto-horas-esperado.v1.3.json"
+  "presupuesto-horas-esperado.v1.4.json"
 )
 
 export type ExpectedLine = {
@@ -61,6 +61,21 @@ export type ExpectedBudgetHeader = {
   marginConfigHash: string
   lineCount: number
   hoursLineCount: number
+  /** **E12 · T19** — inversiones previstas de la versión (Q-4). */
+  capexLineCount: number
+}
+
+/** **E12 · T19 (Q-4)** — una inversión prevista, tal y como la sella el fixture. */
+export type ExpectedCapexLine = {
+  month: string
+  accountCode: string
+  dimensionKind: "PROJECT" | "COST_CENTER"
+  dimensionCode: string
+  amountCents: number
+  residualCents: number
+  method: "LINEAL" | "SUMA_DIGITOS"
+  usefulLifeMonths: number
+  startsAt: "MES_DE_ALTA" | "MES_SIGUIENTE"
 }
 
 export type Expected = {
@@ -71,6 +86,31 @@ export type Expected = {
   budgetLines: Record<string, ExpectedLine[]>
   budgetHoursLines: ExpectedHoursLine[]
   budgetHoursLinesByVersion: Record<string, ExpectedHoursLine[]>
+  /** **E12 · T19** — el CAPEX por versión y el efectivo compuesto. */
+  budgetCapexLinesByVersion: Record<string, ExpectedCapexLine[]>
+  budgetCapexLines: ExpectedCapexLine[]
+  capexDepreciation: {
+    byMonthAndDimension: { month: string; dimensionCode: string; amountCents: number }[]
+    byMonthCents: Record<string, number>
+    totalCents: number
+    lines: number
+  }
+  varianceByMonthCents: Record<
+    string,
+    Record<string, { month: string; actualCents: number; budgetCents: number; varianceCents: number }[]>
+  >
+  volumePrice: {
+    column: string
+    level: string
+    month: string | null
+    budgetQuantity: number
+    actualQuantity: number
+    totalCents: number
+    volumeCents: number
+    priceCents: number
+    allVolume: boolean
+    notMeasurable: boolean
+  }[]
   budgetComposition: { provenanceByMonth: Record<string, string>; effectiveLineCount: number }
   budgetMatrixCents: Record<string, Record<string, number>>
   budgetMatrixByMonthCents: Record<string, Record<string, Record<string, number>>>
@@ -177,6 +217,17 @@ export const cellOf = (line: ExpectedLine): BudgetCell => ({
   signException: line.signException,
 })
 
+export const capexCellOf = (line: ExpectedCapexLine): BudgetCapexCellRef => ({
+  month: line.month,
+  accountCode: line.accountCode,
+  dimension: dimensionOf(line.dimensionKind, line.dimensionCode, null),
+  amountCents: line.amountCents,
+  residualCents: line.residualCents,
+  method: line.method,
+  usefulLifeMonths: line.usefulLifeMonths,
+  startsAt: line.startsAt,
+})
+
 export const hoursCellOf = (line: ExpectedHoursLine): BudgetHoursCell => ({
   month: line.month,
   dimension: dimensionOf(line.dimensionKind, line.dimensionCode, line.businessLineCode),
@@ -205,6 +256,11 @@ export function versionsFromFixture(): BudgetVersion[] {
     // ronda 1 las horas entran en el `budgetHash` (ADR-0018 D2), así que el
     // reparto por versión lo publica el propio fixture y no se re-deriva aquí.
     hours: expected.budgetHoursLinesByVersion[header.code].map(hoursCellOf),
+    // **E12 · T19 (ADR-0018 D2 enmendada)** — el CAPEX entra en el sello desde
+    // la v1.4. Igual que las horas, lo publica el fixture por versión y no se
+    // re-deriva aquí: un fixture que se recalcula con el motor que prueba no
+    // prueba nada (regla 7 de §7.3).
+    capex: expected.budgetCapexLinesByVersion[header.code].map(capexCellOf),
   }))
 }
 

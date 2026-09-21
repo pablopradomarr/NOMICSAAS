@@ -52,6 +52,26 @@ export type BudgetHoursCell = {
   minutes: number
 }
 
+/**
+ * **E12 · T19 (Q-4)** — celda de presupuesto de INVERSIONES. Vive en su propia
+ * tabla (`budget_capex_lines`) porque es un presupuesto de **balance** y no de
+ * explotación, y entra en el `budgetHash` desde la enmienda a ADR-0018 D2.
+ *
+ * El tipo completo, con su aritmética, está en `lib/budget/capex.ts`; aquí se
+ * re-exporta para que `BudgetVersion` no dependa de aquel módulo y no haya
+ * ciclo.
+ */
+export type BudgetCapexCellRef = {
+  month: LocalDate
+  accountCode: string
+  dimension: BudgetDimension
+  amountCents: Cents
+  residualCents: Cents
+  method: "LINEAL" | "SUMA_DIGITOS"
+  usefulLifeMonths: number
+  startsAt: "MES_DE_ALTA" | "MES_SIGUIENTE"
+}
+
 /** Una versión de presupuesto completa, tal y como la lee el motor. */
 export type BudgetVersion = {
   id: string
@@ -69,6 +89,13 @@ export type BudgetVersion = {
   partialFrom: LocalDate | null
   cells: readonly BudgetCell[]
   hours: readonly BudgetHoursCell[]
+  /**
+   * **E12 · T19** — inversiones previstas. Opcional para no romper a los
+   * llamantes de E10: una versión sin CAPEX sella **exactamente el mismo hash
+   * que antes de esta épica**, que es lo que permite que las fixtures v1.0–v1.3
+   * sigan congeladas y sirvan de evidencia.
+   */
+  capex?: readonly BudgetCapexCellRef[]
 }
 
 /** Celda que no se pudo situar en la matriz. Nunca se «arregla» en silencio. */

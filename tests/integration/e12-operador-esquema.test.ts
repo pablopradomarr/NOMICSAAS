@@ -91,8 +91,8 @@ beforeAll(async () => {
   await q(`DELETE FROM organizations WHERE id IN ($1::uuid, $2::uuid)`, [ORG, OTRA])
   await q(
     `INSERT INTO organizations (id, slug, name, updated_at) VALUES
-       ($1::uuid, 'e12-operador', 'E12 Operador S.L.', now()),
-       ($2::uuid, 'e12-operador-2', 'E12 Otra S.L.', now())`,
+       ($1::uuid, 'e12-esquema-operador', 'E12 Operador S.L.', now()),
+       ($2::uuid, 'e12-esquema-operador-2', 'E12 Otra S.L.', now())`,
     [ORG, OTRA]
   )
 }, 60_000)

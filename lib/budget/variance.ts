@@ -147,24 +147,252 @@ export function maxDimensionVariance(
   return best
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T19 — Q-6 / ADR-0018 D6: descomposición VOLUMEN / PRECIO
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * **Q-6 / D6 — descomposición volumen / precio. Convención CONGELADA; la
- * implementación es de E11.** Se escribe aquí para que las columnas no cambien
- * de significado cuando llegue:
+ * **Q-6 / D6 — la convención se congeló en E10 y aquí se implementa**, sin
+ * moverla ni un milímetro:
  *
+ * ```
  *   Δ total   = P_r·Q_r − P_p·Q_p
  *   Δ volumen = ⌊ (Q_r − Q_p) × Importe_ppto / Q_p ⌋      (Q_p = 0 ⇒ todo volumen)
  *   Δ precio  = Δ total − Δ volumen                        ← RESIDUO ⇒ Σ exacta
+ * ```
  *
- * El **cruce va al precio**: el efecto volumen se mide a condiciones del plan
+ * **El cruce va al precio.** El efecto volumen se mide a condiciones del plan
  * —lo único que controla producción— y el efecto precio sobre la actividad
- * realmente ejecutada. Un tercer término «cruce» es honesto e inservible en un
- * comité: nadie tiene responsabilidad sobre él. El precio unitario **no se
- * almacena** y `importe / horas` no es exacto, de ahí el residuo. **No se
- * descompone el efecto mezcla**: exige una jerarquía de producto que el modelo
- * no tiene, y mejor no publicarlo que publicarlo mal.
+ * realmente ejecutada, porque es la decisión comercial aplicada al volumen que
+ * hubo. Un tercer término «cruce» es matemáticamente honesto e **inservible en
+ * un comité**: nadie tiene responsabilidad sobre él.
+ *
+ * **Y el precio es el RESIDUO, no una segunda división.** El precio unitario no
+ * se almacena y `importe / horas` no es exacto; si las dos partes se calcularan
+ * por separado, su suma no daría el total y el informe tendría un céntimo
+ * huérfano que nadie sabría explicar. Con el residuo, `Σ = Δ total` con
+ * **tolerancia 0**, que es la regla de toda la casa.
+ *
+ * **No se descompone el efecto mezcla (mix).** Con más de un proyecto por línea
+ * el mix existe, pero exige una jerarquía de producto que el modelo no tiene:
+ * mejor no publicarlo que publicarlo mal.
  */
-export const VOLUME_PRICE_CONVENTION = "E11" as const
+export type VolumePriceInput = {
+  /** Cantidad presupuestada (minutos, unidades…). Entera. */
+  budgetQuantity: number
+  /** Cantidad real, en la misma unidad. Entera. */
+  actualQuantity: number
+  /** Importe presupuestado, en céntimos y con su signo de aporte. */
+  budgetCents: Cents
+  /** Importe real, en céntimos y con el mismo signo de aporte. */
+  actualCents: Cents
+}
+
+export type VolumePriceSplit = {
+  /** `real − presupuesto`, exacto. */
+  totalCents: Cents
+  /** Efecto de hacer más o menos, valorado **al precio del plan**. */
+  volumeCents: Cents
+  /** Efecto de cobrar o pagar distinto, **sobre la actividad real**. Residuo. */
+  priceCents: Cents
+  /**
+   * `true` cuando `Q_p = 0` y **todo** se atribuye al volumen. No es un matiz:
+   * sin cantidad presupuestada no existe un precio de plan con el que comparar,
+   * y repartir sería inventarse una referencia. La pantalla lo dice.
+   */
+  allVolume: boolean
+  /**
+   * `true` cuando no hay cantidades que comparar en ninguno de los dos lados.
+   * Entonces la descomposición **no se publica**: `volumeCents` y `priceCents`
+   * salen a 0 y esta bandera obliga a la pantalla a imprimir «sin base de
+   * actividad» en vez de dos ceros que parecerían una medición.
+   */
+  notMeasurable: boolean
+}
+
+/**
+ * División entera **truncada hacia cero**, no `Math.floor`.
+ *
+ * `Math.floor(-7/2) = -4` y `Math.trunc(-7/2) = -3`. Con importes de aporte —los
+ * gastos son negativos (D2)— la diferencia no es cosmética: `floor` sesga
+ * sistemáticamente el efecto volumen de los gastos hacia el lado desfavorable y
+ * el residuo del precio lo compensa, de modo que las dos columnas quedan
+ * desplazadas un céntimo **en direcciones opuestas y siempre en el mismo
+ * sentido**. El truncado es simétrico, que es lo que un comité espera de un
+ * número que se compara con el del año pasado.
+ */
+const truncDiv = (numerator: number, denominator: number): number => Math.trunc(numerator / denominator)
+
+export function volumePriceSplit(input: VolumePriceInput): VolumePriceSplit {
+  const { budgetQuantity: qp, actualQuantity: qr, budgetCents: ip, actualCents: ir } = input
+  const totalCents = ir - ip
+
+  if (qp === 0 && qr === 0) {
+    return { totalCents, volumeCents: 0, priceCents: 0, allVolume: false, notMeasurable: true }
+  }
+  if (qp === 0) {
+    // Sin cantidad de plan no hay precio de plan: todo es volumen, y se dice.
+    return { totalCents, volumeCents: totalCents, priceCents: 0, allVolume: true, notMeasurable: false }
+  }
+
+  const volumeCents = truncDiv((qr - qp) * ip, qp)
+  return { totalCents, volumeCents, priceCents: totalCents - volumeCents, allVolume: false, notMeasurable: false }
+}
+
+/** Una fila de la tabla de volumen/precio: la celda y su descomposición. */
+export type VolumePriceRow = {
+  column: ColumnKey
+  level: MarginLevel
+  /** `null` = acumulado del periodo. */
+  month: string | null
+  budgetQuantity: number
+  actualQuantity: number
+  split: VolumePriceSplit
+}
+
+/**
+ * Descompone una colección de celdas comparables. La cantidad la aporta el
+ * llamante —minutos de `time_entries` contra minutos de `budget_hours_lines`—
+ * porque este módulo no lee nada.
+ *
+ * **La suma se comprueba aquí mismo**: si `volumen + precio ≠ total` en una sola
+ * fila, se lanza. Una descomposición que no suma no es una descomposición: es
+ * dos números al lado de un tercero.
+ */
+export function buildVolumePrice(
+  rows: readonly (Omit<VolumePriceRow, "split"> & VolumePriceInput)[]
+): readonly VolumePriceRow[] {
+  return rows.map((row) => {
+    const split = volumePriceSplit(row)
+    if (!split.notMeasurable && split.volumeCents + split.priceCents !== split.totalCents) {
+      throw new Error(
+        `descomposición volumen/precio incoherente en ${row.column}/${row.level}: ` +
+          `${split.volumeCents} + ${split.priceCents} ≠ ${split.totalCents}`
+      )
+    }
+    return {
+      column: row.column,
+      level: row.level,
+      month: row.month,
+      budgetQuantity: row.budgetQuantity,
+      actualQuantity: row.actualQuantity,
+      split,
+    }
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T19 — granularidad MONTH de varios meses y desglose MES A MES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * **Deuda 12 de §6 de E12.** Hasta ahora `granularity: MONTH` servía **un solo
+ * mes**: pedir enero-a-junio devolvía el acumulado y la columna mensual no
+ * existía. El desglose mes a mes es lo primero que un CFO abre cuando el año
+ * cuadra: un total anual en su sitio puede esconder un mayo catastrófico
+ * compensado por un septiembre irrepetible, y eso no se ve en el acumulado.
+ *
+ * La serie es **por celda `(nivel, columna)`**, con un punto por mes del
+ * periodo —incluidos los meses sin movimiento, que salen a 0 y **no se
+ * omiten**: un hueco en la serie se lee como «no hubo datos», y lo que hubo fue
+ * cero—. Y al lado, el **acumulado**, que es la cifra que el informe firma.
+ */
+export type MonthlyVariancePoint = {
+  month: string
+  actualCents: Cents
+  budgetCents: Cents | null
+  varianceCents: Cents | null
+  notComparable: boolean
+}
+
+export type MonthlyVarianceSeries = {
+  level: MarginLevel
+  column: ColumnKey
+  points: readonly MonthlyVariancePoint[]
+  /** Σ de la serie. Se recomputa aquí y se enfrenta al acumulado del informe. */
+  totalActualCents: Cents
+  totalBudgetCents: Cents | null
+  totalVarianceCents: Cents | null
+  /** Algún mes de la serie no es comparable (I-E10-18): la pantalla lo dice. */
+  anyNotComparable: boolean
+}
+
+/**
+ * Compone las series mensuales a partir de las celdas **mensuales** que
+ * `buildVariance` produjo mes a mes (una llamada por mes, con su `month`).
+ *
+ * **Y comprueba el cuadre**: la Σ de la serie tiene que ser el acumulado. Si el
+ * llamante pasa el acumulado y no cuadra, se lanza — es el error de E10 que la
+ * auditoría encontró al revés (la provenance de los niveles acumulados devolvía
+ * 0 filas), y aquí se impide por construcción.
+ */
+export function monthlyVarianceSeries(
+  monthlyCells: readonly VarianceCell[],
+  months: readonly string[]
+): readonly MonthlyVarianceSeries[] {
+  const byCell = new Map<string, Map<string, VarianceCell>>()
+  for (const cell of monthlyCells) {
+    if (cell.month === null) continue
+    const key = `${cell.level}\t${cell.column}`
+    const inner = byCell.get(key) ?? new Map<string, VarianceCell>()
+    inner.set(cell.month, cell)
+    byCell.set(key, inner)
+  }
+
+  const out: MonthlyVarianceSeries[] = []
+  for (const [key, inner] of [...byCell.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const [level, column] = key.split("\t") as [MarginLevel, ColumnKey]
+    let totalActualCents = 0
+    let totalBudgetCents: Cents | null = 0
+    let anyNotComparable = false
+    const points: MonthlyVariancePoint[] = months.map((month) => {
+      const cell = inner.get(month)
+      const actualCents = cell?.actualCents ?? 0
+      const budgetCents = cell ? cell.budgetCents : 0
+      const notComparable = cell?.notComparable ?? false
+      totalActualCents += actualCents
+      if (budgetCents === null) totalBudgetCents = null
+      else if (totalBudgetCents !== null) totalBudgetCents += budgetCents
+      if (notComparable) anyNotComparable = true
+      return {
+        month,
+        actualCents,
+        budgetCents,
+        varianceCents: budgetCents === null ? null : actualCents - budgetCents,
+        notComparable,
+      }
+    })
+    out.push({
+      level,
+      column,
+      points,
+      totalActualCents,
+      totalBudgetCents,
+      totalVarianceCents: totalBudgetCents === null ? null : totalActualCents - totalBudgetCents,
+      anyNotComparable,
+    })
+  }
+  return out
+}
+
+/**
+ * El mes que más pesa en la desviación de una serie, en valor absoluto.
+ *
+ * Es el gemelo mensual de `maxDimensionVariance`, y existe por la misma razón:
+ * un acumulado en su sitio puede esconder dos meses que se compensan, y firmar
+ * eso en verde es exactamente lo que O-E10-18 impidió por dimensión.
+ */
+export function worstMonth(series: MonthlyVarianceSeries): MonthlyVariancePoint | null {
+  let best: MonthlyVariancePoint | null = null
+  for (const point of series.points) {
+    if (point.varianceCents === null) continue
+    if (best === null || Math.abs(point.varianceCents) > Math.abs(best.varianceCents ?? 0)) best = point
+  }
+  return best
+}
+
+/** La convención de volumen/precio, ya implementada (antes decía «E11»). */
+export const VOLUME_PRICE_CONVENTION = "CRUCE_AL_PRECIO" as const
 
 // ─────────────────────────────────────────────────────────────────────────────
 // P6 · §5.1 — provenance POR CELDA (auditoría ronda 1, hallazgo H-7)

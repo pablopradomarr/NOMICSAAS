@@ -32,6 +32,7 @@ import {
   budgetVsActual,
   BudgetReportError,
   type BudgetProfitabilityRow,
+  type VolumePriceRow,
   type BudgetVsActualView,
 } from "@/models/reports"
 import { Role } from "@/prisma/client"
@@ -91,6 +92,13 @@ export type ProjectProfitabilityPayload = {
   budgetHash: string
   rows: readonly BudgetProfitabilityRow[]
   absorption: unknown
+  /**
+   * **E12 · T19 (Q-6 / D6)** — la descomposición volumen/precio del mismo
+   * informe. Va en el payload y no se recalcula en la ficha del proyecto: dos
+   * cifras que salen de dos sitios distintos acaban discrepando, y ésta es
+   * justamente la que un comité mira al lado del margen por hora.
+   */
+  volumePrice: readonly VolumePriceRow[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +166,7 @@ export const projectProfitabilityAction = withOrg(
           budgetHash: view.budgetHash,
           rows: view.result.profitability,
           absorption: view.result.absorption,
+          volumePrice: view.result.volumePrice,
         },
       }
     } catch (error) {

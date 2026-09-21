@@ -232,20 +232,21 @@ model Organization {
   /// organización de demo no cuenta contra `maxOrganizations`, no entra en el uso
   /// y se puede BORRAR ENTERA — que es como se «vacía la demo» sin borrar ni un
   /// asiento posteado (ADR-0003, art. 30 CCom).
-  isDemo Boolean @default(false) @map("is_demo")
+  isDemo               Boolean               @default(false) @map("is_demo")
   /// **D-3**: preferencia de organización, no un cálculo (§6.4). Por defecto
   /// `MES_SIGUIENTE`, que es lo que el motor de E9 ya hace: cambiar el valor por
   /// defecto alteraría cuadros ya posteados.
-  depreciationStartsOn DepreciationStart @default(MES_SIGUIENTE) @map("depreciation_starts_on")
+  depreciationStartsOn DepreciationStart     @default(MES_SIGUIENTE) @map("depreciation_starts_on")
   /// Retención de las copias de seguridad, dentro del máximo que admita el plan.
-  backupRetentionDays Int @default(30) @map("backup_retention_days")
+  backupRetentionDays  Int                   @default(30) @map("backup_retention_days")
   /// E12 · T20 — cadencia de la copia automática. `SCHEDULED` no consume cuota
   /// (O-4): la portabilidad no la puede desactivar un precio.
-  backupSchedule BackupScheduleCadence @default(WEEKLY) @map("backup_schedule")
+  backupSchedule       BackupScheduleCadence @default(WEEKLY) @map("backup_schedule")
 
-  onboardingRun OnboardingRun?
+  onboardingRun      OnboardingRun?
   /// E12 · ADR-0020 — excepciones de operador vivas o caducadas de esta organización.
   operatorExceptions OperatorException[]
+  budgetCapexLines   BudgetCapexLine[]
 
   @@map("organizations")
 }
@@ -529,6 +530,7 @@ model Project {
   budgetLines      BudgetLine[]
   budgetHoursLines BudgetHoursLine[]
   timeEntries      TimeEntry[]
+  budgetCapexLines BudgetCapexLine[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -1489,6 +1491,7 @@ model CostCenter {
   timeEntries        TimeEntry[]
   headcountSnapshots HeadcountSnapshot[]
   employeesByDefault Employee[]          @relation("EmployeeDefaultCostCenter")
+  budgetCapexLines   BudgetCapexLine[]
 
   @@unique([organizationId, code])
   @@unique([organizationId, id])
@@ -3374,8 +3377,9 @@ model Budget {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  lines      BudgetLine[]
-  hoursLines BudgetHoursLine[]
+  lines            BudgetLine[]
+  hoursLines       BudgetHoursLine[]
+  budgetCapexLines BudgetCapexLine[]
 
   @@unique([organizationId, fiscalYearId, scenario, revision], map: "budgets_version_unique")
   @@unique([organizationId, id])
@@ -3492,6 +3496,62 @@ model BudgetHoursLine {
 
   @@index([organizationId, budgetId, month])
   @@map("budget_hours_lines")
+}
+
+/// **E12 · T19 — presupuesto de INVERSIONES** (Q-4 de E10; ADR-0018 D2 enmendada
+/// el 2026-09-15).
+///
+/// Tabla propia, y no una línea más de `budget_lines`, por la razón que Q-4
+/// escribió: presupuestar el grupo 2 allí obligaría a levantar el CHECK
+/// `budget_lines_pnl_only` y a mezclar un presupuesto de **balance** con uno de
+/// **explotación** en la misma tabla. Lo que sí se mezcla —y es el punto— es su
+/// **dotación derivada**: la `68x` propuesta suma la de los activos ya en alta
+/// (`proposeDepreciationBudget`, E10) **más** la de estas altas previstas.
+///
+/// Entra en el `budgetHash` (enmienda a D2): una inversión prevista cambia el
+/// EBIT presupuestado, y un sello que no la cubriera dejaría fuera del hash una
+/// cifra que sí mueve el informe.
+model BudgetCapexLine {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  budgetId       String       @map("budget_id") @db.Uuid
+  budget         Budget       @relation(fields: [organizationId, budgetId], references: [organizationId, id], onDelete: Cascade)
+
+  /// Mes de ALTA prevista (día 1). No es el mes en que se paga: es aquel desde
+  /// el que el activo empieza a amortizar.
+  month DateTime @map("month") @db.Date
+
+  /// Cuenta del grupo 2 (CHECK: empieza por `2`). Es lo que hace explícito que
+  /// esto NO es explotación.
+  accountCode String @map("account_code") @db.VarChar(20)
+
+  /// Dimensión: exactamente una (O-A6), con FK compuesta por tenant.
+  projectId    String?     @map("project_id") @db.Uuid
+  project      Project?    @relation(fields: [organizationId, projectId], references: [organizationId, id], onDelete: Restrict)
+  costCenterId String?     @map("cost_center_id") @db.Uuid
+  costCenter   CostCenter? @relation(fields: [organizationId, costCenterId], references: [organizationId, id], onDelete: Restrict)
+
+  /// Importe de la inversión, en céntimos y **positivo**: un activo que entra no
+  /// es un gasto y no lleva la convención de signo de `budget_lines`.
+  amountCents   Int @map("amount_cents")
+  /// Valor residual previsto, que no se amortiza. Por omisión, cero.
+  residualCents Int @default(0) @map("residual_cents")
+
+  method           DepreciationMethod @default(LINEAL)
+  /// Vida útil en MESES, > 0. En meses y no en años porque el alta cae en un mes
+  /// concreto y una vida en años obligaría a multiplicar dentro del motor.
+  usefulLifeMonths Int                @map("useful_life_months")
+  /// Cuándo arranca la dotación respecto del mes de alta (D-3 de E9).
+  startsAt         DepreciationStart  @default(MES_DE_ALTA) @map("starts_at")
+
+  description String?          @db.VarChar(255)
+  source      BudgetLineSource @default(MANUAL)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, budgetId, month])
+  @@map("budget_capex_lines")
 }
 
 // ── Horas ────────────────────────────────────────────────────────────────────

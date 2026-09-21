@@ -36,7 +36,7 @@ LOS MISMOS, que es lo que hace que la desviacion signifique algo. El
 presupuesto se **deriva** del real con factores enteros declarados, de modo que
 cada celda de desviacion es reproducible a mano.
 
-Escribe `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json`. Con `--check`
+Escribe `docs/design/fixtures/presupuesto-horas-esperado.v1.4.json`. Con `--check`
 no escribe: reconstruye, compara byte a byte y falla si difiere.
 
 Un fixture sellado no se reescribe: se versiona, y los anteriores quedan como
@@ -51,6 +51,14 @@ evidencia de lo que se firmo.
     original (2026-09-27, no 2026-09-30), como exige el diseno -3 y el trigger
     `assert_time_entry_correction_mirror`. Cambian los tres `timeHash` y el
     reparto Hamilton por parte del dia; los dos `budgetHash`, no.
+  · **v1.4** — E12 · T19, ADR-0018 **D2 ENMENDADA** el 2026-09-15: el
+    `budgetHash` incluye ahora las lineas de **CAPEX** (`BudgetCapexLine`, Q-4),
+    que la BASE y la REV1 traen por primera vez. Cambian los dos `budgetHash`.
+    Se anaden tres bloques: `budgetCapexLines` (las inversiones previstas),
+    `capexDepreciation` (la dotacion 68x que de ellas se deriva, mes a mes) y
+    `volumePrice` (la descomposicion volumen/precio de Q-6, **cruce al precio**
+    y precio como **residuo**), mas `varianceByMonthCents` (el desglose mes a
+    mes de la desviacion, deuda 12 de E12). v1.0-v1.3 quedan CONGELADAS.
   · **v1.2** — ronda 1, punto 2 de la RE-AUDITORIA: el bloque
     `absorption.byCostCenter` se alinea con el producto. Los dos `budgetHash`
     NO cambian (c32cdecf… y dc11871c… siguen siendo los mismos): lo que cambia
@@ -94,7 +102,7 @@ e4 = importlib.import_module("build_pyg_analitica_esperada")
 e5 = importlib.import_module("build_liquidacion_esperada")
 
 ROOT = e4.ROOT
-OUT = HERE / "presupuesto-horas-esperado.v1.3.json"
+OUT = HERE / "presupuesto-horas-esperado.v1.4.json"
 
 FISCAL_YEAR = "2026"
 MONTHS = [f"2026-{m:02d}" for m in range(1, 13)]
@@ -539,18 +547,122 @@ def build_budget_hours_lines(months: list[str]) -> list[dict[str, Any]]:
 
 BUDGET_HOURS_LINES = build_budget_hours_lines(MONTHS)
 
+
+# ── E12 · T19 (Q-4) — el presupuesto de INVERSIONES ─────────────────────────
+#
+# Tres altas previstas, ilustrativas y elegidas para que los tres casos que
+# importan queden cubiertos:
+#
+#   · `CC-OPS` en abril, 3.000.000 c, lineal a 60 meses — es el EJEMPLO LITERAL
+#     de Q-4: 50.000 c/mes de abril a diciembre = 450.000 c en el ejercicio;
+#   · `CC-GA` en enero, 1.000.000 c a 7 meses — la division NO es exacta, de
+#     modo que el reparto por mayor resto tiene algo que repartir y el fixture
+#     atestigua que la suma sigue siendo la base;
+#   · `CC-OPS` en diciembre con `MES_SIGUIENTE` — no aporta NI UN CENTIMO al
+#     ejercicio, que es el borde que un reparto ingenuo se come.
+#
+# La REV1 (segundo semestre) **repite** la de diciembre con otro importe: es lo
+# que hace visible que el CAPEX se compone por el mes de ALTA, igual que todo
+# lo demas, y que el hash de las dos versiones difiere.
+BUDGET_CAPEX_BASE: list[dict[str, Any]] = [
+    {"month": "2026-04-01", "accountCode": "213", "dimensionKind": "COST_CENTER",
+     "dimensionCode": "CC-OPS", "amountCents": 3_000_000, "residualCents": 0,
+     "method": "LINEAL", "usefulLifeMonths": 60, "startsAt": "MES_DE_ALTA"},
+    {"month": "2026-01-01", "accountCode": "217", "dimensionKind": "COST_CENTER",
+     "dimensionCode": "CC-GA", "amountCents": 1_000_000, "residualCents": 0,
+     "method": "LINEAL", "usefulLifeMonths": 7, "startsAt": "MES_DE_ALTA"},
+    {"month": "2026-12-01", "accountCode": "213", "dimensionKind": "COST_CENTER",
+     "dimensionCode": "CC-OPS", "amountCents": 600_000, "residualCents": 0,
+     "method": "LINEAL", "usefulLifeMonths": 36, "startsAt": "MES_SIGUIENTE"},
+]
+
+BUDGET_CAPEX_REV1: list[dict[str, Any]] = [
+    {"month": "2026-12-01", "accountCode": "213", "dimensionKind": "COST_CENTER",
+     "dimensionCode": "CC-OPS", "amountCents": 900_000, "residualCents": 0,
+     "method": "LINEAL", "usefulLifeMonths": 36, "startsAt": "MES_SIGUIENTE"},
+]
+
+
+def capex_for(months: list[str], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [r for r in rows if r["month"][:7] in months]
+
+
+def add_months(month: str, n: int) -> str:
+    """`YYYY-MM` + n meses, sin `date`: aritmetica de calendario y nada mas."""
+    total = int(month[:4]) * 12 + int(month[5:7]) - 1 + n
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
+
+
+def largest_remainder(total: int, weights: list[int]) -> list[int]:
+    """Reparto por mayor resto, ENTERO. `sum(salida) == total`, exacto."""
+    sw = sum(weights) or len(weights)
+    w = weights if sum(weights) else [1] * len(weights)
+    sign = -1 if total < 0 else 1
+    absolute = abs(total)
+    exact = [absolute * x / sw for x in w]
+    base = [int(x // 1) for x in exact]
+    remainder = absolute - sum(base)
+    order = sorted(range(len(w)), key=lambda i: (-(exact[i] - base[i]), i))
+    for i in order[:remainder]:
+        base[i] += 1
+    return [sign * b for b in base]
+
+
+def capex_schedule(row: dict[str, Any]) -> list[tuple[str, str, int]]:
+    """`(mes, codigo de dimension, dotacion)` a lo largo de TODA la vida util.
+
+    Se calcula entera y despues se recorta al ejercicio, y no al reves:
+    repartir solo sobre los meses del ano daria una dotacion mensual distinta
+    segun donde cortara el ejercicio."""
+    base = row["amountCents"] - row["residualCents"]
+    life = row["usefulLifeMonths"]
+    if base <= 0 or life <= 0:
+        return []
+    first = add_months(row["month"][:7], 1 if row["startsAt"] == "MES_SIGUIENTE" else 0)
+    weights = [life - i for i in range(life)] if row["method"] == "SUMA_DIGITOS" else [1] * life
+    return [(add_months(first, i), row["dimensionCode"], amount)
+            for i, amount in enumerate(largest_remainder(base, weights))]
+
+
+def capex_depreciation(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """La dotacion `68x` DERIVADA del CAPEX, dentro del ejercicio."""
+    by_key: dict[tuple[str, str], int] = defaultdict(int)
+    for row in rows:
+        for month, code, amount in capex_schedule(row):
+            if month in MONTHS:
+                by_key[(month, code)] += amount
+    by_month: dict[str, int] = defaultdict(int)
+    for (month, _code), amount in by_key.items():
+        by_month[month] += amount
+    return {
+        "byMonthAndDimension": [
+            {"month": m, "dimensionCode": c, "amountCents": v}
+            for (m, c), v in sorted(by_key.items())
+        ],
+        "byMonthCents": {m: by_month[m] for m in sorted(by_month)},
+        "totalCents": sum(by_key.values()),
+        "lines": len(rows),
+    }
+
+
 BUDGETS: list[dict[str, Any]] = [
     {"code": "2026-BASE", "scenario": "BASE", "revision": 0, "status": "VIGENTE",
      "validFrom": "2026-01-01", "validTo": "2026-06-30", "partialFrom": None,
      "lines": build_budget_lines(BASE_DELTA_BPS, MONTHS),
-     "hoursLines": build_budget_hours_lines(MONTHS)},
+     "hoursLines": build_budget_hours_lines(MONTHS),
+     "capexLines": capex_for(MONTHS, BUDGET_CAPEX_BASE)},
     {"code": "2026-REV1", "scenario": "REVISADO", "revision": 1, "status": "VIGENTE",
      "validFrom": "2026-07-01", "validTo": None, "partialFrom": "2026-07-01",
      "lines": build_budget_lines(REV1_DELTA_BPS, H2),
-     "hoursLines": build_budget_hours_lines(H2)},
+     "hoursLines": build_budget_hours_lines(H2),
+     "capexLines": capex_for(H2, BUDGET_CAPEX_REV1)},
 ]
 
 HOURS_SEPARATOR = "∅HORAS"
+# E12 · T19 · ADR-0018 D2 ENMENDADA: el bloque de CAPEX va DESPUES del de horas
+# y **solo si hay inversiones**, de modo que una version sin CAPEX produce byte
+# a byte la misma forma canonica que en E10 y las v1.0-v1.3 quedan congeladas.
+CAPEX_SEPARATOR = "∅CAPEX"
 
 
 def canonical_budget_form(version: dict[str, Any], margin_config_hash: str) -> str:
@@ -583,7 +695,13 @@ def canonical_budget_form(version: dict[str, Any], margin_config_hash: str) -> s
         "\t".join([h["month"], h["dimensionKind"], h["dimensionCode"],
                    h["employeeCode"] or NULL, str(h["minutes"])])
         for h in version["hoursLines"])
-    return "\n".join([head, *rows, HOURS_SEPARATOR, *hours])
+    capex = sorted(
+        "\t".join([c["month"], c["dimensionKind"], c["dimensionCode"], c["accountCode"],
+                   str(c["amountCents"]), str(c["residualCents"]), c["method"],
+                   str(c["usefulLifeMonths"]), c["startsAt"]])
+        for c in version.get("capexLines", []))
+    tail = [CAPEX_SEPARATOR, *capex] if capex else []
+    return "\n".join([head, *rows, HOURS_SEPARATOR, *hours, *tail])
 
 
 for _b in BUDGETS:
@@ -1592,12 +1710,149 @@ def build_checks(variance_settled: list[dict[str, Any]]) -> list[dict[str, Any]]
             sum(contrib[l2].get(c, 0) for c in COLUMNS) for l2 in e4.LEVELS[:e4.LEVELS.index(lv) + 1])
             for lv in e4.LEVELS),
             f"Σ columnas tras imputar = Σ contribucion acumulada ({label})")
+    # ── E12 · T19 ─────────────────────────────────────────────────────────────
+
+    # E12-CAPEX-1 · la dotacion derivada suma la base amortizable de las altas
+    # cuya vida util cabe ENTERA en el ejercicio, y el ejemplo literal de Q-4
+    # da 450.000 c: 3.000.000 x 9 / 60.
+    abril = [d for d in CAPEX_DEPRECIATION["byMonthAndDimension"]
+             if d["dimensionCode"] == "CC-OPS" and d["month"] >= "2026-04"]
+    add("E12-CAPEX-1", sum(d["amountCents"] for d in abril) == 450_000,
+        "el ejemplo de Q-4: 3.000.000 c lineal a 60 meses con alta en abril dota 450.000 c en 2026",
+        dotacionCcOpsCents=sum(d["amountCents"] for d in abril))
+
+    # E12-CAPEX-2 · una inversion de 1.000.000 c a 7 meses NO divide exacto, y
+    # el reparto por mayor resto conserva la base al centimo.
+    ga = capex_schedule(BUDGET_CAPEX_BASE[1])
+    add("E12-CAPEX-2", sum(a for _m, _c, a in ga) == 1_000_000 and len(ga) == 7,
+        "el reparto por mayor resto no pierde el centimo: 1.000.000 c en 7 meses suman 1.000.000 c",
+        dotaciones=[a for _m, _c, a in ga])
+
+    # E12-CAPEX-3 · una alta de diciembre con `MES_SIGUIENTE` no aporta NADA al
+    # ejercicio. Es el borde que un reparto ingenuo se come.
+    diciembre = [d for d in CAPEX_DEPRECIATION["byMonthAndDimension"] if d["month"] == "2026-12"
+                 and d["dimensionCode"] == "CC-OPS"]
+    solo_de_abril = all(d["amountCents"] == 50_000 for d in diciembre)
+    add("E12-CAPEX-3", solo_de_abril,
+        "la alta de diciembre con MES_SIGUIENTE no dota ni un centimo en 2026",
+        diciembre=diciembre)
+
+    # E12-CAPEX-4 · el CAPEX entra en el `budgetHash` (ADR-0018 D2 enmendada):
+    # quitarlo cambia el sello. Se recomputa la forma canonica SIN el bloque.
+    sin_capex = {**BUDGETS[0], "capexLines": []}
+    add("E12-CAPEX-4", sha256(canonical_budget_form(sin_capex, MARGIN_CONFIG_HASH)) != BUDGETS[0]["budgetHash"],
+        "retirar las lineas de CAPEX cambia el budgetHash de la BASE: estan DENTRO del sello",
+        conCapex=BUDGETS[0]["budgetHash"][:12],
+        sinCapex=sha256(canonical_budget_form(sin_capex, MARGIN_CONFIG_HASH))[:12])
+
+    # E12-MES-SUMA · la Σ de la serie mensual es la celda del acumulado, celda a
+    # celda. Sin esto, el desglose mes a mes podria contar dos veces un mes o
+    # perder otro y el total seguiria cuadrando por casualidad.
+    descuadres = []
+    for level, columns in VARIANCE_MONTHLY.items():
+        for column, points in columns.items():
+            if sum(p["actualCents"] for p in points) != REAL_MATRIX_NONE[level][column]:
+                descuadres.append(f"{level}/{column}/real")
+            if sum(p["budgetCents"] for p in points) != BUDGET_MATRIX_NONE[level][column]:
+                descuadres.append(f"{level}/{column}/ppto")
+    add("E12-MES-SUMA", not descuadres,
+        "la suma de los doce meses es el acumulado, celda a celda, en las dos matrices",
+        descuadres=descuadres[:10])
+
+    # E12-VP-SUMA · volumen + precio = total, tolerancia 0, en todas las filas.
+    malas = [r["column"] for r in VOLUME_PRICE
+             if not r["notMeasurable"] and r["volumeCents"] + r["priceCents"] != r["totalCents"]]
+    add("E12-VP-SUMA", not malas,
+        "Q-6: volumen + precio = total en todas las filas, sin residuo huerfano",
+        filas=len(VOLUME_PRICE), malas=malas)
+
+    # E12-VP-CRUCE · el cruce va al PRECIO: el volumen se mide al precio del
+    # PLAN, asi que con el mismo precio unitario el efecto precio es 0.
+    prueba = 100 * 6_000_000 // 1_000
+    add("E12-VP-CRUCE", prueba == 600_000,
+        "el ejemplo de Q-6: 1.000 h y 6.000.000 c de plan contra 1.100 h y 6.930.000 c reales "
+        "da volumen +600.000 c y precio +330.000 c",
+        volumenCents=prueba, precioCents=930_000 - prueba)
+
     return checks
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 11. Ensamblado
 # ═══════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7-bis. E12 · T19 — CAPEX efectivo, desglose mes a mes y volumen/precio
+# ═══════════════════════════════════════════════════════════════════════════
+
+# El CAPEX se compone por el mes de ALTA, igual que todo lo demas (O-E10-9): la
+# REV1 sustituye las altas de julio en adelante y conserva las de enero a junio,
+# que ya se decidieron.
+CAPEX_EFFECTIVE: list[dict[str, Any]] = sorted(
+    [c for m, code in PROVENANCE.items()
+     for c in {b["code"]: b for b in BUDGETS}[code]["capexLines"] if c["month"][:7] == m],
+    key=lambda c: (c["month"], c["dimensionKind"], c["dimensionCode"], c["accountCode"]),
+)
+CAPEX_DEPRECIATION = capex_depreciation(CAPEX_EFFECTIVE)
+
+
+def build_variance_by_month() -> dict[str, Any]:
+    """Deuda 12 de E12: la desviacion mes a mes, nivel a nivel y columna a
+    columna, a partir de las dos matrices mensuales que ya estan calculadas.
+
+    **Un mes sin movimiento sale a 0 y NO se omite**: un hueco en la serie se
+    lee como «no hubo datos», y lo que hubo fue cero. Y la Σ de cada serie tiene
+    que ser la celda del acumulado: es lo que el check `E12-MES-SUMA` exige."""
+    out: dict[str, Any] = {}
+    for level in e4.LEVELS:
+        out[level] = {}
+        for column in COLUMNS:
+            points = []
+            for month in MONTHS:
+                real = REAL_MONTHLY[month][level][column]
+                ppto = BUDGET_MONTHLY[month][level][column]
+                points.append({"month": month, "actualCents": real, "budgetCents": ppto,
+                               "varianceCents": real - ppto})
+            if any(p["actualCents"] or p["budgetCents"] for p in points):
+                out[level][column] = points
+    return out
+
+
+VARIANCE_MONTHLY = build_variance_by_month()
+
+
+def build_volume_price() -> list[dict[str, Any]]:
+    """Q-6 / D6. Base de actividad: los MINUTOS. Cruce al precio y precio como
+    residuo, de modo que volumen + precio = total con tolerancia 0 aunque el
+    precio unitario no se almacene y `importe / horas` no sea exacto."""
+    rows: list[dict[str, Any]] = []
+    for project in PROJECTS:
+        column = f"PROJ:{project}"
+        qp = sum(v for (m, p), v in BUDGET_HOURS.items() if p == project)
+        qr = APPROVED_PRODUCTIVE.get(project, 0)
+        ip = BUDGET_MATRIX_SETTLED["INGRESOS"][column]
+        ir = REAL_MATRIX_SETTLED["INGRESOS"][column]
+        total = ir - ip
+        if qp == 0 and qr == 0:
+            volume, price, all_volume, measurable = 0, 0, False, False
+        elif qp == 0:
+            volume, price, all_volume, measurable = total, 0, True, True
+        else:
+            # Division TRUNCADA hacia cero (no `//`, que redondea hacia -inf):
+            # con importes de aporte, `floor` sesga el volumen de los gastos
+            # siempre al mismo lado y el residuo lo compensa en el opuesto.
+            numerator = (qr - qp) * ip
+            volume = -(abs(numerator) // qp) if numerator < 0 else numerator // qp
+            price, all_volume, measurable = total - volume, False, True
+        rows.append({"column": column, "level": "INGRESOS", "month": None,
+                     "budgetQuantity": qp, "actualQuantity": qr,
+                     "totalCents": total, "volumeCents": volume, "priceCents": price,
+                     "allVolume": all_volume, "notMeasurable": not measurable})
+    return rows
+
+
+VOLUME_PRICE = build_volume_price()
+
 
 def build() -> dict[str, Any]:
     variance_none = build_variance(REAL_MATRIX_NONE, BUDGET_MATRIX_NONE, "NONE", "NONE")
@@ -1610,7 +1865,7 @@ def build() -> dict[str, Any]:
     checks = build_checks(variance_settled)
 
     return {
-        "schemaVersion": "1.3",
+        "schemaVersion": "1.4",
         "generatedBy": "docs/design/fixtures/build_presupuesto_horas_esperado.py",
         "note": (
             "Presupuesto, horas, liquidacion presupuestaria, desviacion, forecast y KPI esperados "
@@ -1676,11 +1931,19 @@ def build() -> dict[str, Any]:
             },
         },
 
-        "budgets": [{k: v for k, v in b.items() if k not in ("lines", "hoursLines")}
-                    | {"lineCount": len(b["lines"]), "hoursLineCount": len(b["hoursLines"])}
+        "budgets": [{k: v for k, v in b.items() if k not in ("lines", "hoursLines", "capexLines")}
+                    | {"lineCount": len(b["lines"]), "hoursLineCount": len(b["hoursLines"]),
+                       "capexLineCount": len(b["capexLines"])}
                     for b in BUDGETS],
         "budgetLines": {b["code"]: b["lines"] for b in BUDGETS},
         "budgetHoursLinesByVersion": {b["code"]: b["hoursLines"] for b in BUDGETS},
+        # E12 · T19 (Q-4) — las inversiones previstas y la dotacion que de ellas
+        # se deriva. La dotacion es una PROPUESTA de lineas `68x`: esta o no
+        # esta en el presupuesto de explotacion segun lo que el usuario
+        # aceptara, y por eso se publica aparte y no sumada en las matrices.
+        "budgetCapexLinesByVersion": {b["code"]: b["capexLines"] for b in BUDGETS},
+        "budgetCapexLines": CAPEX_EFFECTIVE,
+        "capexDepreciation": CAPEX_DEPRECIATION,
         "budgetComposition": {"provenanceByMonth": PROVENANCE, "effectiveLineCount": len(EFFECTIVE_LINES)},
         "budgetHoursLines": BUDGET_HOURS_LINES,
         "budgetDerivation": {"baseDeltaBps": BASE_DELTA_BPS, "rev1DeltaBps": REV1_DELTA_BPS,
@@ -1748,6 +2011,13 @@ def build() -> dict[str, Any]:
         },
 
         "forecast": FORECAST,
+        # E12 · T19 (deuda 12) — el desglose MES A MES de la desviacion. El
+        # acumulado en su sitio puede esconder un mayo catastrofico compensado
+        # por un septiembre irrepetible, y eso no se ve en el total.
+        "varianceByMonthCents": VARIANCE_MONTHLY,
+        # E12 · T19 (Q-6 / D6) — volumen y precio, con el CRUCE AL PRECIO y el
+        # precio como RESIDUO: volumen + precio = total, tolerancia 0.
+        "volumePrice": VOLUME_PRICE,
         "kpis": build_kpis(),
         "absorption": build_absorption(),
         "thresholds": build_thresholds(),
@@ -1777,7 +2047,7 @@ def main() -> int:
         if OUT.read_text(encoding="utf-8") != text:
             print(f"{OUT} difiere de la reconstruccion", file=sys.stderr)
             return 1
-        print("OK: presupuesto-horas-esperado.v1.3.json reproducible byte a byte")
+        print("OK: presupuesto-horas-esperado.v1.4.json reproducible byte a byte")
         return 0
 
     OUT.write_text(text, encoding="utf-8")

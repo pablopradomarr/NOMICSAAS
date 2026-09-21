@@ -12,7 +12,7 @@
  *    de partes inserta **0 filas** y el informe dice por qué.
  *  · **El presupuesto del fixture sellado, entero**: `2026-BASE` + `2026-REV1`
  *    parcial desde julio, sellados, y el informe de desviación con las tres
- *    cifras de cabecera de `presupuesto-horas-esperado.v1.3.json` —INGRESOS −76 400,
+ *    cifras de cabecera de `presupuesto-horas-esperado.v1.4.json` —INGRESOS −76 400,
  *    MC3 +63 350, EBITDA +228 797—. Es el criterio de aceptación del lote: si el
  *    borde compone mal, aquí se ve.
  *  · **`BUDGET_NOT_SEALED`** contra un borrador, y la previsualización del mismo
@@ -119,7 +119,7 @@ type ExpectedLine = {
 }
 type ExpectedHours = { month: string; dimensionKind: string; dimensionCode: string; minutes: number }
 const expected = JSON.parse(
-  readFileSync(path.join(process.cwd(), "docs", "design", "fixtures", "presupuesto-horas-esperado.v1.3.json"), "utf8")
+  readFileSync(path.join(process.cwd(), "docs", "design", "fixtures", "presupuesto-horas-esperado.v1.4.json"), "utf8")
 ) as {
   budgetLines: Record<string, ExpectedLine[]>
   budgetHoursLines: ExpectedHours[]

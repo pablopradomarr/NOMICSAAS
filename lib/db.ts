@@ -158,6 +158,11 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "Budget",
   "BudgetLine",
   "BudgetHoursLine",
+  // E12 · T19 (Q-4, ADR-0018 D2 enmendada) — presupuesto de inversiones. Nace
+  // con `SELECT app.enforce_tenant_rls('budget_capex_lines')` en
+  // `20261001110000_e12_presupuesto_capex`: aquí acota la barrera 1 y, por la
+  // regla E-4, entra sola en el backup, en `reset-org` y en `purgeDerived`.
+  "BudgetCapexLine",
   "TimeEntry",
   "Employee",
   "EmployeeRate",

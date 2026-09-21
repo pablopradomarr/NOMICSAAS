@@ -70,10 +70,18 @@ import { buildBudgetMatrix, settleBudgetMatrix } from "@/lib/budget/matrix"
 import {
   budgetProvenanceByCell,
   buildVariance,
+  buildVolumePrice,
   maxDimensionVariance,
+  monthlyVarianceSeries,
   type BudgetProvenanceContext,
+  type MonthlyVarianceSeries,
   type VarianceCell,
+  type VolumePriceRow,
 } from "@/lib/budget/variance"
+
+/** E12 · T19 — re-exportados para el borde, que importa un solo módulo. */
+export type { MonthlyVarianceSeries, VolumePriceRow } from "@/lib/budget/variance"
+import { capexDepreciationForFiscalYear, capexDepreciationTotal } from "@/lib/budget/capex"
 import { buildForecast } from "@/lib/budget/forecast"
 import { minutesByTarget, unapprovedMinutesByTarget, type HeadcountRow, type TimeEntryRow } from "@/lib/time/aggregate"
 import {
@@ -85,7 +93,7 @@ import {
 import { budgetReviewReasons } from "@/lib/ledger/report-run"
 import { buildAnalyticPnl } from "@/lib/analytics/margins"
 import type { AllocationRuleSpec } from "@/lib/analytics/allocate"
-import type { AnalyticLine, AnalyticsConfig } from "@/lib/analytics/types"
+import type { AnalyticLine, AnalyticsConfig, ColumnKey } from "@/lib/analytics/types"
 import { getAnalyticLines, getAnalyticsConfig } from "@/models/analytics"
 import { EMPTY_RUN_SET_HASH, allocationRunSetHash, analyticsHash as computeAnalyticsHash, marginConfigHash } from "@/lib/analytics/hash"
 import { getEntries, getLinesForPeriod, computeLedgerHash } from "@/models/ledger"
@@ -1832,6 +1840,37 @@ export type BudgetVsActualResult = {
   monthsWithoutBudget: readonly string[]
   openMonths: readonly string[]
   unresolvedBudgetCells: number
+  /**
+   * **E12 · T19 (deuda 12)** — desglose **mes a mes** de la desviación, una
+   * serie por celda `(nivel, columna)` con un punto por mes del periodo.
+   *
+   * Hasta E12, `granularity: MONTH` servía **un solo mes**: pedir enero-a-junio
+   * devolvía el acumulado y la columna mensual no existía. Un total anual en su
+   * sitio puede esconder un mayo catastrófico compensado por un septiembre
+   * irrepetible, y eso no se ve en el acumulado: es lo primero que un CFO abre.
+   *
+   * Vacío cuando la granularidad no es `MONTH`, para no pagar doce matrices en
+   * un informe que no las va a enseñar.
+   */
+  monthlySeries: readonly MonthlyVarianceSeries[]
+  /**
+   * **E12 · T19 (Q-6 / ADR-0018 D6)** — descomposición **volumen / precio** de
+   * los proyectos con base de horas, con el **cruce al precio** y el precio como
+   * **residuo** (Σ exacta, tolerancia 0).
+   */
+  volumePrice: readonly VolumePriceRow[]
+  /**
+   * **E12 · T19 (Q-4)** — dotación de la `68x` que se deriva del presupuesto de
+   * INVERSIONES, mes a mes. Es una **propuesta**: está o no está en las líneas
+   * de explotación según lo que el usuario aceptara, y esta cifra permite ver
+   * la diferencia sin tener que restar a mano.
+   */
+  capexDepreciation: {
+    totalCents: Cents
+    byMonth: Readonly<Record<string, Cents>>
+    /** Cuántas inversiones previstas hay en la versión efectiva. */
+    lines: number
+  }
 }
 
 /**
@@ -2565,6 +2604,80 @@ function buildBudgetVsActual(input: BuildBudgetInput) {
   const monthsInPeriod = months.filter((m) => `${m}-01` >= input.periodStart.slice(0, 8).concat("01") && `${m}-01` <= input.periodEnd)
   const monthsWithoutBudget = monthsInPeriod.filter((m) => input.composition[m] === undefined)
 
+  // ── E12 · T19 (deuda 12) — el desglose MES A MES ──────────────────────────
+  //
+  // `actualByMonth` ya está calculado arriba para el forecast: aquí se
+  // aprovecha y sólo se añade la matriz de PRESUPUESTO de cada mes, que es una
+  // función pura sobre la versión efectiva.
+  //
+  // **La liquidación de estructura NO se reparte por meses.** Es anual por
+  // construcción (§3.2), y trocearla exigiría una regla de reparto temporal que
+  // nadie ha decidido: con imputaciones, las celdas por dimensión de nivel
+  // ≥ MC3 salen `notComparable` en la serie mensual y la pantalla lo dice. Es
+  // la misma honestidad de I-E10-18, aplicada al eje del tiempo.
+  const monthlySeries: MonthlyVarianceSeries[] = []
+  if (input.granularity === "MONTH") {
+    const monthlyCells: VarianceCell[] = []
+    for (const month of monthsInPeriod) {
+      const from = `${month}-01`
+      const to = lastDayOfMonth(month)
+      const monthBudget = buildBudgetMatrix(input.composed.effective, input.config, { from, to })
+      monthlyCells.push(
+        ...buildVariance({
+          actual: { matrixCents: actualByMonth[month] ?? {}, columns: actual.columns },
+          budget: monthBudget,
+          actualAllocationState: input.withAllocations ? "SETTLED" : "NONE",
+          month,
+        })
+      )
+    }
+    monthlySeries.push(...monthlyVarianceSeries(monthlyCells, monthsInPeriod))
+  }
+
+  // ── E12 · T19 (Q-6 / D6) — volumen y precio, con el cruce al PRECIO ───────
+  //
+  // La base de actividad son los **minutos**: presupuestados en
+  // `budget_hours_lines`, reales en los partes aprobados y productivos. Es la
+  // única cantidad que el modelo tiene para un proyecto de servicios, y la
+  // convención (precio como residuo) garantiza que volumen + precio = total con
+  // tolerancia 0 aunque el precio unitario no se almacene.
+  const volumePrice = buildVolumePrice(
+    minutes
+      .filter((m) => m.kind === "PROJECT")
+      .map((m) => {
+        const column: ColumnKey = `PROJ:${m.code}`
+        return {
+          column,
+          level: "INGRESOS" as const,
+          month: null,
+          budgetQuantity: budgetMinutesByCode.get(m.code) ?? 0,
+          actualQuantity: m.minutes,
+          budgetCents: budget.cumulativeCents.INGRESOS?.[column] ?? 0,
+          actualCents: actual.matrixCents.INGRESOS?.[column] ?? 0,
+        }
+      })
+      .filter((r) => r.budgetQuantity !== 0 || r.actualQuantity !== 0 || r.budgetCents !== 0 || r.actualCents !== 0)
+  )
+
+  // ── E12 · T19 (Q-4) — la dotación derivada del presupuesto de INVERSIONES ─
+  const capexCells = (input.composed.effective.capex ?? []).map((c) => ({
+    month: c.month,
+    accountCode: c.accountCode,
+    dimension: c.dimension,
+    amountCents: c.amountCents,
+    residualCents: c.residualCents,
+    method: c.method,
+    usefulLifeMonths: c.usefulLifeMonths,
+    startsAt: c.startsAt,
+  }))
+  const capexDotations = capexDepreciationForFiscalYear(
+    capexCells,
+    input.fiscalYearStart,
+    input.fiscalYearEnd
+  )
+  const capexByMonth: Record<string, Cents> = {}
+  for (const dot of capexDotations) capexByMonth[dot.month] = (capexByMonth[dot.month] ?? 0) + dot.amountCents
+
   const result: BudgetVsActualResult = {
     granularity: input.granularity,
     withAllocations: input.withAllocations,
@@ -2578,6 +2691,13 @@ function buildBudgetVsActual(input: BuildBudgetInput) {
     monthsWithoutBudget,
     openMonths: openMonthsOf(monthsInPeriod, input.cutoffMonth),
     unresolvedBudgetCells: budget.unresolved.length,
+    monthlySeries,
+    volumePrice,
+    capexDepreciation: {
+      totalCents: capexDepreciationTotal(capexDotations),
+      byMonth: capexByMonth,
+      lines: capexCells.length,
+    },
   }
 
   // KPI de desviación a total compañía. La «base» de la comparación NO es un

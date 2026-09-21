@@ -3,7 +3,7 @@
  * `settleBudgetMatrix` (O-E10-4).
  *
  * Criterios 3, 27 y 27-bis de §12, byte a byte contra
- * `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json`.
+ * `docs/design/fixtures/presupuesto-horas-esperado.v1.4.json`.
  */
 
 import { describe, expect, it } from "vitest"
@@ -15,10 +15,14 @@ import { buildBudgetMatrix, settleBudgetMatrix, settlementLadder } from "@/lib/b
 import {
   budgetCellProvenance,
   buildVariance,
+  buildVolumePrice,
   isDimensionColumn,
   maxDimensionVariance,
+  monthlyVarianceSeries,
   varianceBps,
   varianceCoverage,
+  volumePriceSplit,
+  worstMonth,
   type VarianceCell,
 } from "@/lib/budget/variance"
 import {
@@ -492,5 +496,193 @@ describe("H-7 · provenance por celda del PRESUPUESTO_REAL (§5.1)", () => {
     )
     expect(p.confianza).toBe("no_comparable")
     expect(p.valor).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T19 — Q-6 / ADR-0018 D6: volumen y precio, con el cruce AL PRECIO
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("volumePriceSplit (Q-6, convención congelada en D6)", () => {
+  it("el ejemplo literal de la validación de controlling", () => {
+    // Presupuesto 1.000 h y 6.000.000 c (6.000 c/h); real 1.100 h y 6.930.000 c.
+    const out = volumePriceSplit({
+      budgetQuantity: 1_000,
+      actualQuantity: 1_100,
+      budgetCents: 6_000_000,
+      actualCents: 6_930_000,
+    })
+    expect(out.totalCents).toBe(930_000)
+    expect(out.volumeCents).toBe(600_000)
+    expect(out.priceCents).toBe(330_000)
+    // Comprobación del documento: (6.300 − 6.000) × 1.100 = 330.000 ✔
+    expect(out.volumeCents + out.priceCents).toBe(out.totalCents)
+  })
+
+  it("el cruce va al PRECIO: el volumen se mide al precio del PLAN", () => {
+    // Sólo cambia la cantidad: todo el efecto es volumen y el precio es 0.
+    const out = volumePriceSplit({
+      budgetQuantity: 1_000,
+      actualQuantity: 1_200,
+      budgetCents: 6_000_000,
+      actualCents: 7_200_000,
+    })
+    expect(out.volumeCents).toBe(1_200_000)
+    expect(out.priceCents).toBe(0)
+  })
+
+  it("sólo cambia el precio: todo el efecto es precio", () => {
+    const out = volumePriceSplit({
+      budgetQuantity: 1_000,
+      actualQuantity: 1_000,
+      budgetCents: 6_000_000,
+      actualCents: 6_500_000,
+    })
+    expect(out.volumeCents).toBe(0)
+    expect(out.priceCents).toBe(500_000)
+  })
+
+  it("la suma es EXACTA aunque la división no lo sea (el precio es residuo)", () => {
+    const out = volumePriceSplit({
+      budgetQuantity: 777,
+      actualQuantity: 1_013,
+      budgetCents: 4_444_441,
+      actualCents: 5_555_557,
+    })
+    expect(out.volumeCents + out.priceCents).toBe(out.totalCents)
+  })
+
+  it("con `Q_p = 0` todo es volumen, y se DICE (no se inventa un precio de plan)", () => {
+    const out = volumePriceSplit({
+      budgetQuantity: 0,
+      actualQuantity: 500,
+      budgetCents: 0,
+      actualCents: 3_000_000,
+    })
+    expect(out.allVolume).toBe(true)
+    expect(out.volumeCents).toBe(3_000_000)
+    expect(out.priceCents).toBe(0)
+  })
+
+  it("sin cantidades en ninguno de los dos lados, la descomposición NO se publica", () => {
+    const out = volumePriceSplit({ budgetQuantity: 0, actualQuantity: 0, budgetCents: 100, actualCents: 250 })
+    expect(out.notMeasurable).toBe(true)
+    expect(out.totalCents).toBe(150)
+    expect(out.volumeCents).toBe(0)
+    expect(out.priceCents).toBe(0)
+  })
+
+  it("importes NEGATIVOS (un gasto, con el signo de aporte de D2) siguen sumando exacto", () => {
+    const out = volumePriceSplit({
+      budgetQuantity: 1_000,
+      actualQuantity: 1_100,
+      budgetCents: -6_000_000,
+      actualCents: -6_930_000,
+    })
+    expect(out.totalCents).toBe(-930_000)
+    // La división se TRUNCA hacia cero, no hacia −∞: el efecto volumen de un
+    // gasto no se sesga sistemáticamente al lado desfavorable.
+    expect(out.volumeCents).toBe(-600_000)
+    expect(out.priceCents).toBe(-330_000)
+    expect(out.volumeCents + out.priceCents).toBe(out.totalCents)
+  })
+
+  it("una caída de actividad da volumen NEGATIVO", () => {
+    const out = volumePriceSplit({
+      budgetQuantity: 1_000,
+      actualQuantity: 800,
+      budgetCents: 6_000_000,
+      actualCents: 5_000_000,
+    })
+    expect(out.volumeCents).toBe(-1_200_000)
+    expect(out.priceCents).toBe(200_000)
+    expect(out.volumeCents + out.priceCents).toBe(-1_000_000)
+  })
+})
+
+describe("buildVolumePrice — y la comprobación de que suma", () => {
+  it("compone las filas y conserva la identidad de la celda", () => {
+    const rows = buildVolumePrice([
+      {
+        column: "PROJ:P-01",
+        level: "INGRESOS",
+        month: null,
+        budgetQuantity: 1_000,
+        actualQuantity: 1_100,
+        budgetCents: 6_000_000,
+        actualCents: 6_930_000,
+      },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.column).toBe("PROJ:P-01")
+    expect(rows[0]!.split.priceCents).toBe(330_000)
+  })
+
+  it("caso vacío: ni una fila", () => {
+    expect(buildVolumePrice([])).toEqual([])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T19 — desglose MES A MES (deuda 12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("monthlyVarianceSeries — el desglose mes a mes", () => {
+  const cell = (month: string, actual: number, budget: number | null): VarianceCell => ({
+    level: "MC3",
+    column: "PROJ:P-01",
+    month,
+    actualCents: actual,
+    budgetCents: budget,
+    varianceCents: budget === null ? null : actual - budget,
+    varianceBps: null,
+    forecastCents: null,
+    notComparable: budget === null,
+  })
+
+  it("un punto por mes del periodo, y la Σ es el acumulado", () => {
+    const series = monthlyVarianceSeries(
+      [cell("2026-01", 100, 90), cell("2026-02", 200, 210), cell("2026-03", 50, 50)],
+      ["2026-01", "2026-02", "2026-03"]
+    )
+    expect(series).toHaveLength(1)
+    expect(series[0]!.points.map((p) => p.month)).toEqual(["2026-01", "2026-02", "2026-03"])
+    expect(series[0]!.totalActualCents).toBe(350)
+    expect(series[0]!.totalBudgetCents).toBe(350)
+    expect(series[0]!.totalVarianceCents).toBe(0)
+  })
+
+  it("un mes SIN movimiento sale a 0 y NO se omite: un hueco se leería como «no hubo datos»", () => {
+    const series = monthlyVarianceSeries([cell("2026-01", 100, 90)], ["2026-01", "2026-02"])
+    expect(series[0]!.points).toHaveLength(2)
+    expect(series[0]!.points[1]).toMatchObject({ month: "2026-02", actualCents: 0, budgetCents: 0, varianceCents: 0 })
+  })
+
+  it("el acumulado en su sitio puede esconder dos meses que se compensan, y `worstMonth` lo saca", () => {
+    const series = monthlyVarianceSeries(
+      [cell("2026-05", 0, 900_000), cell("2026-09", 1_800_000, 900_000)],
+      ["2026-05", "2026-09"]
+    )
+    expect(series[0]!.totalVarianceCents).toBe(0)
+    const peor = worstMonth(series[0]!)
+    expect(peor?.month).toBe("2026-05")
+    expect(peor?.varianceCents).toBe(-900_000)
+  })
+
+  it("un mes no comparable deja el total sin presupuesto y lo DICE", () => {
+    const series = monthlyVarianceSeries([cell("2026-01", 100, 90), cell("2026-02", 200, null)], ["2026-01", "2026-02"])
+    expect(series[0]!.totalBudgetCents).toBeNull()
+    expect(series[0]!.totalVarianceCents).toBeNull()
+    expect(series[0]!.anyNotComparable).toBe(true)
+  })
+
+  it("las celdas ACUMULADAS (`month: null`) se ignoran: no son de la serie", () => {
+    const acumulada: VarianceCell = { ...cell("2026-01", 100, 90), month: null }
+    expect(monthlyVarianceSeries([acumulada], ["2026-01"])).toEqual([])
+  })
+
+  it("caso vacío", () => {
+    expect(monthlyVarianceSeries([], ["2026-01"])).toEqual([])
+    expect(worstMonth({ level: "MC3", column: "PROJ:P-01", points: [], totalActualCents: 0, totalBudgetCents: 0, totalVarianceCents: 0, anyNotComparable: false })).toBeNull()
   })
 })

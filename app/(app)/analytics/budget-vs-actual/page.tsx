@@ -4,6 +4,8 @@ import {
 } from "@/app/(app)/analytics/budget-vs-actual/actions"
 import { columnLabel, compositionSummary, monthShort, sortColumns } from "@/app/(app)/analytics/budget-vs-actual/shared"
 import { VarianceMatrix, type VarianceRow } from "@/app/(app)/analytics/budget-vs-actual/variance-matrix"
+import { MonthlyBreakdown } from "@/components/budget/monthly-breakdown"
+import { VolumePriceTable } from "@/components/budget/volume-price"
 import { defaultPeriod } from "@/app/(app)/ledger/shared"
 import { sealViewOf } from "@/app/(app)/reports/shared"
 import { MARGIN_LEVEL_LABELS } from "@/components/analytics/types"
@@ -340,6 +342,60 @@ export default tenantPage<SearchParamsProps>(
           notSettleableReason={result.notSettleableReason}
           currency={org.baseCurrency}
         />
+
+        {/* E12 · T19 (deuda 12) — el desglose MES A MES. Sólo con granularidad
+            de mes: componer doce matrices que nadie va a enseñar no sale
+            gratis, y el informe lo dice en vez de enseñar una tabla vacía. */}
+        <MonthlyBreakdown
+          series={result.monthlySeries as never}
+          levelLabels={MARGIN_LEVEL_LABELS}
+        />
+
+        {/* E12 · T19 (Q-6 / D6) — volumen y precio, con el cruce al precio. */}
+        <VolumePriceTable rows={result.volumePrice as never} />
+
+        {/* E12 · T19 (Q-4) — la dotación que se deriva del presupuesto de
+            INVERSIONES. Se enseña APARTE y no sumada en la matriz porque es una
+            PROPUESTA: está o no está en las líneas de explotación según lo que
+            el usuario aceptara, y esta cifra permite ver la diferencia sin
+            tener que restarla a mano. */}
+        {result.capexDepreciation.lines > 0 && (
+          <section className="space-y-2" data-testid="capex-block">
+            <h2 className="text-sm font-semibold tracking-tight">
+              Presupuesto de inversiones · dotación derivada
+            </h2>
+            <p className="max-w-3xl text-xs text-muted-foreground">
+              {result.capexDepreciation.lines} alta(s) prevista(s) en la versión efectiva. Su dotación de{" "}
+              <strong>
+                <AmountPlain cents={-result.capexDepreciation.totalCents} zeroAsDash={false} />
+              </strong>{" "}
+              en el ejercicio es una <strong>propuesta</strong> de líneas <code>68x</code>: entra en el EBIT
+              presupuestado sólo si se aceptó en la hoja. El CAPEX <strong>sí</strong> está dentro del{" "}
+              <code>budgetHash</code> (ADR-0018 D2 enmendada): una inversión prevista cambia el EBIT, y un sello que
+              no la cubriera dejaría fuera una cifra que mueve el informe.
+            </p>
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Mes</th>
+                    <th className="px-3 py-2 text-right font-medium">Dotación derivada</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {Object.entries(result.capexDepreciation.byMonth).map(([month, cents]) => (
+                    <tr key={month} className="h-8" data-capex-month={month}>
+                      <td className="px-3 py-1">{monthShort(month)}</td>
+                      <td className="px-3 py-1 text-right tabular-nums">
+                        <AmountPlain cents={-cents} zeroAsDash={false} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         {forecast?.levelTotalsCents && (
           <section className="space-y-2" data-testid="forecast-block">

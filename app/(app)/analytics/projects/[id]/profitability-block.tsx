@@ -1,7 +1,7 @@
 import { AmountPlain } from "@/components/ledger/amount"
 import { ConfidenceBadge } from "@/components/ui/confidence-badge"
 import type { AbsorptionReport } from "@/lib/time/cost"
-import type { BudgetProfitabilityRow } from "@/models/reports"
+import type { BudgetProfitabilityRow, VolumePriceRow } from "@/models/reports"
 import Link from "next/link"
 
 /**
@@ -63,12 +63,15 @@ const ABSORPTION_LABELS: Record<string, string> = {
 export function ProfitabilityBlock({
   row,
   absorption,
+  volumePrice,
   currency,
   sealed,
   unavailableReason,
 }: {
   row: BudgetProfitabilityRow | null
   absorption: AbsorptionReport | null
+  /** **E12 · T19 (Q-6)** — la descomposición de este proyecto, si la hay. */
+  volumePrice?: VolumePriceRow | null
   currency: string
   sealed: boolean
   /** Por qué no hay bloque: sin informe, sin presupuesto sellado, sin horas. */
@@ -170,6 +173,43 @@ export function ProfitabilityBlock({
           </tbody>
         </table>
       </div>
+
+      {/* E12 · T19 (Q-6 / D6) — volumen y precio del MISMO informe. Es la
+          cifra que un comité mira al lado del margen por hora: cuánto de la
+          desviación es «hemos hecho más o menos» y cuánto «hemos cobrado
+          distinto». Las dos suman el total, exacto. */}
+      {volumePrice && !volumePrice.split.notMeasurable && (
+        <div className="space-y-2" data-testid="project-volume-price">
+          <h3 className="text-sm font-semibold tracking-tight">Volumen y precio · ingresos</h3>
+          <p className="text-sm">
+            Δ volumen{" "}
+            <strong>
+              <AmountPlain cents={volumePrice.split.volumeCents} zeroAsDash={false} /> {currency}
+            </strong>{" "}
+            + Δ precio{" "}
+            <strong>
+              <AmountPlain cents={volumePrice.split.priceCents} zeroAsDash={false} /> {currency}
+            </strong>{" "}
+            = Δ total{" "}
+            <strong>
+              <AmountPlain cents={volumePrice.split.totalCents} zeroAsDash={false} /> {currency}
+            </strong>
+            .
+          </p>
+          <p className="text-xs text-muted-foreground">
+            El volumen se mide <strong>al precio del plan</strong> —es lo que controla producción— y el precio, sobre
+            la actividad realmente ejecutada: el término cruzado va al precio (Q-6 / ADR-0018 D6). El precio sale como
+            residuo, de modo que las dos cifras suman el total con tolerancia 0.
+            {volumePrice.split.allVolume && (
+              <>
+                {" "}
+                <strong>Sin horas presupuestadas</strong> no hay precio de plan con el que comparar: todo el efecto se
+                atribuye al volumen, y se dice en vez de repartirlo a ojo.
+              </>
+            )}
+          </p>
+        </div>
+      )}
 
       {absorption && (
         <div className="space-y-2" data-testid="absorption-block">

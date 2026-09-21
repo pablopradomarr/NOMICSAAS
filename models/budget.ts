@@ -48,9 +48,11 @@ import {
   type ComposedBudget,
   type SignCheck,
 } from "@/lib/budget/hash"
+import { DEFAULT_DEPRECIATION_ACCOUNT, capexDepreciationForFiscalYear } from "@/lib/budget/capex"
 import {
   fiscalYearMonths,
   monthKey,
+  type BudgetCapexCellRef,
   type BudgetCell,
   type BudgetDimension,
   type BudgetHoursCell,
@@ -88,11 +90,21 @@ export type BudgetSeals = {
   sealedAt: string | null
 }
 
-export type StoredBudgetVersion = Omit<BudgetVersion, "cells" | "hours"> & {
+export type StoredBudgetVersion = Omit<BudgetVersion, "cells" | "hours" | "capex"> & {
   seals: BudgetSeals
   cells: readonly BudgetCellRow[]
   hours: readonly BudgetHoursRow[]
+  /**
+   * **E12 · T19 (Q-4)** — inversiones previstas, con el id de su fila para que
+   * el editor pueda distinguir «retirar la inversión» de «ponerla a cero».
+   * Mismo criterio que `BudgetCellRow`: el id es dato de persistencia y el
+   * `budgetHash` no lo mira.
+   */
+  capex: readonly BudgetCapexRow[]
 }
+
+/** Una inversión prevista tal como se guarda (`budget_capex_lines`). */
+export type BudgetCapexRow = BudgetCapexCellRef & { id: string }
 
 /**
  * **La celda de importe TAL COMO SE GUARDA: con el id de su `BudgetLine`.**
@@ -318,6 +330,15 @@ export async function getBudgetVersion(
     },
     orderBy: [{ month: "asc" }, { id: "asc" }],
   })
+  // E12 · T19 (Q-4): las inversiones previstas. Van SIEMPRE completas, sin
+  // paginar: son pocas por naturaleza —una organización no planifica cien
+  // altas al año— y entran en el `budgetHash`, así que servirlas a medias
+  // produciría un sello distinto según la página que se estuviera mirando.
+  const capex = await tx.budgetCapexLine.findMany({
+    where: { budgetId },
+    include: { project: { select: { code: true } }, costCenter: { select: { code: true } } },
+    orderBy: [{ month: "asc" }, { accountCode: "asc" }, { id: "asc" }],
+  })
 
   return {
     id: header.id,
@@ -364,6 +385,20 @@ export async function getBudgetVersion(
       employeeCode: h.employee?.code ?? null,
       employeeId: h.employeeId,
       minutes: h.minutes,
+    })),
+    capex: capex.map((c) => ({
+      id: c.id,
+      month: fromUtcDate(c.month),
+      accountCode: c.accountCode,
+      dimension:
+        c.projectId !== null
+          ? { kind: "PROJECT" as const, id: c.projectId, code: c.project?.code ?? "?", businessLineCode: null }
+          : { kind: "COST_CENTER" as const, id: c.costCenterId ?? "?", code: c.costCenter?.code ?? "?" },
+      amountCents: c.amountCents,
+      residualCents: c.residualCents,
+      method: c.method === "SUMA_DIGITOS" ? ("SUMA_DIGITOS" as const) : ("LINEAL" as const),
+      usefulLifeMonths: c.usefulLifeMonths,
+      startsAt: c.startsAt === "MES_SIGUIENTE" ? ("MES_SIGUIENTE" as const) : ("MES_DE_ALTA" as const),
     })),
   }
 }
@@ -1177,7 +1212,12 @@ export type DepreciationBudgetLine = {
   projectId: string | null
   costCenterId: string | null
   amountCents: Cents
-  assetId: string
+  /**
+   * `null` cuando la línea NO viene de un activo en alta sino de una **inversión
+   * prevista** (E12 · T19): ahí todavía no hay `FixedAsset` que referenciar, y
+   * fingir uno sería afirmar que la compra ya ocurrió.
+   */
+  assetId: string | null
   assetCode: string
   /** Los términos, para que la cifra se pueda rehacer a mano. */
   terms: { baseCents: Cents; method: string; remainingMonths: number; inServiceDate: LocalDate }
@@ -1200,7 +1240,7 @@ export type DepreciationBudgetProposal = {
  */
 export async function proposeDepreciationBudget(
   tx: TenantTransactionClient,
-  input: { fiscalYearId: string }
+  input: { fiscalYearId: string; budgetId?: string }
 ): Promise<DepreciationBudgetProposal> {
   const fiscalYear = await tx.fiscalYear.findFirst({
     where: { id: input.fiscalYearId },
@@ -1275,5 +1315,155 @@ export async function proposeDepreciationBudget(
     }
   }
 
+  // ── E12 · T19 (Q-4, segundo tramo) — lo que TODAVÍA no se ha comprado ─────
+  //
+  // «La mayor parte de esa cifra ya es determinista» decía Q-4, y el bucle de
+  // arriba la trae. Lo que faltaba es el otro sumando: las **altas previstas**
+  // del presupuesto de inversiones. Una inversión en abril cambia el EBIT de
+  // mayo a diciembre, y hasta hoy ese efecto había que teclearlo a mano en la
+  // línea que separa EBITDA de EBIT — que es donde un error de seis cifras no
+  // se ve.
+  //
+  // **Sigue siendo una propuesta.** Que la cifra sea determinista no la
+  // convierte en un hecho: el hecho es la compra, y la compra no ha ocurrido.
+  if (input.budgetId) {
+    const capexRows = await tx.budgetCapexLine.findMany({
+      where: { budgetId: input.budgetId },
+      orderBy: [{ month: "asc" }, { accountCode: "asc" }, { id: "asc" }],
+    })
+    const dotations = capexDepreciationForFiscalYear(
+      capexRows.map((c) => ({
+        month: fromUtcDate(c.month),
+        accountCode: c.accountCode,
+        dimension:
+          c.projectId !== null
+            ? { kind: "PROJECT" as const, id: c.projectId, code: c.projectId, businessLineCode: null }
+            : { kind: "COST_CENTER" as const, id: c.costCenterId ?? "", code: c.costCenterId ?? "" },
+        amountCents: c.amountCents,
+        residualCents: c.residualCents,
+        method: c.method === "SUMA_DIGITOS" ? ("SUMA_DIGITOS" as const) : ("LINEAL" as const),
+        usefulLifeMonths: c.usefulLifeMonths,
+        startsAt: c.startsAt === "MES_SIGUIENTE" ? ("MES_SIGUIENTE" as const) : ("MES_DE_ALTA" as const),
+      })),
+      from,
+      to
+    )
+    for (const dot of dotations) {
+      const amountCents = -dot.amountCents
+      if (amountCents === 0) continue
+      const source = capexRows.find(
+        (c) => (c.projectId ?? c.costCenterId ?? "") === dot.dimension.id
+      )
+      lines.push({
+        month: `${dot.month}-01`,
+        accountCode: DEFAULT_DEPRECIATION_ACCOUNT,
+        projectId: source?.projectId ?? null,
+        costCenterId: source?.costCenterId ?? null,
+        amountCents,
+        assetId: null,
+        assetCode: `CAPEX:${source?.accountCode ?? "?"}`,
+        terms: {
+          baseCents: (source?.amountCents ?? 0) - (source?.residualCents ?? 0),
+          method: source?.method ?? "LINEAL",
+          remainingMonths: source?.usefulLifeMonths ?? 0,
+          inServiceDate: source ? fromUtcDate(source.month) : from,
+        },
+      })
+      totalCents += amountCents
+    }
+  }
+
   return { fiscalYearId: input.fiscalYearId, lines, totalCents, skipped }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T19 — CRUD del presupuesto de INVERSIONES (Q-4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type BudgetCapexInput = {
+  month: LocalDate
+  accountCode: string
+  projectId?: string | null
+  costCenterId?: string | null
+  amountCents: Cents
+  residualCents?: Cents
+  method?: "LINEAL" | "SUMA_DIGITOS"
+  usefulLifeMonths: number
+  startsAt?: "MES_DE_ALTA" | "MES_SIGUIENTE"
+  description?: string | null
+}
+
+/**
+ * Sustituye **todas** las inversiones de una versión en `BORRADOR`.
+ *
+ * Reemplazo completo y no `upsert` fila a fila: una inversión no tiene clave
+ * natural —la misma cuenta, el mismo mes y la misma dimensión pueden ser dos
+ * altas distintas—, así que buscar «la que ya estaba» sería adivinar. Y como
+ * son pocas por naturaleza, reescribirlas cuesta nada.
+ *
+ * Las validaciones de forma se hacen aquí para poder dar un mensaje en español;
+ * la base las vuelve a hacer con sus CHECK, que son la barrera de verdad.
+ */
+export async function replaceBudgetCapexTx(
+  tx: TenantTransactionClient,
+  input: { budgetId: string; rows: readonly BudgetCapexInput[] },
+  actor: Actor
+): Promise<{ written: number; deleted: number }> {
+  const budget = await assertDraft(tx, input.budgetId)
+
+  for (const row of input.rows) {
+    if (!row.accountCode.startsWith("2")) {
+      e10Abort(
+        "BUDGET_DIMENSION",
+        "accountCode",
+        `«${row.accountCode}» no es del grupo 2: el presupuesto de inversiones es de BALANCE, no de explotación (Q-4)`
+      )
+    }
+    if ((row.projectId == null) === (row.costCenterId == null)) {
+      e10Abort("BUDGET_DIMENSION", "projectId", "una inversión va a UN proyecto o a UN centro de coste (O-A6)")
+    }
+    if (!Number.isInteger(row.amountCents) || row.amountCents <= 0) {
+      e10Abort("BUDGET_DIMENSION", "amountCents", "el importe de una inversión es un entero positivo: un activo que entra no es un gasto")
+    }
+    const residual = row.residualCents ?? 0
+    if (!Number.isInteger(residual) || residual < 0 || residual >= row.amountCents) {
+      e10Abort("BUDGET_DIMENSION", "residualCents", "el valor residual va de 0 (inclusive) al importe (exclusive)")
+    }
+    if (!Number.isInteger(row.usefulLifeMonths) || row.usefulLifeMonths < 1 || row.usefulLifeMonths > 1200) {
+      e10Abort("BUDGET_DIMENSION", "usefulLifeMonths", "la vida útil va de 1 a 1200 meses")
+    }
+  }
+
+  const deleted = (await tx.budgetCapexLine.deleteMany({ where: { budgetId: budget.id } })).count
+  let written = 0
+  if (input.rows.length > 0) {
+    const created = await tx.budgetCapexLine.createMany({
+      data: input.rows.map((row) => ({
+        organizationId: tx.$organizationId,
+        budgetId: budget.id,
+        month: toUtcDate(row.month),
+        accountCode: row.accountCode,
+        projectId: row.projectId ?? null,
+        costCenterId: row.costCenterId ?? null,
+        amountCents: row.amountCents,
+        residualCents: row.residualCents ?? 0,
+        method: row.method ?? "LINEAL",
+        usefulLifeMonths: row.usefulLifeMonths,
+        startsAt: row.startsAt ?? "MES_DE_ALTA",
+        description: row.description ?? null,
+      })),
+    })
+    written = created.count
+  }
+
+  await writeAuditLog(tx, {
+    entity: "Budget",
+    entityId: budget.id,
+    action: "update",
+    before: { capexLines: deleted },
+    after: { label: budget.label, capexLines: written },
+    reason: "presupuesto de inversiones (E12 · T19, Q-4)",
+    userId: actor.userId,
+  })
+  return { written, deleted }
 }

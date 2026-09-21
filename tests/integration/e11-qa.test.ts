@@ -204,7 +204,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E11 · QA adversarial", () => {
     async () => {
       const fs = await import("node:fs")
       const { BACKUP_TENANT_MODELS, prismaSchemaMeta } = await import("@/lib/db")
-      const { E11_RESET_TABLES, RESET_ORG_PRESERVED } = await import("@/scripts/load-fixture")
+      const { E11_RESET_TABLES, E12_RESET_TABLES, RESET_ORG_PRESERVED } = await import("@/scripts/load-fixture")
 
       const meta = prismaSchemaMeta()
       const tablasDeTenant = [...BACKUP_TENANT_MODELS]
@@ -218,6 +218,7 @@ describe.skipIf(!TEST_DATABASE_URL)("E11 · QA adversarial", () => {
         ...[...source.matchAll(/DELETE FROM (\w+) WHERE organization_id/g)].map((m) => m[1]),
         ...[...source.matchAll(/^\s+"(\w+)",$/gm)].map((m) => m[1]),
         ...E11_RESET_TABLES,
+        ...E12_RESET_TABLES,
       ])
       const preservadas = new Set(RESET_ORG_PRESERVED.map((row) => row.table))
 

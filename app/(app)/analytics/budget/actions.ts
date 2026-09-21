@@ -29,6 +29,7 @@ import {
   deleteBudgetCellsSchema,
   importBudgetCsvSchema,
   proposeDepreciationBudgetSchema,
+  replaceBudgetCapexSchema,
   sealBudgetSchema,
   supersedeBudgetSchema,
   upsertBudgetCellsSchema,
@@ -51,6 +52,7 @@ import {
   importBudgetCsvTx,
   listBudgets,
   proposeDepreciationBudget,
+  replaceBudgetCapexTx,
   resolveBudgetMarginLevel,
   sealBudgetTx,
   supersedeBudgetTx,
@@ -392,6 +394,25 @@ export const proposeDepreciationBudgetAction = withOrg(
       async (tx) => proposeDepreciationBudget(tx, parsed.data),
       { readOnly: true }
     )
+    return toActionState(result)
+  }
+)
+
+/**
+ * **E12 · T19 (Q-4)** — sustituye el presupuesto de INVERSIONES de un borrador.
+ *
+ * `EDITOR`, como el resto de la hoja: presupuestar es operación. Quien decide
+ * cuál rige sigue siendo el `ADMIN`, al sellar.
+ */
+export const replaceBudgetCapexAction = withOrg(
+  Role.EDITOR,
+  async ({ org, user }, input: unknown): Promise<ActionState<{ written: number; deleted: number }>> => {
+    const parsed = replaceBudgetCapexSchema.safeParse(input)
+    if (!parsed.success) return invalid(parsed.error)
+    const result = await runLedgerTransaction(org.id, user.id, async (tx) =>
+      replaceBudgetCapexTx(tx, parsed.data, { userId: user.id })
+    )
+    if (result.ok) revalidatePath(BUDGET_PATH)
     return toActionState(result)
   }
 )

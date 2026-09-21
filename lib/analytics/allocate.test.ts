@@ -890,13 +890,13 @@ describe("liquidación del fixture completo (2026)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // E10 · T9 — los dos drivers de actividad, contra el fixture sellado de T10
 //
-// `docs/design/fixtures/presupuesto-horas-esperado.v1.3.json` es el contrato de
+// `docs/design/fixtures/presupuesto-horas-esperado.v1.4.json` es el contrato de
 // cifras congelado (ADR-0018 D6): estos tests reproducen su bloque
 // `allocation.real` —runs, líneas y avisos— **byte a byte** desde el motor. Si
 // una coma se mueve, el test cae, que es exactamente lo que debe pasar.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const E10_PATH = path.join(process.cwd(), "docs", "design", "fixtures", "presupuesto-horas-esperado.v1.3.json")
+const E10_PATH = path.join(process.cwd(), "docs", "design", "fixtures", "presupuesto-horas-esperado.v1.4.json")
 
 type E10Fixture = {
   timeEntries: {

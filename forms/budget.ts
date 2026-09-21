@@ -209,7 +209,60 @@ export const importBudgetCsvSchema = z
 // Amortización presupuestada (Q-4) e informe
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const proposeDepreciationBudgetSchema = z.object({ fiscalYearId: uuidSchema }).strict()
+export const proposeDepreciationBudgetSchema = z
+  .object({
+    fiscalYearId: uuidSchema,
+    /**
+     * **E12 · T19 (Q-4, segundo tramo)** — con la versión en la mano, la
+     * propuesta suma también la dotación de las **altas previstas**
+     * (`budget_capex_lines`), no sólo la de los activos ya en alta. Opcional
+     * para no romper al llamante de E10.
+     */
+    budgetId: uuidSchema.optional(),
+  })
+  .strict()
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T19 — presupuesto de INVERSIONES (Q-4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Una inversión prevista. El **grupo 2 y nada más**: es el espejo del CHECK
+ * `budget_lines_pnl_only`, que allí prohíbe el balance y aquí lo exige. Si esto
+ * admitiera una `6xx`, la tabla sería un cajón y el presupuesto de inversiones
+ * dejaría de significar algo.
+ */
+export const budgetCapexSchema = z
+  .object({
+    month: localDateSchema,
+    accountCode: z
+      .string()
+      .trim()
+      .min(1)
+      .max(20)
+      .regex(/^2/, "el presupuesto de inversiones es del grupo 2: una cuenta de explotación no cabe aquí (Q-4)"),
+    projectId: uuidSchema.nullish(),
+    costCenterId: uuidSchema.nullish(),
+    amountCents: z.number().int().positive("un activo que entra no es un gasto: el importe es positivo"),
+    residualCents: z.number().int().min(0).optional(),
+    method: z.enum(["LINEAL", "SUMA_DIGITOS"]).optional(),
+    usefulLifeMonths: z.number().int().min(1).max(1200),
+    startsAt: z.enum(["MES_DE_ALTA", "MES_SIGUIENTE"]).optional(),
+    description: z.string().trim().max(255).nullish(),
+  })
+  .strict()
+  .refine((row) => (row.projectId == null) !== (row.costCenterId == null), {
+    message: "una inversión va a UN proyecto o a UN centro de coste, nunca a los dos ni a ninguno (O-A6)",
+    path: ["projectId"],
+  })
+  .refine((row) => (row.residualCents ?? 0) < row.amountCents, {
+    message: "el valor residual tiene que ser menor que el importe: si no, no hay nada que amortizar",
+    path: ["residualCents"],
+  })
+
+export const replaceBudgetCapexSchema = z
+  .object({ budgetId: uuidSchema, rows: z.array(budgetCapexSchema).max(500) })
+  .strict()
 
 export const budgetGranularitySchema = z.enum(["MONTH", "QUARTER", "YEAR", "YTD"])
 

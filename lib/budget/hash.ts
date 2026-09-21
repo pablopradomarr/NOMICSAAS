@@ -11,6 +11,7 @@ import { createHash } from "node:crypto"
 
 import type {
   AnalyticType,
+  BudgetCapexCellRef,
   BudgetCell,
   BudgetHoursCell,
   BudgetVersion,
@@ -47,6 +48,35 @@ export const canonicalHoursRow = (cell: BudgetHoursCell): string =>
 const HOURS_SEPARATOR = "∅HORAS"
 
 /**
+ * **E12 · T19** — separa el bloque de CAPEX (ADR-0018 **D2 ENMENDADA** el
+ * 2026-09-15). Va DESPUÉS del de horas y sólo se emite **si hay inversiones**:
+ * así una versión sin CAPEX produce byte a byte la misma forma canónica que en
+ * E10, las fixtures v1.0–v1.3 siguen congeladas y ninguna versión ya sellada
+ * cambia de hash. Añadir un bloque vacío habría reversionado el sello de todo
+ * presupuesto existente sin que ninguna cifra se moviera — la peor clase de
+ * cambio.
+ */
+const CAPEX_SEPARATOR = "∅CAPEX"
+
+/**
+ * Una fila canónica de inversión prevista. Mismo criterio que las otras dos:
+ * **claves naturales y valores inmutables**, nunca ids de fila ni timestamps
+ * (regla E-5 de la propuesta v1.1).
+ */
+export const canonicalCapexRow = (cell: BudgetCapexCellRef): string =>
+  [
+    cell.month,
+    cell.dimension.kind,
+    cell.dimension.code,
+    cell.accountCode,
+    String(cell.amountCents),
+    String(cell.residualCents),
+    cell.method,
+    String(cell.usefulLifeMonths),
+    cell.startsAt,
+  ].join("\t")
+
+/**
  * Forma canónica de una versión: cabecera con su identidad y el sello de la
  * configuración de márgenes, una fila por celda de importe **con su
  * `marginLevel` congelado** (O-E10-7) y una fila por celda de horas **en
@@ -73,6 +103,16 @@ const HOURS_SEPARATOR = "∅HORAS"
  * alimentan `settleBudgetMatrix`, es decir la columna de presupuesto de MC3 por
  * dimensión. Sin ellas el sello no atestiguaba la base con la que se repartió y
  * un cambio de horas en una versión sellada era invisible para I-E10-6.
+ *
+ * ── E12 · T19 · ADR-0018 D2 ENMENDADA (2026-09-15) ───────────────────────────
+ *
+ * **Las líneas de CAPEX también entran.** Una inversión prevista cambia la
+ * dotación de la `68x` y con ella el EBIT presupuestado; un sello que no la
+ * cubriera dejaría fuera del hash una cifra que sí mueve el informe. El bloque
+ * se emite **sólo si hay inversiones**, de modo que se **amplía el conjunto
+ * sellado y no su forma canónica**: los presupuestos de E10 siguen sellando
+ * exactamente el mismo hash y las fixtures v1.0–v1.3 quedan congeladas como
+ * evidencia.
  */
 export function canonicalBudgetForm(version: BudgetVersion, marginConfigHash: string): string {
   const head = [
@@ -84,7 +124,9 @@ export function canonicalBudgetForm(version: BudgetVersion, marginConfigHash: st
   ].join("\t")
   const rows = version.cells.map(canonicalRow).sort()
   const hours = version.hours.map(canonicalHoursRow).sort()
-  return [head, ...rows, HOURS_SEPARATOR, ...hours].join("\n")
+  const capex = (version.capex ?? []).map(canonicalCapexRow).sort()
+  const tail = capex.length > 0 ? [CAPEX_SEPARATOR, ...capex] : []
+  return [head, ...rows, HOURS_SEPARATOR, ...hours, ...tail].join("\n")
 }
 
 /** `budgetHash` (§3.8): sha256 de la forma canónica, en hexadecimal. */
@@ -132,6 +174,14 @@ export function composeBudget(
 
   const cells: BudgetCell[] = []
   const hours: BudgetHoursCell[] = []
+  // **E12 · T19** — el CAPEX se compone igual que lo demás: por el mes de ALTA.
+  // Una `REVISADO` que empieza en julio sustituye las altas previstas de julio
+  // en adelante y **conserva** las de enero a junio, que ya se decidieron. Y la
+  // dotación de una alta de marzo sigue corriendo hasta diciembre aunque la
+  // versión de julio no la repita: lo que se sustituye es la decisión de
+  // invertir, no sus consecuencias (`capexDepreciationForFiscalYear` reparte
+  // sobre la vida útil, no sobre la vigencia de la versión).
+  const capex: BudgetCapexCellRef[] = []
   const provenanceByMonth: Record<string, BudgetProvenance> = {}
   for (const month of months) {
     const source = sourceByMonth.get(month)
@@ -139,11 +189,19 @@ export function composeBudget(
     provenanceByMonth[month] = { budgetId: source.id, label: source.code }
     for (const cell of source.cells) if (monthKey(cell.month) === month) cells.push(cell)
     for (const cell of source.hours) if (monthKey(cell.month) === month) hours.push(cell)
+    for (const cell of source.capex ?? []) if (monthKey(cell.month) === month) capex.push(cell)
   }
   cells.sort((a, b) => (canonicalRow(a) < canonicalRow(b) ? -1 : 1))
   hours.sort((a, b) => (canonicalHoursRow(a) < canonicalHoursRow(b) ? -1 : 1))
+  capex.sort((a, b) => (canonicalCapexRow(a) < canonicalCapexRow(b) ? -1 : 1))
 
-  return { effective: { ...base, cells, hours }, provenanceByMonth }
+  // `capex` sólo entra en la versión efectiva **si alguna versión lo trae**: una
+  // organización sin inversiones presupuestadas compone exactamente el mismo
+  // objeto que en E10 y sella el mismo hash (ver `canonicalBudgetForm`).
+  return {
+    effective: { ...base, cells, hours, ...(capex.length > 0 ? { capex } : {}) },
+    provenanceByMonth,
+  }
 }
 
 /**

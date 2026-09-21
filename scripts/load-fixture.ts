@@ -381,6 +381,28 @@ export const E11_RESET_TABLES: readonly string[] = [
 ]
 
 /**
+ * **E12 · T19 / T13** — las dos tablas de tenant que nacen en E12.
+ *
+ * Quinta vez que esta lista se amplía y primera en que la tabla nueva **no se
+ * olvida**: el test de BUG-E11-2 deriva el conjunto de `TENANT_MODELS` y falla
+ * si sobra o falta una. Es la regla E-4 de la propuesta v1.1 haciendo su
+ * trabajo.
+ *
+ * Orden de FK: `budget_capex_lines` cuelga de `budgets`, que ya se vacía
+ * arriba; `operator_exceptions` tiene `ON DELETE RESTRICT` contra
+ * `organizations`, así que si no se vaciara aquí una organización de pruebas
+ * con una excepción de operador **no se podría borrar** y contaminaría la
+ * suite siguiente.
+ *
+ * Nota que hay que leer entera: esto es el script de operador
+ * (`app_maintenance`, `BYPASSRLS`), no la operación `reset-org` de `/admin`.
+ * Aquélla **conserva** `operator_exceptions` a propósito —es el registro de lo
+ * que el propio operador hizo, y no se autoborra (ADR-0020)—. Aquí se vacía
+ * porque lo que se está haciendo es preparar un fixture, no operar un cliente.
+ */
+export const E12_RESET_TABLES: readonly string[] = ["budget_capex_lines", "operator_exceptions"]
+
+/**
  * Tablas de tenant que `--reset-org` **conserva a propósito**, con su motivo.
  *
  * Un reset vacía los LIBROS de la organización, no su configuración ni su
@@ -608,7 +630,7 @@ export async function resetOrganizationLedger(organizationId: string, _userId?: 
     // I-E11-5), `subscription_events` (append-only, es su historia) y
     // `platform_invoices` (son NUESTRAS facturas emitidas, sujetas a
     // conservación —O-11, art. 165.Uno LIVA—, no datos de la prueba).
-    for (const table of E11_RESET_TABLES) {
+    for (const table of [...E11_RESET_TABLES, ...E12_RESET_TABLES]) {
       await client.query(`DELETE FROM ${table} WHERE organization_id = $1::uuid`, [organizationId])
     }
     await client.query(`DELETE FROM period_locks WHERE organization_id = $1::uuid`, [organizationId])
