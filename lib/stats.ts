@@ -14,6 +14,20 @@
  * que hacían lo mismo a escala de panel, se retiraron.
  */
 
+/**
+ * ── E12 · T18 · **G-20** ─────────────────────────────────────────────────────
+ *
+ * Hasta esta épica estas dos funciones **no tenían un solo test**, y la primera
+ * tanda los encontró: `(transaction.total || 0)` deja pasar `NaN` (`NaN || 0`
+ * es `NaN`), deja pasar `Infinity`, y con una cadena —que una fila de OCR sí
+ * puede traer— **concatena en vez de sumar**: `0 + "1234" + 5000` da
+ * `"012345000"`, una cadena que la pantalla pinta como si fuera un total.
+ *
+ * Eso es **G-05 vivo** en el único agregado del producto que no sale del
+ * diario, y por eso el saneado de abajo no es defensivo: es el arreglo. Lo que
+ * no es un número finito **no entra**, y una fila rota no contamina a la buena
+ * que tiene al lado.
+ */
 import { Field, Transaction } from "@/prisma/client"
 
 /** Aviso que la UI DEBE mostrar junto a cualquiera de estos dos totales. */
@@ -21,16 +35,46 @@ export const UNPOSTED_TOTALS_NOTE =
   "Totales de documentos, no contables: agregan lo que el OCR extrajo y no distinguen los que todavía no " +
   "tienen asiento. Las cifras contables están en Informes."
 
+/**
+ * El importe, o `null`. **`NaN`, `Infinity`, una cadena y un `null` valen lo
+ * mismo aquí: nada.** Un total ausente es un total ausente; convertirlo en 0
+ * afirmaría que hubo un movimiento de cero, y dejarlo pasar produciría el
+ * `NaN` de G-05.
+ */
+function finiteAmount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+/** El código ISO en mayúsculas, o `null`. La cadena vacía no es una moneda. */
+function currencyKey(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim().toUpperCase()
+  return trimmed === "" ? null : trimmed
+}
+
+/**
+ * El par `(moneda, importe)` que de verdad aporta una fila: **la conversión
+ * manda**, y si la conversión está a medias —moneda sin importe, o importe sin
+ * moneda— se cae a la original en vez de perder la fila.
+ */
+function amountOf(transaction: Transaction): { currency: string; amount: number } | null {
+  const convertedCurrency = currencyKey(transaction.convertedCurrencyCode)
+  const convertedAmount = finiteAmount(transaction.convertedTotal)
+  if (convertedCurrency !== null && convertedAmount !== null) {
+    return { currency: convertedCurrency, amount: convertedAmount }
+  }
+  const currency = currencyKey(transaction.currencyCode)
+  const amount = finiteAmount(transaction.total)
+  if (currency !== null && amount !== null) return { currency, amount }
+  return null
+}
+
 export function calcTotalPerCurrency(transactions: Transaction[]): Record<string, number> {
   return transactions.reduce(
     (acc, transaction) => {
-      if (transaction.convertedCurrencyCode) {
-        acc[transaction.convertedCurrencyCode.toUpperCase()] =
-          (acc[transaction.convertedCurrencyCode.toUpperCase()] || 0) + (transaction.convertedTotal || 0)
-      } else if (transaction.currencyCode) {
-        acc[transaction.currencyCode.toUpperCase()] =
-          (acc[transaction.currencyCode.toUpperCase()] || 0) + (transaction.total || 0)
-      }
+      const row = amountOf(transaction)
+      if (row === null) return acc
+      acc[row.currency] = (acc[row.currency] ?? 0) + row.amount
       return acc
     },
     {} as Record<string, number>
@@ -40,23 +84,12 @@ export function calcTotalPerCurrency(transactions: Transaction[]): Record<string
 export function calcNetTotalPerCurrency(transactions: Transaction[]): Record<string, number> {
   return transactions.reduce(
     (acc, transaction) => {
-      let amount = 0
-      let currency: string | undefined
-      if (
-        transaction.convertedTotal !== null &&
-        transaction.convertedTotal !== undefined &&
-        transaction.convertedCurrencyCode
-      ) {
-        amount = transaction.convertedTotal
-        currency = transaction.convertedCurrencyCode.toUpperCase()
-      } else if (transaction.total !== null && transaction.total !== undefined && transaction.currencyCode) {
-        amount = transaction.total
-        currency = transaction.currencyCode.toUpperCase()
-      }
-      if (currency && amount !== 0) {
-        const sign = transaction.type === "expense" ? -1 : 1
-        acc[currency] = (acc[currency] || 0) + amount * sign
-      }
+      const row = amountOf(transaction)
+      // Un importe 0 no crea la moneda: un cubo a cero afirmaría que hubo
+      // movimiento en ella, y no lo hubo.
+      if (row === null || row.amount === 0) return acc
+      const sign = transaction.type === "expense" ? -1 : 1
+      acc[row.currency] = (acc[row.currency] ?? 0) + row.amount * sign
       return acc
     },
     {} as Record<string, number>
