@@ -1,6 +1,65 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-21 (**🔧 E12 · RONDA 2 DE CORRECCIÓN cerrada** — N-1…N-4 del auditor, los dos PARCIALES (H-4, H-6), H-9 cerrado de verdad, el #10 del revisor y sus A, B, C, D, F y G; **ADR-0023** nuevo · **SIGUIENTE: ronda 3 de verificación (revisor + auditor en contexto limpio) y cierre de E12**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-21 (**✅ E12 CERRADA y con ella el ciclo E0–E12** · **PUNTO DE REANUDACIÓN: producto E0–E12 cerrado; siguiente E14**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## ✅ E12 CERRADA — y con ella el ciclo E0–E12 (2026-09-21)
+
+**Punto de reanudación: el producto E0–E12 está cerrado. Lo siguiente es E14.**
+No hay ronda 3: la de verificación la firmaron los dos agentes en contexto
+limpio y las dos firmas son favorables.
+
+| Firma | Documento | Veredicto |
+|---|---|---|
+| **Auditor** (contexto limpio) | `docs/design/E12-reauditoria-informe.md` | **CONFORME** en la ronda 2 — **13 de 13 cifras** reconstruidas por un tercer camino con **Δ = 0**, `ledgerHash` **4a1af0ee555f…** intacto, y **N-5 cerrado** en `e6ce68c` |
+| **Revisor** (contexto limpio) | `docs/design/E12-revision-ronda1.md` | **APROBADO** en la ronda 2 — **0 BLOQUEA · 0 DEBE**, y dos PUEDE (**R-1**, **R-2**) anotados a E14 |
+
+Las dos rondas de corrección: **ronda 1** `c0623f5..6c9a6d5`, **ronda 2**
+`96c3c15..a62b57c`. Lo que distingue el cierre, en la frase del revisor: **no se
+ha cerrado ningún hallazgo bajando el listón** — el esquema del registro se
+amplió conservando lo que rechaza, la puerta del sello dejó de contar FAIL y pasó
+a exigir que **cada razón** esté explicada, el criterio 34 no se borró sino que se
+**derogó por ADR** citando el enunciado viejo, y la dependencia de `BYPASSRLS` se
+convirtió en una **condición de despliegue que se comprueba** en vez de tocar una
+política que habría sido Nivel 2.
+
+### Suites finales del ciclo
+
+| Suite | Resultado |
+|---|---|
+| `lint` | **0 errores** (12 avisos heredados) |
+| `tsc --noEmit` | **limpio** |
+| `unit` | **130 ficheros · 2 738 ✓** / 11 skip heredados |
+| `integration` | **187 ficheros · 3 633 ✓** |
+| `integration:rls` | **12 ficheros · 211 ✓** |
+| `acceptance` | **9 ficheros · 53 ✓** |
+| `e2e` | **13/13 ficheros en verde**, uno a uno y con la máquina descargada. Los tres que la ronda 1 dejó sin cerrar —`documentos` **7/7**, `auditoria` **7/7**, `onboarding-plataforma` **14/14**— fallaban **sólo por timeouts de compilación en frío**, no por un `expect` de producto |
+| `next build` | **EXIT=0** (`✓ Compiled successfully`) |
+
+### Los ADR que deja la épica
+
+**0020** escrituras de operador y excepciones auditadas · **0021** qué sello
+sobrevive a una copia (salió de dentro de ADR-0011, que es inmutable) · **0022**
+operador de plataforma **cerrado por defecto** (lista vacía = **nadie**) ·
+**0023** lo derivado se **declara** tabla a tabla y el criterio estructural sólo
+acusa.
+
+### Deuda: ninguna sin épica y sin motivo
+
+Repasadas una a una todas las entradas abiertas de este documento, la lista
+consolidada de lo que el ciclo aplaza está en **`docs/ROADMAP.md` §E14**, con
+**once** líneas y **una razón escrita en cada una**: H-8, H-12, I-E8-17, lector
+ZIP de acceso aleatorio, ciclo comercial de facturas emitidas, export 303/349,
+**E** y **H** del revisor, **R-1**, **R-2** y el WARN de `btree_gist`. No queda
+en este fichero una sola deuda abierta sin épica de cierre y sin motivo: lo que
+las secciones históricas de E5, E7, E8, E9, E10 y E11 dejaron fechado lo cerró la
+épica que lo recogió (523→173 y el valor actual en E9; `journal_lines` a `bigint`
+y el split N-a-1 en E7; las quince de E12), y cada fila lo declara.
+
+**Lo que queda no es deuda de código, sino acciones del operador**, y tampoco se
+deja implícito: rotar la contraseña literal `app_runtime` en cualquier entorno
+donde se aplicara `20260904140000_e1_rls_effective` (§Roles de base de datos),
+validar la FK `journal_entries.posted_by_id` cuando no queden filas huérfanas
+(§Runbook de operación), y los dos puntos de §«Pendiente de Pablo».
 
 ## 🔧 E12 · RONDA 2 DE CORRECCIÓN (2026-09-21)
 
@@ -48,6 +107,9 @@ ni `/admin` — `settings/backups/actions.ts` cambia sólo a qué función llama
 predicado, con idéntico comportamiento). Clones `h4_r2` y `guard_r2` creados con
 `createdb -T erp_test` y **destruidos**.
 Registro: `2026-09-21_e12_ronda2_correccion`.
+
+> **Lanzados después, en el cierre**: `e2e` **13/13 ficheros en verde** uno a uno
+> con la máquina descargada y `next build` **EXIT=0**. Ver §«E12 CERRADA».
 
 ## 🔧 E12 · RONDA 1 DE CORRECCIÓN (2026-09-21)
 
@@ -213,7 +275,7 @@ autoría con el productor)— · `.claude/skills/fiabilidad/SKILL.md` con
 | Re-fechada | Nueva épica | Motivo escrito |
 |---|---|---|
 | **Lector de acceso aleatorio sobre el ZIP** (techo 6 medido con el diario completo pero **sin** los 1,5 GB de documentos) | **E14** | T14 resolvió la **escritura** en streaming; la **lectura** sigue abriendo el archivo con `JSZip` sobre un `Buffer`, y un ZIP multi-GB no cabe en el heap. Hace falta un lector de acceso aleatorio sobre fichero y recablear a él las seis comprobaciones. No es un ajuste: es otro camino de lectura, y meterlo en la ronda de integración sería exactamente el atajo que esta épica existe para no dar |
-| **Inyecciones 4, 5, 6, 8 y 9 de la matriz, DECLARADAS como no ejercidas** | **E14** | El fixture completo se compone de asientos **manuales**: no trae `allocation_lines`, `extraction_runs`, `files` ni `usage_runs` coherentes, y sembrarlos con el arnés deja el ciclo limpio con `I-E8-11`, `I-E8-17` e `I-E11-6` en FAIL. Una inyección sobre un baseline ya roto no demuestra nada: no se distingue lo que caza el invariante de lo que ya estaba mal. Lo que hace falta es un **fixture documental** coherente —documento, bytes en el almacén, run sellado y asiento—, que es una pieza propia. Las cinco quedan **declaradas** con su motivo y comprobando que el sustrato falta de verdad, nunca en PASS |
+| ~~**Inyecciones 4, 5, 6, 8 y 9 de la matriz, DECLARADAS como no ejercidas**~~ **CERRADA en la ronda 1** con el fixture `documental-minimo`: **10/10 ejercidas y cazadas**, y `C4-cobertura` exige 10/10 | ~~E14~~ | El fixture completo se compone de asientos **manuales**: no trae `allocation_lines`, `extraction_runs`, `files` ni `usage_runs` coherentes, y sembrarlos con el arnés deja el ciclo limpio con `I-E8-11`, `I-E8-17` e `I-E11-6` en FAIL. Una inyección sobre un baseline ya roto no demuestra nada: no se distingue lo que caza el invariante de lo que ya estaba mal. Lo que hace falta es un **fixture documental** coherente —documento, bytes en el almacén, run sellado y asiento—, que es una pieza propia. Las cinco quedan **declaradas** con su motivo y comprobando que el sustrato falta de verdad, nunca en PASS |
 
 *(Y la decimosexta no era deuda: el «arqueo de caja como fuente equivalente»
 quedó **RETIRADO como decisión** en el diseño, no re-fechado.)*
@@ -224,9 +286,10 @@ quedó **RETIRADO como decisión** en el diseño, no re-fechado.)*
 e2e por fichero (`admin`, `onboarding-plataforma`, `cierre`) en verde.
 Registro: `2026-09-21_e12_integracion_t22_t23`.
 
-**SIGUIENTE: verificación final y cierre de E12** (T24 revisión, T25 auditoría en
-contexto limpio, T26 cierre), con el fixture documental y el lector de ZIP ya
-fechados en E14.
+~~**SIGUIENTE: verificación final y cierre de E12**~~ **HECHO**: T24 (revisión),
+T25 (auditoría en contexto limpio) y T26 (cierre) están cerrados en las dos
+rondas de corrección y en §«E12 CERRADA». El fixture documental se hizo en la
+ronda 1; el lector de ZIP sigue fechado en E14.
 
 ## ✅ E12 DISEÑADA (2026-09-15) — siguiente: `/sprint E12`
 
