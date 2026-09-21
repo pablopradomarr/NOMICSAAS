@@ -1,0 +1,238 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "docs/design/fixtures/build_documental_minimo.py",
+  "note": "E12 · ronda 1 (H-1) — sustrato documental minimo para que las diez inyecciones de §3.5 se ejerzan. NO toca el libro diario: las doce cifras canonicas y los cinco sellos del fixture `ejercicio-completo` no se mueven con este sustrato cargado.",
+  "fiscalYear": "2026",
+  "documentos": [
+    {
+      "ref": "DOC-1",
+      "filename": "factura-servicios-2026-02.txt",
+      "mimetype": "text/plain",
+      "contenido": "FACTURA RECIBIDA\nNumero: SG-2026-0042\nFecha: 2026-02-10\nProveedor: Servicios Generales SL (B58818501)\nConcepto: Servicios de mantenimiento\nBase imponible: 100000 centimos\nIVA 21%: 21000 centimos\nTotal: 121000 centimos\n",
+      "sha256": "30f2e369dfafb39f84e19c0352f3e0c527042db2f65dde51e2d7d7cddb2d81f0",
+      "sizeBytes": 218
+    },
+    {
+      "ref": "DOC-2",
+      "filename": "ticket-restaurante-2026-03.txt",
+      "mimetype": "text/plain",
+      "contenido": "TICKET\nNumero: TK-2026-0007\nFecha: 2026-03-12\nProveedor: Cafeteria del Puerto SL (B12345674)\nConcepto: Comida de trabajo\nBase imponible: 1122 centimos\nIVA 10%: 112 centimos\nTotal: 1234 centimos\n",
+      "sha256": "7cec8d5f474c992a462a419eaa5e00f884122ac02058530117335a79db54b2f1",
+      "sizeBytes": 194
+    }
+  ],
+  "extracciones": [
+    {
+      "documento": "DOC-1",
+      "kind": "LLM",
+      "provider": "fixture",
+      "model": "documental-minimo-1",
+      "promptCode": "extraction",
+      "promptSource": "GIT",
+      "prompt": "Extrae los campos de la factura adjunta y devuelve JSON conforme al esquema.\nDocumento: factura-servicios-2026-02.txt",
+      "promptSha": "12d54b493d987c16dc3835737649fe28f05a8e02188e1cb0ea53310d155b65e4",
+      "schemaVersion": "v1-fixture",
+      "schema": {
+        "type": "object",
+        "required": [
+          "documentNumber",
+          "totalCents"
+        ],
+        "version": "v1-fixture"
+      },
+      "schemaSha": "8dc2b53bdfea8d709d6e91ac525c63134c2e83de02c2c8fa99ab6358a741a702",
+      "proposal": {
+        "version": 1,
+        "docKind": "FACTURA_RECIBIDA",
+        "documentNumber": "SG-2026-0042",
+        "counterparty": {
+          "name": "Servicios Generales SL",
+          "taxId": "B58818501"
+        },
+        "documentDate": "2026-02-10",
+        "accrualDate": "2026-02-10",
+        "receptionDate": "2026-02-14",
+        "operationDate": "2026-02-10",
+        "currency": "EUR",
+        "lines": [
+          {
+            "kind": "OPERACION",
+            "baseCents": 100000,
+            "taxRateCode": "IVA_21",
+            "description": "Servicios de mantenimiento",
+            "accountCode": "629"
+          }
+        ],
+        "taxes": [
+          {
+            "taxRateCode": "IVA_21",
+            "baseCents": 100000,
+            "quotaCents": 21000
+          }
+        ],
+        "totalCents": 121000,
+        "description": "Factura de servicios de mantenimiento"
+      },
+      "proposalSha": "e2cd5420b5c25a737514776e4e0f5311931860f8855027d32124cd85496fe24f",
+      "pagesSent": 1,
+      "pagesTotal": 1
+    },
+    {
+      "documento": "DOC-2",
+      "kind": "LLM",
+      "provider": "fixture",
+      "model": "documental-minimo-1",
+      "promptCode": "extraction",
+      "promptSource": "GIT",
+      "prompt": "Extrae los campos de la factura adjunta y devuelve JSON conforme al esquema.\nDocumento: ticket-restaurante-2026-03.txt",
+      "promptSha": "16a38641a9453e2f2da233cb4464862da92b92ec0c77fbe642bdba871f57e77c",
+      "schemaVersion": "v1-fixture",
+      "schema": {
+        "type": "object",
+        "required": [
+          "documentNumber",
+          "totalCents"
+        ],
+        "version": "v1-fixture"
+      },
+      "schemaSha": "8dc2b53bdfea8d709d6e91ac525c63134c2e83de02c2c8fa99ab6358a741a702",
+      "proposal": {
+        "version": 1,
+        "docKind": "TICKET",
+        "documentNumber": "TK-2026-0007",
+        "counterparty": {
+          "name": "Cafeteria del Puerto SL",
+          "taxId": "B12345674"
+        },
+        "documentDate": "2026-03-12",
+        "accrualDate": "2026-03-12",
+        "receptionDate": "2026-03-12",
+        "operationDate": "2026-03-12",
+        "currency": "EUR",
+        "lines": [
+          {
+            "kind": "OPERACION",
+            "baseCents": 1122,
+            "taxRateCode": "IVA_10",
+            "description": "Comida de trabajo"
+          }
+        ],
+        "taxes": [
+          {
+            "taxRateCode": "IVA_10",
+            "baseCents": 1122,
+            "quotaCents": 112
+          }
+        ],
+        "totalCents": 1234,
+        "description": "Ticket de restaurante"
+      },
+      "proposalSha": "f06153ba1d1bca52a35f5713a06b2e6ec0c1a2c9cfb6bc0e01ff84a8452e6593",
+      "pagesSent": 1,
+      "pagesTotal": 1
+    }
+  ],
+  "empleado": {
+    "code": "EMP-DOC-01",
+    "name": "Empleada de proyectos",
+    "email": "emp-doc-01@fixture.local",
+    "hireDate": "2025-01-07",
+    "rate": {
+      "validFrom": "2025-01-07",
+      "basis": "COSTE_EMPRESA_CON_SS",
+      "costCentsPerHour": 2500
+    }
+  },
+  "partes": [
+    {
+      "date": "2026-01-11",
+      "projectCode": "P-01",
+      "minutes": 420
+    },
+    {
+      "date": "2026-02-12",
+      "projectCode": "P-02",
+      "minutes": 300
+    },
+    {
+      "date": "2026-03-13",
+      "projectCode": "P-01",
+      "minutes": 420
+    },
+    {
+      "date": "2026-04-14",
+      "projectCode": "P-02",
+      "minutes": 300
+    },
+    {
+      "date": "2026-05-10",
+      "projectCode": "P-01",
+      "minutes": 420
+    },
+    {
+      "date": "2026-06-11",
+      "projectCode": "P-02",
+      "minutes": 300
+    },
+    {
+      "date": "2026-07-12",
+      "projectCode": "P-01",
+      "minutes": 420
+    },
+    {
+      "date": "2026-08-13",
+      "projectCode": "P-02",
+      "minutes": 300
+    },
+    {
+      "date": "2026-09-14",
+      "projectCode": "P-01",
+      "minutes": 420
+    },
+    {
+      "date": "2026-10-10",
+      "projectCode": "P-02",
+      "minutes": 300
+    },
+    {
+      "date": "2026-11-11",
+      "projectCode": "P-01",
+      "minutes": 420
+    },
+    {
+      "date": "2026-12-12",
+      "projectCode": "P-02",
+      "minutes": 300
+    }
+  ],
+  "reglaImputacion": {
+    "code": "AL-DOC-HORAS",
+    "name": "Estructura a proyectos por horas imputadas",
+    "sourceCostCenterCode": "CC-GA",
+    "targetKind": "PROJECTS",
+    "driver": "HOURS",
+    "period": "YEAR",
+    "priority": 90,
+    "sourceShareBps": 10000,
+    "zeroBaseFallback": "SKIP_WARN",
+    "validFrom": "2026-01-01"
+  },
+  "uso": {
+    "periodMonth": "2026-12-01",
+    "nota": "El consumo lo CALCULA el producto contando lo que hay; aqui solo se declara el mes."
+  },
+  "liquidacionIva": {
+    "periodKind": "TRIMESTRAL",
+    "period": "2026-Q1",
+    "periodStart": "2026-01-01",
+    "periodEnd": "2026-03-31",
+    "nota": "Las cifras las calcula el producto leyendo el libro registro del propio fixture: sellar la liquidacion no anade un apunte al diario, lo cierra."
+  },
+  "esperado": {
+    "documentos": 2,
+    "extracciones": 2,
+    "partes": 12,
+    "minutosTotales": 4320,
+    "reglas": 1
+  }
+}

@@ -74,10 +74,14 @@
  *     periodo, no hay con qué contrastar: el veredicto es NO_VERIFICABLE. Un
  *     diario cargado y nunca informado no se audita solo.
  *  6. **La cascada de liquidación de CECOs (E5).** Mientras no haya
- *     `allocation_lines` del periodo, la matriz se reconstruye SIN repartir: los
- *     CECO caen en su propio nivel (`CostCenter.marginLevel`). Con reparto
- *     sellado, el auditor comprueba el cierre a cero y el nivel que viaja con el
- *     importe, pero **no rehace el Hamilton** receptor a receptor.
+ *     `allocation_lines` del periodo, la matriz se reconstruye SIN repartir —los
+ *     CECO caen en su propio nivel (`CostCenter.marginLevel`)— y desde la ronda
+ *     1 de E12 se contrasta **celda a celda por dimensión** (AUD-8): una
+ *     redistribución entre columnas con los totales intactos ya no pasa como
+ *     `CONFORME`. Con reparto sellado, el auditor comprueba el cierre a cero y
+ *     el nivel que viaja con el importe, pero **no rehace el Hamilton**
+ *     receptor a receptor, así que **declara** que las celdas por dimensión no
+ *     se contrastan (`A-MATRIZ-DIMENSION-NO-COMPARABLE`) en vez de callarse.
  *  7. **Alteraciones simultáneas y coherentes de diario y sellos.** Quien pueda
  *     escribir en `journal_lines` y en `report_runs` a la vez con el rol de
  *     mantenimiento reproduce ambos lados. Contra eso está la política
@@ -119,6 +123,9 @@ const KINDS_FUERA_PYG = ["REGULARIZATION", "CLOSING", "OPENING"]
 /** R-A11: estas tres van SIEMPRE a RESULTADO, sean cuales sean la configuración
  *  de niveles y el `nonAnalyticLevel` de la organización (impuesto sobre
  *  beneficios y ajustes 633/638). */
+/** Los tres tipos DIRECTOS (R-A5). Se escriben aquí: el auditor no importa nada. */
+const TIPOS_DIRECTOS = ["INGRESO_DIRECTO", "COSTE_DIRECTO_MC1", "COSTE_DIRECTO_MC2"]
+
 const PREFIJOS_IMPUESTO = ["630", "633", "638"]
 
 type Veredicto = "CONFORME" | "DISCREPANCIA" | "NO_VERIFICABLE"
@@ -492,11 +499,15 @@ async function main(): Promise<void> {
     }
 
     const cecos = await q(
-      `SELECT id, code, margin_level::text AS margin_level, allocatable
+      `SELECT id, code, kind::text AS kind, margin_level::text AS margin_level, allocatable
          FROM cost_centers WHERE organization_id = $1::uuid`,
       [opciones.org]
     )
     const nivelDeCeco = new Map<string, Nivel>(cecos.map((c) => [c.id as string, c.margin_level as Nivel]))
+    /** Columna de la matriz de un CECO: `CECO:<kind>` (no por código: por FAMILIA). */
+    const columnaDeCeco = new Map<string, string>(cecos.map((c) => [c.id as string, `CECO:${c.kind as string}`]))
+    const proyectos = await q(`SELECT id, code FROM projects WHERE organization_id = $1::uuid`, [opciones.org])
+    const columnaDeProyecto = new Map<string, string>(proyectos.map((p) => [p.id as string, `PROJ:${p.code as string}`]))
     const nivelNoAnalitico = (org.non_analytic_level as string as Nivel) ?? "EBITDA"
 
     // ── 2. I1 · Σdebe = Σhaber, por asiento y del periodo ─────────────────────
@@ -554,6 +565,7 @@ async function main(): Promise<void> {
       `SELECT l.account_code,
               COALESCE(l.analytic_type::text, '${NULO}') AS analytic_type,
               l.cost_center_id,
+              l.project_id,
               SUM(l.credit_cents - l.debit_cents)::text AS aporte,
               count(*)::text AS n
          FROM journal_lines l
@@ -561,17 +573,48 @@ async function main(): Promise<void> {
           AND l.fiscal_year_id = $2::uuid
           AND left(l.account_code, 1) IN ('6','7')
           AND l.entry_kind::text <> ALL ($3::text[])
-        GROUP BY 1, 2, 3`,
+        GROUP BY 1, 2, 3, 4`,
       [opciones.org, fyId, KINDS_FUERA_PYG]
     )
 
     const aportePorNivel = new Map<Nivel, bigint>(NIVELES.map((n) => [n, CERO]))
+    /**
+     * **Aporte por nivel Y COLUMNA** (auditor AUD-8 / H-5 de la ronda 1).
+     *
+     * Hasta esta ronda el auditor sólo contrastaba AGREGADOS: mover cien mil
+     * céntimos de `PROJ:P-01` a `PROJ:P-02` dentro de un informe sellado, con
+     * los totales de nivel intactos, salía `CONFORME`. Un auditor que no ve una
+     * redistribución por dimensión no puede decir que la matriz está bien, y su
+     * cabecera tampoco lo declaraba: era un hueco, no un límite.
+     *
+     * La columna de una línea es una decisión SIMPLE —el proyecto manda sobre el
+     * CECO, y el CECO va por su familia (`CECO:<kind>`)—, mientras que el NIVEL
+     * es la parte difícil (R-A3/R-A4/R-A6/R-A7/R-A11) y ya está reconstruida
+     * arriba. Las columnas que no son de dimensión (`FINANCIERO`,
+     * `NO_ANALITICO`, `AMORTIZACION_DETERIORO`, `EXTRAORDINARIO`) no se
+     * reconstruyen: su reparto depende de reglas de presentación y se declara.
+     */
+    const aportePorNivelYColumna = new Map<string, bigint>()
     let lineasSinNivel = CERO
     let lineas67Contadas = CERO
     for (const fila of lineas67) {
       const aporte = aBigInt(fila.aporte)
       lineas67Contadas += aBigInt(fila.n)
-      const tipo = fila.analytic_type as string
+      /**
+       * **Tipo EFECTIVO (R-A3/R-A4)**: la dimensión de la línea manda cuando
+       * contradice al tipo persistido. Sin esto, MC2 y MC3 salen 246 000
+       * céntimos por debajo —lo comprobó el auditor humano de T25 por un tercer
+       * camino—, y la columna de la línea se elige mal.
+       */
+      const tipoDeclarado = fila.analytic_type as string
+      const tieneProyecto = fila.project_id !== null && fila.project_id !== undefined
+      const tieneCeco = fila.cost_center_id !== null && fila.cost_center_id !== undefined
+      const tipo =
+        tipoDeclarado === "INDIRECTO_CECO" && tieneProyecto && !tieneCeco
+          ? "COSTE_DIRECTO_MC2"
+          : TIPOS_DIRECTOS.includes(tipoDeclarado) && tieneCeco && !tieneProyecto
+            ? "INDIRECTO_CECO"
+            : tipoDeclarado
       let nivel: Nivel | null = null
       if (tipo === "INDIRECTO_CECO") {
         nivel = fila.cost_center_id ? nivelDeCeco.get(fila.cost_center_id as string) ?? null : null
@@ -603,6 +646,28 @@ async function main(): Promise<void> {
         continue
       }
       aportePorNivel.set(nivel, (aportePorNivel.get(nivel) ?? CERO) + aporte)
+
+      /**
+       * **La columna la fija el TIPO efectivo, no la dimensión** (R-A5 de
+       * `docs/MODELO-DATOS.md`), con una excepción única: una amortización CON
+       * proyecto va a la columna del proyecto. Reimplementado desde la regla
+       * escrita, no copiado del motor.
+       */
+      const columnaProyecto = tieneProyecto ? columnaDeProyecto.get(fila.project_id as string) ?? null : null
+      const columna =
+        tipo === "INDIRECTO_CECO"
+          ? tieneCeco
+            ? columnaDeCeco.get(fila.cost_center_id as string) ?? "NO_ANALITICO"
+            : "NO_ANALITICO"
+          : TIPOS_DIRECTOS.includes(tipo)
+            ? columnaProyecto ?? "NO_ANALITICO"
+            : tipo === "AMORTIZACION_DETERIORO"
+              ? columnaProyecto ?? "AMORTIZACION_DETERIORO"
+              : tipo === "FINANCIERO" || tipo === "EXTRAORDINARIO"
+                ? tipo
+                : "NO_ANALITICO"
+      const clave = `${nivel}|${columna}`
+      aportePorNivelYColumna.set(clave, (aportePorNivelYColumna.get(clave) ?? CERO) + aporte)
     }
     if (lineasSinNivel > CERO) {
       hallazgos.push({
@@ -1146,6 +1211,69 @@ async function main(): Promise<void> {
         })
       }
     }
+    // ── 8-bis · La matriz analítica, CELDA A CELDA (AUD-8 / H-5) ────────────
+    //
+    //  Comparar sólo totales dejaba pasar una redistribución entre columnas: el
+    //  auditor decía CONFORME sobre un informe en el que cien mil céntimos
+    //  habían cambiado de proyecto. Aquí se reconstruye la matriz ACUMULADA por
+    //  nivel y columna de dimensión y se contrasta con la sellada.
+    const analiticasSelladas = reportRuns.filter((r) => r.type === "PYG_ANALITICA")
+    const repartosVigentes = allocationRuns.filter((x) => x.status === "SEALED")
+    if (analiticasSelladas.length > 0 && repartosVigentes.length > 0) {
+      hallazgos.push({
+        codigo: "A-MATRIZ-DIMENSION-NO-COMPARABLE",
+        gravedad: "BAJA",
+        mensaje:
+          `hay ${repartosVigentes.length} reparto(s) sellado(s) en el periodo: la matriz por dimensión incluye la ` +
+          "cascada de liquidación de CECOs, que este auditor NO rehace receptor a receptor (límite 6). " +
+          "Las celdas por dimensión no se contrastan; los totales de nivel sí",
+      })
+    } else {
+      for (const informe of analiticasSelladas.slice(0, 3)) {
+        const resultado = (informe.result ?? {}) as { matrixCents?: Record<string, Record<string, unknown>> }
+        const matriz = resultado.matrixCents
+        if (!matriz) continue
+        /** Acumulada por columna: cada nivel arrastra los anteriores. */
+        const acumuladoPorColumna = new Map<string, bigint>()
+        const desviadas: string[] = []
+        let celdasComparadas = 0
+        for (const nivel of NIVELES) {
+          const fila = matriz[nivel]
+          if (!fila) continue
+          for (const columna of Object.keys(fila)) {
+            if (!columna.startsWith("PROJ:") && !columna.startsWith("CECO:")) continue
+            const previo = acumuladoPorColumna.get(columna) ?? CERO
+            const esperado = previo + (aportePorNivelYColumna.get(`${nivel}|${columna}`) ?? CERO)
+            acumuladoPorColumna.set(columna, esperado)
+            const sellado = aBigInt(String(fila[columna] ?? "0"))
+            celdasComparadas += 1
+            if (sellado !== esperado) {
+              desviadas.push(`${nivel}/${columna}: sellado ${sellado} vs reconstruido ${esperado} (Δ ${sellado - esperado})`)
+            }
+          }
+        }
+        if (desviadas.length > 0) {
+          hallazgos.push({
+            codigo: "I4-DIMENSION",
+            gravedad: "ALTA",
+            mensaje:
+              `la matriz analítica sellada no reproduce ${desviadas.length} de ${celdasComparadas} celda(s) por dimensión ` +
+              "sobre el diario (los totales de nivel pueden estar intactos: una redistribución entre columnas los conserva)",
+            evidencia: desviadas.slice(0, 20),
+          })
+        } else if (celdasComparadas > 0) {
+          sellos.push({
+            metrica: `matrizPorDimension · report_run ${String(informe.id).slice(0, 8)}`,
+            producto: `${celdasComparadas} celdas`,
+            reconstruccion: `${celdasComparadas} celdas`,
+            delta: "0",
+            metodo: "matriz acumulada por nivel y columna (PROJ:/CECO:) reconstruida por SQL crudo sobre journal_lines",
+            fuenteProducto: `report_runs[${String(informe.id).slice(0, 8)}].matrixCents`,
+          })
+        }
+      }
+    }
+
     for (const b of presupuestos) {
       if (b.status === "VIGENTE" && !b.budget_hash) {
         hallazgos.push({

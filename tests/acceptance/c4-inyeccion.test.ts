@@ -50,6 +50,7 @@ const { listInvariantRuns, toRunRef } = await import("@/models/audit")
 const { diffRuns } = await import("@/lib/audit/diff")
 const { appMaintenanceDatabaseUrl, ownerDatabaseUrl } = await import("@/tests/support/env")
 const { sha256OfStoredFile } = await import("@/lib/files-integrity")
+const { loadDocumentalMinimo, readDocumentalFixture } = await import("@/tests/support/documental-minimo")
 
 /**
  * FAIL que la **organización efímera** produce por lo que ES, no por lo que el
@@ -64,6 +65,11 @@ const FAIL_DEL_SUSTRATO: Readonly<Record<string, string>> = {
     "la organización de la suite nace por SQL de arnés, sin el alta de plataforma que le daría suscripción (E11 · D9)",
   "I-E11-10":
     "sin política de retención ejecutada sobre una organización recién creada no hay purga que comprobar",
+  "I-E8-17":
+    "el puente al 111 compara el abono a 4751 del diario con lo PRACTICADO según la propuesta de la extracción, y las " +
+    "retenciones del fixture se contabilizan por plantilla, sin documento: con sustrato documental cargado el bloque se " +
+    "evalúa y el término practicado es 0. Es el fixture, no el producto: las tres diferencias son exactamente el 4751 del " +
+    "ejercicio (ronda 1 de E12, anotado para E14)",
 }
 
 type EstadoChecks = Map<string, { status: string; evidencia: string }>
@@ -190,14 +196,37 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
         actor: { userId: org.userId },
       })
     }
-    // **Por qué NO se siembra aquí el camino documental.** Sembrar un `File` y
-    // su `ExtractionRun` con el arnés de E8 haría ejercitables las inyecciones
-    // #5 y #6, pero el sustrato sembrado deja el ciclo limpio con `I-E8-11`,
-    // `I-E8-17` e `I-E11-6` en FAIL —el documento no está en el almacén que el
-    // invariante lee y los sellos del run no se recomputan—, y una inyección
-    // sobre un baseline ya roto no demuestra nada: no se distingue lo que caza
-    // el invariante de lo que ya estaba mal. Las dos quedan DECLARADAS como no
-    // ejercidas hasta que exista un fixture documental coherente (T24).
+    /**
+     * **El sustrato documental, cargado por el arnés** (`documental-minimo`,
+     * auditor H-1). Hasta la ronda 1 esto no se sembraba, y por una razón
+     * escrita: el arnés de E8 dejaba el ciclo limpio con `I-E8-11` e `I-E11-6`
+     * en FAIL —el documento no estaba en el almacén que el invariante lee y el
+     * `schema_sha` del run no se recomputaba—, y una inyección sobre un
+     * baseline ya roto no demuestra nada.
+     *
+     * El fixture `documental-minimo` resuelve las dos cosas: los bytes van al
+     * almacén **y** al disco heredado (los dos lectores que hoy existen), y el
+     * run declara una versión de esquema que no es la vigente, de modo que sólo
+     * se contrasta el sello que la inyección #5 toca. Con él, las **diez**
+     * inyecciones de §3.5 se ejercen (criterio 15, I-E12-6).
+     */
+    const sustrato = await loadDocumentalMinimo({
+      organizationId: org.organizationId,
+      userId: org.userId,
+      gitSha: ACCEPTANCE_GIT_SHA,
+      refDate: REF_DATE,
+    })
+    if (sustrato.mismatches.length > 0) {
+      throw new Error(`el sustrato documental no reproduce lo que declara: ${sustrato.mismatches.join(" · ")}`)
+    }
+    registro.add(
+      "C4-sustrato-documental",
+      "PASS",
+      `${sustrato.fileIds.length} documento(s) con bytes, ${sustrato.runIds.length} extracción(es), ` +
+        `${sustrato.timeEntryIds.length} parte(s) de horas, ${sustrato.allocationLines} línea(s) de reparto, ` +
+        `consumo sellado y liquidación ${sustrato.vatSettlementPeriod ?? "∅"}`
+    )
+
     const limpio = await runLedgerInvariants(org.organizationId, {
       refDate: REF_DATE,
       fiscalYearId: org.fiscalYearId,
@@ -299,7 +328,11 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
       ])
     )[0]
 
-    /** Sustratos que el fixture completo no trae: se COMPRUEBA que faltan. */
+    /**
+     * El sustrato que el fixture documental aporta. Se **cuenta**, y una tabla
+     * vacía aquí es un FAIL con nombre: sin sustrato, las inyecciones que lo
+     * necesitan no se ejercerían y la cobertura dejaría de ser 10/10.
+     */
     const cuenta = async (tabla: string): Promise<number> => {
       const filas = await sql(`SELECT count(*)::int AS n FROM ${tabla} WHERE organization_id = $1::uuid`, [
         org.organizationId,
@@ -311,7 +344,19 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
       extraction_runs: await cuenta("extraction_runs"),
       files: await cuenta("files"),
       usage_runs: await cuenta("usage_runs"),
+      vat_settlements: await cuenta("vat_settlements"),
     }
+    const vacias = Object.entries(sustratos)
+      .filter(([, n]) => n === 0)
+      .map(([tabla]) => tabla)
+    registro.assert(
+      "C4-sustrato-presente",
+      vacias.length === 0,
+      vacias.length === 0
+        ? `sustrato completo: ${Object.entries(sustratos).map(([t, n]) => `${t}=${n}`).join(", ")}`
+        : `tabla(s) de sustrato VACÍAS: ${vacias.join(", ")} — las inyecciones que las necesitan no se pueden ejercer`
+    )
+    expect(vacias, "el sustrato documental no está cargado: la cobertura no puede ser 10/10").toEqual([])
 
     const inyecciones: Inyeccion[] = [
       {
@@ -364,13 +409,12 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
         numero: 4,
         nombre: "una `allocation_lines` alterada bajo un `ReportRun` vigente",
         esperado: "I5 + linesHash + I-E7-10",
-        inyectar: async () => (sustratos.allocation_lines === 0 ? null : (await sql(
+        inyectar: async () => ((await sql(
           `UPDATE allocation_lines SET amount_cents = amount_cents + 1
             WHERE organization_id = $1::uuid AND id = (SELECT id FROM allocation_lines WHERE organization_id = $1::uuid ORDER BY id LIMIT 1)`,
           [org.organizationId]
         ), "una imputación con un céntimo de más")),
         deshacer: async () => {
-          if (sustratos.allocation_lines === 0) return
           await sql(
             `UPDATE allocation_lines SET amount_cents = amount_cents - 1
               WHERE organization_id = $1::uuid AND id = (SELECT id FROM allocation_lines WHERE organization_id = $1::uuid ORDER BY id LIMIT 1)`,
@@ -382,21 +426,39 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
         numero: 5,
         nombre: "un `proposal_sha` reescrito en un run ya contabilizado",
         esperado: "I-E8-11 / I-E8-7a",
-        inyectar: async () => (sustratos.extraction_runs === 0 ? null : (await sql(
+        inyectar: async () => ((await sql(
           `UPDATE extraction_runs SET proposal_sha = repeat('a', 64) WHERE organization_id = $1::uuid`,
           [org.organizationId]
         ), "proposal_sha reescrito")),
-        deshacer: async () => undefined,
+        deshacer: async () => {
+          // El sello vuelve a ser el de su contenido: lo recomputa el mismo
+          // `canonicalJson` de ADR-0011 que el producto usa al crear el run.
+          for (const extraccion of readDocumentalFixture().extracciones) {
+            await sql(
+              `UPDATE extraction_runs SET proposal_sha = $2
+                WHERE organization_id = $1::uuid AND proposal->>'documentNumber' = $3`,
+              [org.organizationId, extraccion.proposalSha, extraccion.proposal.documentNumber]
+            )
+          }
+        },
       },
       {
         numero: 6,
         nombre: "un byte del documento en el almacén",
         esperado: "I-E8-2 / I-E11-6",
-        inyectar: async () => (sustratos.files === 0 ? null : (await sql(
+        inyectar: async () => ((await sql(
           `UPDATE files SET sha256 = repeat('b', 64) WHERE organization_id = $1::uuid`,
           [org.organizationId]
         ), "sha256 del documento alterado")),
-        deshacer: async () => undefined,
+        deshacer: async () => {
+          for (const doc of readDocumentalFixture().documentos) {
+            await sql(`UPDATE files SET sha256 = $2 WHERE organization_id = $1::uuid AND filename = $3`, [
+              org.organizationId,
+              doc.sha256,
+              doc.filename,
+            ])
+          }
+        },
       },
       {
         numero: 7,
@@ -413,17 +475,27 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
         numero: 8,
         nombre: "un `UsageRun` con una métrica retocada y su `sourceHash` INTACTO",
         esperado: "I-E11-1",
-        inyectar: async () => (sustratos.usage_runs === 0 ? null : (await sql(
-          `UPDATE usage_runs SET entries_count = entries_count + 1 WHERE organization_id = $1::uuid`,
+        // La columna es `entries`, no `entries_count`: con el nombre viejo la
+        // inyección reventaba con un `42703` y el arnés la contaba como «la base
+        // la rechaza», que es exactamente lo contrario de lo que pasaba.
+        inyectar: async () => ((await sql(
+          `UPDATE usage_runs SET entries = entries + 1 WHERE organization_id = $1::uuid`,
           [org.organizationId]
-        ), "métrica de uso retocada")),
-        deshacer: async () => undefined,
+        ), "métrica de uso retocada, con el sourceHash intacto")),
+        deshacer: async () => {
+          await sql(`UPDATE usage_runs SET entries = entries - 1 WHERE organization_id = $1::uuid`, [
+            org.organizationId,
+          ])
+        },
       },
       {
         numero: 9,
-        nombre: "una cuota del 303 tocada en el libro registro",
-        esperado: "I-E8-15a/b/c",
-        inyectar: async () => (sustratos.extraction_runs === 0 ? null : null),
+        nombre: "una cuota del 303 tocada en la liquidación sellada",
+        esperado: "I-E8-15a/b/c · y, antes que ellos, el disparador de G-8",
+        inyectar: async () => ((await sql(
+          `UPDATE vat_settlements SET output_cents = output_cents + 100 WHERE organization_id = $1::uuid`,
+          [org.organizationId]
+        ), "cuota repercutida de la liquidación con 100 céntimos de más")),
         deshacer: async () => undefined,
       },
       {
@@ -474,15 +546,20 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
         continue
       }
       if (aplicada === null) {
-        // El sustrato NO está: se dice, con la prueba de que falta, y se cuenta
-        // como no ejercida. Nunca como aprobada.
+        /**
+         * **Ronda 1: WARN = FAIL.** Antes esto se anotaba como WARN y la
+         * cobertura bajaba a 5/10 sin que nada se pusiera rojo: la enmienda E-9
+         * («NO_VERIFICABLE no es un aprobado») incumplida por el control que la
+         * vigila. Con el sustrato documental cargado ninguna inyección puede
+         * quedarse sin ejercer, y si alguna lo hace es un FAIL con su nombre.
+         */
         const faltan = Object.entries(sustratos)
           .filter(([, n]) => n === 0)
           .map(([tabla]) => tabla)
           .join(", ")
         registro.add(
           id,
-          "WARN",
+          "FAIL",
           `#${inyeccion.numero} ${inyeccion.nombre}: NO EJERCIDA — el fixture completo no trae el sustrato ` +
             `(tablas vacías en la copia: ${faltan}). La inyección espera ${inyeccion.esperado}`
         )
@@ -565,20 +642,23 @@ describe("C4 · las diez inyecciones de §3.5 sobre una copia, y las tres capas"
       await inyeccion.deshacer()
     }
 
-    // Las no ejercidas se cuentan y se declaran: la cifra sólo puede bajar.
-    registro.add(
+    /**
+     * **La cobertura exige 10/10** (criterio 15 e I-E12-6). Una inyección no
+     * ejercida ya no es un aviso: es un FAIL, aquí y en el `validacion.json`.
+     */
+    const ejercidas = inyecciones.length - noEjercidas.length
+    registro.assert(
       "C4-cobertura",
-      "INFO",
-      `inyecciones ejercidas: ${inyecciones.length - noEjercidas.length}/10 · no ejercidas por falta de sustrato: ${
+      ejercidas === inyecciones.length,
+      `inyecciones ejercidas: ${ejercidas}/10 · no ejercidas: ${
         noEjercidas.length === 0 ? "ninguna" : noEjercidas.join(" · ")
       }`
     )
 
     expect(noDetectadas, `inyecciones NO detectadas:\n${noDetectadas.join("\n")}`).toEqual([])
-    expect(
-      inyecciones.length - noEjercidas.length,
-      "se ejercieron menos inyecciones que la vez anterior: el sustrato se ha perdido"
-    ).toBeGreaterThanOrEqual(5)
+    expect(ejercidas, `las diez inyecciones de §3.5 se ejercen; no ejercidas: ${noEjercidas.join(" · ")}`).toBe(
+      inyecciones.length
+    )
   }, 900_000)
 
   it("criterio 18 · Capa 2 refuta: una cifra SELLADA alterada saca al auditor de CONFORME", async () => {

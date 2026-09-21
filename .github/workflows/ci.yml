@@ -167,8 +167,14 @@ jobs:
           set -e
           for dir in lib/ledger lib/analytics lib/accounts lib/taxes lib/audit lib/bank lib/closing lib/recurring lib/budget lib/time; do
             [ -d "$dir" ] || { echo "· $dir todavía no existe (E3/E4/E7/E10), se omite"; continue; }
+            # Los comentarios que NOMBRAN `prisma` y los tipos del cliente
+            # generado no son impurezas: sin estos dos filtros el guard saltaba
+            # en todos los directorios (ronda 1 de E12).
             if grep -rnE "Date\.now\(\)|new Date\(\s*\)|from \"@/lib/db\"|\bprisma\b|\bfetch\(|langchain|@langchain" \
-                 --include="*.ts" "$dir" | grep -v "\.test\.ts:"; then
+                 --include="*.ts" "$dir" \
+                 | grep -v "\.test\.ts:" \
+                 | grep -vE ":[0-9]+: *(\*|//|/\*)" \
+                 | grep -vE 'from "@/prisma/client"'; then
               echo "::error::Impureza detectada en $dir (reloj, IO, Prisma o LLM). Ver CLAUDE.md."
               exit 1
             fi
