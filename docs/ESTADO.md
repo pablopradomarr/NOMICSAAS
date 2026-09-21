@@ -1,6 +1,94 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-15 (**✅ E12 DISEÑADA** — `docs/design/E12-fiabilidad-dod.md`, 584 h / 26 tareas / 3 olas; **ADR-0020 APROBADO** y **ADR-0018 D2 ENMENDADA** · **SIGUIENTE: `/sprint E12`**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-21 (**🔗 E12 · RONDA DE INTEGRACIÓN cerrada** — las tres olas cosidas, **T22 (CI)** y **T23 (documentación)** entregadas; quince de las dieciséis deudas fechadas en E12 **CERRADAS**, dos re-fechadas con motivo escrito · **SIGUIENTE: verificación final y cierre de E12 (T24–T26)**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## 🔗 E12 · RONDA DE INTEGRACIÓN DE LAS TRES OLAS (2026-09-21)
+
+Olas: **A** (aceptación C1–C7 y el auditor automatizado), **B** (memoria borrada,
+backup en streaming, deuda de plataforma, volumen real), **C** (`/admin`,
+controlling y golden tests). Esta ronda cierra sus rojos, sus hallazgos y las
+dos tareas que quedaban: **T22** (integración continua) y **T23** (documentación).
+
+### Los rojos de integración, cerrados
+
+| Rojo | Qué era | Cómo se cierra |
+|---|---|---|
+| `e9-esquema` · «ninguna tabla en NO FORCE» | El endurecimiento de Supabase (`20260929090000`) dejó `sessions`, `account`, `verification` y `_prisma_migrations` con RLS **ENABLE y sin FORCE** | **Excluidas por nombre, con motivo escrito.** `FORCE` sólo sirve para que el propietario no esquive una política **de tenant**, y estas cuatro no tienen ninguna: su política es `USING (true)` a los roles de la aplicación, un cierre **por rol** frente a `anon`/`authenticated`. Ponerles `FORCE` no cerraría ninguna fuga y dejaría fuera al propietario, que es quien las migra: rompería `prisma migrate deploy` a cambio de cero seguridad. El test comprueba además que la exclusión no es una puerta abierta —las cuatro siguen con RLS y con su política de roles— y que ninguna lleva `organization_id` |
+| `models-app-runtime` · «`updateOrganization` pasa el WITH CHECK» | Escribía `storageUsed`, la columna que **T15 retiró** | El test demuestra que un `UPDATE` pasa la política bajo `app_runtime`, no esa columna: se ejerce con una columna viva (`name`) |
+| Ningún otro | `npm run test:integration` completo, `unit`, `rls` y `acceptance` | Verdes |
+
+### Los hallazgos de la ola A, cerrados
+
+| Hallazgo | Qué era | Cómo se cierra |
+|---|---|---|
+| **C3** · la provenance de las cuatro cifras de cabecera **no era ejecutable** | Una sola consulta agregada (`GROUP BY 1,2,3`) que declaraba `$1` y `$2` mientras `cellProvenance` le mandaba tres parámetros: ejecutarla daba `08P01`. Una consulta que no se puede ejecutar no es trazabilidad, es una cita | **Una consulta por cifra**, que devuelve `journal_lines.id` como el resto de celdas, con los parámetros que declara y ni uno más. Las acumuladas (activo, PN + pasivo, tesorería) **no tienen fecha de inicio**, así que no la llevan: `cellProvenance` gana `queryParams` para que una consulta explícita traiga sus propios parámetros. La suite **C3 las ejecuta** |
+| **C4** · el auditor declaraba `P-PRODUCTO-CONTRADICTORIO` sobre una copia **intacta** | Su sondeo recorría el JSON sellado entero y leía las doce celdas `ingresos` de una serie mensual como doce afirmaciones distintas sobre la misma cifra | Corregida **la comparación en el script**: una cifra DEL PERIODO no vive dentro de una serie ni de una lista. Se descartan los caminos que atraviesan un índice de lista, una clave de serie declarada o una **etiqueta de periodo** (`2026-03`). Y la suite C4 siembra ahora el `CASHFLOW` mensual **y** una serie inyectada de doce meses: si alguien deshace el filtro, la copia limpia deja de salir CONFORME |
+| **C5** · `DIVERGENCIAS_T23`: 8 motivos emitidos sin declarar y 3 declarados sin emisor | La tabla del cierre declaraba **cinco** de los diez de `E9_SEAL_REASONS`, y la del camino documental tres que **nadie emite** | `SKILL.md` alineado: los diez del cierre y los seis de E8, escritos como los emite el código. Y los tres «huérfanos» resultaron **no ser motivos de sello** sino avisos de calidad (`DataQualityWarning`) —uno además con otro nombre: `DESVIACION_DE_CUOTA`—, que ahora viven en su propia tabla fuera del vocabulario cerrado. **La lista de divergencias queda vacía** y el test pasa con ella vacía |
+
+### El hallazgo de la ola B (Nivel 2), resuelto como decisión
+
+**`InvariantRun.analyticsKey` se compone sobre uuid y no puede sobrevivir a una
+restauración.** Se resuelve **cerrándolo**, no alineándolo: nota de alcance
+fechada en **ADR-0011** (2026-09-21, permiso delegado), que no cambia ninguna
+tupla. El sello analítico comparable entre copias es el de `computeContentSeals`,
+sobre **claves naturales**, y ése sí coincide —el test de reconstrucción lo
+enfrenta explícitamente—. Alinearlos exigiría reescribir `canonicalAnalyticsForm`
+e **invalidaría todos los sellos emitidos**, que es justo lo que ADR-0011
+prohíbe; y no haría falta, porque el de `InvariantRun` es una **clave de caché
+local**, no un certificado que viaje. `README-FIABILIDAD.md` §3 lo dice para
+humanos: qué sello sobrevive a una copia y cuál no.
+
+### T22 · integración continua (`.github/workflows/fiabilidad.yml`)
+
+**Nueve trabajos**, con `GIT_SHA` y `TZ: Europe/Madrid` **en la raíz del
+workflow** —heredarlos es la única forma de que ninguno se quede sin ellos al
+añadir el siguiente—: lint+tsc · unitarios · integración · RLS · **aceptación
+C1–C7** (más memoria borrada y reconstrucción desde copia) · **auditor
+automatizado** · **fixtures `--check`** (los **doce** generadores, por glob, no
+por lista) · **e2e uno por fichero** (matriz de 13) · build.
+
+- El job del auditor **emite los informes antes** (`scripts/ci-audit-fixture.ts`:
+  fixture cargado por el motor, BALANCE, PyG, **CASHFLOW mensual** y PyG
+  analítica, y el barrido persistido). Sin cifras selladas el veredicto sería
+  `NO_VERIFICABLE`, y **`NO_VERIFICABLE` falla igual que `DISCREPANCIA`**: lo
+  impone el código de salida del propio auditor, sin `|| true` que lo tape.
+- Artefactos a 90 días: `validacion.json`, `barrido.json`,
+  `audit-reconstruct.json` y los `validacion.json` de los siete componentes.
+- **Resumen en el PR** (`scripts/ci-resumen.ts`): sello y motivos, los cinco
+  hashes, las doce cifras con su Δ y el recuento PASS/FAIL/WARN/INFO por familia,
+  con los FAIL enumerados. Que se lea sin abrir un artefacto es la diferencia
+  entre un control y un adorno.
+
+### T23 · documentación
+
+`README-FIABILIDAD.md` **final** (siete secciones, con **§4 «cómo auditarlo en
+diez minutos»** y **§6 «cómo se extiende sin romper la capa»**, las dos nuevas) ·
+`docs/spec/SPEC-FIABILIDAD-v1.1-propuesta.md` revisada con lo que costó ejecutar
+E12: cinco enmiendas estrenan cicatriz y se añaden **dos** —**E-11** (un techo se
+mide con volumen real, nunca extrapolado) y **E-12** (el refutador no comparte
+autoría con el productor)— · `.claude/skills/fiabilidad/SKILL.md` con
+**`I-E12-1…8`** y el vocabulario de motivos alineado · `docs/ARQUITECTURA.md` y
+`docs/MODELO-DATOS.md` con la capa que E12 añade.
+
+### La deuda fechada en E12: quince cerradas, **dos re-fechadas con motivo**
+
+| Re-fechada | Nueva épica | Motivo escrito |
+|---|---|---|
+| **Lector de acceso aleatorio sobre el ZIP** (techo 6 medido con el diario completo pero **sin** los 1,5 GB de documentos) | **E14** | T14 resolvió la **escritura** en streaming; la **lectura** sigue abriendo el archivo con `JSZip` sobre un `Buffer`, y un ZIP multi-GB no cabe en el heap. Hace falta un lector de acceso aleatorio sobre fichero y recablear a él las seis comprobaciones. No es un ajuste: es otro camino de lectura, y meterlo en la ronda de integración sería exactamente el atajo que esta épica existe para no dar |
+| **Inyecciones 4, 5, 6, 8 y 9 de la matriz, DECLARADAS como no ejercidas** | **E14** | El fixture completo se compone de asientos **manuales**: no trae `allocation_lines`, `extraction_runs`, `files` ni `usage_runs` coherentes, y sembrarlos con el arnés deja el ciclo limpio con `I-E8-11`, `I-E8-17` e `I-E11-6` en FAIL. Una inyección sobre un baseline ya roto no demuestra nada: no se distingue lo que caza el invariante de lo que ya estaba mal. Lo que hace falta es un **fixture documental** coherente —documento, bytes en el almacén, run sellado y asiento—, que es una pieza propia. Las cinco quedan **declaradas** con su motivo y comprobando que el sustrato falta de verdad, nunca en PASS |
+
+*(Y la decimosexta no era deuda: el «arqueo de caja como fuente equivalente»
+quedó **RETIRADO como decisión** en el diseño, no re-fechado.)*
+
+### Suites al cerrar la ronda
+
+`unit` · `integration` · `integration:rls` · `acceptance` · `build` en verde;
+e2e por fichero (`admin`, `onboarding-plataforma`, `cierre`) en verde.
+Registro: `2026-09-21_e12_integracion_t22_t23`.
+
+**SIGUIENTE: verificación final y cierre de E12** (T24 revisión, T25 auditoría en
+contexto limpio, T26 cierre), con el fixture documental y el lector de ZIP ya
+fechados en E14.
 
 ## ✅ E12 DISEÑADA (2026-09-15) — siguiente: `/sprint E12`
 
@@ -157,14 +245,14 @@ caducaría el ZIP en el instante de crearlo.
 
 | Deuda | Épica | Motivo |
 |---|---|---|
-| **El ZIP del backup se construye EN MEMORIA** (`JSZip`) | **E12** | Un volcado de 2 GB no cabe en el heap de una función serverless. El troceado en streaming exige cambiar el generador y subir en multipart; no es barato y no cabe en una ronda de integración. Techo medido en §12 |
-| **El camino de lectura al disco heredado** (`lib/documents.ts`) | **E12** | Lo subido antes de E11 sólo está en disco. Se retira cuando `scripts/migrate-uploads-to-storage.ts --apply` haya corrido en todos los entornos (runbook `docs/deploy/e11-plataforma.md`) |
-| **`organizations.storage_used` / `storage_limit`** siguen vivas y deprecadas | **E12** | La cifra buena es la derivada de `models/usage.ts`, que excluye por `kind` lo que no es cuota del cliente (O-12c). `syncOrganizationStorage` ya las alimenta **desde el almacén**, no desde el disco |
-| **Ficheros `static/` (logo, avatar)** siguen en disco | **E12** | Se nombran por su nombre, no por su `sha256`, así que migrarlos al almacén exige un índice que no existe. No son justificantes: son la marca de la organización |
-| **`/admin` de plataforma: las escrituras** | **E12** | En E11 queda `/api/health` y el cambio de plan por acción de administración (D9), que es como se **prueban** los límites. El panel completo lo puede sustituir SQL durante una épica |
-| **Los techos 3, 5, 6 y 8 de §12, con volumen REAL** | **E12** | Se miden con volumen sembrado en el propio test (10 000 asientos, 20 000 objetos, 5 000 documentos) y se **extrapolan separando coste fijo de marginal**; el 5 mide además el ZIP y el pico. La medición a 50 000 asientos / 1,5 GB de ficheros necesita un fixture de gran volumen dedicado |
-| **`stored_objects` se restaura con la clave del prefijo del ORIGEN** | **E12** | No rompe nada hoy —I-E11-6 lo enseña igual en origen y destino, y la comprobación 6 **relativa** lo tolera por fiel—, pero las claves deberían rederivarse en el destino junto con los bytes |
-| **G-20** — restaurar un ZIP ajeno **desde la interfaz** | **E12** | En E11 se restaura desde una copia que vive en la plataforma, que es el caso real; un ZIP ajeno entra por script de operador. Es el resto de `G-15`, cuyo grueso E11 cierra |
+| ~~**El ZIP del backup se construye EN MEMORIA** (`JSZip`)~~ **CERRADA (E12 · T14)** | **E12** | Un volcado de 2 GB no cabe en el heap de una función serverless. El troceado en streaming exige cambiar el generador y subir en multipart; no es barato y no cabe en una ronda de integración. Techo medido en §12 |
+| ~~**El camino de lectura al disco heredado** (`lib/documents.ts`)~~ **CERRADA (E12 · T15)** | **E12** | Lo subido antes de E11 sólo está en disco. Se retira cuando `scripts/migrate-uploads-to-storage.ts --apply` haya corrido en todos los entornos (runbook `docs/deploy/e11-plataforma.md`) |
+| ~~**`organizations.storage_used` / `storage_limit`** siguen vivas y deprecadas~~ **CERRADA (E12 · T15: eliminadas, con guardia estática)** | **E12** | La cifra buena es la derivada de `models/usage.ts`, que excluye por `kind` lo que no es cuota del cliente (O-12c). `syncOrganizationStorage` ya las alimenta **desde el almacén**, no desde el disco |
+| ~~**Ficheros `static/` (logo, avatar)** siguen en disco~~ **CERRADA (E12 · T15: al almacén con `kind = BRANDING`)** | **E12** | Se nombran por su nombre, no por su `sha256`, así que migrarlos al almacén exige un índice que no existe. No son justificantes: son la marca de la organización |
+| ~~**`/admin` de plataforma: las escrituras**~~ **CERRADA (E12 · T12/T13, ADR-0020)** | **E12** | En E11 queda `/api/health` y el cambio de plan por acción de administración (D9), que es como se **prueban** los límites. El panel completo lo puede sustituir SQL durante una épica |
+| ~~**Los techos 3, 5, 6 y 8 de §12, con volumen REAL**~~ **CERRADA (E12 · T17, sin extrapolar)** — salvo el techo 6 con 1,5 GB de documentos, **re-fechado en E14** con motivo | **E12** | Se miden con volumen sembrado en el propio test (10 000 asientos, 20 000 objetos, 5 000 documentos) y se **extrapolan separando coste fijo de marginal**; el 5 mide además el ZIP y el pico. La medición a 50 000 asientos / 1,5 GB de ficheros necesita un fixture de gran volumen dedicado |
+| ~~**`stored_objects` se restaura con la clave del prefijo del ORIGEN**~~ **CERRADA (E12 · T16: claves rederivadas, comprobación 6 exacta)** | **E12** | No rompe nada hoy —I-E11-6 lo enseña igual en origen y destino, y la comprobación 6 **relativa** lo tolera por fiel—, pero las claves deberían rederivarse en el destino junto con los bytes |
+| ~~**G-15b** (rotulado `G-20` por errata) — restaurar un ZIP ajeno **desde la interfaz**~~ **CERRADA (E12 · T16)** | **E12** | En E11 se restaura desde una copia que vive en la plataforma, que es el caso real; un ZIP ajeno entra por script de operador. Es el resto de `G-15`, cuyo grueso E11 cierra |
 
 ## ✅ E11 DISEÑADA (2026-09-15) — el diseño y su validación
 
@@ -789,9 +877,9 @@ extensión/mimetype del fichero importado en el borde) queda abierto abajo.
 | **Drill-down del informe: 28 800 celdas filtradas en memoria** (registro C1) | **CERRADA (2026-09-15)** | — | `budgetSheetSummary` agrega en SQL (recuento de filas, total, por mes y por nivel) y `getBudgetVersion(tx, id, { rows })` pagina por **fila de la hoja** —sus doce meses—, resolviendo la ventana con `row_number()` en SQL. El techo 1 de §9 se mide sobre ese camino |
 | **El editor pinta las celdas de UNA versión sin paginación** (registro C2) | **CERRADA (2026-09-15)** | — | Misma corrección: la pantalla lee una página de filas y los totales del ejercicio por agregado SQL, así que el pie de la tabla no miente aunque en pantalla haya cien filas |
 | **El calendario de `/time` lee hasta 5 000 partes del mes** (registro C1) | **ABIERTA**, acotada | **E11** | El listado ya pagina (`take`) y el techo 6 de §9 se mide (< 400 ms con 40 × 22 partes). Lo que falta es el **agregado por (empleado, día) en SQL** para el calendario, en vez de traer los partes y agrupar en memoria: con 40 empleados y 22 días son 880 filas, pero con 250 el calendario del mes se va a 5 000 |
-| **Contrato del bloque de rentabilidad por proyecto** (registro C3, «queda abierto, sin fecha propia») | **ABIERTA**, ahora **fechada** | **E11** | Depende del contrato de la celda mensual y de la descomposición volumen/precio (Q-6 / D6), que E11 fija. Hasta entonces el bloque publica lo de §5.2 sin desglose mensual |
+| ~~**Contrato del bloque de rentabilidad por proyecto**~~ **CERRADA (E12 · T19)** | CERRADA | **E11 → E12** | Depende del contrato de la celda mensual y de la descomposición volumen/precio (Q-6 / D6), que E11 fija. Hasta entonces el bloque publica lo de §5.2 sin desglose mensual |
 | **PUEDE 14** — el import valida el tamaño pero no extensión ni mimetype en el borde | ABIERTA | **E11** | Un `.xlsx` soltado por error entra como binario y sale como 30 000 rechazos en vez de un «esto no es un CSV» |
-| **Granularidad `MONTH` de varios meses** (ronda de integración) | ABIERTA | **E11** | Ya fechada arriba; se mantiene |
+| ~~**Granularidad `MONTH` de varios meses**~~ **CERRADA (E12 · T19: desglose mes a mes y volumen/precio)** | CERRADA | **E11 → E12** | Ya fechada arriba; se mantiene |
 
 Registro: `2026-09-15_e10_ronda1`.
 
