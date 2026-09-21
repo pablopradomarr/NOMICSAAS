@@ -921,13 +921,84 @@ describe.skipIf(!TEST_DATABASE_URL)("E9 · T4 — CHECK, triggers e índices de 
       }
     })
 
+    /**
+     * **E12 · T22 — las cuatro excepciones, con motivo escrito.**
+     *
+     * El endurecimiento `20260929090000_supabase_api_hardening` activó RLS en
+     * cuatro tablas que NO son de negocio: las tres de `better-auth`
+     * (`sessions`, `account`, `verification`) y `_prisma_migrations`. Su
+     * política no aísla tenants —no tienen `organization_id`—: es
+     * `USING (true) TO app_runtime, app_auth, app_maintenance`, es decir, un
+     * cierre POR ROL frente a `anon`/`authenticated` de la API REST de Supabase.
+     *
+     * Por qué NO se les pone `FORCE`, que es lo que se evaluó primero:
+     *
+     * 1. `FORCE` sirve para una cosa: que **el propietario** no esquive una
+     *    política de tenant. Aquí no hay política de tenant que esquivar —la
+     *    política admite todo a los roles de la aplicación—, así que `FORCE` no
+     *    cierra ninguna fuga: la restricción real la dan los `REVOKE` del paso 1
+     *    de esa migración, no la política.
+     * 2. Lo único que `FORCE` cambiaría es dejar **fuera al propietario**, que
+     *    es precisamente el rol que las gestiona: `_prisma_migrations` la
+     *    escribe Prisma por `DIRECT_URL` (propietario, y no cambia de rol: la
+     *    migración lo dice en su cabecera), y las tres de `better-auth` las
+     *    crean y alteran las migraciones con ese mismo rol. Un `FORCE` ahí
+     *    rompería `prisma migrate deploy` en el primer despliegue —fallo de
+     *    disponibilidad a cambio de cero seguridad—.
+     * 3. El riesgo que este test vigila —un backfill que se deja el baile
+     *    `NO FORCE` → backfill → `FORCE` a medias y abre una tabla de negocio
+     *    para siempre— no aplica a ninguna de las cuatro: no llevan
+     *    `organization_id` ni entran en `TENANT_MODELS`.
+     *
+     * Por eso se excluyen **por nombre** (no por un patrón que pudiera tragarse
+     * una tabla futura) y el test comprueba, además, que la exclusión no es una
+     * puerta abierta: las cuatro siguen con RLS activada y con su política de
+     * roles. Cualquier tabla nueva que aparezca en `NO FORCE` sigue siendo roja.
+     */
+    const SIN_FORCE_JUSTIFICADAS = ["_prisma_migrations", "account", "sessions", "verification"] as const
+
     it("ninguna tabla de negocio de la base queda en NO FORCE tras M1…M6", async () => {
       const rows = await q<{ relname: string }>(
         `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE n.nspname = 'public' AND c.relkind = 'r'
-            AND c.relrowsecurity AND NOT c.relforcerowsecurity`
+            AND c.relrowsecurity AND NOT c.relforcerowsecurity
+            AND c.relname <> ALL($1::text[])
+          ORDER BY c.relname`,
+        [[...SIN_FORCE_JUSTIFICADAS]]
       )
       expect(rows.map((r) => r.relname)).toEqual([])
+    })
+
+    it("las cuatro excluidas no son un agujero: RLS activada y política de roles de la app", async () => {
+      const rows = await q<{ relname: string; rls: boolean; force: boolean; roles: string }>(
+        `SELECT c.relname, c.relrowsecurity AS rls, c.relforcerowsecurity AS force,
+                COALESCE((SELECT string_agg(DISTINCT r, ',' ORDER BY r)
+                            FROM pg_policies p, unnest(p.roles) AS r
+                           WHERE p.schemaname = 'public' AND p.tablename = c.relname), '') AS roles
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relname = ANY($1::text[])
+          ORDER BY c.relname`,
+        [[...SIN_FORCE_JUSTIFICADAS]]
+      )
+      expect(rows.map((r) => r.relname)).toEqual([...SIN_FORCE_JUSTIFICADAS])
+      for (const row of rows) {
+        expect(row.rls, `${row.relname} sin ENABLE`).toBe(true)
+        expect(row.force, `${row.relname} con FORCE: revisa el motivo escrito arriba`).toBe(false)
+        // La política nombra a los roles de la aplicación, nunca a PUBLIC (que
+        // en `pg_policies` aparece como cadena vacía o `{public}`).
+        expect(row.roles, `${row.relname} sin política de roles`).toContain("app_runtime")
+        expect(row.roles, `${row.relname} con política abierta a PUBLIC`).not.toContain("public")
+      }
+    })
+
+    it("ninguna de las excluidas es tabla de negocio: no llevan `organization_id`", async () => {
+      const filas = await q<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.columns
+          WHERE table_schema = 'public' AND column_name = 'organization_id'
+            AND table_name = ANY($1::text[])`,
+        [[...SIN_FORCE_JUSTIFICADAS]]
+      )
+      expect(filas.map((f) => f.table_name)).toEqual([])
     })
   })
 })

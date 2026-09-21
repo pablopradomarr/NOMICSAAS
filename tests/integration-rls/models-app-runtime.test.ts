@@ -101,10 +101,14 @@ describe.skipIf(!OWNER_URL)("models/ ejecutados como app_runtime (RLS efectiva)"
   })
 
   it("updateOrganization() pasa el WITH CHECK de organizations", async () => {
-    const updated = await updateOrganization(orgA.id, { storageUsed: 4096 })
-    // E11 · M6: `storage_used` es `bigint` (§2.7) — `integer` topaba en 2,147 GB
-    // contra un plan PRO de 100 GB.
-    expect(updated.storageUsed).toBe(BigInt(4096))
+    // E12 · T22 (integración): este test escribía `storageUsed`, la columna que
+    // **T15 retiró** de `organizations` (la cifra buena es la derivada de
+    // `models/usage.ts`). Lo que el test demuestra no es esa columna sino que un
+    // UPDATE de `updateOrganization` pasa el WITH CHECK de la política bajo
+    // `app_runtime`; se ejerce con una columna viva.
+    const updated = await updateOrganization(orgA.id, { name: "Organización A (renombrada)" })
+    expect(updated.name).toBe("Organización A (renombrada)")
+    expect(updated.id).toBe(orgA.id)
   })
 
   it("CRUD de categorías y transacciones por tenantDb bajo RLS", async () => {
