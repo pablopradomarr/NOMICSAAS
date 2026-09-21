@@ -8,7 +8,8 @@
  * el asiento propuesto, la confirmación y el drill-down.
  *
  * Así que este script hace lo que haría `runExtraction` **menos la llamada al
- * modelo**: escribe el documento en disco con su `sha256`, y siembra un
+ * modelo**: escribe el documento **en el almacén de objetos** con su `sha256`
+ * —donde el producto lo lee (ADR-0019 D3)—, y siembra un
  * `ExtractionRun` con la propuesta ya puesta y el veredicto calculado por el
  * MISMO `reconcile()` que usa la aplicación, con el MISMO contexto leído de la
  * base. No hay veredicto de mentira: si la propuesta sembrada no cuadrase, la
@@ -21,14 +22,14 @@
  */
 
 import { createHash, randomUUID } from "node:crypto"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
-import path from "node:path"
 
 import { tenantDb } from "@/lib/db"
 import { reconcile } from "@/lib/extraction/reconcile"
 import { documentWarnings, sealedReconcile } from "@/lib/extraction/seal"
 import type { ExtractionProposal } from "@/lib/extraction/types"
-import { getOrganizationUploadsDirectory, safePathJoin, unsortedFilePath } from "@/lib/files"
+import { documentBytesExist } from "@/lib/documents"
+import { unsortedFilePath } from "@/lib/files"
+import { putObject } from "@/models/storage"
 import { createExtractionRun } from "@/models/extraction"
 import { createFile } from "@/models/files"
 import { buildReconcileContext } from "@/models/reconcile-context"
@@ -199,32 +200,36 @@ async function main(): Promise<void> {
    * de acumular ficheros en cada ejecución de la suite.
    *
    * **BUG-E8-2 (QA de E8).** «Ya está sembrado» se comprobaba MIRANDO SÓLO LA
-   * FILA. Los bytes viven en `UPLOAD_PATH`, que en el sandbox se pierde al
-   * reiniciar y que además no se borra al recargar la base: bastaba con que la
-   * fila sobreviviera y el fichero no para que el visor devolviera 404 y el
-   * e2e de documentos fallara en un `expect` que no explicaba nada. Ahora el
-   * arnés comprueba que los BYTES están donde la fila dice y, si no, los vuelve
-   * a escribir: el sha256 registrado es determinista por número de documento,
-   * así que regenerarlos reproduce exactamente el fichero que la fila declara.
+   * FILA: bastaba con que la fila sobreviviera y el contenido no para que el
+   * visor devolviera 404 y el e2e de documentos fallara en un `expect` que no
+   * explicaba nada.
+   *
+   * **BUG-E12-2 (QA de E12).** Y los bytes se escribían **a mano en
+   * `UPLOAD_PATH`**, cuando el producto los lee del **almacén de objetos** desde
+   * E11 (`readDocumentBytes` → `putObject`, ADR-0019 D3): el fichero estaba en
+   * disco, la fila lo declaraba, y la pantalla seguía sin poder enseñarlo —
+   * `documentos.spec` caía por un 410 en el visor—. Ahora el arnés escribe
+   * **donde el producto lee**, con la misma función que la acción de subida, y
+   * comprueba la presencia preguntándole al almacén.
    */
   const existing = await db.file.findFirst({ where: { filename }, orderBy: { createdAt: "desc" } })
   let fileId = existing?.id ?? null
 
-  if (existing) {
-    const fullPath = safePathJoin(getOrganizationUploadsDirectory(organization), existing.path)
-    if (!(await onDiskWithSha(fullPath, existing.sha256 ?? sha256))) {
-      await mkdir(path.dirname(fullPath), { recursive: true })
-      await writeFile(fullPath, bytes)
-      process.stderr.write(`[seed-extraction] regenerado el documento ausente en disco: ${existing.path}\n`)
-    }
+  if (existing && !(await documentBytesExist(organizationId, existing))) {
+    await putObject(db, {
+      organizationId,
+      kind: "DOCUMENT",
+      sha256: existing.sha256 ?? sha256,
+      mimeType: existing.mimetype,
+      body: bytes,
+    })
+    process.stderr.write(`[seed-extraction] repuestos en el almacén los bytes de ${existing.filename}\n`)
   }
 
   if (!fileId) {
     const fileUuid = randomUUID()
     const relativePath = unsortedFilePath(fileUuid, filename)
-    const fullPath = safePathJoin(getOrganizationUploadsDirectory(organization), relativePath)
-    await mkdir(path.dirname(fullPath), { recursive: true })
-    await writeFile(fullPath, bytes)
+    await putObject(db, { organizationId, kind: "DOCUMENT", sha256, mimeType: "image/png", body: bytes })
 
     const created = await createFile(db, {
       id: fileUuid,
@@ -291,16 +296,6 @@ async function main(): Promise<void> {
   process.stdout.write(
     `${JSON.stringify({ fileId: file.id, runId: run.id, status: result.status, documentNumber })}\n`
   )
-}
-
-/** ¿Están los bytes en disco y son los que la fila declara? (BUG-E8-2). */
-async function onDiskWithSha(fullPath: string, expectedSha256: string): Promise<boolean> {
-  try {
-    const bytes = await readFile(fullPath)
-    return createHash("sha256").update(bytes).digest("hex") === expectedSha256
-  } catch {
-    return false
-  }
 }
 
 /** Hoy en `YYYY-MM-DD`, hora local del proceso. El motor nunca lo hace por su cuenta. */

@@ -366,6 +366,18 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T19 — perf-budget (§9, los NUEVE 
         [ORG, employeeIds, FY_START, FY_END, projectIds, USER]
       )
       await client.query(`ALTER TABLE time_entries ENABLE TRIGGER USER`)
+
+      /**
+       * **`ANALYZE` tras la siembra masiva** (DEBE #5 de la revisión). Sin
+       * estadísticas frescas el planificador cree que estas tablas están
+       * vacías, elige el plan de una tabla vacía y lo que los nueve techos
+       * miden es su error, no el código. Es la misma razón por la que
+       * `perf-audit`, `perf-closing` y `e8-bandeja-perf` ya lo hacen.
+       */
+      await client.query(
+        `ANALYZE budgets, budget_lines, budget_hours_lines, time_entries, projects, cost_centers, accounts,
+                 journal_entries, journal_lines`
+      )
     })
   }, 900_000)
 
@@ -444,17 +456,36 @@ describe.skipIf(!TEST_DATABASE_URL)("E10 · T19 — perf-budget (§9, los NUEVE 
 
   // ── 2 ─────────────────────────────────────────────────────────────────────
   it(`2/9 · guardado por lotes de ${SCALE.batchCells} celdas en < 300 ms`, async () => {
-    const cells = Array.from({ length: SCALE.batchCells }, (_, i) => ({
-      month: `2026-${String((i % 12) + 1).padStart(2, "0")}-01`,
-      accountCode: accountCodes[i % accountCodes.length],
-      projectId: projectIds[i % projectIds.length],
-      analyticType: "COSTE_DIRECTO_MC2" as const,
-      amountCents: -(1_000 + i),
-    }))
+    /**
+     * **DEBE #5 de la revisión / BUG-E12-4.** El techo fallaba dos de dos veces
+     * (460 y 472 ms) sin que `upsertBudgetCellsTx` hubiera cambiado una línea.
+     * Faltaban las dos cosas que hacen que un número mida el código:
+     *
+     *  · **`ANALYZE`** de las tablas recién sembradas (lo hace el `beforeAll`):
+     *    sobre estadísticas de una tabla vacía el planificador elige el plan de
+     *    una tabla vacía, y lo que se mide es el error del planificador.
+     *  · **Calentamiento**: la primera llamada paga el `prepare` de las
+     *    sentencias, la conexión del pool y las páginas frías de la caché. Se
+     *    hace con un lote DISTINTO —otras celdas, mismo tamaño y misma forma—
+     *    para no convertir el `createMany` medido en un `updateMany`.
+     */
+    const lote = (desde: number) =>
+      Array.from({ length: SCALE.batchCells }, (_, i) => ({
+        month: `2026-${String(((desde + i) % 12) + 1).padStart(2, "0")}-01`,
+        accountCode: accountCodes[(desde + i) % accountCodes.length],
+        projectId: projectIds[(desde + i) % projectIds.length],
+        analyticType: "COSTE_DIRECTO_MC2" as const,
+        amountCents: -(1_000 + desde + i),
+      }))
+    const cells = lote(0)
     // La configuración analítica es una lectura de la PANTALLA, no del guardado:
     // el techo de §9 mide «`createMany` + `updateMany`, nunca 500 `upsert`».
     const config = await tenantTransaction(ORG, USER, async (tx) =>
       getAnalyticsConfig(tx, { periodEnd: FY_END })
+    )
+    // Calentamiento, fuera de la medida.
+    await tenantTransaction(ORG, USER, async (tx) =>
+      upsertBudgetCellsTx(tx, { budgetId: draftId, config, cells: lote(SCALE.batchCells * 3) }, actor)
     )
     const { ms } = await watcher.measure(async () =>
       tenantTransaction(ORG, USER, async (tx) => upsertBudgetCellsTx(tx, { budgetId: draftId, config, cells }, actor))

@@ -118,9 +118,27 @@ export function ensureSelfHostedSeed(): SelfHostedSeed {
   return selfHostedSeed
 }
 
-/** Correo del usuario con el que corre el smoke. ADMIN de la organización. */
+/**
+ * El usuario con el que corre el smoke: **el que el arnés siembra**, y ninguno
+ * más.
+ *
+ * **BUG-E12-1 (QA).** Antes se pedía «el ADMIN de la organización más antigua de
+ * TODA la base», y en una base con varias organizaciones —la de `erp_test`
+ * después de correr la suite de integración, o un `erp` de desarrollo— eso
+ * devolvía el administrador de OTRA organización: la sesión se abría con un
+ * usuario que no pertenece a la organización del smoke, y la mitad de los
+ * ficheros e2e fallaban por un 404 o por una pantalla vacía que no explicaba
+ * nada.
+ *
+ * El usuario sembrado es el dueño de la organización del smoke por
+ * construcción (`scripts/seed-self-hosted.ts`), así que no hace falta buscarlo:
+ * se sabe. La consulta sólo se conserva para el caso en que el arnés no haya
+ * podido sembrar —ahí sí vale cualquier ADMIN, porque no hay otra cosa—, y con
+ * el aviso escrito.
+ */
 export async function adminUserId(): Promise<string> {
   const seed = ensureSelfHostedSeed()
+  if (seed.userId) return seed.userId
   return await withDb(async (client) => {
     const { rows } = await client.query<{ user_id: string }>(
       `SELECT m.user_id
@@ -130,11 +148,8 @@ export async function adminUserId(): Promise<string> {
         ORDER BY o.created_at ASC
         LIMIT 1`
     )
-    // Sin ADMIN no se lanza: se devuelve el usuario SEMBRADO. Las suites que
-    // degradan el rol para probar el VIEWER (`setRole`) dejan la base sin ningún
-    // ADMIN mientras dura el test, y el `finally` que restaura el rol volvía a
-    // pedir el ADMIN — que ya no existía— y moría sin restaurar nada.
-    return rows.length > 0 ? rows[0].user_id : seed.userId
+    if (rows.length === 0) throw new Error("no hay ningún ADMIN en la base y el arnés no ha sembrado usuario")
+    return rows[0].user_id
   })
 }
 

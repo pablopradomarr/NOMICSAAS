@@ -203,6 +203,21 @@ test("un activo enseña su cuadro sellado y su venta ofrece 543, nunca 430", asy
   await expect(page.getByTestId("asset-lis-note")).toContainText("amortización fiscal no se contabiliza")
   await page.getByTestId("asset-life").fill("24")
   await page.getByTestId("asset-capital-good").check()
+
+  /**
+   * **BUG-E12-3 (QA).** La organización de los e2e **exige destino analítico**
+   * en los grupos 6 y 7 (C-9), y este formulario lo dice en su propio aviso:
+   * sin él la acción se niega con «La cuenta 681 exige exactamente un destino
+   * analítico» y el alta no llega a ocurrir. El test no lo elegía, así que
+   * fallaba en el `expect` de la fila —que no explica nada— en vez de en la
+   * causa. Se elige el PRIMER proyecto de la lista: cuál sea da igual, que haya
+   * uno no.
+   */
+  const destino = page.getByTestId("asset-analytic-target")
+  const primerProyecto = await destino.locator('option[value^="PROJ:"]').first().getAttribute("value")
+  expect(primerProyecto, "la organización no tiene proyectos: el activo no puede heredar destino").toBeTruthy()
+  await destino.selectOption(primerProyecto!)
+
   await page.getByTestId("asset-submit").click()
 
   const fila = page.locator('[data-asset-code="ACT-E2E"]')
