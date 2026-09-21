@@ -1,0 +1,444 @@
+name: Fiabilidad
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E12 · T22 — La capa de fiabilidad, comprobada por una máquina en cada push.
+# (`docs/design/E12-fiabilidad-dod.md` §8)
+#
+# Workflow HERMANO de `ci.yml`, no su sustituto: `ci.yml` ya corre lint, unit,
+# typecheck, docker, integración, fixtures de E10 y pureza del motor. Éste añade
+# lo que hasta E12 **no corría nunca en CI** —aceptación C1–C7, el auditor
+# automatizado y los e2e— y lo hace con las dos condiciones que hacen que los
+# asertos signifiquen algo:
+#
+#   · `GIT_SHA` en TODOS los jobs. Sin él el sello sale `REQUIERE REVISIÓN` por
+#     diseño (runbook de E3) y la mitad de los asertos serían falsos.
+#   · `TZ: Europe/Madrid` en TODOS los jobs. La hidratación de fechas ya costó
+#     dos incidentes.
+#
+# Y una regla que no se negocia (enmienda **E-9** de la v1.1):
+# **`NO_VERIFICABLE` falla igual que `DISCREPANCIA`.** Lo impone el código de
+# salida de `scripts/audit-reconstruct.ts`, que sólo devuelve 0 con `CONFORME`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fiabilidad-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Las dos variables del §8, en la raíz: heredarlas es la única forma de que
+  # NINGÚN job se quede sin ellas al añadir el siguiente.
+  GIT_SHA: ${{ github.sha }}
+  TZ: Europe/Madrid
+  CI: "true"
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1 · Lint + tsc
+  # ───────────────────────────────────────────────────────────────────────────
+  lint-tsc:
+    name: 1 · Lint y tipos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run lint
+      - run: npx tsc --noEmit
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2 · Unitarios
+  # ───────────────────────────────────────────────────────────────────────────
+  unit:
+    name: 2 · Unitarios
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run test
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3 · Integración (Postgres)
+  # ───────────────────────────────────────────────────────────────────────────
+  integracion:
+    name: 3 · Integración
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/erp_test
+      APP_RUNTIME_PASSWORD: ci-app-runtime-password
+      PGPASSWORD: postgres
+      BASE_URL: http://localhost:7331
+      BETTER_AUTH_SECRET: ci-secret-not-for-production
+      PLATFORM_SIGNING_KEY: ci-platform-signing-key
+      PLATFORM_SIGNING_KEY_ID: k1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Credencial del rol de runtime
+        run: ./scripts/dev-db-setup.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp_test
+      - run: npm run test:integration
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4 · RLS (rol `app_runtime`, NOBYPASSRLS)
+  # ───────────────────────────────────────────────────────────────────────────
+  rls:
+    name: 4 · RLS con app_runtime
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/erp_test
+      APP_RUNTIME_PASSWORD: ci-app-runtime-password
+      PGPASSWORD: postgres
+      BETTER_AUTH_SECRET: ci-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Credencial del rol de runtime
+        run: ./scripts/dev-db-setup.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp_test
+      # La suite de integración corre como PROPIETARIO, que ignora RLS. Ésta es
+      # la única que demuestra que la segunda barrera filtra de verdad.
+      - run: npm run test:integration:rls
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 5 · Aceptación C1–C7 + memoria borrada + reconstrucción desde backup
+  # ───────────────────────────────────────────────────────────────────────────
+  aceptacion:
+    name: 5 · Aceptación C1–C7
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/erp_test
+      APP_RUNTIME_PASSWORD: ci-app-runtime-password
+      PGPASSWORD: postgres
+      BASE_URL: http://localhost:7331
+      BETTER_AUTH_SECRET: ci-secret-not-for-production
+      PLATFORM_SIGNING_KEY: ci-platform-signing-key
+      PLATFORM_SIGNING_KEY_ID: k1
+      STORAGE_BACKEND: local
+      STORAGE_PREFIX: erp
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Credencial del rol de runtime
+        run: ./scripts/dev-db-setup.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp_test
+      # Los siete C1–C7 **más** «memoria borrada» (P4) y «reconstrucción desde
+      # backup» (P7). Cada fichero deja su `artifacts/acceptance/<c>/validacion.json`.
+      - run: npm run test:acceptance
+      - name: Ninguna familia SIN_EVALUAR se cuela en verde
+        # La regla de C5 vive en el propio test (criterio 22); aquí sólo se
+        # comprueba que los validacion.json existen: un job que publica un
+        # artefacto vacío y se declara verde es el adorno que E12 persigue.
+        run: |
+          set -e
+          test -d artifacts/acceptance || { echo "::error::la suite no dejó artifacts/acceptance"; exit 1; }
+          n=$(find artifacts/acceptance -name validacion.json | wc -l)
+          echo "· $n validacion.json de aceptación"
+          [ "$n" -ge 7 ] || { echo "::error::sólo $n componentes dejaron validacion.json (se esperan ≥ 7)"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aceptacion-validacion
+          path: artifacts/acceptance/**/validacion.json
+          retention-days: 90
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 6 · Auditor automatizado (Capa 2 de C4)
+  # ───────────────────────────────────────────────────────────────────────────
+  auditor-automatizado:
+    name: 6 · Auditor automatizado
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp_test
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/erp_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/erp_test
+      DATABASE_URL_MAINTENANCE: postgresql://postgres:postgres@localhost:5432/erp_test
+      APP_RUNTIME_PASSWORD: ci-app-runtime-password
+      PGPASSWORD: postgres
+      BETTER_AUTH_SECRET: ci-secret-not-for-production
+      PLATFORM_SIGNING_KEY: ci-platform-signing-key
+      PLATFORM_SIGNING_KEY_ID: k1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Credencial del rol de runtime
+        run: ./scripts/dev-db-setup.sh
+      - name: Esquema al día
+        run: npx prisma migrate deploy
+      # **Los informes se emiten ANTES del auditor**, y ése es el orden que
+      # importa: sin cifras selladas el veredicto sería `NO_VERIFICABLE`, que
+      # aquí falla igual que `DISCREPANCIA` (enmienda E-9).
+      - name: Fixture cargado por el motor e informes sellados
+        run: npx tsx scripts/ci-audit-fixture.ts --out artifacts/validacion.json
+      - name: Reconstrucción independiente por SQL crudo
+        # Código de salida ≠ 0 con DISCREPANCIA **y con NO_VERIFICABLE**.
+        run: |
+          npx tsx scripts/audit-reconstruct.ts \
+            --org c1ac1ac1-0e12-4000-8000-000000000001 \
+            --ref-date 2026-12-31 \
+            --out artifacts/audit-reconstruct.json
+      - name: Resumen en el PR
+        if: always()
+        run: npx tsx scripts/ci-resumen.ts --dir artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: auditor-automatizado
+          path: |
+            artifacts/validacion.json
+            artifacts/barrido.json
+            artifacts/audit-reconstruct.json
+          retention-days: 90
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 7 · Fixtures sellados: TODOS los generadores, con --check
+  # ───────────────────────────────────────────────────────────────────────────
+  fixtures-check:
+    name: 7 · Fixtures sellados (--check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Un fixture sellado que ya no se puede REGENERAR deja de ser un contrato.
+      # **Todos** los generadores, no una lista a mano: una lista a mano ha
+      # fallado cuatro veces (BUG-E7-1, BUG-E9-5, BUG-E10-1, BUG-E11-2) y sería
+      # además la enmienda E-4 incumplida en el propio control que la vigila.
+      - name: Cada generador reproduce su fixture byte a byte
+        run: |
+          set -euo pipefail
+          n=0
+          for gen in docs/design/fixtures/build_*.py; do
+            echo "── $gen"
+            python3 "$gen" --check
+            n=$((n + 1))
+          done
+          echo "· $n generadores comprobados"
+          [ "$n" -ge 12 ] || { echo "::error::sólo $n generadores; ¿se ha perdido alguno?"; exit 1; }
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 8 · e2e, UN FICHERO POR JOB
+  # ───────────────────────────────────────────────────────────────────────────
+  e2e:
+    name: 8 · e2e ${{ matrix.spec }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Por fichero, para que un fallo diga CUÁL sin leer 600 líneas de log.
+      matrix:
+        spec:
+          - admin
+          - analitica
+          - auditoria
+          - cierre
+          - documentos
+          - horas-presupuesto-real
+          - informes
+          - libro-diario
+          - liquidacion
+          - onboarding-plataforma
+          - plan-cuentas
+          - presupuesto
+          - recurrentes-iva
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://app_runtime:ci-app-runtime-password@localhost:5432/erp
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/erp
+      DATABASE_URL_MAINTENANCE: postgresql://postgres:postgres@localhost:5432/erp
+      AUTH_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp
+      APP_RUNTIME_PASSWORD: ci-app-runtime-password
+      PGPASSWORD: postgres
+      SELF_HOSTED_MODE: "true"
+      DISABLE_SIGNUP: "false"
+      BETTER_AUTH_SECRET: ci-secret-not-for-production
+      PLATFORM_SIGNING_KEY: ci-platform-signing-key
+      PLATFORM_SIGNING_KEY_ID: k1
+      STORAGE_BACKEND: local
+      STORAGE_PREFIX: erp
+      UPLOAD_PATH: ./data/uploads
+      E2E_BASE_URL: http://localhost:7331
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx playwright install --with-deps chromium
+      - name: Credencial del rol de runtime
+        run: ./scripts/dev-db-setup.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp
+      - name: Esquema al día
+        run: npx prisma migrate deploy
+      # El `webServer` de `playwright.config.ts` levanta `npm run dev` y lo
+      # reutiliza si ya está: no hace falta arrancarlo aquí.
+      - name: ${{ matrix.spec }}.spec.ts
+        run: npx playwright test tests/e2e/${{ matrix.spec }}.spec.ts
+      - uses: actions/upload-artifact@v4
+        # Sólo si falla: un report de Playwright por cada spec en verde son 13
+        # artefactos que nadie abre.
+        if: failure()
+        with:
+          name: playwright-report-${{ matrix.spec }}
+          path: |
+            playwright-report/
+            tests/e2e/.artifacts/
+          retention-days: 90
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 9 · Build de producción
+  # ───────────────────────────────────────────────────────────────────────────
+  build:
+    name: 9 · Build
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/erp
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/erp
+      BETTER_AUTH_SECRET: ci-secret-not-for-production
+      PLATFORM_SIGNING_KEY: ci-platform-signing-key
+      PLATFORM_SIGNING_KEY_ID: k1
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build
