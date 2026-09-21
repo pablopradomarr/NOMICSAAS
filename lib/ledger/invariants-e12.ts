@@ -116,6 +116,15 @@ export type OperatorAuditRef = {
   at: string
   reason: string | null
   confirmedName: string | null
+  /**
+   * `detail.exceptionId` de una línea `admin.unblock`. Es lo que ata la
+   * excepción con su registro **por identidad y no por reloj**: una ventana de
+   * tiempo entre dos relojes distintos —el de la aplicación y el del servidor de
+   * base de datos— es una comparación que falla sola en cuanto se desfasan unos
+   * minutos, y un invariante que depende del desfase de dos relojes no vigila
+   * nada.
+   */
+  exceptionId: string | null
 }
 
 /** Las seis tablas que **ninguna** escritura de operador puede tocar (D2). */
@@ -323,9 +332,7 @@ export function checkIE125(input: OperatorInvariantInput): CheckResult {
     }
     const verdict = validateReason(e.reason)
     if (!verdict.ok) problemas.push(`excepción ${e.id}: motivo inválido — ${verdict.error}`)
-    const registrada = block.auditLines.some(
-      (l) => l.action === "admin.unblock" && Math.abs(Date.parse(l.at) - created) <= 60_000
-    )
+    const registrada = block.auditLines.some((l) => l.action === "admin.unblock" && l.exceptionId === e.id)
     if (!registrada) problemas.push(`excepción ${e.id}: no tiene su línea «admin.unblock» en el registro de plataforma`)
   }
 

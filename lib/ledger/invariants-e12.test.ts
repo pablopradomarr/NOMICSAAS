@@ -56,6 +56,7 @@ const linea = (over: Partial<OperatorAuditRef> = {}): OperatorAuditRef => ({
   at: "2026-10-01T10:00:00.000Z",
   reason: MOTIVO,
   confirmedName: "Acme S.L.",
+  exceptionId: "e-1",
   ...over,
 })
 

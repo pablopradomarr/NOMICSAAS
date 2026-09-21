@@ -163,9 +163,15 @@ export async function createOperatorException(
       targetRef: input.targetRef ?? null,
       reason: input.reason.trim(),
       requestedBy: input.requestedBy.slice(0, 120),
-      // `createdAt` lo pone la base (`DEFAULT CURRENT_TIMESTAMP`) y `expiresAt`
-      // lo calcula el llamante: si los dos relojes discreparan más de lo que
-      // cabe en el CHECK, la base rechaza — que es lo correcto.
+      // **Los dos instantes salen del MISMO reloj**, el que entra por parámetro
+      // (`CLAUDE.md`: la fecha de referencia nunca se lee dentro). Dejar que
+      // `created_at` lo pusiera la base y `expires_at` lo calculara el llamante
+      // hacía que el CHECK de 24 h midiera la diferencia entre DOS relojes: con
+      // el del servidor de base de datos desfasado unos minutos, una excepción
+      // legítima se rechazaba —y con él adelantado, una de 24 h y pico colaba—.
+      // El CHECK sigue en la base y sigue siendo la barrera; lo que se arregla
+      // aquí es que compare dos marcas comparables.
+      createdAt: input.now,
       expiresAt,
     },
   })
@@ -213,11 +219,20 @@ export async function readOperatorInvariantInput(
   // política de lectura de la tabla ya acota a `organization_id = current_org()`
   // o NULL; aquí se pide además la organización, que es lo que I-E12-5 juzga.
   const auditRows = await tx.$queryRaw<
-    { id: string; action: string; actor: string; at: Date; reason: string | null; confirmed_name: string | null }[]
+    {
+      id: string
+      action: string
+      actor: string
+      at: Date
+      reason: string | null
+      confirmed_name: string | null
+      exception_id: string | null
+    }[]
   >`
     SELECT "id", "action", "actor", "at",
            "detail" ->> 'reason'        AS reason,
-           "detail" ->> 'confirmedName' AS confirmed_name
+           "detail" ->> 'confirmedName' AS confirmed_name,
+           "detail" ->> 'exceptionId'   AS exception_id
       FROM "platform_audit_logs"
      WHERE "organization_id" = ${organizationId}::uuid
        AND "action" LIKE 'admin.%'
@@ -260,6 +275,7 @@ export async function readOperatorInvariantInput(
         at: iso(r.at),
         reason: r.reason,
         confirmedName: r.confirmed_name,
+        exceptionId: r.exception_id,
       })),
       forbiddenWrites,
       refDate: iso(opts.refDate),

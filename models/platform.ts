@@ -12,7 +12,7 @@
  * de E1 #16 aplicada al sitio donde más fácil se filtra.
  */
 
-import { prisma } from "@/lib/db"
+import { prisma, type TenantTransactionClient } from "@/lib/db"
 import { CRON_JOB_SPECS, isStale, type CronJobName } from "@/lib/platform/cron"
 import { lastRunsByJob } from "@/models/cron"
 import type { Prisma } from "@/prisma/client"
@@ -188,6 +188,61 @@ export async function recordPlatformAudit(input: {
   }
 }
 
+/**
+ * E12 · T13 — el registro de plataforma **de una organización**, leído con el
+ * cliente ACOTADO.
+ *
+ * `listPlatformAudit` va por el cliente sin tenant y por eso no ve estas filas:
+ * la política de `platform_audit_logs` es `organization_id IS NULL OR
+ * organization_id = app.current_org()` (ronda 1 de E11, H-8), así que sin GUC
+ * fijado devuelve **vacío en silencio** — el fallo que ADR-0009 avisa en cada
+ * página de `CLAUDE.md`. La pantalla de `/admin/<id>` ya está dentro de la
+ * transacción de esa organización: se lee desde ahí.
+ */
+export async function listPlatformAuditForOrganization(
+  tx: Pick<TenantTransactionClient, "$queryRaw" | "$organizationId">,
+  limit = 30
+): Promise<{ id: string; at: Date; actor: string; action: string; reason: string | null }[]> {
+  return await tx.$queryRaw<{ id: string; at: Date; actor: string; action: string; reason: string | null }[]>`
+    SELECT "id", "at", "actor", "action", "detail" ->> 'reason' AS reason
+      FROM "platform_audit_logs"
+     WHERE "organization_id" = ${tx.$organizationId}::uuid
+     ORDER BY "at" DESC
+     LIMIT ${limit}
+  `
+}
+
+/**
+ * E12 · T13 — la línea de plataforma escrita **dentro de la transacción del
+ * tenant**, y por SQL sin `RETURNING`.
+ *
+ * Dos razones, y las dos se pagaron en el e2e de `/admin` antes de encontrarlas:
+ *
+ *  1. **`RETURNING` exige SELECT sobre la fila nueva**, y la política de lectura
+ *     de `platform_audit_logs` es `organization_id IS NULL OR = current_org()`
+ *     (H-8 de E11). Sin GUC fijado, `prisma.create` insertaba y después no podía
+ *     leer lo insertado: `new row violates row-level security policy`. Y como
+ *     `recordPlatformAudit` **nunca lanza** —correcto para un webhook—, la línea
+ *     se perdía **en silencio**. Una auditoría que se pierde en silencio es
+ *     exactamente lo que ADR-0020 existe para impedir.
+ *  2. **Atomicidad.** La escritura de operador y su registro viven o mueren
+ *     juntos, como `writeAuditLog` con su mutación (ADR-0008).
+ *
+ * Aquí **sí lanza**: si no se puede registrar una escritura de operador, la
+ * escritura no debe ocurrir.
+ */
+export async function recordPlatformAuditTx(
+  tx: Pick<TenantTransactionClient, "$executeRaw" | "$organizationId">,
+  input: { actor: string; action: PlatformAction; detail?: Record<string, unknown> }
+): Promise<void> {
+  const detail = sanitizeDetail(input.detail ?? {})
+  await tx.$executeRaw`
+    INSERT INTO "platform_audit_logs" ("id", "at", "actor", "action", "organization_id", "detail")
+    VALUES (gen_random_uuid(), now(), ${input.actor.slice(0, 64)}, ${input.action},
+            ${tx.$organizationId}::uuid, ${JSON.stringify(detail)}::jsonb)
+  `
+}
+
 export async function listPlatformAudit(opts: { organizationId?: string; limit?: number } = {}) {
   return await prisma.platformAuditLog.findMany({
     where: opts.organizationId ? { organizationId: opts.organizationId } : undefined,
@@ -270,4 +325,171 @@ export async function healthReport(opts: { version: string; gitSha: string; refD
       : "ok"
 
   return { status, version: opts.version, gitSha: opts.gitSha, db: { ok: dbOk, latencyMs }, cron, migrations }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E12 · T13 — el inventario que ve el operador en `/admin` (ADR-0020 §5.5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Una organización vista **desde la plataforma**: plan, uso grueso, sello del
+ * último barrido y excepciones vivas.
+ *
+ * `§9.2 · PII`: aquí NO va un email, ni un NIF, ni una cifra del diario. El
+ * operador ve **cuánto**, no **qué** — la misma regla que gobierna `/api/health`.
+ * El nombre de la organización sí va, y tiene que ir: es lo que D4 obliga a
+ * teclear para confirmar.
+ */
+export type OperatorOrganizationRow = {
+  id: string
+  slug: string
+  name: string
+  isActive: boolean
+  isPersonal: boolean
+  planCode: string | null
+  subscriptionStatus: string | null
+  journalEntries: number
+  members: number
+  /** Sello del último `InvariantRun`, o `null` si nunca se barrió. */
+  lastSeal: string | null
+  lastSweepAt: string | null
+  /** Excepciones de operador vivas a la fecha de referencia. */
+  liveExceptions: number
+}
+
+/**
+ * Recorre TODAS las organizaciones, que es justamente lo que un panel de
+ * operador tiene que hacer y lo que `tenantDb` no puede hacer.
+ *
+ * **No lee las tablas: llama a `app.operator_organizations`**, una función
+ * `SECURITY DEFINER` que devuelve los AGREGADOS y nada más. La alternativa
+ * —darle al operador `SELECT` sobre `organizations`, `journal_entries` y
+ * `memberships`— habría convertido el panel en una llave para leer el diario de
+ * cualquier cliente, y ADR-0020 §9.2 dice que el operador ve **cuánto**, no
+ * **qué**. Quien autoriza sigue siendo `requirePlatformAdmin()`.
+ *
+ * Una sola consulta. Cincuenta organizaciones no pueden costar doscientas (el
+ * N+1 que el estándar de calidad prohíbe).
+ */
+export async function listOrganizationsForOperator(refDate: Date): Promise<OperatorOrganizationRow[]> {
+  const rows = await prisma.$queryRaw<
+    {
+      id: string
+      slug: string
+      name: string
+      is_active: boolean
+      is_personal: boolean
+      plan_code: string | null
+      subscription_status: string | null
+      journal_entries: bigint
+      members: bigint
+      last_seal: string | null
+      last_sweep_at: Date | null
+      live_exceptions: bigint
+    }[]
+  >`SELECT * FROM app.operator_organizations(${refDate}::timestamp(3))`
+  return rows.map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    isActive: r.is_active,
+    isPersonal: r.is_personal,
+    planCode: r.plan_code,
+    subscriptionStatus: r.subscription_status,
+    journalEntries: Number(r.journal_entries),
+    members: Number(r.members),
+    lastSeal: r.last_seal,
+    lastSweepAt: r.last_sweep_at ? r.last_sweep_at.toISOString() : null,
+    liveExceptions: Number(r.live_exceptions),
+  }))
+}
+
+/** Un objetivo concreto sobre el que se puede levantar una guardia (ADR-0020 D1). */
+export type OperatorGuardTarget = { id: string | null; ref: string | null; label: string }
+
+export type OperatorGuardTargets = {
+  periodLocks: OperatorGuardTarget[]
+  closingGuards: OperatorGuardTarget[]
+  stuckRestores: OperatorGuardTarget[]
+  stuckCronJobs: OperatorGuardTarget[]
+}
+
+/**
+ * Qué hay atascado AHORA, por clase de guardia.
+ *
+ * **Sólo se ofrece levantar lo que de verdad está atascado.** Un desplegable con
+ * todas las guardias posibles invitaría a crear excepciones «por si acaso», y
+ * una excepción de más es exactamente lo que ADR-0020 existe para evitar.
+ *
+ * **Se lee con el cliente ACOTADO de la organización**, no con el cliente sin
+ * tenant: `period_locks`, `fiscal_years` y `restore_jobs` llevan RLS estricta y
+ * una consulta fuera de `tenantDb` no da error — devuelve VACÍO (ADR-0009). Un
+ * desplegable vacío por esa razón habría sido un fallo silencioso de manual.
+ *
+ * «Colgado» es un `RestoreJob` que lleva más de una hora sin terminar: el techo
+ * de §12 de E11 para una restauración es muy inferior, así que a la hora ya no
+ * está trabajando, está atascado. El umbral entra por parámetro para que el test
+ * no tenga que esperar.
+ */
+export async function operatorGuardTargets(
+  tx: Pick<TenantTransactionClient, "$queryRaw" | "$organizationId">,
+  refDate: Date,
+  stuckAfterMs: number = 60 * 60 * 1000
+): Promise<OperatorGuardTargets> {
+  const organizationId = tx.$organizationId
+  const cutoff = new Date(refDate.getTime() - stuckAfterMs)
+
+  const locks = await tx.$queryRaw<{ id: string; month: number; code: string; reason: string | null }[]>`
+    SELECT pl."id", pl."month", fy."code", pl."reason"
+      FROM "period_locks" pl
+      JOIN "fiscal_years" fy ON fy."id" = pl."fiscal_year_id"
+     WHERE pl."organization_id" = ${organizationId}::uuid
+     ORDER BY fy."code" DESC, pl."month" DESC
+     LIMIT 60
+  `
+  const years = await tx.$queryRaw<{ id: string; code: string; status: string }[]>`
+    SELECT "id", "code", "status"::text AS status
+      FROM "fiscal_years"
+     WHERE "organization_id" = ${organizationId}::uuid AND "status" <> 'OPEN'
+     ORDER BY "code" DESC
+     LIMIT 20
+  `
+  const restores = await tx.$queryRaw<{ id: string; status: string; created_at: Date }[]>`
+    SELECT "id", "status"::text AS status, "created_at"
+      FROM "restore_jobs"
+     WHERE "organization_id" = ${organizationId}::uuid
+       AND "status" IN ('QUEUED', 'RUNNING', 'VERIFYING')
+       AND "created_at" < ${cutoff}
+     ORDER BY "created_at" ASC
+     LIMIT 20
+  `
+  // `cron_runs` es de PLATAFORMA: no lleva `organization_id` (§9.5). Un job
+  // atascado en PARTIAL bloquea a todas las organizaciones por igual, y la
+  // excepción se registra contra la que la pide — que es quien la sufre.
+  const cron = await tx.$queryRaw<{ job: string; period_key: string; started_at: Date }[]>`
+    SELECT "job", "period_key", "started_at"
+      FROM "cron_runs"
+     WHERE "status" = 'PARTIAL' AND "started_at" < ${cutoff}
+     ORDER BY "started_at" ASC
+     LIMIT 20
+  `
+
+  return {
+    periodLocks: locks.map((l) => ({
+      id: l.id,
+      ref: null,
+      label: `${l.code} · mes ${String(l.month).padStart(2, "0")}${l.reason ? ` · ${l.reason.slice(0, 60)}` : ""}`,
+    })),
+    closingGuards: years.map((y) => ({ id: y.id, ref: null, label: `Ejercicio ${y.code} · ${y.status}` })),
+    stuckRestores: restores.map((r) => ({
+      id: r.id,
+      ref: null,
+      label: `${r.status} desde ${r.created_at.toISOString().slice(0, 16).replace("T", " ")}`,
+    })),
+    stuckCronJobs: cron.map((c) => ({
+      id: null,
+      ref: `${c.job}:${c.period_key}`,
+      label: `${c.job} · ${c.period_key} · PARTIAL desde ${c.started_at.toISOString().slice(0, 16).replace("T", " ")}`,
+    })),
+  }
 }
