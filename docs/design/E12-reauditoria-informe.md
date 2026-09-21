@@ -172,3 +172,87 @@ cambios pequeños; H-9 no necesita código, necesita que el motivo diga la verda
 *Re-auditoría ejecutada el 2026-09-21 en contexto limpio. Clones `audit_r2_a…d` creados desde
 `erp_test` y destruidos; scripts temporales fuera del repositorio y borrados; no se modificó
 producto ni fixture.*
+
+---
+
+# Ronda 2 — verificación de los cierres (2026-09-21)
+
+> Mismo agente, **contexto limpio**, mismo método: ejecutar el control y **romperlo en un clon**.
+> Entradas: `git log --oneline b56eafd..HEAD` (9 commits), §«E12 · RONDA 2 DE CORRECCIÓN» de
+> `docs/ESTADO.md` y **ADR-0023**. Clones `audit_r3_a` y `audit_r3_b` creados con
+> `createdb -T erp_test` y **destruidos**. Por instrucción del encargo **no** se lanzaron
+> `integration`, `e2e` ni `build` (otro agente ocupaba la máquina); sí `unit` y `acceptance`.
+
+## Las cifras, otra vez, y el sello canónico
+
+`recon.py` (Python puro sobre el fixture y `seeds/npgc.csv`, sin tocar el repositorio) vuelve a dar
+**Δ = 0 en las trece**: Σdebe total 67 193 629 · Σdebe 2026 52 884 809 · Activo 13 673 820 ·
+PN+Pasivo 13 673 820 · Resultado 1 497 322 · Tesorería 2 943 920 · INGRESOS 6 250 000 ·
+MC1 5 670 000 · MC2 3 276 000 · MC3 3 084 110 · EBITDA 2 390 430 · EBIT 1 995 430 · BAI 1 996 430;
+la cascada analítica cierra sobre la contable (Δ 0) y los saldos por prefijo casan con
+`expected.balancesByPrefix3Cents`. El auditor independiente sobre un clon sembrado en `HEAD`:
+`CONFORME · 12/12 reconstruidas · 24 sellos coinciden · entry_hash 83/83 ·` **`ledgerHash
+4a1af0ee555f…`**. **El cambio del criterio 12 no ha movido nada.**
+
+| Punto | Veredicto | Evidencia (ejecutada) |
+|---|---|---|
+| **N-1** · el registro no validaba contra su esquema | **CERRADO VERIFICADO** | `npm run test:acceptance` → **9 ficheros · 53/53 ✓** (antes 2 fallos / 50 ✓), `EXIT=0`. `C7-1 PASS: «las 80 líneas del registro validan contra el schema»` ⇒ **I-E12-7 en PASS**. La ampliación es **acotada de verdad**, comprobada contra el esquema a mano: `{e2e_detalle:{nota:"…"}}` **OK**, `{e2e_detalle:{verdes:["a","b"]}}` **OK**, `{e2e_detalle:{nota:{x:"y"}}}` → **`tests: Invalid input`**. Un segundo nivel sigue prohibido |
+| **H-4** · la puerta del sello era vacua | **CERRADO VERIFICADO** | (a) Clon intacto: `ci-audit-fixture.ts` → sello «REQUIERE REVISIÓN», **`EXIT=0`** con la línea nueva «explicado ENTERAMENTE por la lista cerrada del sustrato (1 razón, todas declaradas)». (b) **Negativo por la puerta de los FAIL**: sembrada una suscripción con `soft_max_entries_month = 1` → `I-E11-4` sin declarar → **`EXIT=1`**. (c) **Negativo por la puerta del SELLO**, que es la que estaba muerta: sembrada una **excepción de operador VIVA** y ejecutada la misma puerta (`motivosNoExplicadosPorElSustrato`) sobre el barrido **real**, devuelve `ENTORNO · EXCEPCION_DE_OPERADOR_VIGENTE …` como motivo **no explicado** ⇒ job **ROJO**. Con el criterio de la ronda 1 (`\|\| fallos.length > 0`) ese mismo barrido salía **verde**. Vale la pena decir qué he **podido** y qué **no**: no hay forma de sembrar un motivo de sello de otra naturaleza *a través del propio script* —vacía la organización antes de empezar—, así que el tercer negativo ejerce la puerta con el barrido real pero desde un arnés mío, no desde `main()` |
+| **H-6 / N-2** · detectaba pero no decidía | **CERRADO VERIFICADO** | `REQUIRED_CHECKS` son **siete** (`lib/platform/backup.ts:437`). Re-ejecutado **mi propio script de la ronda 1**, el que destapó el agujero: con `COBERTURA_INVENTARIO = FAIL` y las seis en PASS ahora sale **`verified: false · DONE_UNVERIFIED`** (antes `true · DONE`) |
+| **N-3** · tercera copia del predicado de operador | **CERRADO VERIFICADO** | `app/(app)/settings/backups/actions.ts:284` llama a `isPlatformAdminEmail()`. `grep -rn adminEmails app lib models` deja **una sola** definición viva (`admin.ts:45-46`) más el aviso de arranque; la única aparición restante en `backups/actions.ts` es el comentario que cuenta el cambio |
+| **N-4 / H-9** · el motivo era falso ⇒ se cierra H-9 | **CERRADO VERIFICADO** | `C3-drilldown-documento` **PASS**: «el asiento nº 2 lleva al documento *factura-servicios-2026-02.txt* en el tercer salto, sin mover ni una cifra», 4 ms sobre un techo de 5 000. Y la demostración está partida en dos medidas, que es la forma correcta: `C3-sustrato-no-toca-el-diario` (14 cifras intactas, `ledgerHash 4a1af0ee555f…`) y `C3-drilldown-no-mueve-cifras` (**las 14 cifras y los CINCO sellos intactos** tras atar el documento, con `expect(ledgerHash).toBe(LEDGER_HASH_CANONICO)`). El tercer salto va por `journal_entries.file_id`, que es la columna real —el anterior consultaba `transactions.file_id`, **que no existe**: `42703` que nadie veía porque el fixture dejaba `transaction_id` a NULL— |
+
+## La pregunta del encargo: ¿`analyticsKey` se mueve sin que nadie lo vea?
+
+**Se ve, y moverse es su oficio.** Tres razones, y una reserva.
+
+1. El sustrato trae una **regla de reparto y su ejecución**: la configuración analítica de esa
+   organización **ha cambiado de verdad**. Un sello que no se moviera ahí estaría mintiendo.
+2. **ADR-0021** ya decidió que el `analyticsKey` de `InvariantRun` es una **clave de caché local**
+   —lleva uuid, no viaja entre copias— y que el sello analítico comparable es el de
+   `computeContentSeals`, sobre claves naturales. Mover una clave de caché cuando la caché caduca
+   no es un sello que se rompe: es la caché funcionando.
+3. Lo que importaba está **acotado y comprobado**: `ledgerHash` y las catorce cifras no se mueven
+   al cargar el sustrato, y **ninguno de los cinco sellos** se mueve al atar el documento.
+
+**Reserva (N-5, BAJA).** El aserto es
+`movidasPorSustrato.length === 0 && !sellosPorSustrato.includes("ledgerHash")`
+(`tests/acceptance/c3-provenance.test.ts:474`): prohíbe que se mueva **`ledgerHash`** y **declara**
+—en el texto de la evidencia— cuál se movió. Si mañana el sustrato moviera además `planHash`,
+`accountMapHash` o `configHash`, el check **seguiría en PASS** y el cambio sólo viviría en una
+cadena de texto del artefacto. Declarar no es acotar. *Recomendación* (una línea):
+`expect(sellosPorSustrato).toEqual(["analyticsKey"])` — así el día que se mueva otro, alguien se
+entera sin leer el `validacion.json`.
+
+## ADR-0023, en dos líneas
+
+Acota E-4 **sólo** a `purgeDerived` y lo razona con una medida (el criterio estructural acertaba
+cuatro de nueve) y con la asimetría del modo de fallo —una tabla que el backup olvida se nota al
+restaurar; una que la purga borra por parecer caché es un hecho contable destruido, y «memoria
+borrada» lo celebraría—. Es una acotación con motivo y con alcance escrito, no una derogación:
+`backupInventory`, `--reset-org` y `derivedSealColumns()` siguen derivados.
+
+## Suites ejecutadas en esta ronda
+
+`npm run test` → **130 ficheros · 2 738 ✓ / 11 skip** · `npm run test:acceptance` → **9 ficheros ·
+53/53 ✓**, `EXIT=0`. Coinciden con lo que declara `ESTADO.md`. `integration`, `e2e` y `build`: **no
+lanzados**, por instrucción del encargo.
+
+```
+VEREDICTO RONDA 2: CONFORME
+  (las trece cifras reconstruyen con Δ = 0 por el tercer camino y el ledgerHash sigue siendo
+   4a1af0ee555f…; los cinco puntos abiertos de la re-auditoría —N-1, H-4, H-6/N-2, N-3 y
+   N-4/H-9— están CERRADOS y VERIFICADOS ejecutando el control y rompiéndolo en un clon.)
+
+Cifras reconstruidas: 13/13, Δ = 0 (Python puro sobre el fixture; tabla de §1)
+Hallazgos: 0 abiertos de los anteriores · 1 nuevo, N-5 (BAJA): el check del sustrato declara qué
+sello se movió pero sólo prohíbe que se mueva `ledgerHash`.
+Trazabilidad: OK — criterio 12 ejercido de extremo a extremo: celda → 19 líneas → asiento nº 2 →
+documento «factura-servicios-2026-02.txt», 3 saltos, 4 ms.
+Recomendación: cerrar N-5 con el aserto de conjunto exacto (una línea) y dar E12 por hecha. Queda
+en pie lo ya fechado con motivo en E14 (H-8, H-12, I-E8-17, E y H del revisor).
+```
+
+*Ronda 2 verificada el 2026-09-21 en contexto limpio. Clones `audit_r3_a` y `audit_r3_b` creados
+desde `erp_test` y destruidos; scripts del auditor fuera del repositorio; no se modificó producto
+ni fixture.*
