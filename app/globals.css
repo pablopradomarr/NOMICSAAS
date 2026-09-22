@@ -3,41 +3,63 @@
 @custom-variant dark (&:where(.dark, .dark *));
 @config "../tailwind.config.ts";
 
+/*
+ * Tokens de marca CFOnomic (brand book `cfonomic-design`, §10). Son la FUENTE
+ * de los valores que luego consumen las variables de shadcn de más abajo; se
+ * exponen también tal cual para los puntos donde hace falta el color de marca
+ * literal (el lima, que shadcn no tiene). Paleta radicalmente reducida: blanco
+ * + carbón + un único acento lima. No añadir colores fuera de esta lista.
+ */
+:root {
+  --cfo-white: #FFFFFF;
+  --cfo-carbon: #1A202C;
+  --cfo-black: #0A0A0A;
+  --cfo-lime: #EAFF69;
+  --cfo-gray: #737373;
+  --cfo-gray-100: #F7F7F7;
+  --cfo-gray-200: #EDF2F7;
+  --cfo-border: rgba(10, 10, 10, 0.1);
+  --cfo-gold: #F5A623;
+  --cfo-link: #2B6CB0;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --foreground: 222 26% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 222 26% 14%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
+    --popover-foreground: 222 26% 14%;
+    --primary: 222 26% 14%;
     --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
+    --secondary: 0 0% 97%;
+    --secondary-foreground: 222 26% 14%;
+    --muted: 0 0% 97%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 97%;
+    --accent-foreground: 222 26% 14%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 10% 3.9%;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 222 26% 14%;
+    /* Series de gráfico: carbón + grises + oro/azul de marca. Sin rojo ni
+       verde semáforo (brand book §2), y sin lima sobre blanco (§2, contraste). */
+    --chart-1: 222 26% 14%;
+    --chart-2: 0 0% 45%;
+    --chart-3: 0 0% 68%;
+    --chart-4: 37 91% 55%;
+    --chart-5: 213 61% 43%;
     --radius: 0.5rem;
-    --sidebar-background: 200 13% 93%;
-    --sidebar-foreground: 200 10% 30%;
-    --sidebar-primary: 200 13% 80%;
+    --sidebar-background: 0 0% 97%;
+    --sidebar-foreground: 0 0% 45%;
+    --sidebar-primary: 0 0% 88%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 5.9% 10%;
+    --sidebar-accent: 222 26% 14%;
     --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 200 13% 85%;
-    --sidebar-ring: 200 13% 80%;
+    --sidebar-border: 0 0% 90%;
+    --sidebar-ring: 222 26% 14%;
   }
 
   .dark {
