@@ -18,7 +18,7 @@ import { NotificationProvider } from "./context"
 
 export const metadata: Metadata = {
   title: {
-    template: "%s | TaxHacker",
+    template: `%s | ${config.app.title}`,
     default: config.app.title,
   },
   description: config.app.description,
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: "#ffffff",
+  themeColor: "#0A0A0A",
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

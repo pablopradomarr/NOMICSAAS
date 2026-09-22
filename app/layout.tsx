@@ -16,7 +16,7 @@ const jetBrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    template: "%s | TaxHacker",
+    template: `%s | ${config.app.title}`,
     default: config.app.title,
   },
   description: config.app.description,
@@ -29,7 +29,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(config.app.baseURL),
   openGraph: {
     type: "website",
-    locale: "en_US",
+    locale: "es_ES",
     url: config.app.baseURL,
     title: config.app.title,
     description: config.app.description,
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: "#ffffff",
+  themeColor: "#0A0A0A",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -56,7 +56,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={jetBrainsMono.variable}>
+    <html lang="es" className={jetBrainsMono.variable}>
       <body className="min-h-screen bg-white antialiased">{children}</body>
     </html>
   )

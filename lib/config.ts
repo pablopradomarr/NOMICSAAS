@@ -19,7 +19,7 @@ const envSchema = z.object({
   // E13 · T1 — duración de la sesión en días, configurable (docs/design/E13-autenticacion.md §4.1, D-1).
   AUTH_SESSION_DAYS: z.coerce.number().int().positive().default(30),
   RESEND_API_KEY: z.string().default("please-set-your-resend-api-key-here"),
-  RESEND_FROM_EMAIL: z.string().default("TaxHacker <user@localhost>"),
+  RESEND_FROM_EMAIL: z.string().default("CFOnomic <no-reply@cfonomic.com>"),
   RESEND_AUDIENCE_ID: z.string().default(""),
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),
@@ -88,7 +88,7 @@ const env = envSchema.parse(Object.fromEntries(Object.entries(process.env).filte
  *
  * Se falla al ARRANCAR y no al primer uso, que es cuando ya hay datos cifrados.
  * En self-hosted se avisa y se sigue: ahí el operador es el dueño de la máquina
- * y TaxHacker genera y persiste una clave por él.
+ * y la aplicación genera y persiste una clave por él.
  */
 const SECRETOS_DE_EJEMPLO = new Set([
   "please-set-your-key-here",
@@ -110,11 +110,11 @@ if (SECRETOS_DE_EJEMPLO.has(env.BETTER_AUTH_SECRET)) {
 
 const config = {
   app: {
-    title: "TaxHacker",
-    description: "Your personal AI accountant",
+    title: "CFOnomic",
+    description: "Contabilidad y control de gestión para empresas de proyectos",
     version: packageJson.version || "0.0.1",
     baseURL: env.BASE_URL || `http://localhost:${env.PORT || "7331"}`,
-    supportEmail: "me@vas3k.com",
+    supportEmail: "pablo@cfonomic.com",
   },
   upload: {
     acceptedMimeTypes: "image/*,.pdf,.doc,.docx,.xls,.xlsx",
@@ -154,10 +154,12 @@ const config = {
     resetTokenTtlSeconds: 60 * 60, // 1 hora
     sessionDays: env.AUTH_SESSION_DAYS,
   },
-  // E13 · T1 — identidad visible sólo en las pantallas de acceso (§6.2, D-3).
-  // `config.app.title` no se toca: el resto de la aplicación sigue siendo TaxHacker.
+  // E13 · T1 — identidad de marca. Desde el rebranding de 2026-09-22 producto y
+  // compañía son lo MISMO: el producto se llama CFOnomic, igual que la empresa
+  // que lo presta. Las pantallas que antes escribían «<producto> de <compañía>»
+  // (kit de `(auth)`, onboarding) se ajustaron para no decir «CFOnomic CFOnomic».
   brand: {
-    product: "NOMIC",
+    product: "CFOnomic",
     company: "CFOnomic",
   },
   /**

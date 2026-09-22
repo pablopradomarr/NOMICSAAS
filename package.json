@@ -1,7 +1,9 @@
 {
-  "name": "taxhacker",
+  "name": "cfonomic",
   "version": "0.8.5",
   "private": true,
+  "description": "CFOnomic — contabilidad y control de gestión para empresas de proyectos",
+  "author": "CFOnomic <pablo@cfonomic.com>",
   "type": "module",
   "engines": {
     "node": ">=24"
