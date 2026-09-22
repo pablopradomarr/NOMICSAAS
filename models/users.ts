@@ -14,9 +14,13 @@ import { cache } from "react"
 import { createOrganizationDefaults, isDatabaseEmpty } from "./defaults"
 import { ensurePersonalOrganization, updateOrganization } from "./organizations"
 
+// El correo es la CLAVE de identidad de la instalación self-hosted (y de
+// `tests/support/ensure-self-hosted.ts`): cambiarlo duplicaría el usuario global
+// en toda instalación existente, así que se conserva. El nombre visible sí es
+// de marca.
 export const SELF_HOSTED_USER = {
   email: "taxhacker@localhost",
-  name: "TaxHacker",
+  name: "CFOnomic",
 }
 
 /** Plan de la organización local en self-hosted (ya no vive en `users`). */

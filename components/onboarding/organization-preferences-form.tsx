@@ -89,7 +89,7 @@ export function OrganizationPreferencesForm({
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Servicio prestado por <strong>{brand.company}</strong> ({brand.product}).
+          Servicio prestado por <strong>{brand.company}</strong>.
         </p>
 
         {canEdit && (

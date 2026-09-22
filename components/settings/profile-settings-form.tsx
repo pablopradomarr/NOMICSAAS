@@ -36,7 +36,7 @@ export default function ProfileSettingsForm({
       */}
       <form action={saveAction} className="space-y-8">
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Your TaxHacker Profile</h3>
+          <h3 className="text-lg font-semibold">Tu perfil de CFOnomic</h3>
           <FormAvatar
             title="Avatar"
             name="avatar"

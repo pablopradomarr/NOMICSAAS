@@ -8,8 +8,8 @@ export default async function Cookie() {
         <strong className="text-slate-700">Effective Date:</strong> April 22, 2025
         <br />
         <strong className="text-slate-700">Service:</strong>{" "}
-        <a href="https://taxhacker.app" className="text-blue-600 hover:text-blue-800">
-          https://taxhacker.app
+        <a href="https://cfonomic.com" className="text-blue-600 hover:text-blue-800">
+          https://cfonomic.com
         </a>
         <br />
         <strong className="text-slate-700">Contact:</strong>{" "}
@@ -19,7 +19,7 @@ export default async function Cookie() {
       </p>
 
       <p className="text-slate-700 mb-6 leading-relaxed">
-        This Cookie Policy explains how TaxHacker uses cookies and similar technologies when you visit our website or
+        This Cookie Policy explains how CFOnomic uses cookies and similar technologies when you visit our website or
         use our services.
       </p>
 

@@ -21,16 +21,16 @@ export default async function PrivacyPolicy() {
         </a>
         <br />
         <strong className="text-slate-700">Domain</strong>:{" "}
-        <a href="https://taxhacker.app" className="text-blue-600 hover:text-blue-800">
-          https://taxhacker.app
+        <a href="https://cfonomic.com" className="text-blue-600 hover:text-blue-800">
+          https://cfonomic.com
         </a>
       </p>
 
       <p className="text-slate-700 mb-6 leading-relaxed">
-        TaxHacker (&quot;we&quot;, &quot;our&quot;, &quot;us&quot;) is committed to protecting your privacy. This
+        CFOnomic (&quot;we&quot;, &quot;our&quot;, &quot;us&quot;) is committed to protecting your privacy. This
         Privacy Policy describes how we collect, use, store, and protect your personal data when you use our services at{" "}
-        <a href="https://taxhacker.app" className="text-blue-600 hover:text-blue-800">
-          taxhacker.app
+        <a href="https://cfonomic.com" className="text-blue-600 hover:text-blue-800">
+          cfonomic.com
         </a>
         .
       </p>
@@ -40,7 +40,7 @@ export default async function PrivacyPolicy() {
       <h3 className="text-2xl font-semibold text-slate-800 mb-4">
         1. <strong>What Data We Collect</strong>
       </h3>
-      <p className="text-slate-700 mb-3">We collect the following types of data when you use TaxHacker:</p>
+      <p className="text-slate-700 mb-3">We collect the following types of data when you use CFOnomic:</p>
       <ul className="list-disc pl-6 mb-6 space-y-2 text-slate-700">
         <li>
           <strong className="text-slate-800">Account Data</strong>: Email address, display name, optional avatar image.
@@ -71,7 +71,7 @@ export default async function PrivacyPolicy() {
       </h3>
       <p className="text-slate-700 mb-3">We use your data to:</p>
       <ul className="list-disc pl-6 mb-6 space-y-2 text-slate-700">
-        <li>Create and manage your TaxHacker account</li>
+        <li>Create and manage your CFOnomic account</li>
         <li>Store and analyze your uploaded files</li>
         <li>Improve your financial organization through AI-powered insights</li>
         <li>Communicate with you about your account and service updates</li>
@@ -92,7 +92,7 @@ export default async function PrivacyPolicy() {
       </ul>
 
       <p className="text-slate-700 mb-6 leading-relaxed">
-        By using TaxHacker, you consent to the transfer of relevant data to these third-party providers for the purpose
+        By using CFOnomic, you consent to the transfer of relevant data to these third-party providers for the purpose
         of processing. These providers may operate outside the EU, in compliance with appropriate safeguards under GDPR
         (e.g., SCCs).
       </p>
@@ -103,7 +103,7 @@ export default async function PrivacyPolicy() {
         4. <strong>Cookies and Tracking</strong>
       </h3>
       <p className="text-slate-700 mb-6 leading-relaxed">
-        TaxHacker does <strong className="text-slate-800">not use tracking cookies</strong> or third-party analytics. We
+        CFOnomic does <strong className="text-slate-800">not use tracking cookies</strong> or third-party analytics. We
         only collect aggregate access logs and usage statistics via{" "}
         <strong className="text-slate-800">Cloudflare</strong> for infrastructure performance and security.
       </p>
@@ -193,7 +193,7 @@ export default async function PrivacyPolicy() {
         9. <strong>Children&#39;s Privacy</strong>
       </h3>
       <p className="text-slate-700 mb-6 leading-relaxed">
-        TaxHacker is <strong className="text-slate-800">not intended for users under the age of 18</strong>. We do not
+        CFOnomic is <strong className="text-slate-800">not intended for users under the age of 18</strong>. We do not
         knowingly collect or store data from minors.
       </p>
 

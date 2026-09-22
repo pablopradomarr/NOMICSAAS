@@ -1,6 +1,6 @@
 # Email Server Monitor
 
-This app allows you to connect to email servers and automatically monitor incoming emails for file attachments that can be processed by TaxHacker.
+This app allows you to connect to email servers and automatically monitor incoming emails for file attachments that can be processed by CFOnomic.
 
 ## 🔧 **Setup**
 
@@ -74,7 +74,7 @@ File: `etc/crontab`
 
 > **Env propagation:** cron strips the environment, so the container's startup script dumps the
 > needed vars to `/etc/cron.env` and each job sources it. In self-hosted Docker, if
-> `BETTER_AUTH_SECRET` is unset, TaxHacker generates and persists one in `./data/.better_auth_secret`
+> `BETTER_AUTH_SECRET` is unset, CFOnomic generates and persists one in `./data/.better_auth_secret`
 > so the app and cron containers still share the same key.
 
 ## 📊 **Data Storage**

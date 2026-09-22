@@ -12,7 +12,7 @@ export default function MobileMenu({ unsortedFilesCount }: { unsortedFilesCount:
     <menu className="flex flex-row gap-2 p-2 items-center justify-between fixed top-0 left-0 w-full z-50 border-b-2 border-solid bg-background md:hidden">
       <Avatar className="h-10 w-10 rounded-lg cursor-pointer" onClick={toggleSidebar}>
         <AvatarImage src="/logo/256.png" />
-        <AvatarFallback className="rounded-lg">AI</AvatarFallback>
+        <AvatarFallback className="rounded-lg">CFO</AvatarFallback>
       </Avatar>
       <Link href="/" className="text-lg font-bold">
         {config.app.title}

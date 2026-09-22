@@ -34,7 +34,6 @@ import {
   FolderKanban,
   FormInput,
   Gauge,
-  Gift,
   History,
   Hourglass,
   House,
@@ -451,16 +450,6 @@ export function AppSidebar({
                       <Link href="/import/csv">
                         <Import />
                         Import from CSV
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )}
-                {isSelfHosted && (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild>
-                      <Link href="https://vas3k.com/donate/" target="_blank">
-                        <Gift />
-                        Thank the author
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
