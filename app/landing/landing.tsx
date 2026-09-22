@@ -96,8 +96,8 @@ export default function LandingPage() {
         </h1>
 
         <p className="max-w-[60ch] font-[family-name:var(--font-open-sans)] text-lg leading-relaxed text-[var(--cfo-gray)]">
-          {config.app.description}. Contabilidad de partida doble sobre el PGC, analítica por proyecto, centro de coste
-          y línea de negocio, y cierres que cuadran solos. Decisiones con datos, no con intuición.
+          {config.app.description}. Partida doble sobre el PGC, analítica por proyecto, centro de coste y línea de
+          negocio, y cierres que cuadran solos. Decisiones con datos, no con intuición.
         </p>
 
         <div className="flex flex-wrap items-center gap-4">

@@ -1,6 +1,57 @@
 # ESTADO DEL PROYECTO — punto de reanudación
 
-Actualizado: 2026-09-21 (**✅ E12 CERRADA y con ella el ciclo E0–E12** · **PUNTO DE REANUDACIÓN: producto E0–E12 cerrado; siguiente E14**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+Actualizado: 2026-09-22 (**🎨 rebranding CFOnomic** · **✅ E12 CERRADA y con ella el ciclo E0–E12** · **PUNTO DE REANUDACIÓN: producto E0–E12 cerrado; siguiente E14**) · Repo: `pablopradomarr/NOMICSAAS` rama `main` · Sesión origen: https://claude.ai/code/session_01HZCqGBP589Lkmf3TNgtTvb
+
+## 🎨 Rebranding CFOnomic (2026-09-22)
+
+Petición de Pablo: *«Pone TaxHacker, quiero cambiar eso… quiero que sea
+CFOnomic»*. Cambio de **contenido**, no rediseño: ninguna pantalla cambia de
+estructura y el motor contable, las migraciones y los tests de cifras no se
+tocan. Nivel 1, sin ADR.
+
+| Qué | Cómo queda |
+|---|---|
+| `lib/config.ts` | `app.title` **CFOnomic**, `description` «Contabilidad y control de gestión para empresas de proyectos», `supportEmail` `pablo@cfonomic.com`, `RESEND_FROM_EMAIL` por defecto `CFOnomic <no-reply@cfonomic.com>` |
+| `config.brand` | `product` pasa de **NOMIC** a **CFOnomic**: producto y compañía son el MISMO nombre. Las dos pantallas que escribían «`<producto>` de `<compañía>`» (wordmark de `(auth)`, aviso del onboarding) se ajustaron para no decir «CFOnomic CFOnomic» |
+| Metadatos | `%s \| CFOnomic` derivado de `config`, `lang="es"`, OpenGraph `es_ES`, `theme_color` al negro de marca. `site.webmanifest` tenía `name`/`short_name` **vacíos**: ahora describen la aplicación |
+| Iconos | Regenerados del logotipo (el brand book no trae isotipo: *«el logo ES la tipografía»*). Tile negro `#0A0A0A` + «CFO» blanco + punto lima `#EAFF69`; en 16/32 px sólo «C» + punto. `favicon.ico` con 16/32/48. `public/logo/*.png` pasan a ser **cuadrados** (eran 1024×1044 y se deformaban en los cinco sitios que los pintan) |
+| Portada `/` | La de TaxHacker era marketing del producto original (features, precios, once capturas, vídeo, newsletter, enlaces a vas3k). Reducida a logotipo + propuesta + acceso con el brand book. Se fueron con ella el formulario y la acción de newsletter, su correo de bienvenida y `welcome-widget.tsx`, que **nadie renderizaba** desde que se rehízo el panel |
+| Pantallas de acceso | El asistente de self-hosted («TaxHacker: Self-Hosted Edition», en inglés) es ya «CFOnomic · edición autoalojada» y está en español, igual que el aviso de `SELF_HOSTED_MODE` y las dos pantallas de la edición en la nube |
+| Dentro de la aplicación | Fuera el enlace de donaciones a vas3k de la barra lateral; perfil, menú móvil y onboarding en español y con la marca. `ColoredText` (el degradado naranja, en cuatro pantallas) pasa a carbón: la paleta CFOnomic no tiene degradados ni naranjas |
+| Tema | `app/globals.css` declara los tokens `--cfo-*` y las variables de shadcn derivan de ellos: primario y anillo al carbón `#1A202C`, grises neutros, barra lateral sobre `#F7F7F7`, series de gráfico carbón + grises + oro/azul (el brand book prohíbe rojo y verde semáforo, y el lima no se puede usar sobre blanco) |
+| `package.json` · `README.md` | Nombre, descripción y autor. README nuevo, con la **atribución**: «Basado en TaxHacker (vas3k), licencia MIT» |
+
+### Lo que sigue diciendo «TaxHacker» **a propósito**
+
+1. **`LICENSE`** — MIT de Vasily Zubarev. Es la licencia del fork: se conserva
+   intacta y la atribución se hace explícita en el README.
+2. **Claves técnicas de identidad**: el prefijo de cookie `taxhacker`
+   (`taxhacker.session_token`, `taxhacker.active_org`), el correo del usuario
+   global de self-hosted `taxhacker@localhost`, la sal de
+   `lib/encryption.ts` y el nombre de base por defecto. Cambiarlos invalida las
+   sesiones vivas, **duplica** el usuario global de toda instalación existente y
+   deja los secretos cifrados con una clave derivada distinta. El NOMBRE visible
+   de ese usuario sí es ya CFOnomic.
+3. **Imágenes y contenedores de Docker** (`ghcr.io/vas3k/taxhacker:latest`,
+   `taxhacker_cron`) en `docker-compose*.yml` y en el README de la app de correo:
+   son artefactos reales publicados por el proyecto original; renombrarlos
+   apuntaría a un registro que no existe.
+4. **Comentarios de código y `docs/`** que explican de dónde viene cada pieza
+   («el panel heredado de TaxHacker sumaba…», `tests/fixtures/taxhacker-pre-e1.sql`,
+   `docs/AUDITORIA-FIABILIDAD.md`). Son la memoria del fork: borrarla haría el
+   código menos comprensible, no más de marca.
+
+### Deuda que deja el rebranding
+
+- **Textos legales** (`/docs/terms`, `/docs/privacy_policy`, `/docs/cookie`,
+  `/docs/ai`, los que enlaza el alta de la edición en la nube): se les ha
+  cambiado el **nombre y el dominio**, pero el texto es el heredado y sigue **en
+  inglés**, describiendo el producto original. **Necesitan redacción y revisión
+  legal de Pablo** antes de abrir el alta en la nube. Hasta entonces no los
+  enlaza la portada.
+- El brand book manda **League Spartan** y esa fuente no está en la máquina: los
+  iconos se generaron con **Inter Black** (que sí está, en `public/fonts/`). Si
+  algún día se quiere el trazo exacto, se regeneran con la fuente real.
 
 ## ✅ E12 CERRADA — y con ella el ciclo E0–E12 (2026-09-21)
 
