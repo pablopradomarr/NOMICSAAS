@@ -1,4 +1,3 @@
-import { NewsletterWelcomeEmail } from "@/components/emails/newsletter-welcome-email"
 import { OrganizationInviteEmail } from "@/components/emails/organization-invite-email"
 import { PasswordResetEmail } from "@/components/emails/password-reset-email"
 import React from "react"
@@ -90,15 +89,4 @@ export async function sendOrganizationInviteEmail({
   })
 
   return true
-}
-
-export async function sendNewsletterWelcomeEmail(email: string) {
-  const html = React.createElement(NewsletterWelcomeEmail)
-
-  return await resend.emails.send({
-    from: config.email.from,
-    to: email,
-    subject: "Welcome to TaxHacker Newsletter!",
-    react: html,
-  })
 }
