@@ -3,10 +3,12 @@ import config from "@/lib/config"
 /**
  * E13 · T5/T6 — Constantes del kit de marca CFOnomic para `app/(auth)/`.
  *
- * `lib/config.ts` ya expone `config.brand = { product: "NOMIC", company: "CFOnomic" }` (T1), así que
- * `BRAND` es un simple reexport tipado en vez de duplicar los literales (deuda de T5 cerrada en T6).
+ * `lib/config.ts` ya expone `config.brand = { product: "CFOnomic", company: "CFOnomic" }`, así que
+ * `BRAND` es un simple reexport tipado en vez de duplicar los literales (deuda de T5 cerrada en T6),
+ * más el descriptor del producto, que también vive en `config` (`app.description`) y que el wordmark
+ * usa desde el rebranding de 2026-09-22.
  */
-export const BRAND = config.brand
+export const BRAND = { ...config.brand, description: config.app.description } as const
 
 /**
  * Tokens de color de marca — sólo estos cinco (§6.2). No añadir colores fuera de esta lista dentro de

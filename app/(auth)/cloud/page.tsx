@@ -16,13 +16,13 @@ export default async function ChoosePlanPage() {
     <div className="container mx-auto px-4 py-8">
       <Card className="w-full max-w-4xl mx-auto p-8 flex flex-col items-center justify-center gap-8">
         <CardTitle className="text-4xl font-bold text-center">
-          <ColoredText>TaxHacker Cloud Edition</ColoredText>
-          <h2 className="mt-3 text-2xl font-semibold text-muted-foreground">Choose your plan</h2>
+          <ColoredText>CFOnomic · edición en la nube</ColoredText>
+          <h2 className="mt-3 text-2xl font-semibold text-muted-foreground">Elige tu plan</h2>
         </CardTitle>
         <CardContent className="p-0 w-full">
           {config.auth.disableSignup ? (
             <div className="text-center text-md text-muted-foreground">
-              Creating new account is disabled for now. Please use the self-hosted version.
+              El alta de cuentas nuevas está desactivada. Escríbenos si necesitas acceso.
             </div>
           ) : (
             <div className="space-y-8">
@@ -35,17 +35,17 @@ export default async function ChoosePlanPage() {
               </div>
 
               <div className="text-center text-muted-foreground">
-                By signing up, you agree to our{" "}
+                Al darte de alta aceptas las{" "}
                 <Link href="/docs/terms" className="hover:text-primary transition-colors underline">
-                  Terms of Service
+                  condiciones del servicio
                 </Link>
-                ,{" "}
+                , la{" "}
                 <Link href="/docs/privacy_policy" className="hover:text-primary transition-colors underline">
-                  Privacy Policy
-                </Link>
-                , and{" "}
+                  política de privacidad
+                </Link>{" "}
+                y el{" "}
                 <Link href="/docs/ai" className="hover:text-primary transition-colors underline">
-                  AI Usage Disclosure
+                  aviso sobre el uso de IA
                 </Link>
               </div>
             </div>
@@ -58,7 +58,7 @@ export default async function ChoosePlanPage() {
             className="flex flex-row gap-1 items-center hover:text-primary transition-colors underline"
           >
             <Mail className="w-4 h-4" />
-            Contact us for custom plans
+            Escríbenos para planes a medida
           </Link>
         </div>
       </Card>

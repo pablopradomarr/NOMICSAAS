@@ -6,13 +6,13 @@ import { describe, expect, it } from "vitest"
 import { PasswordResetEmail } from "./password-reset-email"
 
 describe("PasswordResetEmail", () => {
-  it("incluye el enlace de restablecimiento y la marca NOMIC", () => {
+  it("incluye el enlace de restablecimiento y la marca CFOnomic", () => {
     const html = renderToStaticMarkup(
       <PasswordResetEmail resetUrl="https://app.example.com/reset-password/abc123token" />
     )
 
     expect(html).toContain("https://app.example.com/reset-password/abc123token")
-    expect(html).toContain("NOMIC")
+    expect(html).toContain("CFOnomic")
     expect(html).toContain("1 hora")
   })
 

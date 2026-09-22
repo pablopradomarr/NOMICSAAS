@@ -28,11 +28,13 @@ describe("AuthShell", () => {
 })
 
 describe("AuthWordmark", () => {
-  it("muestra NOMIC como producto y 'de CFOnomic' debajo, sin lima sobre texto", () => {
+  it("muestra el logotipo CFO+nomic y el descriptor debajo, sin lima sobre texto", () => {
     const html = renderToStaticMarkup(<AuthWordmark />)
-    expect(html).toContain(BRAND.product)
     expect(html).toContain(">CFO<")
     expect(html).toContain(">nomic<")
+    expect(html).toContain(BRAND.description)
+    // Producto y compañía son el mismo nombre: el wordmark NO lo dice dos veces.
+    expect(html).not.toContain("de CFOnomic")
     // El lima nunca lleva texto encima dentro de (auth) (§6.3): el wordmark no usa --nomic-lime.
     expect(html).not.toContain("nomic-lime")
   })

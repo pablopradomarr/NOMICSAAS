@@ -93,8 +93,8 @@ export async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> 
  * (`taxhacker@localhost`), su organización personal, su membresía ADMIN y los
  * valores por defecto.
  *
- * Sin esto, una base sin ese usuario mandaba la suite al asistente «TaxHacker:
- * Self-Hosted Edition» y el primer `expect` fallaba con un mensaje que no decía
+ * Sin esto, una base sin ese usuario mandaba la suite al asistente «CFOnomic ·
+ * edición autoalojada» y el primer `expect` fallaba con un mensaje que no decía
  * nada del problema real. Es IDEMPOTENTE y se ejecuta una sola vez por proceso.
  * Va por `npx tsx` porque necesita el código de la aplicación y el cargador ESM
  * de Playwright no puede importarlo.

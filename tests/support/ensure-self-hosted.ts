@@ -6,7 +6,7 @@
  *
  *  1. el usuario global de `SELF_HOSTED_MODE` (`taxhacker@localhost`) con su
  *     organización personal y su membresía ADMIN — sin él la aplicación manda al
- *     asistente «TaxHacker: Self-Hosted Edition» y la suite falla en el primer
+ *     asistente «CFOnomic · edición autoalojada» y la suite falla en el primer
  *     `expect` con un mensaje que no dice nada del problema real;
  *  2. una **segunda** organización para las suites que cargan fixtures. Son dos
  *     a propósito, porque sus planes de cuentas son incompatibles: la personal
